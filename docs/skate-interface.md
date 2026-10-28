@@ -192,7 +192,10 @@ The eighteen gameplay actions the state graphs read are derived from those 24 sl
   r1.xyz|0, r2.xyz|0, r3.xyz|1)`). So in `Pose`, `m.x_axis/y_axis/z_axis` are the bone's
   axes and `m.w_axis.xyz` its position, standard glam column-major, apply as `m * v`.
 - `root` = `skater.animated_skeleton.roots.animation_to_world`; `bones` = `skater.render_pose`
-  per bone (world matrices, already including the root); `names` =
+  per bone, **relative to the root, not world matrices**: a bone's world matrix is
+  `root * bones[i]` (IW4L places the body entity at `root` and draws the bones inside it,
+  `remote_body.rs` line 577; checked in the Halo runtime, where bones alone sit within a
+  metre of the origin while the skater is hundreds of metres away); `names` =
   `evaluator.frames.bone_names` (bridge.rs lines 161-187). Look bones up **by name**; the glue
   never assumes an order.
 - **35 bone names** (read from the user's `rig.json`, which the export derives from the same

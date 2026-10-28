@@ -52,7 +52,10 @@ const RB: Mat4 = Mat4::from_cols(Vec4::X, Vec4::NEG_Z, Vec4::Y, Vec4::W);
 /// Halo bone -> skate bone, and the child pair whose segment is aligned.
 /// Halo has two spine bones to the skater's four: `spine1` carries the
 /// chest and sits where SPINE2 does, proportionally.
-const MAPPING: [(&str, &str, Option<(&str, &str)>); 21] = [
+/// A Halo bone, the skate bone it follows, and the (Halo, skate) child pair.
+type Mapping = (&'static str, &'static str, Option<(&'static str, &'static str)>);
+
+const MAPPING: [Mapping; 21] = [
     ("pelvis", "HIPS", Some(("spine", "SPINE"))),
     ("spine", "SPINE", Some(("spine1", "SPINE2"))),
     ("spine1", "SPINE2", Some(("neck", "NECK"))),
@@ -409,8 +412,10 @@ fn spawn_rider(
                     // frame is not mirrored, so put the GLB order back.
                     let indices = s
                         .indices
-                        .chunks_exact(3)
-                        .flat_map(|t| [t[0], t[2], t[1]])
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
+                        .flat_map(|&[a, b, c]| [a, c, b])
                         .collect();
                     let mesh = skinned_mesh(
                         v.iter().map(|v| v.position).collect(),
@@ -575,7 +580,13 @@ fn spawn_chief(
         let uvs = if mesh.uvs.len() == n { mesh.uvs.clone() } else { vec![[0.0; 2]; n] };
         for part in &mesh.parts {
             let look = chief.textures.looks.get(part.material as usize).and_then(Option::as_ref);
-            if look.is_some_and(|l| l.hidden) {
+            // The personal decals and emblem are overlays coloured by the
+            // player's emblem choice; drawn plain they are bright blue
+            // patches (their colour map is a change-colour mask).
+            let overlay = chief.scene.materials.get(part.material as usize).is_some_and(|m| {
+                m.tag_path.ends_with("mp_personal_decals") || m.tag_path.ends_with("mc_emblem")
+            });
+            if overlay || look.is_some_and(|l| l.hidden) {
                 continue;
             }
             let baked = chief.tinted.get(&part.material).map(|(w, h, px)| {
