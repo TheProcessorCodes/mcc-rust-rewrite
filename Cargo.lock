@@ -2508,6 +2508,7 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "blam_sound",
  "blam_texture",
  "glam",
  "half",

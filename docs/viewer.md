@@ -38,6 +38,10 @@ middle.
 | B, or gamepad View / Back | dirt bike / fly (see "Dirt bike" below) |
 | PageDown / PageUp | next / previous zone set (campaign maps) |
 | Home | load every BSP at once |
+| M | music on / off (the map's showpiece: the Warthog run on 120_halo); Shift+M next track |
+| N | music: switch to the alternate loop and back (at the next loop boundary) |
+| K | mute / unmute |
+| `-` / `=` | sound volume down / up (10 % steps) |
 | gamepad left stick | move |
 | gamepad right stick | look |
 | gamepad right / left trigger | up / down |
@@ -433,3 +437,65 @@ collision. Tuning constants are at the top of `physics.rs`.
 Headless check: `halo3 riverworld --shot DIR --bike --view spawn50` rides from
 spawn 50 holding `HALO3_BIKE_THROTTLE` (default 0.4) for `HALO3_SKATE_FOR`
 seconds, then takes the rider pictures.
+
+## Sound
+
+`crates/halo3/src/audio/` plays Halo 3's own sound from the user's install: the
+`snd!` / `lsnd` / `ssce` tags of the map (`crates/blam_sound`, `docs/format/sound.md`) and
+the samples of MCC's FMOD bank `halo3\fmod\pc\sfx.fsb` (Vorbis, decoded with lewton;
+the Vorbis setup headers are rebuilt from the user's `halo3.dll`). Nothing is copied into
+this repo. `HALO3_AUDIO=0` turns sound off; `--shot` never opens the sound device.
+
+- **Mixer** (`mixer.rs`): one endless 48 kHz stereo source handed to bevy_audio, into which
+  every voice is mixed, with its own gains, pitch (playback rate) and a soft limiter.
+  A voice plays a queue of clips, then random permutations of its loop forever, the way
+  Halo loops a looping sound's permutations; loop permutations are cut at the bank's loop
+  end. Decoding runs on a worker thread as clips are needed (a loop starts once all its
+  permutations are in); multichannel samples (120_halo's quad wind) are folded to stereo.
+- **Background per cluster**: the camera's cluster (through the collision tree of the
+  loaded BSPs) names an entry of its BSP's acoustics palette, whose background `lsnd`
+  plays non-positional at its track gain, cross-fading over about a second when the entry
+  changes (Valhalla: `halo_ext` outside, `riverworld_interior` in the bases). Outside every
+  cluster the last background stays.
+- **Details**: each background's detail sounds (birds, gusts, cicadas) fire at random
+  within their period, at a random yaw, pitch and distance around the listener; mono ones
+  are panned there, stereo ones play as they are.
+- **Sound scenery**: every placement of the scenario's sound scenery whose origin BSP is
+  loaded plays its `lsnd` loop at its position when the camera comes within its far
+  distance (the placement's own bounds, else the sound's playback distances): full volume
+  inside the near distance, falling as the square of the remaining fraction to silence at
+  the far one, equal-power panned by the camera's right vector. Valhalla has 77 (the
+  waterfall, the creek and brook along the river, the lake shore). Two stand-ins for
+  the game's undecoded sound classes and mix: only the 2 loudest placements of one
+  looping sound play at a time, and sound scenery is mixed 6 dB down (120_halo's eight
+  falling-plate loops along the Warthog run otherwise summed to -5 dBFS).
+- **Music** is started by HaloScript in the game; here M plays the map's showpiece (on
+  120_halo `120_music_15`, the Warthog run's `halo3_trench`: 92 s intro, then its four loop
+  permutations), Shift+M the next `lsnd` under a `music` folder, `--music NAME|N` one at
+  start (`--music 120_music_15` or an index into the list the log prints). N moves to the
+  alternate loop through its transition at the end of the current loop, and back. M again
+  plays the outro (or fades out over the track's fade time).
+- **Board sounds while skating** (Skate 3's data has no audio): Halo's own samples, picked
+  from the bank by folder: the Brute chopper's hard-wheel loop for rolling (gain and pitch
+  with speed), a vehicle scrape while grinding, the Chief's hard concrete landing after
+  more than 0.25 s in the air (louder the longer the air). The skate engine's state names
+  (`PhysicsGround`, `PhysicsAir`, `GrindFiftyFifty`, ...) come through `skate::SkateMotion`.
+- **Volume**: `HALO3_VOLUME` (default 0.8) sets the start level, `-` / `=` change it, K mutes.
+
+Headless check: `HALO3_AUDIO_TRACE=1` with `--shot` runs all of this without a sound device
+and logs, 0.3 s after each view, the cluster, background layers and their fade, the sound
+scenery in range with distance and gain, and the decoded clips:
+
+```
+$env:HALO3_AUDIO_TRACE="1"
+target\debug\halo3.exe riverworld --shot .scratch\shots --view "96,-140,2,90,0" --view spawn
+```
+
+`blam sound <map> list | show TAG | wav TAG... | check` lists, inspects and decodes the same
+sounds to WAV (`.scratch/sound` by default) with duration, rate, RMS and peak.
+
+Not done: the sound environments (`snde` reverb) and obstruction; pitch ranges past the
+first; dialogue (the per-language banks); weapon, vehicle, footstep and impact sounds of the
+game world; HaloScript-driven music cues (music is by hand); the dirt bike's engine
+(the Mongoose engine loops are in the bank). Halo's real distance curve and the meaning of
+the playback parameters' first two distances are not checked against the game.

@@ -338,14 +338,20 @@ impl<'a> SoundTags<'a> {
             .collect::<Result<_>>()?;
         for e in c.reader_at(s + 0x180).block()?.elements(112) {
             let pal = c.reader_at(e).i16()?;
-            let Some(ssce) = usize::try_from(pal).ok().and_then(|p| palette.get(p).copied().flatten())
+            let Some(ssce) = usize::try_from(pal)
+                .ok()
+                .and_then(|p| palette.get(p).copied().flatten())
             else {
                 continue;
             };
             let near = c.reader_at(e + 0x5C).f32()?;
             let far = c.reader_at(e + 0x60).f32()?;
             out.scenery.push(SoundScenery {
-                object: c.tags.get(ssce).map(|t| t.name().to_string()).unwrap_or_default(),
+                object: c
+                    .tags
+                    .get(ssce)
+                    .map(|t| t.name().to_string())
+                    .unwrap_or_default(),
                 looping: self.scenery_looping(ssce)?,
                 position: c.reader_at(e + 0x08).f32x3()?,
                 origin_bsp: u32::try_from(c.reader_at(e + 0x3C).i16()?).ok(),

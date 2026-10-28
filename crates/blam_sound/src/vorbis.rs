@@ -129,10 +129,17 @@ impl Setups {
             if let Some((base, shared)) = rd(p + 4)
                 && (64..65536).contains(&shared)
                 && starts.binary_search(&base).is_ok()
-                && !by_crc.get(&crc).is_some_and(|(_, ok): &(Vec<u8>, bool)| *ok)
+                && !by_crc
+                    .get(&crc)
+                    .is_some_and(|(_, ok): &(Vec<u8>, bool)| *ok)
             {
                 let packet = rd(p - 12)
-                    .filter(|&(tail, total)| total >= shared && total < 65536 && tail + (total - shared) <= dll.len() && base + total <= dll.len())
+                    .filter(|&(tail, total)| {
+                        total >= shared
+                            && total < 65536
+                            && tail + (total - shared) <= dll.len()
+                            && base + total <= dll.len()
+                    })
                     .and_then(|(tail, total)| {
                         let own = total - shared;
                         (0..=own).find_map(|k| {
@@ -145,7 +152,11 @@ impl Setups {
                     });
                 let packet = packet.unwrap_or_else(|| {
                     let k = starts.binary_search(&base).unwrap();
-                    let end = starts.get(k + 1).copied().unwrap_or(dll.len()).min(base + 65536);
+                    let end = starts
+                        .get(k + 1)
+                        .copied()
+                        .unwrap_or(dll.len())
+                        .min(base + 65536);
                     (dll[base..end].to_vec(), false)
                 });
                 by_crc.insert(crc, packet);
@@ -184,15 +195,19 @@ pub fn crc32(data: &[u8]) -> u32 {
         for (i, e) in t.iter_mut().enumerate() {
             let mut c = i as u32;
             for _ in 0..8 {
-                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
             }
             *e = c;
         }
         t
     });
-    !data
-        .iter()
-        .fold(!0u32, |c, &b| TABLE[((c ^ b as u32) & 0xFF) as usize] ^ (c >> 8))
+    !data.iter().fold(!0u32, |c, &b| {
+        TABLE[((c ^ b as u32) & 0xFF) as usize] ^ (c >> 8)
+    })
 }
 
 /// Just enough of a PE image to turn its virtual addresses into file
@@ -207,7 +222,10 @@ impl Pe {
     fn parse(b: &[u8]) -> Result<Pe> {
         let bad = || Error::Invalid("not a 64-bit PE image".into());
         let u16_at = |o: usize| b.get(o..o + 2).map(|s| u16::from_le_bytes([s[0], s[1]]));
-        let u32_at = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()));
+        let u32_at = |o: usize| {
+            b.get(o..o + 4)
+                .map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+        };
         let pe = u32_at(0x3C).ok_or_else(bad)? as usize;
         if b.get(pe..pe + 4) != Some(b"PE\0\0") {
             return Err(bad());
@@ -284,9 +302,9 @@ impl<'a> Decoder<'a> {
         let crc = s
             .setup_crc
             .ok_or_else(|| Error::Invalid(format!("sample {sample} names no setup header")))?;
-        let setup = setups
-            .get(crc)
-            .ok_or_else(|| Error::Unsupported(format!("setup header {crc:#010x} not in the DLL")))?;
+        let setup = setups.get(crc).ok_or_else(|| {
+            Error::Unsupported(format!("setup header {crc:#010x} not in the DLL"))
+        })?;
         let ident = read_header_ident(&ident_packet(channels, s.rate))
             .map_err(|e| Error::Decode(format!("ident: {e:?}")))?;
         let setup = read_header_setup(setup, channels as u8, BLOCKSIZES)

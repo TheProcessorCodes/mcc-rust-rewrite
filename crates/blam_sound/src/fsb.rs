@@ -50,7 +50,8 @@ pub struct Info {
 /// seeded with 5381) over the source path relative to `data\sound\` with no
 /// extension, e.g. `characters\bodyfalls\bodythud\bodythud1`.
 pub fn djb2(s: &str) -> u32 {
-    s.bytes().fold(5381u32, |h, c| h.wrapping_mul(33).wrapping_add(c as u32))
+    s.bytes()
+        .fold(5381u32, |h, c| h.wrapping_mul(33).wrapping_add(c as u32))
 }
 
 pub struct Bank {
@@ -62,7 +63,9 @@ pub struct Bank {
     by_id: HashMap<u32, u32>,
 }
 
-const RATES: [u32; 10] = [0, 8000, 11000, 11025, 16000, 22050, 24000, 32000, 44100, 48000];
+const RATES: [u32; 10] = [
+    0, 8000, 11000, 11025, 16000, 22050, 24000, 32000, 44100, 48000,
+];
 
 fn u32_at(b: &[u8], o: usize) -> Result<u32> {
     b.get(o..o + 4)
@@ -110,7 +113,10 @@ impl Bank {
     fn parse(path: PathBuf, map: memmap2::Mmap) -> Result<Bank> {
         let b: &[u8] = &map;
         if b.get(0..4) != Some(b"FSB5") {
-            return Err(Error::Invalid(format!("{} is not an FSB5 bank", path.display())));
+            return Err(Error::Invalid(format!(
+                "{} is not an FSB5 bank",
+                path.display()
+            )));
         }
         let version = u32_at(b, 4)?;
         let count = u32_at(b, 8)? as usize;
@@ -119,7 +125,9 @@ impl Bank {
         let data = u32_at(b, 0x14)? as usize;
         let mode = u32_at(b, 0x18)?;
         if mode != 0x0F {
-            return Err(Error::Invalid(format!("bank codec {mode:#x}, not Vorbis (0xF)")));
+            return Err(Error::Invalid(format!(
+                "bank codec {mode:#x}, not Vorbis (0xF)"
+            )));
         }
         let header_size = if version == 0 { 0x40 } else { 0x3C };
         let data_base = header_size + headers + names;
@@ -207,7 +215,10 @@ impl Bank {
 
 fn parse_info(b: &[u8]) -> Result<Vec<Info>> {
     if !b.len().is_multiple_of(280) {
-        return Err(Error::Invalid(format!("info file of {} bytes is not 280-byte records", b.len())));
+        return Err(Error::Invalid(format!(
+            "info file of {} bytes is not 280-byte records",
+            b.len()
+        )));
     }
     let mut out = Vec::with_capacity(b.len() / 280);
     for r in b.as_chunks::<280>().0 {

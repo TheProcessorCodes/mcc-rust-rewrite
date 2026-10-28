@@ -11,10 +11,11 @@ name = "halo3"
 path = "src/main.rs"
 
 [dependencies]
-bevy = { workspace = true }
+bevy = { workspace = true, features = ["bevy_audio"] }
 blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
 blam_texture = { workspace = true }
+blam_sound = { workspace = true }
 glam = { workspace = true }
 anyhow = { workspace = true }
 # The Skate 3 board and rig files IW4L derives from skater.glb (read at run time).

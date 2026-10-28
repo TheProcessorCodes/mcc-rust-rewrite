@@ -25,10 +25,16 @@ fn bank_and_setups() {
     assert_eq!(lib.setups.get(0xAD11_D38D).unwrap().len(), 3484);
     assert_eq!(lib.setups.get(0x632B_1FAC).unwrap().len(), 3006);
     let s0 = &lib.sfx.samples[0];
-    assert_eq!((s0.rate, s0.channels, s0.frames, s0.offset), (48000, 1, 13725, 0));
+    assert_eq!(
+        (s0.rate, s0.channels, s0.frames, s0.offset),
+        (48000, 1, 13725, 0)
+    );
     assert_eq!(lib.sfx.samples[1].offset, 2528);
     let info = &lib.sfx.infos[0];
-    assert_eq!(info.path, r"data\sound\characters\bodyfalls\bodythud\bodythud1.aif");
+    assert_eq!(
+        info.path,
+        r"data\sound\characters\bodyfalls\bodythud\bodythud1.aif"
+    );
     assert_eq!(info.id, blam_sound::fsb::id_of_path(&info.path));
     assert_eq!(info.id, 0x2071_32B0);
 }
@@ -41,7 +47,10 @@ fn riverworld_tags_resolve_and_decode() {
     let tags = SoundTags::new(&cache).unwrap();
 
     let bird = tags.sound(6786).unwrap();
-    assert_eq!(bird.name, r"sound\levels\riverworld\halo_ext\details\weird_bird");
+    assert_eq!(
+        bird.name,
+        r"sound\levels\riverworld\halo_ext\details\weird_bird"
+    );
     assert_eq!(bird.permutations.len(), 9);
     assert_eq!(bird.permutations[2].name, "weird_bird2");
     assert_eq!(bird.permutations[2].fmod_id, 0x073D_1E2E);
@@ -76,11 +85,17 @@ fn riverworld_tags_resolve_and_decode() {
 #[test]
 fn halo_music_and_quad_ambience() {
     let Some(maps) = maps() else { return };
-    let Ok(cache) = CacheFile::open(maps.join("120_halo.map")) else { return };
+    let Ok(cache) = CacheFile::open(maps.join("120_halo.map")) else {
+        return;
+    };
     let lib = Library::open_beside(&maps).unwrap();
     let tags = SoundTags::new(&cache).unwrap();
     let m = tags.map_sounds().unwrap();
-    let run = m.music.iter().find(|(_, n)| n.ends_with("120_music_15")).unwrap();
+    let run = m
+        .music
+        .iter()
+        .find(|(_, n)| n.ends_with("120_music_15"))
+        .unwrap();
     let l = tags.looping(run.0).unwrap();
     let t = &l.tracks[0];
     assert!(t.intro.is_some() && t.looped.is_some() && t.alt_loop.is_some());

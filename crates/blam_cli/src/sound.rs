@@ -18,7 +18,11 @@ use blam_sound::tags::{Looping, SoundTags};
 use crate::{Args, find_tag, maps_dir};
 
 fn library(cache: &CacheFile) -> Result<Library> {
-    let dir = cache.path().parent().map(PathBuf::from).unwrap_or_else(maps_dir);
+    let dir = cache
+        .path()
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(maps_dir);
     let started = std::time::Instant::now();
     let lib = Library::open_beside(&dir).context("opening the FMOD bank beside the maps")?;
     eprintln!(
@@ -142,7 +146,10 @@ fn print_looping(c: &CacheFile, l: &Looping) {
 
 fn show(tags: &SoundTags<'_>, lib: &Library, index: u32) -> Result<()> {
     let c = tags.cache();
-    let class = c.tags.get(index).map(|t| c.tags.class_of(t).code.to_string());
+    let class = c
+        .tags
+        .get(index)
+        .map(|t| c.tags.class_of(t).code.to_string());
     if class.as_deref() == Some("lsnd") {
         print_looping(c, &tags.looping(index)?);
         return Ok(());
@@ -178,7 +185,10 @@ fn show(tags: &SoundTags<'_>, lib: &Library, index: u32) -> Result<()> {
 /// The `snd!` tags a tag stands for: itself, or every sound of an `lsnd`.
 fn sounds_of(tags: &SoundTags<'_>, index: u32) -> Result<Vec<u32>> {
     let c = tags.cache();
-    let class = c.tags.get(index).map(|t| c.tags.class_of(t).code.to_string());
+    let class = c
+        .tags
+        .get(index)
+        .map(|t| c.tags.class_of(t).code.to_string());
     Ok(match class.as_deref() {
         Some("lsnd") => {
             let l = tags.looping(index)?;
@@ -186,7 +196,15 @@ fn sounds_of(tags: &SoundTags<'_>, index: u32) -> Result<Vec<u32>> {
                 .tracks
                 .iter()
                 .flat_map(|t| {
-                    [t.intro, t.looped, t.outro, t.alt_loop, t.alt_out, t.alt_trans_in, t.alt_trans_out]
+                    [
+                        t.intro,
+                        t.looped,
+                        t.outro,
+                        t.alt_loop,
+                        t.alt_out,
+                        t.alt_trans_in,
+                        t.alt_trans_out,
+                    ]
                 })
                 .chain(l.details.iter().map(|d| d.sound))
                 .flatten()
@@ -241,7 +259,12 @@ fn check(cache: &CacheFile, tags: &SoundTags<'_>) -> Result<()> {
     let m = tags.map_sounds()?;
     let mut loops: BTreeSet<u32> = m.scenery.iter().filter_map(|s| s.looping).collect();
     for b in &m.bsps {
-        loops.extend(b.palette.iter().flat_map(|a| [a.background, a.inside]).flatten());
+        loops.extend(
+            b.palette
+                .iter()
+                .flat_map(|a| [a.background, a.inside])
+                .flatten(),
+        );
     }
     loops.extend(m.music.iter().map(|(t, _)| *t));
     let (mut ok, mut failed, mut missing, mut seconds) = (0, 0, 0, 0.0f64);

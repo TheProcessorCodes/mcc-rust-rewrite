@@ -18,6 +18,10 @@
 //!                        which structure BSPs to load first (default: the
 //!                        zone set the player starts in; `world/zones.rs`)
 //!
+//! halo3 <map> --music NAME|N
+//!                        start a music track (`audio/`; M plays the map's
+//!                        showpiece, e.g. the Warthog run on 120_halo)
+//!
 //! In a map, J switches between flying and skating (see `skate.rs`), B
 //! between flying and the dirt bike (`bike/mod.rs`), PageDown / PageUp step
 //! through the zone sets, Home loads every BSP. Escape or Start pauses and
@@ -26,6 +30,7 @@
 //!
 //! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install.
 
+mod audio;
 mod bike;
 mod fly_camera;
 mod pause;
@@ -144,6 +149,9 @@ fn main() -> anyhow::Result<()> {
         );
     }
     let title = format!("Halo 3 - {}", scene.name);
+    // Sound plays only in a window (`audio/`); `--shot` never opens the
+    // sound device.
+    let sound = audio::wanted(shot.is_some());
     let mut app = App::new();
     match &shot {
         // No window and no event loop: render into an image on a plain loop.
@@ -154,20 +162,37 @@ fn main() -> anyhow::Result<()> {
                     exit_condition: bevy::window::ExitCondition::DontExit,
                     ..default()
                 })
-                .disable::<bevy::winit::WinitPlugin>(),
+                .disable::<bevy::winit::WinitPlugin>()
+                .disable::<bevy::audio::AudioPlugin>(),
         )
         .add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
             std::time::Duration::from_millis(1),
         )),
-        None => app.add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title,
-                present_mode: PresentMode::AutoVsync,
+        None => {
+            let plugins = DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title,
+                    present_mode: PresentMode::AutoVsync,
+                    ..default()
+                }),
                 ..default()
-            }),
-            ..default()
-        })),
+            });
+            if sound {
+                app.add_plugins(plugins)
+            } else {
+                app.add_plugins(plugins.disable::<bevy::audio::AudioPlugin>())
+            }
+        }
     };
+    if sound || audio::trace_wanted() {
+        let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
+        app.add_plugins(audio::HaloAudioPlugin {
+            cache: map_file,
+            output: sound,
+            trace: audio::trace_wanted(),
+            music: value("--music"),
+        });
+    }
     let skating = shot.as_ref().is_none_or(|p| p.rides());
     let collision = scene.collision.clone();
     let shot_mode = shot.is_some();
