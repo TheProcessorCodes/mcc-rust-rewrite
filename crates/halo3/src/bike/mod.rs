@@ -459,7 +459,7 @@ fn bike_sticks(bike: &Bike, gizmos: &mut Sticks) {
     }
 
     // Forks: two legs from the triple clamp to the axle.
-    let clamp = front_leg.extended + axis * 0.95;
+    let clamp = physics::fork_base() + axis * 0.95;
     let side = bars * Vec3::X * 0.09;
     for s in [side, -side] {
         gizmos.line(w(clamp + s), w(front + s), metal);
@@ -480,8 +480,8 @@ fn bike_sticks(bike: &Bike, gizmos: &mut Sticks) {
     }
 
     // Frame: head tube, down tube and cradle, top rail, subframe.
-    let head_top = front_leg.extended + axis * 0.92;
-    let head_low = front_leg.extended + axis * 0.70;
+    let head_top = physics::fork_base() + axis * 0.92;
+    let head_low = physics::fork_base() + axis * 0.70;
     let pivot = Vec3::new(0.0, -0.18, -0.20);
     let cradle = Vec3::new(0.0, -0.40, 0.08);
     let seat_front = Vec3::new(0.0, 0.26, -0.05);

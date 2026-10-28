@@ -56,7 +56,7 @@ struct Knob {
 
 const KMH: f32 = 3.6;
 
-const KNOBS: [Knob; 14] = [
+const KNOBS: [Knob; 15] = [
     Knob {
         group: "Engine and brakes",
         name: "Engine power",
@@ -114,14 +114,14 @@ const KNOBS: [Knob; 14] = [
     },
     Knob {
         group: "",
-        name: "Slide feel",
-        low: "smooth, free",
-        high: "sharp, catches",
-        range: (1000.0, 9000.0),
-        step: 200.0,
-        get: |t| t.lateral_stiffness,
-        set: |t, v| t.lateral_stiffness = v,
-        show: |v| format!("side force {v:.0} N per m/s of slip"),
+        name: "Slide catch",
+        low: "slides run on",
+        high: "slides catch",
+        range: (0.0, 3000.0),
+        step: 100.0,
+        get: |t| t.slide_force,
+        set: |t, v| t.slide_force = v,
+        show: |v| format!("a sliding tyre gains up to {v:.0} N of side grip"),
     },
     Knob {
         group: "Steering and lean",
@@ -133,57 +133,84 @@ const KNOBS: [Knob; 14] = [
         get: |t| t.steer_lock,
         set: |t, v| t.steer_lock = v,
         show: |v| {
-            let deg = |a: f32| (a * v).to_degrees();
+            let deg = |kmh: f32| (physics::steer_lock(kmh / KMH) * v).to_degrees().min(30.0);
             format!(
-                "full stick {:.0} deg standing, {:.0} deg at 50 km/h",
-                deg(physics::STEER_LOCK_SLOW),
-                deg(physics::STEER_LOCK_FAST)
+                "full stick {:.0} / {:.0} / {:.0} deg at 0 / 50 / 80 km/h",
+                deg(0.0),
+                deg(50.0),
+                deg(80.0)
             )
         },
     },
     Knob {
         group: "",
-        name: "Steering quickness",
-        low: "lazier",
-        high: "quicker",
-        range: (1.0, 12.0),
-        step: 0.5,
-        get: |t| t.steer_rate,
-        set: |t, v| t.steer_rate = v,
-        show: |v| format!("bars turn {:.0} deg/s", v.to_degrees()),
+        name: "Steering lag",
+        low: "quicker",
+        high: "lazier",
+        range: (0.03, 0.5),
+        step: 0.01,
+        get: |t| t.steer_lag,
+        set: |t, v| t.steer_lag = v,
+        show: |v| format!("the bars lag the stick {v:.2} s"),
     },
     Knob {
         group: "",
         name: "Lean depth",
         low: "shallower",
         high: "deeper",
-        range: (0.3, 1.2),
+        range: (0.4, 2.0),
         step: 0.05,
-        get: |t| t.max_lean,
-        set: |t, v| t.max_lean = v,
-        show: |v| format!("leans over to {:.0} deg at most", v.to_degrees()),
+        get: |t| t.lean_depth,
+        set: |t, v| t.lean_depth = v,
+        show: |v| {
+            let deg = |kmh: f32| (physics::lean_for(kmh / KMH) * v).to_degrees();
+            format!(
+                "full stick leans {:.0} / {:.0} deg at 20 / 60 km/h ({:.0} / {:.0} with the rider)",
+                deg(20.0),
+                deg(60.0),
+                deg(20.0) * (1.0 + physics::RIDER_LEAN),
+                deg(60.0) * (1.0 + physics::RIDER_LEAN)
+            )
+        },
     },
     Knob {
         group: "",
-        name: "Lean quickness",
-        low: "lazier",
-        high: "quicker",
-        range: (0.3, 3.0),
-        step: 0.1,
-        get: |t| t.lean_speed,
-        set: |t, v| t.lean_speed = v,
-        show: |v| format!("x{v:.1} the stock lean speed"),
+        name: "Lean lag",
+        low: "quicker",
+        high: "lazier",
+        range: (0.05, 0.8),
+        step: 0.01,
+        get: |t| t.lean_lag,
+        set: |t, v| t.lean_lag = v,
+        show: |v| format!("the lean lags {v:.2} s"),
     },
     Knob {
         group: "",
         name: "Rider-lean influence",
         low: "less (stick)",
         high: "more (rider)",
+        range: (0.0, 2.5),
+        step: 0.05,
+        get: |t| t.rider_lean,
+        set: |t, v| t.rider_lean = v,
+        show: |v| {
+            format!(
+                "full rider lean adds {:.0} % lean and {:.0} % bars",
+                physics::RIDER_LEAN * v * 100.0,
+                physics::RIDER_STEER * v * 100.0
+            )
+        },
+    },
+    Knob {
+        group: "",
+        name: "Weight shift",
+        low: "less",
+        high: "more",
         range: (0.0, 4.0),
         step: 0.1,
         get: |t| t.lean_gain,
         set: |t, v| t.lean_gain = v,
-        show: |v| format!("the rider's weight counts x{v:.1}"),
+        show: |v| format!("the rider's weight pitches the bike x{v:.1} (wheelies, stoppies)"),
     },
     Knob {
         group: "Suspension",
@@ -210,9 +237,14 @@ const KNOBS: [Knob; 14] = [
         get: |t| t.damper,
         set: |t, v| t.damper = v,
         show: |v| {
-            let r = physics::rear_leg().damper * v;
-            let f = physics::front_leg().damper * v;
-            format!("dampers front {f:.0} / rear {r:.0} N·s/m")
+            let (r, f) = (physics::rear_leg(), physics::front_leg());
+            format!(
+                "bump / rebound front {:.0} / {:.0}, rear {:.0} / {:.0} N·s/m",
+                f.bump * v,
+                f.rebound * v,
+                r.bump * v,
+                r.rebound * v
+            )
         },
     },
     Knob {
