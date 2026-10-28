@@ -389,6 +389,9 @@ pub(super) fn standard_material(
             Some(bevy::render::render_resource::Face::Back)
         },
         double_sided: two_sided,
+        // A multiply decal scales what is under it, already fogged; fog
+        // on the decal itself would tint it twice.
+        fog_enabled: alpha_mode != AlphaMode::Multiply,
         alpha_mode,
         ..default()
     }

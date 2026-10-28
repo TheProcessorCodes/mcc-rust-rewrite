@@ -449,6 +449,18 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 }
 
     colour = vec4((colour.rgb + illum) * halo.extra.y, colour.a);
+@if(BLEND_MULTIPLY) {
+    // Multiply decals (`rmd ` blend_mode multiply: High Ground's
+    // `medical_decals`) scale the lit surface under them by their own
+    // colour: unlit and unexposed, or the white of the texture times the
+    // exposure turned them into white sheets. The vertex colour is the
+    // irradiance of vertex-lit objects; take it back out.
+    var unlit = pbr_input.material.base_color.rgb;
+@if(VERTEX_COLORS) {
+    unlit = unlit / max(in.color.rgb, vec3(1e-4));
+}
+    colour = vec4(min(unlit, vec3(1.0)), colour.a);
+}
     var out: FragmentOutput;
     pbr_input.world_position = fog_position(pbr_input.world_position);
     out.color = main_pass_post_lighting_processing(pbr_input, colour);
