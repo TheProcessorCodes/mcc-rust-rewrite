@@ -85,6 +85,9 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 - [x] Spawn points (107 on Valhalla); the viewer starts on one.
 - [x] Spartan skeleton and skin weights decode (`blam nodes`); bone mapping
       to the skater in `docs/rider.md`.
+- [x] Dirt bike (built, awaiting a playtest): B rides a stick-model motocross
+      bike with dual-stick physics (left stick bars, right stick rider, RT gas,
+      LT brake), the Spartan standing on it (`docs/viewer.md` "Dirt bike").
 - [ ] Milestone 3b: feed collision and rails to the skate world.
 - [ ] Milestone 4: Skate 3 crates plugged in.
 - [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets

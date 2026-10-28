@@ -8,18 +8,22 @@
 //!                        no window: save PNGs and exit (see `shot.rs`)
 //! halo3 <map> --shot <dir> --skate [--view ...]
 //!                        the same, after two seconds of skating
+//! halo3 <map> --shot <dir> --bike [--view ...]
+//!                        the same, after two seconds on the dirt bike
 //!
 //! halo3 <map> --zone N|NAME | --bsps 0,3,5 | --all-bsps
 //!                        which structure BSPs to load first (default: the
 //!                        zone set the player starts in; `world/zones.rs`)
 //!
-//! In a map, J switches between flying and skating (see `skate.rs`),
-//! PageDown / PageUp step through the zone sets, Home loads every BSP.
-//! Escape or Start pauses and lists the controls (`pause.rs`).
+//! In a map, J switches between flying and skating (see `skate.rs`), B
+//! between flying and the dirt bike (`bike/mod.rs`), PageDown / PageUp step
+//! through the zone sets, Home loads every BSP. Escape or Start pauses and
+//! lists the controls (`pause.rs`).
 //! ```
 //!
 //! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install.
 
+mod bike;
 mod fly_camera;
 mod pause;
 mod rider;
@@ -58,7 +62,7 @@ fn main() -> anyhow::Result<()> {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
-  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate]
+  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike]
   halo3 --test-scene");
             std::process::exit(2);
         }
@@ -157,9 +161,10 @@ fn main() -> anyhow::Result<()> {
             ..default()
         })),
     };
-    let skating = shot.as_ref().is_none_or(|p| p.skate);
+    let skating = shot.as_ref().is_none_or(|p| p.rides());
+    let collision = scene.collision.clone();
     if let Some(plan) = shot {
-        if plan.skate {
+        if plan.rides() {
             // Ride from the first view, or the start spawn.
             let start = match plan.views.first() {
                 Some(v) => Some((v.position, v.yaw_deg.to_radians())),
@@ -169,8 +174,14 @@ fn main() -> anyhow::Result<()> {
                     .map(|s| (s.position, s.yaw))
                     .or_else(|| scene.starts.first().map(|s| (s.position, s.yaw))),
             };
-            if let Some((position, yaw)) = start {
-                app.insert_resource(skate::AutoStart::at(position, yaw));
+            match start {
+                Some((position, yaw)) if plan.bike => {
+                    app.insert_resource(bike::AutoStart::at(position, yaw));
+                }
+                Some((position, yaw)) => {
+                    app.insert_resource(skate::AutoStart::at(position, yaw));
+                }
+                None => {}
             }
         }
         app.add_plugins(shot::ShotPlugin(plan));
@@ -182,6 +193,10 @@ fn main() -> anyhow::Result<()> {
         ))
         .insert_resource(rider::PendingChief(chief))
         .add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
+        if !collision.triangles.is_empty() {
+            app.insert_resource(bike::BikeInput(collision))
+                .add_plugins(bike::BikePlugin);
+        }
         // Water surfaces and the ground under them, for sinking and
         // respawning (`swim.rs`).
         let mut water_materials: Vec<u32> = water
@@ -240,5 +255,6 @@ fn shot_plan(args: &[String], scene: &blam_geometry::Scene) -> anyhow::Result<Op
         views,
         size,
         skate: args.iter().any(|a| a == "--skate"),
+        bike: args.iter().any(|a| a == "--bike"),
     }))
 }
