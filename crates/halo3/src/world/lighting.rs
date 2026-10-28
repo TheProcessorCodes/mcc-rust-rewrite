@@ -431,11 +431,13 @@ pub fn default_light() -> ShLight {
 #[derive(Resource)]
 pub struct SceneLights(pub std::sync::Arc<SurfaceLights>);
 
-/// A lit surface point: position, light, and its cluster's BSP mask.
-type Sample = (Vec3, ShLight, u32);
+/// A lit surface point: position, light, its BSP mask, and the height of
+/// its normal (how much it faces up).
+type Sample = (Vec3, ShLight, u32, f32);
 
-/// Lighting sampled at every per-pixel lit cluster vertex, in a grid, for
-/// lighting objects by the nearest lit surface.
+/// Lighting sampled at the vertices of every per-pixel lit cluster and
+/// instance, in a grid, for lighting objects and the rider by the lit
+/// surface under them.
 pub struct SurfaceLights {
     cell: f32,
     grid: HashMap<(i32, i32, i32), Vec<Sample>>,
@@ -443,35 +445,105 @@ pub struct SurfaceLights {
     mean: ShLight,
 }
 
+/// Whether a lightmap texel holds any light: texels outside every chart
+/// (and the unbaked backs of things) decode to zero, which drew the rider
+/// black on 120_halo's Warthog run.
+fn holds_light(l: &ShLight) -> bool {
+    l.c[0].max_element() > 1e-4 || l.dominant.max_element() > 1e-4
+}
+
+/// Spacing of the light samples on big triangles, world units.
+const SAMPLE_SPACING: f32 = 3.0;
+
+/// The samples of one placement's per-pixel lit triangles: inside each
+/// triangle, never on its corners (a vertex's texcoord sits on the edge of
+/// its lightmap chart, where the texel is often the dark padding around the
+/// chart: the black rider), a grid about [`SAMPLE_SPACING`] apart on big
+/// triangles so the nearest sample is near the surface under a point.
+fn sample_placement(scene: &Scene, p: &blam_geometry::Placement, atlas: &Atlas<'_>, uvs: &[[f32; 2]], out: &mut Vec<Sample>) {
+    let mesh = &scene.meshes[p.mesh as usize];
+    // Instances repeat one mesh many times: every other triangle is plenty.
+    let step = if p.kind == Kind::Instance { 2 } else { 1 };
+    let triangles = mesh.parts.iter().flat_map(|part| part.indices.as_chunks::<3>().0.iter());
+    for t in triangles.step_by(step) {
+        let [a, b, c] = t.map(|i| i as usize);
+        let (Some(ua), Some(ub), Some(uc)) = (uvs.get(a), uvs.get(b), uvs.get(c)) else {
+            continue;
+        };
+        let [pa, pb, pc] = [a, b, c].map(|i| p.transform.transform_point3(mesh.positions[i]));
+        let mut normal = (pb - pa).cross(pc - pa).normalize_or_zero();
+        if p.mirrored {
+            normal = -normal;
+        }
+        let longest = pa.distance(pb).max(pb.distance(pc)).max(pc.distance(pa));
+        let k = (longest / SAMPLE_SPACING).ceil().clamp(1.0, 12.0) as u32;
+        // The centres of the k x k sub-triangles, in barycentric
+        // coordinates (u, v), w = 1 - u - v: the upright ones, then the
+        // upside-down ones between them.
+        for i in 0..k {
+            for j in 0..k - i {
+                for (du, dv) in [(1.0 / 3.0, 1.0 / 3.0), (2.0 / 3.0, 2.0 / 3.0)] {
+                    if du > 0.5 && i + j + 1 >= k {
+                        continue;
+                    }
+                    let u = (i as f32 + du) / k as f32;
+                    let v = (j as f32 + dv) / k as f32;
+                    let w0 = 1.0 - u - v;
+                    let uv = [ua[0] * w0 + ub[0] * u + uc[0] * v, ua[1] * w0 + ub[1] * u + uc[1] * v];
+                    let light = atlas.light(uv);
+                    if holds_light(&light) {
+                        out.push((pa * w0 + pb * u + pc * v, light, p.bsps, normal.z));
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl SurfaceLights {
     pub fn build(scene: &Scene, atlases: &[Option<Atlas<'_>>]) -> SurfaceLights {
         let cell = 8.0;
+        let lit: Vec<(&blam_geometry::Placement, &Atlas<'_>, &[[f32; 2]])> = scene
+            .placements
+            .iter()
+            .filter(|p| matches!(p.kind, Kind::Cluster | Kind::Instance))
+            .filter_map(|p| {
+                let Lighting::PerPixel { lightmap, uvs } = &p.lighting else {
+                    return None;
+                };
+                Some((p, atlases.get(*lightmap as usize)?.as_ref()?, uvs.as_slice()))
+            })
+            .collect();
+        // Spread over the cores: every sample decodes ten BC3 blocks.
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 16);
+        let samples: Vec<Sample> = std::thread::scope(|s| {
+            let jobs: Vec<_> = (0..threads)
+                .map(|k| {
+                    let lit = &lit;
+                    s.spawn(move || {
+                        let mut out = Vec::new();
+                        for (p, atlas, uvs) in lit.iter().skip(k).step_by(threads) {
+                            sample_placement(scene, p, atlas, uvs, &mut out);
+                        }
+                        out
+                    })
+                })
+                .collect();
+            jobs.into_iter().flat_map(|j| j.join().unwrap_or_default()).collect()
+        });
         let mut grid: HashMap<(i32, i32, i32), Vec<Sample>> = HashMap::new();
         let mut sum = ShLight::default();
-        let mut n = 0usize;
-        for p in scene.placements.iter().filter(|p| p.kind == Kind::Cluster) {
-            let Lighting::PerPixel { lightmap, uvs } = &p.lighting else {
-                continue;
-            };
-            let Some(Some(atlas)) = atlases.get(*lightmap as usize) else {
-                continue;
-            };
-            let mesh = &scene.meshes[p.mesh as usize];
-            for (pos, uv) in mesh.positions.iter().zip(uvs) {
-                let w = p.transform.transform_point3(*pos);
-                let light = atlas.light(*uv);
-                for k in 0..4 {
-                    sum.c[k] += light.c[k];
-                }
-                sum.dominant += light.dominant;
-                n += 1;
-                grid.entry(Self::key(w, cell)).or_default().push((w, light, p.bsps));
+        for sample in &samples {
+            for k in 0..4 {
+                sum.c[k] += sample.1.c[k];
             }
+            sum.dominant += sample.1.dominant;
+            grid.entry(Self::key(sample.0, cell)).or_default().push(*sample);
         }
-        let mean = if n == 0 {
+        let mean = if samples.is_empty() {
             default_light()
         } else {
-            let s = 1.0 / n as f32;
+            let s = 1.0 / samples.len() as f32;
             ShLight {
                 c: sum.c.map(|c| c * s),
                 dominant: sum.dominant * s,
@@ -501,6 +573,8 @@ impl SurfaceLights {
     /// [`near`](Self::near) over the surfaces of the BSPs in `mask` only
     /// (zero: any), so an object is lit by its own BSP where BSPs overlap
     /// (campaign maps swap versions of one space between zone sets).
+    /// Surfaces under `p` facing up count as nearer than walls and
+    /// ceilings: an object stands on the ground it is lit like.
     pub fn near_in(&self, p: Vec3, mask: u32) -> ShLight {
         let (cx, cy, cz) = Self::key(p, self.cell);
         let mut best: Option<(f32, ShLight)> = None;
@@ -514,11 +588,15 @@ impl SurfaceLights {
                         let Some(v) = self.grid.get(&(cx + dx, cy + dy, cz + dz)) else {
                             continue;
                         };
-                        for (q, l, bsps) in v {
+                        for (q, l, bsps, up) in v {
                             if mask != 0 && bsps & mask == 0 {
                                 continue;
                             }
-                            let d = q.distance_squared(p);
+                            // Ground under the point: as is. A wall, a
+                            // ceiling or the underside of a ledge: as if 3
+                            // world units further.
+                            let ground = *up > 0.5 && q.z <= p.z + 0.5;
+                            let d = q.distance_squared(p) + if ground { 0.0 } else { 9.0 };
                             if best.is_none_or(|b| d < b.0) {
                                 best = Some((d, *l));
                             }
