@@ -414,20 +414,32 @@ fn set_atmosphere(s: &mut WaterShading, a: &AtmosphereSetting) {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Water materials already made, by the world material they replace: the
+/// world's chunks of one material share it, and so do their water
+/// materials. Held weakly, so a zone set's water goes with its BSPs.
+#[derive(Default)]
+struct WaterCache {
+    materials: HashMap<AssetId<HaloMaterial>, AssetId<WaterMaterial>>,
+    images: HashMap<(u32, bool), Option<AssetId<Image>>>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn swap_water_materials(
     mut commands: Commands,
-    mut pending: ResMut<PendingWater>,
+    pending: Res<PendingWater>,
     mut has_water: ResMut<HasWater>,
     batches: Query<(Entity, &BatchMaterial, &MeshMaterial3d<HaloMaterial>), Added<BatchMaterial>>,
     halo: Res<Assets<HaloMaterial>>,
     mut water_materials: ResMut<Assets<WaterMaterial>>,
     mut images: ResMut<Assets<Image>>,
     compressed: Option<Res<bevy::image::CompressedImageFormatSupport>>,
+    mut cache: Local<WaterCache>,
 ) {
     if batches.is_empty() {
         return;
     }
-    let Some(data) = pending.0.take() else {
+    // Kept for the zone sets streamed in later.
+    let Some(data) = pending.0.as_ref() else {
         return;
     };
     if data.looks.is_empty() {
@@ -435,29 +447,50 @@ fn swap_water_materials(
     }
     let bc = compressed.is_some_and(|c| c.0.supports(TextureFormat::Bc3RgbaUnormSrgb));
     let exposure = super::lighting::exposure();
-    let mut handles: HashMap<(u32, bool), Option<Handle<Image>>> = HashMap::new();
+    let cache = &mut *cache;
+    let handles = &mut cache.images;
     let mut image = |m: Option<&Map>, srgb: bool, array: bool| -> Option<Handle<Image>> {
         let m = m?;
-        handles
-            .entry((m.bitmap, srgb))
-            .or_insert_with(|| {
-                let t = data.bitmaps.get(&m.bitmap)?;
-                let made = if array { slope_image(t) } else { super::texture_image_as(t, bc, srgb) };
-                match made {
-                    Ok(i) => Some(images.add(i)),
-                    Err(e) => {
-                        warn!("water texture {}: {e}", t.name);
-                        None
-                    }
+        match handles.get(&(m.bitmap, srgb)) {
+            Some(None) => return None,
+            Some(Some(id)) => {
+                if let Some(h) = images.get_strong_handle(*id) {
+                    return Some(h);
                 }
-            })
-            .clone()
+            }
+            None => {}
+        }
+        let t = data.bitmaps.get(&m.bitmap)?;
+        let made = if array { slope_image(t) } else { super::texture_image_as(t, bc, srgb) };
+        match made {
+            Ok(i) => {
+                let h = images.add(i);
+                handles.insert((m.bitmap, srgb), Some(h.id()));
+                Some(h)
+            }
+            Err(e) => {
+                warn!("water texture {}: {e}", t.name);
+                handles.insert((m.bitmap, srgb), None);
+                None
+            }
+        }
     };
     let mut swapped = (0, 0);
     for (entity, batch, handle) in &batches {
         let Some(look) = data.looks.get(&batch.0) else {
             continue;
         };
+        if let Some(h) = cache
+            .materials
+            .get(&handle.0.id())
+            .and_then(|id| water_materials.get_strong_handle(*id))
+        {
+            commands
+                .entity(entity)
+                .remove::<MeshMaterial3d<HaloMaterial>>()
+                .insert(MeshMaterial3d(h));
+            continue;
+        }
         let Some(old) = halo.get(&handle.0) else {
             continue;
         };
@@ -559,13 +592,19 @@ fn swap_water_materials(
             },
             extension: s,
         };
+        let h = water_materials.add(material);
+        cache.materials.insert(handle.0.id(), h.id());
         commands
             .entity(entity)
             .remove::<MeshMaterial3d<HaloMaterial>>()
-            .insert(MeshMaterial3d(water_materials.add(material)));
+            .insert(MeshMaterial3d(h));
     }
-    has_water.0 = swapped.0 > 0;
-    info!("water: {} water and {} flowing batches", swapped.0, swapped.1);
+    if swapped.0 > 0 && !has_water.0 {
+        has_water.0 = true;
+    }
+    if swapped != (0, 0) {
+        info!("water: {} water and {} flowing materials", swapped.0, swapped.1);
+    }
 }
 
 /// The water reads the depth behind it for murk and shore fade.

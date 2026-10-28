@@ -429,7 +429,7 @@ pub fn default_light() -> ShLight {
 /// The scene's [`SurfaceLights`], kept after the world is built so moving
 /// things (the rider) can be lit the way objects are.
 #[derive(Resource)]
-pub struct SceneLights(pub SurfaceLights);
+pub struct SceneLights(pub std::sync::Arc<SurfaceLights>);
 
 /// A lit surface point: position, light, and its cluster's BSP mask.
 type Sample = (Vec3, ShLight, u32);

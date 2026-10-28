@@ -6,6 +6,7 @@
 //! same mapping HaloExport uses for its glTF files.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{
@@ -14,23 +15,27 @@ use bevy::image::{
 };
 use bevy::light::NotShadowCaster;
 use bevy::math::{Affine2, Mat2};
-use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use blam_geometry::{Kind, Lighting, Scene, Shading, WORLD_UNIT_METRES};
+use blam_geometry::{Kind, Scene, Shading, WORLD_UNIT_METRES};
 use blam_texture::{Blend, Format, Texture, rgba};
 
 use crate::fly_camera::FlyCamera;
 use crate::textures::{Look, MaterialTextures};
 
+pub mod build;
+pub mod culling;
 pub mod lighting;
 pub mod sky;
+pub mod stream;
 pub mod water;
 pub mod zones;
 
+use build::BuildInput;
 use lighting::{Atlas, HaloLightmap, HaloMaterial, SurfaceLights};
-use zones::{BspMember, ShowCollision};
+use zones::{BspMember, LoadedBsps, ShowCollision};
 
 /// Halo world units, Z up, to renderer metres, Y up.
 pub fn to_render(h: Vec3) -> Vec3 {
@@ -64,10 +69,12 @@ impl Plugin for WorldPlugin {
             sky::SkyPlugin,
             water::WaterPlugin,
             zones::ZonesPlugin,
+            stream::StreamPlugin,
+            culling::CullingPlugin,
         ))
             .insert_resource(ClearColor(Color::srgb(0.53, 0.70, 0.90)))
             .add_systems(Startup, spawn_world)
-            .add_systems(Update, toggle_collision);
+            .add_systems(Update, (toggle_collision, spawn_collision_on_demand).chain());
     }
 }
 
@@ -75,6 +82,10 @@ impl Plugin for WorldPlugin {
 /// for systems that swap in a material of their own (`water.rs`).
 #[derive(Component, Clone, Copy)]
 pub struct BatchMaterial(pub u32);
+
+/// How many triangles a world mesh entity draws, for `--bench`.
+#[derive(Component, Clone, Copy)]
+pub struct Triangles(pub u32);
 
 /// The game's collision drawn as a translucent shell; V shows and hides it.
 #[derive(Component)]
@@ -276,7 +287,7 @@ pub(crate) fn normal_image(t: &Texture, bc: bool) -> Result<(Image, bool), Strin
 
 /// A 1x1 white image whose only job is to carry the repeating, trilinear,
 /// anisotropic sampler the surface maps are read with.
-fn sampler_carrier() -> Image {
+pub(super) fn sampler_carrier() -> Image {
     let mut image = Image::new(
         Extent3d {
             width: 1,
@@ -295,14 +306,14 @@ fn sampler_carrier() -> Image {
 /// How a bitmap is uploaded: as a colour (sRGB), as plain data (linear), or
 /// as a normal map ([`normal_image`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Upload {
+pub(super) enum Upload {
     Colour,
     Linear,
     Normal,
 }
 
 /// The `StandardMaterial` for one scene material.
-fn standard_material(
+pub(super) fn standard_material(
     name: &str,
     material: Option<&blam_geometry::Material>,
     look: Option<&Look>,
@@ -376,7 +387,7 @@ fn standard_material(
 }
 
 /// A terrain material's GPU images and xforms, ready for [`HaloLightmap`].
-struct TerrainImages {
+pub(super) struct TerrainImages {
     /// `None`: no blend map, all layers that are on weigh the same.
     blend_map: Option<Handle<Image>>,
     blend_xform: Vec4,
@@ -395,7 +406,7 @@ struct TerrainLayerImages {
 }
 
 /// An uploaded image and whether it reads -1..1 (BC5 normal maps).
-type Uploaded = Option<(Handle<Image>, bool)>;
+pub(super) type Uploaded = Option<(Handle<Image>, bool)>;
 
 fn xform_vec(x: &blam_texture::Xform) -> Vec4 {
     Vec4::new(x.scale[0], x.scale[1], x.offset[0], x.offset[1])
@@ -403,7 +414,7 @@ fn xform_vec(x: &blam_texture::Xform) -> Vec4 {
 
 /// Uploads (or reuses) a terrain's images; `None` when the blend map or
 /// every layer failed, so the caller falls back to the dominant layer.
-fn terrain_textures(
+pub(super) fn terrain_textures(
     t: &crate::textures::TerrainLook,
     image: &mut dyn FnMut(u32, Upload) -> Uploaded,
 ) -> Option<TerrainImages> {
@@ -440,12 +451,12 @@ fn normalise_terrain() -> bool {
 
 /// Whether terrain draws its four-layer blend (the default);
 /// `HALO3_TERRAIN_BLEND=0` draws the dominant layer alone, as before.
-fn terrain_blend() -> bool {
+pub(super) fn terrain_blend() -> bool {
     std::env::var("HALO3_TERRAIN_BLEND").map_or(true, |v| v != "0")
 }
 
 impl TerrainImages {
-    fn apply(self, e: &mut HaloLightmap) {
+    pub(super) fn apply(self, e: &mut HaloLightmap) {
         // A layer that is off still binds a real texture (another layer's)
         // and gets zero weight.
         let fill = self.layers.iter().flatten().next().map(|l| l.base.clone());
@@ -510,7 +521,7 @@ impl TerrainImages {
 
 /// Fills in the material model of an ordinary shader: its extra maps
 /// (detail, bump, specular mask, self-illumination) and parameters.
-fn apply_surface(
+pub(super) fn apply_surface(
     s: &crate::textures::SurfaceLook,
     e: &mut HaloLightmap,
     image: &mut dyn FnMut(u32, Upload) -> Uploaded,
@@ -610,7 +621,7 @@ fn apply_surface(
 /// goal and return areas, hills and territories): Forge shows them, a game
 /// only its own game type's, and then mostly as effects. Unnamed placements
 /// are called after their object (`scenario.rs`), e.g. `respawn_point 12`.
-fn is_editor_only(placement: &str) -> bool {
+pub(super) fn is_editor_only(placement: &str) -> bool {
     let object = placement.split(' ').next().unwrap_or(placement);
     [
         "spawn_point",
@@ -645,48 +656,10 @@ fn illum_gain() -> f32 {
     std::env::var("HALO3_SELF_ILLUM").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0)
 }
 
-#[derive(Default)]
-struct Batch {
-    positions: Vec<[f32; 3]>,
-    normals: Vec<[f32; 3]>,
-    uvs: Vec<[f32; 2]>,
-    /// Lightmap texcoords (per-pixel lit batches).
-    lightmap_uvs: Vec<[f32; 2]>,
-    /// Irradiance per vertex (every other batch but the sky).
-    colours: Vec<[f32; 4]>,
-    /// Halo's tangents, render frame, handedness in w.
-    tangents: Vec<[f32; 4]>,
-    indices: Vec<u32>,
-    has_normals: bool,
-    has_tangents: bool,
-}
-
-/// How a batch is lit: the sky draws unlit; the world by a BSP's lightmap
-/// in the shader, or by irradiance baked into its vertex colours.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum Lit {
-    PerPixel(u32),
-    PerVertex,
-    Sky,
-}
-
-/// Where one placement's per-vertex irradiance comes from.
-enum VertexLight<'a> {
-    PerVertex(&'a [blam_geometry::lightmap::ShLight]),
-    Probe(&'a blam_geometry::lightmap::Probe),
-    One(blam_geometry::lightmap::ShLight),
-}
-
-impl VertexLight<'_> {
-    fn irradiance(&self, vertex: usize, n: Vec3) -> Vec3 {
-        match self {
-            VertexLight::PerVertex(v) => v.get(vertex).map_or(Vec3::ZERO, |l| l.irradiance(n)),
-            VertexLight::Probe(p) => p.irradiance(n),
-            VertexLight::One(l) => l.irradiance(n),
-        }
-    }
-}
-
+/// Builds and uploads the start zone set (every unit at once, in
+/// parallel), places the camera, and hands the scene to the streaming
+/// (`stream.rs`) for later zone sets.
+#[allow(clippy::too_many_arguments)]
 fn spawn_world(
     mut commands: Commands,
     mut pending: ResMut<PendingScene>,
@@ -695,6 +668,9 @@ fn spawn_world(
     mut halo_materials: ResMut<Assets<HaloMaterial>>,
     mut images: ResMut<Assets<Image>>,
     compressed: Option<Res<CompressedImageFormatSupport>>,
+    mut loaded: ResMut<LoadedBsps>,
+    mut residency: ResMut<stream::Residency>,
+    mut cache: ResMut<stream::GpuCache>,
 ) {
     let Some(scene) = pending.0.take() else {
         return;
@@ -702,321 +678,89 @@ fn spawn_world(
     let textures = pending.1.take().unwrap_or_default();
     // Without the resource we cannot tell; decode on the CPU to be safe.
     let bc = compressed.is_some_and(|c| c.0.supports(TextureFormat::Bc3RgbaUnormSrgb));
-    let look_of = |m: u32| textures.looks.get(m as usize).and_then(Option::as_ref);
 
-    // Each BSP's lightmap: two GPU arrays for the shader, and CPU reads for
-    // lighting objects by the surface under them.
+    // CPU reads of every BSP's lightmap, for lighting objects by the
+    // surface under them.
     let started = std::time::Instant::now();
-    let mut lightmap_images: Vec<Option<(Handle<Image>, Handle<Image>)>> = Vec::new();
-    let mut atlases: Vec<Option<Atlas>> = Vec::new();
-    for (i, lm) in scene.lightmaps.iter().enumerate() {
-        let tex = textures.lightmaps.get(i).and_then(Option::as_ref);
-        let gpu = tex.and_then(|t| {
-            match (
-                lighting::array_image(&t.coefficients, bc),
-                lighting::array_image(&t.intensity, bc),
-            ) {
-                (Ok(a), Ok(b)) => Some((images.add(a), images.add(b))),
-                (Err(e), _) | (_, Err(e)) => {
-                    warn!("lightmap of bsp {}: {e}; vertex lighting there", lm.bsp);
-                    None
-                }
-            }
-        });
-        atlases.push(tex.filter(|_| gpu.is_some()).map(|t| Atlas::new(t, lm.scales)));
-        lightmap_images.push(gpu);
-    }
-    let surface = SurfaceLights::build(&scene, &atlases);
+    let atlases: Vec<Option<Atlas>> = scene
+        .lightmaps
+        .iter()
+        .enumerate()
+        .map(|(i, lm)| textures.lightmaps.get(i).and_then(Option::as_ref).map(|t| Atlas::new(t, lm.scales)))
+        .collect();
+    let surface = Arc::new(SurfaceLights::build(&scene, &atlases));
+    drop(atlases);
     info!(
-        "lighting: {} of {} lightmaps on the GPU, surface lights sampled in {:.2} s{}",
-        lightmap_images.iter().flatten().count(),
+        "lighting: {} of {} lightmaps decoded, surface lights sampled in {:.2} s{}",
+        textures.lightmaps.iter().flatten().count(),
         scene.lightmaps.len(),
         started.elapsed().as_secs_f32(),
         if surface.is_empty() { " (none: default sun)" } else { "" }
     );
-    let exposure = lighting::exposure();
+    let lightmap_ok = textures.lightmaps.iter().map(Option::is_some).collect();
+    let crate::textures::MaterialTextures {
+        looks,
+        bitmaps,
+        lightmaps,
+    } = textures;
+    let source = stream::WorldSource {
+        input: Arc::new(BuildInput {
+            scene,
+            looks,
+            lightmap_ok,
+            surface: Arc::clone(&surface),
+        }),
+        bitmaps,
+        lightmaps,
+        bc,
+    };
+    let scene = &source.input.scene;
 
-    // One batch per material, every placement baked into world space.
-    // Keyed by (sky, material): the sky draws unlit, so it never shares a
-    // batch with the world even when the shader is the same.
-    // Also by BSP, so zone sets can show and hide them (`world/zones.rs`).
-    let mut batches: HashMap<(Lit, u32, BspMember), Batch> = HashMap::new();
+    // The start zone set, built in parallel and uploaded at once.
+    let started = std::time::Instant::now();
+    let mut built = stream::build_now(&source, loaded.mask & scene.all_bsps());
+    let build_seconds = started.elapsed().as_secs_f32();
+    let (mut triangles, mut chunks) = (0usize, 0usize);
     let mut lo = Vec3::splat(f32::INFINITY);
     let mut hi = Vec3::splat(f32::NEG_INFINITY);
     let mut lit_counts: HashMap<&str, usize> = HashMap::new();
-    let mut editor_only = 0usize;
-    for placement in &scene.placements {
-        if is_editor_only(&placement.name) {
-            editor_only += 1;
-            continue;
+    let mut editor_only = 0;
+    for b in &mut built {
+        triangles += b.chunks.iter().map(|c| c.triangles as usize).sum::<usize>();
+        chunks += b.chunks.len();
+        if let Some((a, c)) = b.extent {
+            lo = lo.min(a);
+            hi = hi.max(c);
         }
-        let sky = placement.kind == Kind::Sky;
-        let member = BspMember {
-            bsps: placement.bsps,
-            sky: placement.sky.filter(|_| sky),
-        };
-        let mesh = &scene.meshes[placement.mesh as usize];
-        let m = placement.transform;
-        let normal_m = Mat3::from_mat4(m).inverse().transpose();
-        let has_normals = mesh.normals.len() == mesh.positions.len();
-        let has_tangents = has_normals && mesh.tangents.len() == mesh.positions.len();
-        let tangent_m = Mat3::from_mat4(m);
-        // A mirroring transform flips the binormal's side.
-        let handedness = if placement.mirrored { -1.0 } else { 1.0 };
-        // Per-pixel when the lightmap made it to the GPU; otherwise the
-        // placement's own per-vertex data or probe; otherwise the lit
-        // surface nearest its base.
-        let (lit, lightmap_uvs, vertex_light) = match &placement.lighting {
-            _ if sky => (Lit::Sky, None, None),
-            Lighting::PerPixel { lightmap, uvs }
-                if lightmap_images
-                    .get(*lightmap as usize)
-                    .is_some_and(Option::is_some) =>
-            {
-                (Lit::PerPixel(*lightmap), Some(uvs), None)
-            }
-            Lighting::PerVertex(v) => (Lit::PerVertex, None, Some(VertexLight::PerVertex(v))),
-            Lighting::Probe(p) => (Lit::PerVertex, None, Some(VertexLight::Probe(p))),
-            _ => {
-                let mut a = Vec3::splat(f32::INFINITY);
-                let mut b = Vec3::splat(f32::NEG_INFINITY);
-                for p in &mesh.positions {
-                    let w = m.transform_point3(*p);
-                    a = a.min(w);
-                    b = b.max(w);
-                }
-                let base = if a.x.is_finite() {
-                    Vec3::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, a.z + 0.1)
-                } else {
-                    m.w_axis.truncate()
-                };
-                let light = if surface.is_empty() {
-                    lighting::default_light()
-                } else {
-                    surface.near_in(base, placement.bsps)
-                };
-                (Lit::PerVertex, None, Some(VertexLight::One(light)))
-            }
-        };
-        *lit_counts
-            .entry(match (&lit, &vertex_light) {
-                (Lit::Sky, _) => "sky",
-                (Lit::PerPixel(_), _) => "per-pixel",
-                (_, Some(VertexLight::PerVertex(_))) => "per-vertex",
-                (_, Some(VertexLight::Probe(_))) => "probe",
-                _ => "nearest surface",
-            })
-            .or_default() += 1;
-        for part in &mesh.parts {
-            let shading = scene
-                .materials
-                .get(part.material as usize)
-                .map_or(Shading::Opaque, |mat| mat.shading);
-            let hidden = look_of(part.material).is_some_and(|l| l.hidden);
-            if shading == Shading::Invisible || hidden || part.indices.is_empty() {
-                continue;
-            }
-            let batch = batches.entry((lit, part.material, member)).or_insert_with(|| Batch {
-                has_normals,
-                has_tangents,
-                ..Default::default()
-            });
-            batch.has_normals &= has_normals;
-            batch.has_tangents &= has_tangents;
-            // Re-index this part's vertices into the batch, winding mirrored
-            // placements the other way round.
-            let mut remap: HashMap<u32, u32> = HashMap::new();
-            let order: &[usize] = if placement.mirrored { &[0, 2, 1] } else { &[0, 1, 2] };
-            for &i in part
-                .indices
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .flat_map(|t| order.iter().map(move |&k| &t[k]))
-            {
-                let j = *remap.entry(i).or_insert_with(|| {
-                    let p = to_render(m.transform_point3(mesh.positions[i as usize]));
-                    if !sky {
-                        lo = lo.min(p);
-                        hi = hi.max(p);
-                    }
-                    batch.positions.push(p.to_array());
-                    let halo_n = mesh
-                        .normals
-                        .get(i as usize)
-                        .map(|n| (normal_m * *n).normalize_or(Vec3::Z))
-                        .unwrap_or(Vec3::Z);
-                    batch.normals.push(to_render_dir(halo_n).to_array());
-                    if let Some(t) = mesh.tangents.get(i as usize) {
-                        let ht = (tangent_m * Vec3::new(t[0], t[1], t[2])).normalize_or(Vec3::X);
-                        let rt = to_render_dir(ht);
-                        batch.tangents.push([rt.x, rt.y, rt.z, t[3] * handedness]);
-                    }
-                    if let Some(uvs) = lightmap_uvs {
-                        batch
-                            .lightmap_uvs
-                            .push(uvs.get(i as usize).copied().unwrap_or([0.0, 0.0]));
-                    }
-                    if let Some(l) = &vertex_light {
-                        let e = l.irradiance(i as usize, halo_n);
-                        batch.colours.push([e.x, e.y, e.z, 1.0]);
-                    }
-                    batch
-                        .uvs
-                        .push(mesh.uvs.get(i as usize).copied().unwrap_or([0.0, 0.0]));
-                    (batch.positions.len() - 1) as u32
-                });
-                batch.indices.push(j);
-            }
+        for (k, n) in &b.lit_counts {
+            *lit_counts.entry(k).or_default() += n;
         }
-    }
-
-    // Each bitmap becomes one image, shared by every material using it.
-    // Keyed by (bitmap, upload): blend maps go up linear, bump maps as
-    // normal maps.
-    let mut handles: HashMap<(u32, Upload), Uploaded> = HashMap::new();
-    let (mut uploaded, mut uploaded_bytes, mut kept_bc, mut textured) = (0usize, 0usize, 0usize, 0usize);
-    let mut terrains = 0usize;
-    let mut image_as = |bitmap: u32, how: Upload, images: &mut Assets<Image>| -> Uploaded {
-        handles
-            .entry((bitmap, how))
-            .or_insert_with(|| {
-                let t = textures.bitmaps.get(&bitmap)?;
-                let made = match how {
-                    Upload::Colour => texture_image_as(t, bc, true).map(|i| (i, false)),
-                    Upload::Linear => texture_image_as(t, bc, false).map(|i| (i, false)),
-                    Upload::Normal => normal_image(t, bc),
-                };
-                match made {
-                    Ok((image, signed)) => {
-                        uploaded += 1;
-                        uploaded_bytes += image.data.as_ref().map_or(0, Vec::len);
-                        if image.texture_descriptor.format.is_compressed() {
-                            kept_bc += 1;
-                        }
-                        Some((images.add(image), signed))
-                    }
-                    Err(e) => {
-                        warn!("texture {}: {e}; left out", t.name);
-                        None
-                    }
-                }
-            })
-            .clone()
-    };
-    let surface_sampler = images.add(sampler_carrier());
-
-    let mut triangles = 0usize;
-    let mut keys: Vec<(Lit, u32, BspMember)> = batches.keys().copied().collect();
-    keys.sort_unstable();
-    for (lit, key, member) in keys {
-        let sky = lit == Lit::Sky;
-        let batch = batches.remove(&(lit, key, member)).unwrap();
-        triangles += batch.indices.len() / 3;
-        let material = scene.materials.get(key as usize);
-        let name = material.map_or("unknown", |m| m.tag_path.as_str());
-        let look = look_of(key);
-
-        let mut mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::RENDER_WORLD,
+        editor_only += b.editor_only;
+        let mut entities = Vec::new();
+        stream::upload(
+            b,
+            u32::MAX,
+            &mut entities,
+            &mut commands,
+            &source,
+            &mut cache,
+            &mut meshes,
+            &mut images,
+            &mut materials,
+            &mut halo_materials,
         );
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, batch.positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, batch.uvs);
-        if !batch.lightmap_uvs.is_empty() {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, batch.lightmap_uvs);
-        }
-        if !batch.colours.is_empty() {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, batch.colours);
-        }
-        mesh.insert_indices(Indices::U32(batch.indices));
-        // Tangents only where a normal map will use them.
-        let bumped = look.is_some_and(|l| {
-            l.surface.bump.is_some()
-                || l.terrain.as_ref().is_some_and(|t| t.layers.iter().flatten().any(|x| x.bump.is_some()))
-        });
-        if batch.has_tangents && bumped && !sky && batch.tangents.len() == batch.normals.len() {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, batch.tangents);
-        }
-        if batch.has_normals {
-            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, batch.normals);
-        } else {
-            mesh.compute_normals();
-        }
-
-        let terrain = look
-            .and_then(|l| l.terrain.as_ref())
-            .filter(|_| !sky && terrain_blend())
-            .and_then(|t| terrain_textures(t, &mut |b, how| image_as(b, how, &mut images)));
-        let texture = if terrain.is_some() {
-            None
-        } else {
-            look.and_then(|l| l.texture)
-                .and_then(|b| image_as(b, Upload::Colour, &mut images))
-                .map(|(h, _)| h)
-        };
-        textured += (texture.is_some() || terrain.is_some()) as usize;
-        terrains += terrain.is_some() as usize;
-        let mut std_material = standard_material(name, material, look, texture);
-        if terrain.is_some() {
-            // The blend replaces the texture: keep the tint, not the
-            // hashed stand-in colour.
-            let c = look.and_then(|l| l.colour).unwrap_or([1.0; 4]);
-            std_material.base_color =
-                Color::srgb(c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0));
-        }
-        // Halo's sky carries its own light: draw its textures as they are.
-        std_material.unlit = sky;
-        let translucent =
-            sky || !matches!(std_material.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_));
-        let mut entity = commands.spawn((
-            Mesh3d(meshes.add(mesh)),
-            Name::new(name.to_string()),
-            member,
-            Visibility::Hidden,
-        ));
-        if sky {
-            // `sky.rs` swaps in the sky shader and its atmosphere.
-            entity.insert((MeshMaterial3d(materials.add(std_material)), sky::SkyBatch(key)));
-        } else {
-            let (scales, arrays) = match lit {
-                Lit::PerPixel(l) => (
-                    scene.lightmaps[l as usize].scales,
-                    lightmap_images[l as usize].clone(),
-                ),
-                _ => ([0.0; 5], None),
-            };
-            let (coefficients, intensity) = arrays.map_or((None, None), |(a, b)| (Some(a), Some(b)));
-            let mut extension = HaloLightmap {
-                scales: Vec4::from_slice(&scales[..4]),
-                extra: Vec4::new(scales[4], exposure, 0.0, 0.0),
-                coefficients,
-                intensity,
-                ..default()
-            };
-            extension.surface_dummy = Some(surface_sampler.clone());
-            if let Some(t) = terrain {
-                t.apply(&mut extension);
-            } else if let Some(l) = look {
-                apply_surface(&l.surface, &mut extension, &mut |b, how| image_as(b, how, &mut images));
-            }
-            entity.insert((
-                MeshMaterial3d(halo_materials.add(HaloMaterial {
-                    base: std_material,
-                    extension,
-                })),
-                BatchMaterial(key),
-            ));
-        }
-        if translucent {
-            entity.insert(NotShadowCaster);
-        }
+        residency.adopt(b.unit, entities);
     }
-
+    loaded.shown = loaded.mask;
     info!(
-        "textures: {textured} materials textured ({terrains} terrain blends), {uploaded} images ({kept_bc} kept BC-compressed, BC support {bc}), {:.1} MiB to the GPU",
-        uploaded_bytes as f64 / (1 << 20) as f64
+        "world: {chunks} chunks, {triangles} triangles built in {build_seconds:.2} s; {} materials textured ({} terrain blends), {:.1} MiB of textures and lightmaps to the GPU (BC support {bc})",
+        cache.textured.len(),
+        cache.terrains.len(),
+        cache.live_image_bytes(&images) as f64 / (1 << 20) as f64
     );
+    let mut counts: Vec<_> = lit_counts.into_iter().collect();
+    counts.sort_unstable();
+    info!("lit placements: {counts:?}; {editor_only} spawn-marker pieces not drawn");
 
     let (lo, hi) = if lo.x.is_finite() {
         (lo, hi)
@@ -1025,19 +769,6 @@ fn spawn_world(
     };
     let centre = (lo + hi) * 0.5;
     let size = hi - lo;
-    info!(
-        "world: {} materials, {triangles} triangles, {:.0} x {:.0} x {:.0} m",
-        batches.len().max(scene.materials.len()),
-        size.x,
-        size.y,
-        size.z
-    );
-
-    let mut counts: Vec<_> = lit_counts.into_iter().collect();
-    counts.sort_unstable();
-    info!("lit placements: {counts:?}; {editor_only} spawn-marker pieces not drawn");
-
-    spawn_collision(&mut commands, &mut meshes, &mut materials, &scene);
 
     // No bevy lights: the world carries Halo's baked lighting
     // (`world/lighting.rs`), the sky its own, the collision shell is unlit.
@@ -1092,6 +823,27 @@ fn spawn_world(
         cam,
     ));
     commands.insert_resource(lighting::SceneLights(surface));
+    commands.insert_resource(source);
+}
+
+/// Builds the collision shell the first time V asks for it (120_halo's is
+/// a million triangles: not worth the GPU memory until wanted).
+fn spawn_collision_on_demand(
+    mut commands: Commands,
+    show: Res<ShowCollision>,
+    source: Option<Res<stream::WorldSource>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut done: Local<bool>,
+) {
+    if *done || !show.0 {
+        return;
+    }
+    let Some(source) = source else {
+        return;
+    };
+    *done = true;
+    spawn_collision(&mut commands, &mut meshes, &mut materials, &source.input.scene);
 }
 
 /// A small made-up scene for checking the camera before any map decodes: a
@@ -1198,6 +950,7 @@ pub fn test_scene() -> Scene {
             lighting: Default::default(),
             bsps: 0,
             sky: None,
+            cluster: None,
         }],
         bounds: Some((Vec3::new(-20.0, -20.0, 0.0), Vec3::new(20.0, 20.0, 3.0))),
         collision: Default::default(),
@@ -1220,6 +973,7 @@ pub fn test_scene() -> Scene {
             lighting: Default::default(),
             bsps: 0,
             sky: None,
+            cluster: None,
         });
     }
     scene
