@@ -193,6 +193,24 @@ elif MODE == "leaves":
         v = struct.unpack_from("<b", m, la + k)[0]
         hist[v] = hist.get(v, 0) + 1
     print(f"{ln} leaves, {cn} clusters, cluster byte histogram {sorted(hist.items())}")
+elif MODE == "air":
+    # Every BSP: the atmosphere palette at sbsp + 0x94 (8 bytes: string id
+    # name, i16 index into the skya settings) and the clusters' bytes at
+    # +0x18 (sky) and +0x19 (atmosphere palette index), counted.
+    n, a = block(S + 0x18)
+    for i in range(n):
+        _, idx, name = tagref(a + 108 * i)
+        b = tag_meta(idx)
+        pn, pa = block(b + 0x94)
+        palette = [(string_id(u32(pa + 8 * k)), i16(pa + 8 * k + 4)) for k in range(pn)]
+        cn, ca = block(b + 0xC4)
+        seen = {}
+        for c in range(cn):
+            e = ca + 280 * c
+            key = (struct.unpack_from("<b", m, e + 0x18)[0], struct.unpack_from("<b", m, e + 0x19)[0])
+            seen[key] = seen.get(key, 0) + 1
+        print(f"bsp {i} {name}: palette {palette}")
+        print(f"   (sky, atmosphere) x clusters: {sorted(seen.items())}")
 elif MODE == "dump":
     boff, stride, k = sys.argv[4].split(":")
     boff, stride, k = int(boff, 16), int(stride, 0), int(k)
@@ -204,3 +222,5 @@ elif MODE == "dump":
         print(f"[{i}] " + " ".join(f"{struct.unpack_from('<I', raw, j)[0]:08X}" for j in range(0, stride - 3, 4)))
         print("    " + " ".join(f"{struct.unpack_from('<f', raw, j)[0]:8.3g}" for j in range(0, stride - 3, 4)))
         print("    h " + " ".join(f"{struct.unpack_from('<h', raw, j)[0]}" for j in range(0, min(stride, 16) - 1, 2)))
+        sids = [string_id(struct.unpack_from('<I', raw, j)[0]) for j in range(0, stride - 3, 4)]
+        print("    sid: " + " | ".join(x if x and not x.startswith("<") else "-" for x in sids))

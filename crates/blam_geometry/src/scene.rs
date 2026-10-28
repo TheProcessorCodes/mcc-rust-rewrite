@@ -354,7 +354,8 @@ pub struct ClusterInfo {
     /// sky block); `None` indoors.
     pub sky: Option<u32>,
     /// The atmosphere setting of the air in it (index into the `skya`
-    /// tag's settings, `atmosphere.rs`); `None`: the map's default.
+    /// tag's settings, `atmosphere.rs`, through the BSP's atmosphere
+    /// palette); `None`: the map's default.
     pub atmosphere: Option<u32>,
 }
 

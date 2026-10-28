@@ -74,7 +74,13 @@ On 120_halo's Warthog run tunnel (zone set 6, BSP 120, camera at (410, 590, -45)
 camera is in cluster 8 and sees 23 of 48 clusters; on Valhalla's first spawn 13 of 26; over
 Valhalla's middle, in the outdoor cluster, all 26.
 
-## 5. Not decoded
+## 5. Atmosphere palette, sbsp + `0x94`
+
+8-byte elements: string id name, i16 index into the `skya` settings, pad. A cluster's byte at
+`+0x19` indexes this palette (`zone-sets.md` 3 has the 120_halo and 010_jungle contents and the
+correction this made).
+
+## 6. Not decoded
 
 The scenario's per-zone-set block at scnr + `0x40` (about 1,904 bytes per zone set; probably a
 cluster PVS across BSPs), the cluster blocks at `+0xC8`, `+0xE8`, `+0x10C`, the portal plane's

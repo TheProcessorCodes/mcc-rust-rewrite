@@ -164,8 +164,18 @@ impl Scene {
             .map(|(i, _)| *i)
     }
 
-    /// The smallest cluster of a loaded BSP (`mask`) whose bounds hold `p`.
+    /// The cluster of a loaded BSP (`mask`) that holds `p`: through the
+    /// collision tree where a BSP has one (`sbsp-portals.md` 3), else the
+    /// smallest cluster whose bounds hold it.
     pub fn cluster_at(&self, p: Vec3, mask: u32) -> Option<&ClusterInfo> {
+        let exact = self
+            .bsps
+            .iter()
+            .filter(|b| mask & (1 << b.index) != 0)
+            .find_map(|b| b.clusters.get(b.locator.as_ref()?.cluster(p)? as usize));
+        if exact.is_some() {
+            return exact;
+        }
         self.bsps
             .iter()
             .filter(|b| mask & (1 << b.index) != 0)
@@ -271,6 +281,31 @@ mod tests {
         assert_eq!(found, scene.spawns.len());
         // Far below the map is solid or outside.
         assert_eq!(locator.cluster(Vec3::new(0.0, 0.0, -500.0)), None);
+    }
+
+    /// The cluster's atmosphere byte goes through the BSP's palette
+    /// (`sbsp-portals.md` 5): the Warthog run's clusters say 4, palette
+    /// entry 4 is `trench`, the skya's setting 5.
+    #[test]
+    fn halo_cluster_atmospheres_go_through_the_palette() {
+        let Some(cache) = map("120_halo") else { return };
+        let mut scene = Scene::default();
+        let options = crate::Options {
+            bsps: Some(vec![1, 9]),
+            objects: false,
+            collision: false,
+            verbose: false,
+        };
+        crate::decode_into(&cache, &options, &mut scene).unwrap();
+        let of = |b: u32| -> Vec<Option<u32>> {
+            let mut a: Vec<_> = scene.bsps.iter().find(|i| i.index == b).unwrap().clusters.iter().map(|c| c.atmosphere).collect();
+            a.sort_unstable();
+            a.dedup();
+            a
+        };
+        assert_eq!(of(9), [Some(5)]);
+        // 120_bsp_010: `snow_light` (setting 1) and, inside, `interior` (4).
+        assert_eq!(of(1), [Some(1), Some(4)]);
     }
 
     #[test]

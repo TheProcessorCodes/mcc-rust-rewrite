@@ -25,7 +25,23 @@ import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
+    mesh_view_bindings::{view, fog},
 };
+
+// Halo's fog starts `distance bias` world units from the eye (`skya`
+// setting +0x3C; -100 wu on 120_halo's Warthog run): bevy's fog has no
+// start, so `sky.rs` passes the start in metres in the fog's unused
+// directional-light exponent, and the fragment is moved that much closer
+// for the fog only.
+fn fog_position(world: vec4<f32>) -> vec4<f32> {
+    let start = fog.directional_light_exponent;
+    if start <= 0.0 {
+        return world;
+    }
+    let v = world.xyz - view.world_position;
+    let d = length(v);
+    return vec4(view.world_position + v * (max(d - start, 0.0) / max(d, 1e-4)), world.w);
+}
 
 struct HaloLightmapParams {
     // Ranges of SH coefficients c0..c3.
@@ -377,6 +393,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
     colour = vec4((colour.rgb + illum) * halo.extra.y, colour.a);
     var out: FragmentOutput;
+    pbr_input.world_position = fog_position(pbr_input.world_position);
     out.color = main_pass_post_lighting_processing(pbr_input, colour);
     return out;
 }

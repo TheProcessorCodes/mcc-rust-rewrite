@@ -170,11 +170,20 @@ pub fn decode(
     }
     stats.sections = sections.len() as u32;
 
+    // The atmosphere palette (sbsp + 0x94, 8 bytes: string id name, i16
+    // index into the skya settings): what a cluster's atmosphere byte
+    // indexes (`sbsp-portals.md` 5).
+    let palette: Block = cache.reader_at(sbsp + 0x94).block()?;
+    let atmospheres: Vec<Option<u32>> = palette
+        .elements(8)
+        .map(|o| cache.reader_at(o + 4).i16().map(|i| u32::try_from(i).ok()))
+        .collect::<std::result::Result<_, _>>()?;
     let mut cluster_info = Vec::new();
     for (c, o) in clusters.elements(280).enumerate() {
         stats.clusters += 1;
         // Bounds (x, y, z ranges; FLT_MAX when unset), the sky index at
-        // +0x18 and the atmosphere index at +0x19 (`zone-sets.md` 3).
+        // +0x18 and the atmosphere palette index at +0x19 (`zone-sets.md`
+        // 3).
         let mut r = cache.reader_at(o);
         let (x, y, z) = (r.f32x2()?, r.f32x2()?, r.f32x2()?);
         let mut r = r.at(o + 0x18);
@@ -183,7 +192,9 @@ pub fn decode(
             bounds: (x[0] <= x[1] && x[1] < 1e30)
                 .then(|| (Vec3::new(x[0], y[0], z[0]), Vec3::new(x[1], y[1], z[1]))),
             sky: u32::try_from(sky).ok(),
-            atmosphere: u32::try_from(atmosphere).ok(),
+            atmosphere: usize::try_from(atmosphere)
+                .ok()
+                .and_then(|a| atmospheres.get(a).copied().flatten()),
         });
         let section = cache.reader_at(o + 216).i16()?;
         let Some(mesh) = usize::try_from(section)
