@@ -597,6 +597,7 @@ pub(super) fn apply_surface(
         Illum::FromDiffuse => 3.0,
         Illum::TimesDiffuse => 4.0,
         Illum::ThreeChannel => 5.0,
+        Illum::Plasma => 6.0,
     };
     if mode == 0.0 {
         return;

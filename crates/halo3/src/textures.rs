@@ -70,7 +70,7 @@ pub enum SpecMask {
 pub enum Illum {
     #[default]
     Off,
-    /// `self_illum_map * colour * intensity` (`simple`, `simple_with_alpha_mask`, `plasma` approximated).
+    /// `self_illum_map * colour * intensity` (`simple`, `simple_with_alpha_mask`).
     Map,
     /// `illum_detail`: the map times its detail map (scaled like a detail map).
     MapDetail,
@@ -80,6 +80,12 @@ pub enum Illum {
     TimesDiffuse,
     /// `3_channel_self_illum`: the map's red, green and blue each tint a colour.
     ThreeChannel,
+    /// `plasma` (Guardian's jump pads and minilift, Sandtrap's shields): the
+    /// glow lives where `alpha_mask_map`'s alpha is; it is tinted by the mean
+    /// of the three band colours (`color_medium`, `color_wide`,
+    /// `color_sharp`) times the intensity. The scrolling noise that makes the
+    /// bands crawl is not drawn.
+    Plasma,
 }
 
 /// A shader's parameters and extra maps beyond the base colour.
@@ -342,6 +348,12 @@ fn surface_look(s: &Shader, fetch: &mut dyn FnMut(&TextureSlot) -> Option<u32>) 
         "from_diffuse" => Illum::FromDiffuse,
         "self_illum_times_diffuse" => Illum::TimesDiffuse,
         "illum_detail" => Illum::MapDetail,
+        "plasma" => {
+            let bands = ["color_medium", "color_wide", "color_sharp"].map(|n| rgb(n, [0.0; 3]));
+            let mean = [0, 1, 2].map(|c| bands.iter().map(|b| b[c]).sum::<f32>() / 3.0 * intensity);
+            out.illum_colour = [mean; 3];
+            Illum::Plasma
+        }
         "3_channel_self_illum" => {
             out.illum_colour = [
                 rgb("channel_a", [1.0; 3]).map(|x| x * intensity),
@@ -353,7 +365,7 @@ fn surface_look(s: &Shader, fetch: &mut dyn FnMut(&TextureSlot) -> Option<u32>) 
         _ => Illum::Map,
     };
     if !matches!(out.illum, Illum::Off | Illum::FromDiffuse) {
-        out.illum_map = map("self_illum_map");
+        out.illum_map = map(if out.illum == Illum::Plasma { "alpha_mask_map" } else { "self_illum_map" });
         if out.illum_map.is_none() {
             out.illum = Illum::Off;
         }

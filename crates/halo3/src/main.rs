@@ -27,6 +27,7 @@
 //! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install.
 
 mod bike;
+mod falls;
 mod fly_camera;
 mod pause;
 mod rider;
@@ -205,8 +206,12 @@ fn main() -> anyhow::Result<()> {
             app.insert_resource(bike::BikeInput(collision))
                 .add_plugins(bike::BikePlugin);
         }
-        // Water surfaces and the ground under them, for sinking and
+        // Kill volumes and the bottom of the world (`falls.rs`), water
+        // surfaces and the ground under them, for sinking, falling and
         // respawning (`swim.rs`).
+        let kill = falls::KillZones::new(&scene.trigger_volumes, &scene.collision);
+        eprintln!("kill volumes: {}; out of the world below z {:.1} wu", kill.volumes.len(), kill.floor);
+        app.insert_resource(kill);
         let mut water_materials: Vec<u32> = water
             .looks
             .iter()
@@ -214,11 +219,13 @@ fn main() -> anyhow::Result<()> {
             .map(|(m, _)| *m)
             .collect();
         water_materials.sort_unstable();
-        if !water_materials.is_empty() {
+        if !scene.collision.triangles.is_empty() {
             app.insert_resource(swim::WaterWorld::build(&scene, &water_materials));
-            if let Some(s) = scene.spawns.first() {
-                app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
-            }
+        }
+        if let Some(s) = scene.spawns.first() {
+            app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
+        } else if let Some(s) = scene.starts.first() {
+            app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
         }
     }
     app.insert_resource(zones)

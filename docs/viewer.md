@@ -186,6 +186,7 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 | spawn markers: placements of `respawn_point`, `*_initial_spawn_point`, `*_respawn_zone` objects, and the `objects\multi\shaders\spawn_point*` and `shaders\invalid` shaders | not drawn: Forge shows them, a game never does (they were the black discs and white plasma columns on every map) |
 | constant-colour shaders (no base map) | flat `albedo_color` |
 | additive glows without a base map | `self_illum_map` tinted by `self_illum_color`, added |
+| `self_illumination plasma` (Guardian's jump pads and minilift) | `alpha_mask_map`'s **alpha** (its colour channels are black) times the mean of `color_medium`, `color_wide` and `color_sharp` times `self_illum_intensity`, added; the crawling noise bands are not drawn. Before, these had no `self_illum_map` and drew nothing |
 | "special" shaders (path segment `invisible`, `portal`, `sky_portal`, `z_only`, `black`; effect classes) and alpha-tested shaders without a colour map (light quads) | not drawn |
 | anything that fails to resolve or decode | the old steady hashed colour, with a message on the console |
 
@@ -320,6 +321,14 @@ $env:HALO3_SWIM_TEST="70,20,1.0"; $env:HALO3_SKATE_FOR="8"
 & "target\debug\halo3.exe" riverworld --shot out\shots\lake --skate --view "79.76,-56.73,1.5,-88,0"
 ```
 
+**Falling out of the map** (`falls.rs`). Guardian floats over a misty abyss. The scenario
+puts a kill volume, `kill_drop`, under the walkways (z -0.9 to 13.7; the lowest floor is at
+15.8). Any `kill*` / `*_kill*` trigger volume counts, and so does anything more than 20 wu
+under the lowest collision triangle, so nothing falls for ever on maps without one. The
+skater who falls in is put back at the same last safe spot as after sinking (the start spawn
+if there is none yet; log lines start with `fall:`). The bike is put back where it last rode
+well, as after a crash. The start prints `kill volumes: N; out of the world below z ...`.
+
 Not done: refraction (no copy of the scene behind, so no wave distortion of the bed), the
 static cube reflection, vertex wave displacement, painted foam, `global_shape` and the
 watercolor texture (they need the mask texcoord), water seen from below.
@@ -425,7 +434,9 @@ stick model). Dual-stick riding in the style of MX vs ATV Reflex:
 | Y | R | stand the bike back up |
 
 Hitting the bars or the rider's head, or landing upside down, is a crash: two
-seconds later the bike comes back where it last rode well. The rider is one
+seconds later the bike comes back where it last rode well. Falling into a kill
+volume or out of the world brings it back there at once (see "Falling out of
+the map" above). The rider is one
 stiff stance (attack position) kept on the pegs and grips by IK. The bike is a
 stick model of unlit cylinders for now. It rides on the loaded zone set's
 collision. Tuning constants are at the top of `physics.rs`.

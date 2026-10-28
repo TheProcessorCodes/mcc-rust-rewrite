@@ -161,6 +161,67 @@ fn the_pit_matches_haloexport() {
     assert_eq!(c.machine_triangles, 3200);
 }
 
+/// Guardian has no HaloExport reference: these are our own counts, checked
+/// by looking (headless shots) rather than against another tool.
+#[test]
+fn guardian_counts() {
+    let Some(path) = map("guardian") else { return };
+    let scene = blam_geometry::load_map(&path).expect("guardian decodes");
+    let c = count(&scene);
+    assert_eq!(c.clusters_placed, 26);
+    assert_eq!(c.instances_placed, 471);
+    assert_eq!(c.cluster_triangles, 15491);
+    assert_eq!(c.instance_triangles, 99759);
+    assert_eq!(c.scenery_triangles, 85848);
+    assert_eq!(c.crate_triangles, 33680);
+    assert_eq!(c.machine_triangles, 0);
+    assert_eq!(c.sky_triangles, 23497);
+    assert_eq!(scene.materials.len(), 102);
+
+    // 53 respawn points, every one standing on a collision floor.
+    assert_eq!(scene.spawns.len(), 53);
+    let col = &scene.collision;
+    for sp in &scene.spawns {
+        let p = sp.position;
+        let floor = col
+            .triangles
+            .iter()
+            .filter_map(|t| {
+                let [a, b, c] = t.points;
+                let d = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+                if d.abs() < 1e-9 {
+                    return None;
+                }
+                let u = ((p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y)) / d;
+                let v = ((b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)) / d;
+                (u >= -1e-4 && v >= -1e-4 && u + v <= 1.0001).then_some(a.z + u * (b.z - a.z) + v * (c.z - a.z))
+            })
+            .filter(|z| *z <= p.z + 0.3)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!((p.z - floor).abs() < 0.05, "spawn {sp:?} is {:.2} wu over its floor", p.z - floor);
+        assert!(p.z > 15.5 && p.z < 19.5, "{sp:?}");
+    }
+
+    // The real collision: 14,448 world and 97,940 instanced triangles.
+    let bsp = col
+        .triangles
+        .iter()
+        .filter(|t| matches!(t.source, blam_geometry::CollisionSource::Bsp(_)))
+        .count();
+    assert_eq!(bsp, 14448);
+    assert_eq!(col.triangles.len() - bsp, 97940);
+    assert_eq!(col.materials.len(), 69);
+
+    // The abyss: `kill_drop` lies under the walkways (z 15.8 and up) and
+    // over the fog plane; no spawn is in it.
+    let kills: Vec<_> = scene.trigger_volumes.iter().filter(|v| v.kills()).collect();
+    assert_eq!(kills.len(), 1);
+    assert_eq!(kills[0].name, "kill_drop");
+    assert!(kills[0].contains(glam::Vec3::new(0.0, -10.0, 10.0)));
+    assert!(!kills[0].contains(glam::Vec3::new(0.0, -10.0, 15.0)));
+    assert!(!scene.spawns.iter().any(|s| kills[0].contains(s.position)));
+}
+
 #[test]
 fn campaign_map_selects_one_bsp() {
     let Some(path) = map("120_halo") else { return };
