@@ -6,3 +6,4 @@
 .env
 /.research-cache
 /.scratch
+/.claude/worktrees/
