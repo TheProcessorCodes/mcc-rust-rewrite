@@ -65,6 +65,15 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       cut by their own `alpha_test_map` in the water depth prepass, the
       sky's `from_diffuse` glow and halogram edge fade (white slabs on the
       sea), rails under deep water dropped.
+- [x] High Ground (`deadlock`, 2026-10-28): every HaloExport count matches
+      (43 cluster meshes, 849 instances, 564,094 triangles with objects,
+      the gate machine where HaloExport put it), 101 of 101 colour bitmaps
+      decode, 85 spawns all on the ground and clear of walls, no collision
+      holes under the render floors; checked by `cargo test`
+      (`docs/format/reference-numbers.md` 10). Fixed on the way: the sky's
+      alpha-tested `water_edge_breakup` cards drawn whole round the cove,
+      multiply decals (`medical_decals`) lit and exposed. Still off: a hard
+      seam where the cove's water ends and the sky's far sea begins.
 - [x] Milestone 1c: scenery, crates, machines, controls and the sky placed
       from the scenario, again matching HaloExport's triangle counts exactly.
 - [x] Textures (built, awaiting a playtest): every material draws its real
