@@ -220,6 +220,7 @@ pub fn decode_with(
             positions: decoded.vertices.positions.clone(),
             normals: decoded.vertices.normals.clone(),
             uvs: decoded.vertices.uvs.clone(),
+            tangents: decoded.vertices.tangents.clone(),
             parts: Vec::new(),
             skin,
         };
@@ -292,6 +293,9 @@ pub fn decode_with(
                         mesh.positions.push(decoded.vertices.positions[k]);
                         mesh.normals.push(decoded.vertices.normals[k]);
                         mesh.uvs.push(decoded.vertices.uvs[k]);
+                        if let Some(t) = decoded.vertices.tangents.get(k) {
+                            mesh.tangents.push(*t);
+                        }
                         (mesh.positions.len() - 1) as u32
                     })
                 })

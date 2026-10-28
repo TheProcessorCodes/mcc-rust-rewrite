@@ -4,6 +4,7 @@
 //! module says which note it follows.
 
 pub mod atmosphere;
+pub mod camera_fx;
 pub mod collision;
 pub mod lightmap;
 pub mod materials;

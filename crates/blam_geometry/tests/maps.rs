@@ -279,3 +279,39 @@ fn valhalla_lighting() {
     assert_eq!(counts.get(&(Kind::Instance, "none")), Some(&1));
     assert_eq!(counts.get(&(Kind::Instance, "probe")), Some(&18));
 }
+
+/// The camera fx exposure (`docs/format/sky-and-atmosphere.md` 5) and
+/// Halo's own tangents on BSP vertices.
+#[test]
+fn camera_fx_and_tangents() {
+    for (name, stops) in [("riverworld", -4.8365), ("bunkerworld", -2.5146), ("construct", -4.4739)] {
+        let Some(path) = map(name) else { continue };
+        let cache = blam_cache::CacheFile::open(&path).unwrap();
+        let fx = blam_geometry::camera_fx::read(&cache).unwrap().expect("a cfxs tag");
+        assert!((fx.exposure - stops).abs() < 1e-3, "{name}: {}", fx.exposure);
+    }
+    let Some(path) = map("riverworld") else { return };
+    let options = Options {
+        objects: false,
+        collision: false,
+        ..Default::default()
+    };
+    let scene = blam_geometry::load_map_with(&path, &options).unwrap();
+    let (mut checked, mut skewed) = (0, 0);
+    for m in scene.meshes.iter().filter(|m| !m.tangents.is_empty()) {
+        assert_eq!(m.tangents.len(), m.positions.len(), "{}", m.name);
+        for (t, n) in m.tangents.iter().zip(&m.normals) {
+            let tv = glam::Vec3::new(t[0], t[1], t[2]);
+            // Unit length and a +-1 handedness; at right angles to the
+            // normal but for a few stored degenerate ones (tangent = normal),
+            // which the viewer's shader skips.
+            assert!((tv.length() - 1.0).abs() < 0.05, "{tv}");
+            assert!(t[3] == 1.0 || t[3] == -1.0);
+            skewed += (tv.dot(*n).abs() > 0.1) as usize;
+            checked += 1;
+        }
+    }
+    eprintln!("{checked} tangents, {skewed} not at right angles to their normal");
+    assert!(checked > 50_000, "{checked} tangents");
+    assert!(skewed * 100 < checked, "{skewed} of {checked} tangents not at right angles");
+}

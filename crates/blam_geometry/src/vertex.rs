@@ -81,6 +81,10 @@ pub struct Vertices {
     pub positions: Vec<Vec3>,
     pub normals: Vec<Vec3>,
     pub uvs: Vec<[f32; 2]>,
+    /// Tangent (texture U direction) per vertex with the handedness of the
+    /// stored binormal in `w` (+1 when `cross(normal, tangent)` points along
+    /// the binormal). Empty for formats without tangents.
+    pub tangents: Vec<[f32; 4]>,
     /// Bone indices per vertex, only for the skinned format.
     pub joints: Vec<[u16; 4]>,
     /// Bone weights per vertex, summing to one, only for the skinned format.
@@ -101,6 +105,16 @@ fn u16n(b: &[u8], o: usize) -> f32 {
 }
 fn i16n(b: &[u8], o: usize) -> f32 {
     (i16::from_le_bytes([b[o], b[o + 1]]) as f32 / 32767.0).clamp(-1.0, 1.0)
+}
+
+fn i16n3(b: &[u8], o: usize) -> Vec3 {
+    Vec3::new(i16n(b, o), i16n(b, o + 2), i16n(b, o + 4))
+}
+
+/// A tangent with its handedness from the stored binormal.
+fn tangent(n: Vec3, t: Vec3, b: Vec3) -> [f32; 4] {
+    let w = if n.cross(t).dot(b) < 0.0 { -1.0 } else { 1.0 };
+    [t.x, t.y, t.z, w]
 }
 
 /// Unpacks `count` vertices of `format` from `bytes`. `bounds` is required
@@ -125,6 +139,7 @@ pub fn decode(
         positions: Vec::with_capacity(count),
         normals: Vec::with_capacity(count),
         uvs: Vec::with_capacity(count),
+        tangents: Vec::with_capacity(count),
         joints: Vec::with_capacity(if skinned { count } else { 0 }),
         weights: Vec::with_capacity(if skinned { count } else { 0 }),
     };
@@ -135,8 +150,9 @@ pub fn decode(
                 out.positions
                     .push(Vec3::new(f32_at(v, 0), f32_at(v, 4), f32_at(v, 8)));
                 out.uvs.push([f32_at(v, 12), f32_at(v, 16)]);
-                out.normals
-                    .push(Vec3::new(i16n(v, 20), i16n(v, 22), i16n(v, 24)));
+                let n = Vec3::new(i16n(v, 20), i16n(v, 22), i16n(v, 24));
+                out.normals.push(n);
+                out.tangents.push(tangent(n, i16n3(v, 0x1C), i16n3(v, 0x24)));
             }
             VertexFormat::Rigid | VertexFormat::Skinned | VertexFormat::Decorator => {
                 let p = Vec3::new(u16n(v, 0), u16n(v, 2), u16n(v, 4));
@@ -153,6 +169,9 @@ pub fn decode(
                     }
                 }
                 out.normals.push(n);
+                if format != VertexFormat::Decorator {
+                    out.tangents.push(tangent(n, i16n3(v, 0x14), i16n3(v, 0x1C)));
+                }
                 if skinned {
                     out.joints
                         .push([v[0x24] as u16, v[0x25] as u16, v[0x26] as u16, v[0x27] as u16]);

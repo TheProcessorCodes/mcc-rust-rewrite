@@ -221,7 +221,7 @@ pub fn shader(cache: &CacheFile, tag: &TagEntry) -> Result<()> {
 
 /// `blam textures <map> [--png-dir DIR]`: decode every base texture the
 /// map's drawn materials use and report counts, bytes and time.
-pub fn textures(cache: &CacheFile, png_dir: Option<&Path>) -> Result<()> {
+pub fn textures(cache: &CacheFile, png_dir: Option<&Path>, list: bool) -> Result<()> {
     let started = std::time::Instant::now();
     let mut scene = blam_geometry::Scene::default();
     let options = blam_geometry::Options {
@@ -237,11 +237,25 @@ pub fn textures(cache: &CacheFile, png_dir: Option<&Path>) -> Result<()> {
     let mut failed_shaders = 0;
     let mut no_base = 0;
     let mut hidden = Vec::new();
+    // (class, category, option) -> materials using it.
+    let mut options_seen: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     for m in &scene.materials {
         let Some(tag) = m.shader_tag else { continue };
         match blam_texture::shader::resolve(cache, tag) {
             Ok(s) => {
                 shaders += 1;
+                for (c, o) in &s.options {
+                    *options_seen.entry((s.class.clone(), c.clone(), o.clone())).or_default() += 1;
+                }
+                if list {
+                    println!(
+                        "material #{tag} {} {:?}{} {}",
+                        s.class,
+                        s.blend,
+                        if s.alpha_test { " alpha-test" } else { "" },
+                        s.name
+                    );
+                }
                 if s.special || (s.alpha_test && s.base.is_none()) {
                     hidden.push(format!("{} {}", s.class, s.name));
                 }
@@ -309,6 +323,10 @@ pub fn textures(cache: &CacheFile, png_dir: Option<&Path>) -> Result<()> {
             "  {f:<18} {n:>4} bitmaps {:>8.1} MiB",
             *b as f64 / (1 << 20) as f64
         );
+    }
+    println!("shader options (class, category, option: materials)");
+    for ((class, c, o), n) in &options_seen {
+        println!("  {class} {c:<22} {o:<32} {n}");
     }
     println!(
         "time: geometry {geometry:.2} s, shaders {:.2} s, bitmaps {:.2} s",
