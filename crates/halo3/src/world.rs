@@ -25,6 +25,7 @@ use crate::fly_camera::FlyCamera;
 use crate::textures::{Look, MaterialTextures};
 
 pub mod lighting;
+pub mod sky;
 
 use lighting::{Atlas, HaloLightmap, HaloMaterial, SurfaceLights};
 
@@ -55,7 +56,7 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(lighting::LightingPlugin)
+        app.add_plugins((lighting::LightingPlugin, sky::SkyPlugin))
             .insert_resource(ClearColor(Color::srgb(0.53, 0.70, 0.90)))
             .add_systems(Startup, spawn_world)
             .add_systems(Update, toggle_collision);
@@ -160,14 +161,19 @@ fn tiling_sampler(levels: u32) -> ImageSampler {
     })
 }
 
-/// A colour texture as a bevy image: layer 0 of every level, largest
+/// A colour texture as a bevy image, sampled as sRGB; see [`texture_image_as`].
+pub(crate) fn texture_image(t: &Texture, bc: bool) -> Result<Image, String> {
+    texture_image_as(t, bc, true)
+}
+
+/// A texture as a bevy image: layer 0 of every level, largest
 /// first. BC1/2/3 stay compressed when the GPU takes BC and the size is a
 /// whole number of blocks; A8R8G8B8 goes up as BGRA; everything else is
 /// expanded to RGBA8 on the CPU. Colour maps (`srgb`) are always sampled as
 /// sRGB: Halo's colour maps are authored that way whatever their curve byte
 /// says (the "linear"-curve `mountains_snow` only looks right read as sRGB).
 /// Data that is not a colour (a terrain blend map's weights) goes up linear.
-fn texture_image_as(t: &Texture, bc: bool, srgb: bool) -> Result<Image, String> {
+pub(crate) fn texture_image_as(t: &Texture, bc: bool, srgb: bool) -> Result<Image, String> {
     let levels = t.mips.len() as u32;
     if levels == 0 {
         return Err("no levels".into());
@@ -667,7 +673,8 @@ fn spawn_world(
             sky || !matches!(std_material.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_));
         let mut entity = commands.spawn((Mesh3d(meshes.add(mesh)), Name::new(name.to_string())));
         if sky {
-            entity.insert(MeshMaterial3d(materials.add(std_material)));
+            // `sky.rs` swaps in the sky shader and its atmosphere.
+            entity.insert((MeshMaterial3d(materials.add(std_material)), sky::SkyBatch(key)));
         } else {
             let (scales, arrays) = match lit {
                 Lit::PerPixel(l) => (

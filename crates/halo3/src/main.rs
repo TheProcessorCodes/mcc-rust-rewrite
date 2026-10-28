@@ -46,14 +46,19 @@ fn resolve_map(arg: &str) -> PathBuf {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (scene, textures, chief) = match args.first().map(String::as_str) {
+    let (scene, textures, chief, sky) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map>          e.g. riverworld
   halo3 --test-scene");
             std::process::exit(2);
         }
-        Some("--test-scene") => (world::test_scene(), textures::MaterialTextures::default(), None),
+        Some("--test-scene") => (
+            world::test_scene(),
+            textures::MaterialTextures::default(),
+            None,
+            world::sky::SkyData::default(),
+        ),
         Some(map) => {
             let path = resolve_map(map);
             let started = std::time::Instant::now();
@@ -82,7 +87,8 @@ fn main() -> anyhow::Result<()> {
                 started.elapsed().as_secs_f32()
             );
             let chief = rider::load_chief(&cache);
-            (scene, textures, chief)
+            let sky = world::sky::load(&cache, &scene);
+            (scene, textures, chief, sky)
         }
     };
     let shot = shot_plan(&args, &scene.name)?;
@@ -133,6 +139,7 @@ fn main() -> anyhow::Result<()> {
         .add_plugins((skate::SkatePlugin, rider::RiderPlugin));
     }
     app.insert_resource(world::PendingScene(Some(scene), Some(textures)))
+        .insert_resource(world::sky::PendingSky(Some(sky)))
         .add_plugins((fly_camera::FlyCameraPlugin, world::WorldPlugin))
         .run();
     Ok(())
