@@ -1,8 +1,8 @@
 //! A free-flying camera: the noclip of goal 2.
 //!
 //! Keyboard: WASD moves, Space / C (or E / Q) goes up / down, Shift is fast,
-//! Alt is slow. Hold the right mouse button, or press Tab, to look around
-//! with the mouse; Escape gives the cursor back. P prints the camera's place
+//! Alt is slow. The mouse looks around whenever the window has focus;
+//! Escape gives the cursor back and a click takes it again. P prints the camera's place
 //! in Halo units. Gamepad: left stick moves, right stick looks, right and
 //! left triggers go up and down, the A button is fast.
 
@@ -70,20 +70,26 @@ fn cursor_grabbed(cursor: &CursorOptions) -> bool {
 fn grab_cursor(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
-    mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
-    // Whether Tab has switched mouselook on; right-click is only a hold.
-    mut tab_look: Local<bool>,
+    mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    // Whether Escape has handed the cursor back; a click takes it again.
+    mut released: Local<bool>,
+    mut was_focused: Local<bool>,
 ) {
-    let Ok(mut cursor) = windows.single_mut() else {
+    let Ok((window, mut cursor)) = windows.single_mut() else {
         return;
     };
-    if keys.just_pressed(KeyCode::Tab) {
-        *tab_look = !*tab_look;
+    // Coming back to the window (alt-tab, click) always takes the mouse.
+    if window.focused && !*was_focused {
+        *released = false;
     }
+    *was_focused = window.focused;
     if keys.just_pressed(KeyCode::Escape) {
-        *tab_look = false;
+        *released = true;
     }
-    let want = *tab_look || mouse.pressed(MouseButton::Right);
+    if mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right) {
+        *released = false;
+    }
+    let want = window.focused && !*released;
     let mode = if want {
         CursorGrabMode::Locked
     } else {
