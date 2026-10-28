@@ -136,6 +136,8 @@ pub struct Placement {
     pub bsps: u32,
     /// For [`Kind::Sky`]: which entry of the scenario's sky block it is.
     pub sky: Option<u32>,
+    /// For [`Kind::Cluster`]: the cluster's index in its BSP.
+    pub cluster: Option<u32>,
 }
 
 /// Where a collision triangle came from.
@@ -276,6 +278,71 @@ pub struct BspInfo {
     pub bounds: (Vec3, Vec3),
     /// Every cluster of the BSP, by index.
     pub clusters: Vec<ClusterInfo>,
+    /// The openings between clusters (`docs/format/sbsp-portals.md`).
+    pub portals: Vec<Portal>,
+    /// Finds the cluster a point is in, when the collision BSP decoded.
+    pub locator: Option<ClusterLocator>,
+}
+
+/// A convex opening joining two clusters of one BSP: whatever is seen of
+/// one cluster from the other is seen through its portals.
+#[derive(Clone, Debug)]
+pub struct Portal {
+    pub back: u32,
+    pub front: u32,
+    /// The polygon, world units.
+    pub vertices: Vec<Vec3>,
+    pub centroid: Vec3,
+    /// Distance from the centroid to the farthest vertex.
+    pub radius: f32,
+}
+
+impl Portal {
+    /// The cluster on the other side from `cluster`.
+    pub fn other(&self, cluster: u32) -> u32 {
+        if self.back == cluster { self.front } else { self.back }
+    }
+}
+
+/// Point to cluster: the BSP's collision tree down to a leaf, then the
+/// structure BSP's leaf table (`docs/format/sbsp-portals.md` 3).
+#[derive(Clone, Debug, Default)]
+pub struct ClusterLocator {
+    /// Collision BSP 3D nodes as stored: plane in bits 0..15, back child
+    /// 16..39, front child 40..63.
+    pub nodes: Vec<u64>,
+    /// Plane normal and distance.
+    pub planes: Vec<[f32; 4]>,
+    /// The cluster of each collision leaf, -1 for none.
+    pub leaf_clusters: Vec<i8>,
+}
+
+impl ClusterLocator {
+    /// The cluster holding `p`, or `None` when `p` is in solid space
+    /// (inside a wall, outside the level) or the tree is malformed.
+    pub fn cluster(&self, p: Vec3) -> Option<u32> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        let mut node = 0usize;
+        // A malformed tree must not loop forever.
+        for _ in 0..self.nodes.len().min(4096) {
+            let n = *self.nodes.get(node)?;
+            let plane = self.planes.get((n & 0xFFFF) as usize)?;
+            let d = plane[0] * p.x + plane[1] * p.y + plane[2] * p.z - plane[3];
+            let child = if d >= 0.0 { (n >> 40) & 0xFF_FFFF } else { (n >> 16) & 0xFF_FFFF } as u32;
+            // 23-bit index, sign-extended; bit 23 marks a leaf.
+            let index = ((child << 9) as i32) >> 9;
+            if index < 0 {
+                return None;
+            }
+            if child & 0x80_0000 != 0 {
+                return u32::try_from(*self.leaf_clusters.get(index as usize)?).ok();
+            }
+            node = index as usize;
+        }
+        None
+    }
 }
 
 /// What a cluster says about its surroundings.

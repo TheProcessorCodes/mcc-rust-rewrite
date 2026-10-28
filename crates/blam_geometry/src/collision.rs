@@ -243,6 +243,50 @@ fn triangulate(
     Ok(out.len() - before)
 }
 
+/// The BSP 3D nodes and planes of a structure BSP's first (normal)
+/// collision BSP, for finding the leaf a point is in
+/// (`docs/format/sbsp-portals.md` 3). Its leaves are the structure BSP's
+/// leaves, whose clusters `sbsp::leaf_clusters` reads.
+pub fn tree(cache: &CacheFile, resources: &Resources<'_>, sbsp: &TagEntry) -> Result<(Vec<u64>, Vec<[f32; 4]>, usize)> {
+    let base = cache.tag_offset(sbsp)?;
+    let datum = ResourceId(cache.reader_at(base + 0x38C).u32()?);
+    if datum.is_null() {
+        return Err(Error::Invalid(format!("{} has no collision resource", sbsp.name())));
+    }
+    let entry = resources.entry(datum)?;
+    if entry.is_empty() || entry.definition_address.kind() != CacheAddress::DEFINITION {
+        return Err(Error::Invalid(format!("{}: no usable collision resource", sbsp.name())));
+    }
+    let def = resources.fixed_definition(&entry)?;
+    let data = resources.data(&entry)?;
+    let res = Resolver {
+        def: &def,
+        data: data.bytes(),
+    };
+    let root = entry.definition_address.offset();
+    let bsps = res.block(root)?;
+    if bsps.count == 0 || bsps.address.kind() != CacheAddress::DEFINITION {
+        return Err(Error::Invalid(format!("{}: no normal collision bsp", sbsp.name())));
+    }
+    let at = bsps.address.offset();
+    let nodes = res.elements(res.block(at)?, 8, "bsp 3d nodes")?;
+    let planes = res.elements(res.block(at + 0x0C)?, 16, "planes")?;
+    let leaves = res.block(at + 0x18)?.count;
+    let nodes = nodes
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|b| u64::from_le_bytes(*b))
+        .collect();
+    let planes = planes
+        .as_chunks::<16>()
+        .0
+        .iter()
+        .map(|b| [f32_at(b, 0), f32_at(b, 4), f32_at(b, 8), f32_at(b, 12)])
+        .collect();
+    Ok((nodes, planes, leaves))
+}
+
 /// Decodes a BSP's collision into `collision`, returning what was found.
 pub fn decode(
     cache: &CacheFile,

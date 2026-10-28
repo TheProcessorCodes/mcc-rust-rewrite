@@ -199,6 +199,7 @@ pub fn decode(
                     lighting: Default::default(),
                     bsps,
                     sky: None,
+                    cluster: None,
                 });
             }
             *stats.placed.entry(k.kind).or_default() += 1;
@@ -230,6 +231,7 @@ pub fn decode(
                 lighting: Default::default(),
                 bsps,
                 sky: Some(sky_index as u32),
+                cluster: None,
             });
         }
         *stats.placed.entry(Kind::Sky).or_default() += 1;

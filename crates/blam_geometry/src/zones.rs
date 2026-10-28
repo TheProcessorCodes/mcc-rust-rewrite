@@ -240,6 +240,39 @@ mod tests {
         );
     }
 
+    /// `docs/format/sbsp-portals.md`: portal counts, and every spawn point
+    /// of Valhalla falls in a cluster through the collision tree (the side
+    /// rule: front child when the plane test is >= 0).
+    #[test]
+    fn riverworld_portals_and_spawn_clusters() {
+        let Some(cache) = map("riverworld") else { return };
+        let mut scene = Scene::default();
+        crate::decode_into(&cache, &crate::Options::default(), &mut scene).unwrap();
+        let bsp = &scene.bsps[0];
+        assert_eq!(bsp.clusters.len(), 26);
+        assert_eq!(bsp.portals.len(), 60);
+        let p = &bsp.portals[1];
+        assert_eq!((p.back, p.front, p.vertices.len()), (18, 2, 8));
+        let far = p.vertices.iter().map(|v| v.distance(p.centroid)).fold(0.0, f32::max);
+        assert!((far - p.radius).abs() < 1e-3);
+        let locator = bsp.locator.as_ref().expect("cluster lookup");
+        assert_eq!(locator.leaf_clusters.len(), 42101);
+        let mut found = 0;
+        for s in &scene.spawns {
+            let c = locator.cluster(s.position + Vec3::Z * 0.6);
+            // A spawn's cluster box must hold it.
+            if let Some(c) = c {
+                let (lo, hi) = bsp.clusters[c as usize].bounds.unwrap();
+                let p = s.position + Vec3::Z * 0.6;
+                assert!(p.cmpge(lo - 0.01).all() && p.cmple(hi + 0.01).all(), "{} in cluster {c}", s.name);
+                found += 1;
+            }
+        }
+        assert_eq!(found, scene.spawns.len());
+        // Far below the map is solid or outside.
+        assert_eq!(locator.cluster(Vec3::new(0.0, 0.0, -500.0)), None);
+    }
+
     #[test]
     fn jungle_start_faces_its_yaw() {
         let Some(cache) = map("010_jungle") else { return };
