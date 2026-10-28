@@ -70,6 +70,8 @@ pub struct RiderPose {
     pub skated: f32,
     /// A model draws the rider: no stick figure.
     pub drawn: bool,
+    /// The dirt bike holds the rider (`bike`): no board, no skating.
+    pub bike: bool,
 }
 
 impl Default for RiderPose {
@@ -83,6 +85,7 @@ impl Default for RiderPose {
             drive_camera: true,
             skated: 0.0,
             drawn: false,
+            bike: false,
         }
     }
 }
@@ -529,7 +532,7 @@ fn update(
         let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
         return;
     }
-    if toggle && host.ready {
+    if toggle && host.ready && !rider.bike {
         host.epoch = host.epoch.wrapping_add(1);
         if host.active {
             host.active = false;
@@ -628,7 +631,14 @@ fn draw_rider(rider: Res<RiderPose>, mut gizmos: Gizmos) {
 }
 
 /// The skate status in the window title.
-fn show_status(host: Res<Host>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+fn show_status(
+    host: Res<Host>,
+    rider: Res<RiderPose>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    if rider.bike {
+        return;
+    }
     let Ok(mut window) = windows.single_mut() else {
         return;
     };

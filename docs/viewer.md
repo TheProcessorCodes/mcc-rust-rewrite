@@ -30,11 +30,12 @@ middle.
 | Space / C, or E / Q | up / down |
 | Shift | fast (6x) |
 | Alt | slow |
-| right mouse button (hold), or Tab | look around with the mouse |
-| Escape | give the cursor back |
+| mouse | look around (whenever the window has focus) |
+| Escape | give the cursor back; click the window to take it again |
 | P | print the camera's position in Halo units to the console |
 | V | show or hide the game's real collision: green shell for surfaces, red for invisible walls |
 | J | skate / fly (`crates/halo3/src/skate.rs`) |
+| B, or gamepad View / Back | dirt bike / fly (see "Dirt bike" below) |
 | PageDown / PageUp | next / previous zone set (campaign maps) |
 | Home | load every BSP at once |
 | gamepad left stick | move |
@@ -329,3 +330,28 @@ first 15 wu) and the sun-angle dependence of the haze colour are not applied to 
 fog has neither); `desaturation` (used by The Pit, 0.2) is ignored; Halo's real sky lighting and
 exposure curve is not decoded (the `cfxs` exposure is, see "Lighting"); no sun glare or bloom; the sky does not move with the camera
 (it is at true size, about 7,500 wu out, which is what the haze distances need).
+
+## Dirt bike
+
+B (or the controller's View / Back button) drops a dirt bike under the camera
+with the Spartan standing on it; B again flies. Code: `crates/halo3/src/bike/`
+(`physics.rs` the bike, `pose.rs` the rider, `mod.rs` controls, camera and the
+stick model). Dual-stick riding in the style of MX vs ATV Reflex:
+
+| controller | keyboard | effect |
+|---|---|---|
+| left stick X | A / D | handlebars (less lock at speed); the bike leans into the turn itself |
+| right stick | arrow keys | rider: forward / back moves his weight (front down, wheelies); left / right tightens the turn; in the air it pitches, leans and whips the bike |
+| RT | W | throttle: one long gear, 7 m/s² linear acceleration to 90 km/h |
+| LT | S | brake (65 % front) |
+| Y | R | stand the bike back up |
+
+Hitting the bars or the rider's head, or landing upside down, is a crash: two
+seconds later the bike comes back where it last rode well. The rider is one
+stiff stance (attack position) kept on the pegs and grips by IK. The bike is a
+stick model of unlit cylinders for now. It rides on the loaded zone set's
+collision. Tuning constants are at the top of `physics.rs`.
+
+Headless check: `halo3 riverworld --shot DIR --bike --view spawn50` rides from
+spawn 50 holding `HALO3_BIKE_THROTTLE` (default 0.4) for `HALO3_SKATE_FOR`
+seconds, then takes the rider pictures.

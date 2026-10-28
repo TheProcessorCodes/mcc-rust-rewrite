@@ -133,6 +133,15 @@ pub struct ShotPlan {
     pub size: UVec2,
     /// Skate before the pictures (`--skate`).
     pub skate: bool,
+    /// Ride the dirt bike before the pictures (`--bike`).
+    pub bike: bool,
+}
+
+impl ShotPlan {
+    /// Whether a rider is dropped in before the pictures.
+    pub fn rides(&self) -> bool {
+        self.skate || self.bike
+    }
 }
 
 #[derive(Resource, Default)]
@@ -230,7 +239,7 @@ fn aim_at_image(
         commands
             .entity(camera)
             .insert(RenderTarget::Image(handle.clone().into()));
-        if let Some(view) = plan.views.first().filter(|_| !plan.skate) {
+        if let Some(view) = plan.views.first().filter(|_| !plan.rides()) {
             place(view, &mut transform);
         }
     }
@@ -258,7 +267,7 @@ fn step(
     };
     // In skate mode views 0..RIDER_VIEWS follow the rider; the first
     // `--view` was the drop point, the rest come after.
-    let skate = plan.skate.then_some(pose.as_deref()).flatten();
+    let skate = plan.rides().then_some(pose.as_deref()).flatten();
     let total = match skate {
         Some(_) => RIDER_VIEWS + plan.views.len().saturating_sub(1),
         None => plan.views.len().max(1),

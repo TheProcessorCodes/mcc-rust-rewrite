@@ -291,12 +291,15 @@ struct Joint {
 struct Rider {
     joints: Vec<Joint>,
     meshes: Vec<Entity>,
+    /// The skateboard's meshes, hidden while the rider is on the dirt bike.
+    board: Vec<Entity>,
     /// Every rider material with its unlit colour, scaled by the light
     /// where the rider is.
     materials: Vec<(Handle<StandardMaterial>, LinearRgba)>,
     /// Where the light was last sampled (Halo units).
     lit_at: Option<Vec3>,
-    shown: bool,
+    /// Whether the rider, and the board, are showing.
+    shown: (bool, bool),
 }
 
 /// Bones that keep the Spartan's own offset from their parent instead of
@@ -486,7 +489,7 @@ fn spawn_rider(
                             Name::new("skate board"),
                         ))
                         .id();
-                    rider.meshes.push(e);
+                    rider.board.push(e);
                 }
             }
         }
@@ -740,11 +743,14 @@ fn pose_rider(
         return;
     };
     let show = pose.active && !pose.bones.is_empty();
-    if show != rider.shown {
-        rider.shown = show;
-        for &e in &rider.meshes {
+    let shown = (show, show && !pose.bike);
+    if shown != rider.shown {
+        rider.shown = shown;
+        let rider = &*rider;
+        let all = rider.meshes.iter().map(|e| (e, shown.0)).chain(rider.board.iter().map(|e| (e, shown.1)));
+        for (&e, on) in all {
             if let Ok(mut v) = visibility.get_mut(e) {
-                *v = if show { Visibility::Inherited } else { Visibility::Hidden };
+                *v = if on { Visibility::Inherited } else { Visibility::Hidden };
             }
         }
     }
@@ -786,7 +792,7 @@ fn light_rider(
     let Some(mut rider) = rider else {
         return;
     };
-    if !rider.shown {
+    if !rider.shown.0 {
         return;
     }
     let Some(i) = pose.names.iter().position(|n| n == "SKATEBOARD_ROOT") else {
