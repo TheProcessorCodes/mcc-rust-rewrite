@@ -1,0 +1,567 @@
+//! Skating: goal 3. The Skate 3 engine (`skate-host`, linked from the MW2
+//! mashup) runs on its own thread, fed the map's collision, its grind rails
+//! and the controller; it hands back a posed skeleton and a camera.
+//!
+//! J (or both sticks clicked) drops the skater where the camera is and starts
+//! riding; J again goes back to flying. Without a pad the keyboard stands in:
+//! WASD is the left stick, the arrow keys the right stick, Space A, F B,
+//! R X, T Y, Q / E the bumpers, Z / X the triggers.
+//!
+//! Units follow `docs/skate-interface.md` section 10. The renderer frame is
+//! already the skate engine's (metres, Y up, the same axis swap), so the only
+//! conversion is the scale `k`: the engine sees the world shrunk by `k`, so a
+//! 1.8 m skater stands as tall as a 2.1 m Spartan. `HALO3_SKATE_SCALE`
+//! overrides it.
+//!
+//! The rider is the map's Spartan on the Skate 3 board (`rider.rs`); a
+//! stick figure stands in when either is missing.
+
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::sync::mpsc::{self, Receiver, Sender};
+
+use bevy::input::gamepad::GamepadButton as B;
+use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+use skate_host::bridge::{InputFrame, Pose, Session};
+
+use blam_geometry::{Collision, rails};
+
+use crate::fly_camera::FlyCamera;
+use crate::world::{to_halo_dir, to_render};
+
+/// What IW4L ships: a Spartan-sized skater (`docs/skate-interface.md` 10).
+const DEFAULT_SCALE: f32 = 33.0 * 0.0254;
+const DEFAULT_ASSETS: &str = r"D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\assets";
+
+/// The map data the skate world is built from, handed over by `main`.
+#[derive(Resource)]
+pub struct SkateInput(pub Option<Collision>);
+
+pub struct SkatePlugin;
+
+impl Plugin for SkatePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Host>()
+            .init_resource::<RiderPose>()
+            .init_resource::<AutoStart>()
+            .add_systems(Startup, start_worker)
+            .add_systems(Update, (update, draw_rider, show_status).chain());
+    }
+}
+
+/// The latest pose for drawing the rider, in skate space (`docs/skate-interface.md`
+/// section 4); divide by `scale` for the renderer frame.
+#[derive(Resource)]
+pub struct RiderPose {
+    pub active: bool,
+    pub names: Vec<String>,
+    pub bones: Vec<Mat4>,
+    pub scale: f32,
+    /// The engine's chase camera in the renderer frame, and its vertical FOV
+    /// in radians.
+    pub camera: Option<(Transform, f32)>,
+    /// Whether `update` puts the view camera on the engine's camera.
+    pub drive_camera: bool,
+    /// Seconds of input fed since the skater was dropped in.
+    pub skated: f32,
+    /// A model draws the rider: no stick figure.
+    pub drawn: bool,
+}
+
+impl Default for RiderPose {
+    fn default() -> Self {
+        RiderPose {
+            active: false,
+            names: Vec::new(),
+            bones: Vec::new(),
+            scale: scale(),
+            camera: None,
+            drive_camera: true,
+            skated: 0.0,
+            drawn: false,
+        }
+    }
+}
+
+/// Drop the skater in as soon as the session is ready and ride with the
+/// sticks at rest (screenshot mode): a skate-space spawn and heading.
+#[derive(Resource, Default)]
+pub struct AutoStart(pub Option<([f32; 3], f32)>);
+
+impl AutoStart {
+    /// At a Halo position (world units) facing Halo yaw (radians).
+    pub fn at(position: Vec3, yaw: f32) -> Self {
+        let spawn = (to_render(position + Vec3::Z * 0.3) * scale()).to_array();
+        AutoStart(Some((spawn, yaw + std::f32::consts::FRAC_PI_2)))
+    }
+}
+
+/// Marks the camera while the skate engine drives it.
+#[derive(Component)]
+pub struct Skating;
+
+enum Job {
+    Activate(u64, [f32; 3], f32, f32),
+    Step(u64, f32, InputFrame, f32),
+    Suspend,
+}
+
+enum Reply {
+    Ready(usize, usize),
+    Activated(u64, Pose),
+    Pose(u64, Pose),
+    Error(String),
+}
+
+#[derive(Resource)]
+struct Host {
+    scale: f32,
+    send: Option<Sender<Job>>,
+    receive: Option<Mutex<Receiver<Reply>>>,
+    ready: bool,
+    active: bool,
+    epoch: u64,
+    packet: u32,
+    /// Riding with neutral input (screenshot mode).
+    neutral: bool,
+    speed: f32,
+    state: String,
+    status: String,
+}
+
+/// The skate scale `k`: `HALO3_SKATE_SCALE` or the default.
+pub fn scale() -> f32 {
+    std::env::var("HALO3_SKATE_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|k: &f32| *k > 0.0)
+        .unwrap_or(DEFAULT_SCALE)
+}
+
+impl Default for Host {
+    fn default() -> Self {
+        Host {
+            scale: scale(),
+            send: None,
+            receive: None,
+            ready: false,
+            active: false,
+            epoch: 0,
+            packet: 0,
+            neutral: false,
+            speed: 0.0,
+            state: String::new(),
+            status: String::new(),
+        }
+    }
+}
+
+pub fn assets_root() -> PathBuf {
+    ["HALO3_SKATE_ASSETS", "IW4L_SKATE_ASSETS"]
+        .iter()
+        .find_map(std::env::var_os)
+        .map_or_else(|| PathBuf::from(DEFAULT_ASSETS), PathBuf::from)
+}
+
+/// The collision as the skate engine wants it: skate metres, no degenerate
+/// or repeated triangles. Halo already winds faces counter-clockwise seen
+/// from the side you stand on, which is what the engine expects.
+fn skate_triangles(collision: &Collision, k: f32) -> Vec<[[f32; 3]; 3]> {
+    let mut seen = std::collections::HashSet::new();
+    let key = |p: Vec3| (p * 1000.0).round().as_ivec3().to_array();
+    collision
+        .triangles
+        .iter()
+        .filter_map(|t| {
+            let p = t.points.map(|p| to_render(p) * k);
+            let [a, b, c] = p;
+            let area2 = (b - a).cross(c - a).length_squared();
+            if !area2.is_finite() || area2 <= 1e-9 {
+                return None;
+            }
+            let mut sorted = p.map(key);
+            sorted.sort_unstable();
+            seen.insert(sorted).then(|| p.map(|v| v.to_array()))
+        })
+        .collect()
+}
+
+fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>) {
+    let Some(collision) = input.0.take() else {
+        return;
+    };
+    let root = assets_root();
+    if !root.join("private").join("game.json").exists() {
+        host.status = format!("skate assets not found at {}", root.display());
+        warn!("{}; set HALO3_SKATE_ASSETS", host.status);
+        return;
+    }
+    let k = host.scale;
+    let (send, jobs) = mpsc::channel::<Job>();
+    let (publish, replies) = mpsc::channel::<Reply>();
+    let spawned = std::thread::Builder::new()
+        .name("halo3-skate".into())
+        // The engine recurses deeply.
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let result = (|| -> Result<(), String> {
+                let started = std::time::Instant::now();
+                let triangles = skate_triangles(&collision, k);
+                let (found, _) = rails::find_rails(&collision);
+                let rails: Vec<Vec<[f32; 3]>> = found
+                    .iter()
+                    .map(|r| r.iter().map(|p| (to_render(*p) * k).to_array()).collect())
+                    .collect();
+                let counts = (triangles.len(), rails.len());
+                let mut session = Session::new(&root, triangles, rails, [0.0; 3], 0.0)?;
+                eprintln!(
+                    "skate: session ready in {:.1} s ({} triangles, {} rails)",
+                    started.elapsed().as_secs_f32(),
+                    counts.0,
+                    counts.1
+                );
+                if publish.send(Reply::Ready(counts.0, counts.1)).is_err() {
+                    return Ok(());
+                }
+                let mut epoch = 0;
+                let mut accumulated = 0.0;
+                while let Ok(job) = jobs.recv() {
+                    match job {
+                        Job::Activate(new_epoch, spawn, heading, aspect) => {
+                            epoch = new_epoch;
+                            accumulated = 0.0;
+                            session.set_aspect_ratio(aspect);
+                            let p = session.activate(spawn, heading)?;
+                            if publish.send(Reply::Activated(epoch, p)).is_err() {
+                                break;
+                            }
+                        }
+                        Job::Suspend => {
+                            accumulated = 0.0;
+                            session.suspend_input();
+                        }
+                        Job::Step(request, dt, input, aspect) => {
+                            if request != epoch {
+                                continue;
+                            }
+                            session.set_aspect_ratio(aspect);
+                            session.collect(input, dt);
+                            accumulated = (accumulated + dt).min(0.15);
+                            let mut advanced = false;
+                            // The engine's camera can change the period (slow motion).
+                            while accumulated >= session.period() {
+                                accumulated -= session.period();
+                                session.advance()?;
+                                advanced = true;
+                            }
+                            if advanced {
+                                let p = session.pose();
+                                if !p.root.is_finite() || p.bones.iter().any(|b| !b.is_finite()) {
+                                    return Err("the skate engine published a non-finite pose".into());
+                                }
+                                if publish.send(Reply::Pose(epoch, p)).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(e) = result {
+                let _ = publish.send(Reply::Error(e));
+            }
+        });
+    match spawned {
+        Ok(_) => {
+            host.send = Some(send);
+            host.receive = Some(Mutex::new(replies));
+            host.status = "skate: loading".into();
+        }
+        Err(e) => host.status = format!("skate thread: {e}"),
+    }
+}
+
+/// A controller's state in XInput's layout (raw: the engine applies its own
+/// deadzones).
+fn pad_frame(pad: &Gamepad, packet: u32) -> InputFrame {
+    const BITS: [(B, u16); 14] = [
+        (B::DPadUp, 0x0001),
+        (B::DPadDown, 0x0002),
+        (B::DPadLeft, 0x0004),
+        (B::DPadRight, 0x0008),
+        (B::Start, 0x0010),
+        (B::Select, 0x0020),
+        (B::LeftThumb, 0x0040),
+        (B::RightThumb, 0x0080),
+        (B::LeftTrigger, 0x0100),
+        (B::RightTrigger, 0x0200),
+        (B::South, 0x1000),
+        (B::East, 0x2000),
+        (B::West, 0x4000),
+        (B::North, 0x8000),
+    ];
+    let buttons = BITS
+        .iter()
+        .filter(|(b, _)| pad.pressed(*b))
+        .fold(0, |bits, (_, bit)| bits | bit);
+    let trigger = |b: B| {
+        let v = pad.get(b).unwrap_or(if pad.pressed(b) { 1.0 } else { 0.0 });
+        (v.clamp(0.0, 1.0) * 255.0).round() as u8
+    };
+    let axis = |v: f32| (v.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+    let (l, r) = (pad.left_stick(), pad.right_stick());
+    InputFrame::from_pad(
+        buttons,
+        [trigger(B::LeftTrigger2), trigger(B::RightTrigger2)],
+        [axis(l.x), axis(l.y)],
+        [axis(r.x), axis(r.y)],
+        packet,
+    )
+}
+
+/// The keyboard as a pad, for playing without one.
+fn keyboard_frame(keys: &ButtonInput<KeyCode>, packet: u32) -> InputFrame {
+    const BITS: [(KeyCode, u16); 6] = [
+        (KeyCode::Space, 0x1000),
+        (KeyCode::KeyF, 0x2000),
+        (KeyCode::KeyR, 0x4000),
+        (KeyCode::KeyT, 0x8000),
+        (KeyCode::KeyQ, 0x0100),
+        (KeyCode::KeyE, 0x0200),
+    ];
+    let buttons = BITS
+        .iter()
+        .filter(|(k, _)| keys.pressed(*k))
+        .fold(0, |bits, (_, bit)| bits | bit);
+    let axis = |neg: KeyCode, pos: KeyCode| {
+        (keys.pressed(pos) as i16 - keys.pressed(neg) as i16) * 32767
+    };
+    let trigger = |k: KeyCode| if keys.pressed(k) { 255 } else { 0 };
+    InputFrame::from_pad(
+        buttons,
+        [trigger(KeyCode::KeyZ), trigger(KeyCode::KeyX)],
+        [axis(KeyCode::KeyA, KeyCode::KeyD), axis(KeyCode::KeyS, KeyCode::KeyW)],
+        [
+            axis(KeyCode::ArrowLeft, KeyCode::ArrowRight),
+            axis(KeyCode::ArrowDown, KeyCode::ArrowUp),
+        ],
+        packet,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update(
+    mut commands: Commands,
+    mut host: ResMut<Host>,
+    mut rider: ResMut<RiderPose>,
+    mut auto: ResMut<AutoStart>,
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut cameras: Query<(Entity, &mut Transform, &mut FlyCamera, &mut Projection)>,
+) {
+    let host = &mut *host;
+    let Some(receive) = host.receive.as_ref() else {
+        return;
+    };
+    let aspect = windows
+        .single()
+        .map_or(16.0 / 9.0, |w| w.width() / w.height().max(1.0));
+    let pad = gamepads.iter().next();
+    let toggle = keys.just_pressed(KeyCode::KeyJ)
+        || pad.is_some_and(|p| {
+            (p.just_pressed(B::LeftThumb) && p.pressed(B::RightThumb))
+                || (p.just_pressed(B::RightThumb) && p.pressed(B::LeftThumb))
+        });
+    let Ok((camera, mut transform, mut fly, mut projection)) = cameras.single_mut() else {
+        return;
+    };
+
+    // Replies first, so a pose that arrived this frame is drawn this frame.
+    let mut failed = None;
+    let mut latest = None;
+    for reply in receive.lock().unwrap().try_iter() {
+        match reply {
+            Reply::Ready(t, r) => {
+                host.ready = true;
+                host.status = format!("skate: ready ({t} triangles, {r} rails), J to ride");
+            }
+            Reply::Activated(e, p) | Reply::Pose(e, p) if e == host.epoch => latest = Some(p),
+            Reply::Activated(..) | Reply::Pose(..) => {}
+            Reply::Error(e) => failed = Some(e),
+        }
+    }
+    if let Some(e) = failed {
+        error!("skate: {e}");
+        host.status = format!("skate failed: {e}");
+        host.send = None;
+        host.receive = None;
+        host.ready = false;
+        host.active = false;
+        rider.active = false;
+        commands.entity(camera).remove::<Skating>();
+        return;
+    }
+    let k = host.scale;
+    if host.active
+        && let Some(p) = latest
+    {
+        host.speed = p.velocity.length() / k;
+        host.state = p.state;
+        rider.active = true;
+        rider.scale = k;
+        rider.names = p.names;
+        // The bones are relative to the root (IW4L draws the body at
+        // `root`), not world matrices.
+        rider.bones = p.bones.iter().map(|b| p.root * *b).collect();
+        rider.camera = p.camera.map(|(position, basis, fov)| {
+            let view = Transform::from_translation(position / k)
+                .looking_to(basis.z_axis.normalize(), basis.y_axis.normalize());
+            (view, fov.to_radians())
+        });
+        if rider.drive_camera
+            && let Some((view, fov)) = rider.camera
+        {
+            *transform = view;
+            if let Projection::Perspective(lens) = &mut *projection {
+                lens.fov = fov;
+            }
+        }
+    }
+
+    let Some(send) = host.send.clone() else {
+        return;
+    };
+    if host.ready
+        && !host.active
+        && let Some((spawn, heading)) = auto.0.take()
+    {
+        host.epoch = host.epoch.wrapping_add(1);
+        host.active = true;
+        host.neutral = true;
+        rider.skated = 0.0;
+        commands.entity(camera).insert(Skating);
+        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+        return;
+    }
+    if toggle && host.ready {
+        host.epoch = host.epoch.wrapping_add(1);
+        if host.active {
+            host.active = false;
+            rider.active = false;
+            rider.bones.clear();
+            let _ = send.send(Job::Suspend);
+            commands.entity(camera).remove::<Skating>();
+            // Fly on from where the skate camera left off.
+            let f = transform.forward().as_vec3();
+            fly.yaw = (-f.x).atan2(-f.z);
+            fly.pitch = f.y.clamp(-1.0, 1.0).asin();
+            transform.rotation = fly.rotation();
+            if let Projection::Perspective(lens) = &mut *projection {
+                lens.fov = 75f32.to_radians();
+            }
+        } else {
+            // Drop the skater under the camera, facing the way it looks; the
+            // engine puts the wheels on the ground below.
+            let f = to_halo_dir(transform.forward().as_vec3());
+            let heading = f.y.atan2(f.x) + std::f32::consts::FRAC_PI_2;
+            let spawn = (transform.translation * k).to_array();
+            host.active = true;
+            host.neutral = false;
+            rider.skated = 0.0;
+            commands.entity(camera).insert(Skating);
+            let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+        }
+        return;
+    }
+    if host.active {
+        host.packet = host.packet.wrapping_add(1);
+        let frame = match pad {
+            _ if host.neutral => InputFrame::from_pad(0, [0, 0], [0, 0], [0, 0], host.packet),
+            Some(p) => pad_frame(p, host.packet),
+            None => keyboard_frame(&keys, host.packet),
+        };
+        let dt = time.delta_secs().min(0.1);
+        rider.skated += dt;
+        let _ = send.send(Job::Step(host.epoch, dt, frame, aspect));
+    }
+}
+
+/// The skater as lines between joints, the board in orange.
+fn draw_rider(rider: Res<RiderPose>, mut gizmos: Gizmos) {
+    if !rider.active || rider.drawn || rider.bones.is_empty() {
+        return;
+    }
+    const BODY: [(&str, &str); 22] = [
+        ("HIPS", "SPINE"),
+        ("SPINE", "SPINE1"),
+        ("SPINE1", "SPINE2"),
+        ("SPINE2", "SPINE3"),
+        ("SPINE3", "NECK"),
+        ("NECK", "NECK1"),
+        ("NECK1", "HEAD"),
+        ("SPINE3", "LEFTSHOULDER"),
+        ("LEFTSHOULDER", "LEFTARM"),
+        ("LEFTARM", "LEFTFOREARM"),
+        ("LEFTFOREARM", "LEFTHAND"),
+        ("SPINE3", "RIGHTSHOULDER"),
+        ("RIGHTSHOULDER", "RIGHTARM"),
+        ("RIGHTARM", "RIGHTFOREARM"),
+        ("RIGHTFOREARM", "RIGHTHAND"),
+        ("HIPS", "LEFTUPLEG"),
+        ("LEFTUPLEG", "LEFTLEG"),
+        ("LEFTLEG", "LEFTFOOT"),
+        ("LEFTFOOT", "LEFTTOEBASE"),
+        ("HIPS", "RIGHTUPLEG"),
+        ("RIGHTUPLEG", "RIGHTLEG"),
+        ("RIGHTLEG", "RIGHTFOOT"),
+    ];
+    const BOARD: [(&str, &str); 5] = [
+        ("TRUCK_FRONT", "TRUCK_BACK"),
+        ("TRUCK_FRONT", "LEFT_WHEELFRONT"),
+        ("TRUCK_FRONT", "RIGHT_WHEELFRONT"),
+        ("TRUCK_BACK", "LEFT_WHEELBACK"),
+        ("TRUCK_BACK", "RIGHT_WHEELBACK"),
+    ];
+    let at = |name: &str| {
+        let i = rider.names.iter().position(|n| n == name)?;
+        Some(rider.bones[i].w_axis.truncate() / rider.scale)
+    };
+    for (pairs, colour) in [
+        (&BODY[..], Color::srgb(0.2, 0.9, 0.3)),
+        (&BOARD[..], Color::srgb(1.0, 0.55, 0.1)),
+    ] {
+        for (a, b) in pairs {
+            if let (Some(a), Some(b)) = (at(a), at(b)) {
+                gizmos.line(a, b, colour);
+            }
+        }
+    }
+    if let Some(head) = at("HEAD") {
+        gizmos.sphere(Isometry3d::from_translation(head), 0.15, Color::srgb(0.2, 0.9, 0.3));
+    }
+}
+
+/// The skate status in the window title.
+fn show_status(host: Res<Host>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    let base = window.title.split(" | ").next().unwrap_or_default().to_string();
+    let status = if host.active {
+        format!(
+            "skating {:.1} m/s {}",
+            host.speed,
+            host.state.chars().take(48).collect::<String>()
+        )
+    } else {
+        host.status.clone()
+    };
+    let title = if status.is_empty() { base } else { format!("{base} | {status}") };
+    if window.title != title {
+        window.title = title;
+    }
+}

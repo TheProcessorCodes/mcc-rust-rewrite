@@ -1,0 +1,12 @@
+[package]
+name = "blam_cache"
+description = "Reads MCC Halo 3 .map cache files: header, sections, tag index, tag names, string ids, tag data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+memmap2 = { workspace = true }
+thiserror = { workspace = true }
+flate2 = { workspace = true }

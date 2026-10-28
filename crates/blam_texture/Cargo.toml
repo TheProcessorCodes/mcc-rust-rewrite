@@ -1,0 +1,15 @@
+[package]
+name = "blam_texture"
+description = "Decodes Halo 3 bitmap tags into mip chains and resolves shader tags to their textures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_cache = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Only for the V-direction check against decoded geometry in tests/maps.rs.
+blam_geometry = { workspace = true }

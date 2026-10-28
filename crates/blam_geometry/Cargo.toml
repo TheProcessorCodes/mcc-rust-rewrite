@@ -1,0 +1,12 @@
+[package]
+name = "blam_geometry"
+description = "Turns Halo 3 structure BSPs and render models into plain triangle meshes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_cache = { workspace = true }
+glam = { workspace = true }
+thiserror = { workspace = true }
