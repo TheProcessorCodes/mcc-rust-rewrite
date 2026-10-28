@@ -11,6 +11,7 @@
 //! | right stick | arrow keys | rider: forward, back, left, right |
 //! | RT | W | throttle |
 //! | LT | S | brake |
+//! | A (hold) | Space (hold) | back up, to 3 m/s |
 //! | Y | R | stand the bike back up |
 //!
 //! `--shot DIR --bike` rides from the first view (or the start spawn) for a
@@ -147,6 +148,7 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>) -> Controls
         ),
         throttle: key(KeyCode::KeyW),
         brake: key(KeyCode::KeyS),
+        reverse: keys.pressed(KeyCode::Space),
     };
     if let Some(pad) = pad {
         let l = dead(pad.left_stick(), 0.12);
@@ -156,6 +158,7 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>) -> Controls
         c.lean = (c.lean + r).clamp_length_max(1.0);
         c.throttle = c.throttle.max(trigger(B::RightTrigger2));
         c.brake = c.brake.max(trigger(B::LeftTrigger2));
+        c.reverse |= pad.pressed(B::South);
     }
     c
 }
