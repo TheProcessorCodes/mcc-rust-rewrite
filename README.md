@@ -45,7 +45,8 @@ target\debug\blam.exe textures riverworld
 A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
-`sidewinder` Avalanche, `guardian` Guardian.
+`sidewinder` Avalanche, `guardian` Guardian,
+`lockout` Blackout.
 
 ## Status
 
@@ -95,6 +96,14 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       collision) puts the skater or the bike back where it last stood; the
       jump pads' and minilift's `plasma` glow is drawn. Pinned by
       `cargo test` (our own counts: there is no HaloExport reference).
+- [x] Blackout (`lockout`, DLC; built, awaiting a playtest): 21 clusters,
+      447 instances, 442 k triangles, 80 spawns (all on a floor), 19,326
+      world and 166,536 instanced collision triangles, about 4,150 rails.
+      A night sky: the sky's lit pieces get a tenth of the daylight
+      (`NIGHT_SKIES` in `world/sky.rs`), so the sea is black under white ice
+      floes, with the moon, its halo and the aurora (`plasma`) drawn.
+      Dropping off the rig (`kill_volume_bottom`, z -18.3) puts the skater
+      or the bike back. Pinned by `cargo test` (our own counts).
 - [ ] Milestone 3b: feed collision and rails to the skate world.
 - [ ] Milestone 4: Skate 3 crates plugged in.
 - [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets

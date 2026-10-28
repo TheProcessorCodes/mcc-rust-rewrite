@@ -222,6 +222,83 @@ fn guardian_counts() {
     assert!(!scene.spawns.iter().any(|s| kills[0].contains(s.position)));
 }
 
+/// Blackout (`lockout`, a DLC map: tags under `levels\dlc\lockout`) has no
+/// HaloExport reference either: our own counts, checked by looking. An oil
+/// rig at night over an icy sea; the sea, the ice floes and the moon are
+/// sky pieces, and `kill_volume_bottom` catches anyone who drops off.
+#[test]
+fn blackout_counts() {
+    let Some(path) = map("lockout") else { return };
+    let scene = blam_geometry::load_map(&path).expect("lockout decodes");
+    let c = count(&scene);
+    assert_eq!(c.clusters_placed, 21);
+    assert_eq!(c.instances_placed, 447);
+    assert_eq!(c.cluster_triangles, 22103);
+    assert_eq!(c.instance_triangles, 195893);
+    assert_eq!(c.scenery_triangles, 163040);
+    assert_eq!(c.crate_triangles, 35972);
+    assert_eq!(c.machine_triangles, 928);
+    assert_eq!(c.sky_triangles, 23956);
+    assert_eq!(scene.materials.len(), 128);
+
+    // 80 respawn points, every one standing on a collision floor of the rig
+    // (decks from z -12.6 up to -5.7).
+    assert_eq!(scene.spawns.len(), 80);
+    let col = &scene.collision;
+    for sp in &scene.spawns {
+        let p = sp.position;
+        let floor = col
+            .triangles
+            .iter()
+            .filter_map(|t| {
+                let [a, b, c] = t.points;
+                let d = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+                if d.abs() < 1e-9 {
+                    return None;
+                }
+                let u = ((p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y)) / d;
+                let v = ((b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)) / d;
+                (u >= -1e-4 && v >= -1e-4 && u + v <= 1.0001).then_some(a.z + u * (b.z - a.z) + v * (c.z - a.z))
+            })
+            .filter(|z| *z <= p.z + 0.3)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!((p.z - floor).abs() < 0.06, "spawn {sp:?} is {:.2} wu over its floor", p.z - floor);
+        assert!(p.z > -12.7 && p.z < -5.6, "{sp:?}");
+    }
+
+    // The real collision: 19,326 world and 166,536 instanced triangles.
+    let bsp = col
+        .triangles
+        .iter()
+        .filter(|t| matches!(t.source, blam_geometry::CollisionSource::Bsp(_)))
+        .count();
+    assert_eq!(bsp, 19326);
+    assert_eq!(col.triangles.len() - bsp, 166536);
+    assert_eq!(col.materials.len(), 61);
+
+    // The drop into the sea: `kill_volume_bottom` reaches up to z -18.26,
+    // under the lowest deck (-12.6) and the rig's legs (-18.0), and down past
+    // the sea (-33); no spawn is in it.
+    let kills: Vec<_> = scene.trigger_volumes.iter().filter(|v| v.kills()).collect();
+    assert_eq!(kills.len(), 1);
+    assert_eq!(kills[0].name, "kill_volume_bottom");
+    assert!(kills[0].contains(glam::Vec3::new(20.0, 0.0, -18.5)));
+    assert!(kills[0].contains(glam::Vec3::new(0.0, 0.0, -33.0)));
+    assert!(!kills[0].contains(glam::Vec3::new(0.0, 0.0, -18.0)));
+    assert!(!scene.spawns.iter().any(|s| kills[0].contains(s.position)));
+
+    // Grind rails: about 4,194 found (the finder's count moves by one or two
+    // from run to run), 47 of them in the kill volume dropped.
+    let (rails, census) = blam_geometry::rails::find_rails(col);
+    assert!((4185..=4205).contains(&census.rails), "{} rails", census.rails);
+    let found = rails.len();
+    let rails = blam_geometry::rails::outside_kill_volumes(rails, &scene.trigger_volumes);
+    assert!((40..=55).contains(&(found - rails.len())), "{} rails dropped", found - rails.len());
+    for p in rails.iter().flatten() {
+        assert!(p.x.abs() < 14.0 && p.y.abs() < 14.0 && p.z > -18.26 && p.z < 0.2, "rail point {p}");
+    }
+}
+
 #[test]
 fn campaign_map_selects_one_bsp() {
     let Some(path) = map("120_halo") else { return };
