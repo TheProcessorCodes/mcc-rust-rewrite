@@ -45,7 +45,7 @@ target\debug\blam.exe textures riverworld
 A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
-`sidewinder` Avalanche.
+`sidewinder` Avalanche, `guardian` Guardian.
 
 ## Status
 
@@ -88,6 +88,13 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 - [x] Dirt bike (built, awaiting a playtest): B rides a stick-model motocross
       bike with dual-stick physics (left stick bars, right stick rider, RT gas,
       LT brake), the Spartan standing on it (`docs/viewer.md` "Dirt bike").
+- [x] Guardian (`guardian`; built, awaiting a playtest): 26 clusters,
+      471 instances, 258 k triangles, 53 spawns (all on a floor), 14,448 world
+      and 97,940 instanced collision triangles, about 3,400 rails. Falling
+      into the abyss (the `kill_drop` kill volume, or anywhere far below the
+      collision) puts the skater or the bike back where it last stood; the
+      jump pads' and minilift's `plasma` glow is drawn. Pinned by
+      `cargo test` (our own counts: there is no HaloExport reference).
 - [ ] Milestone 3b: feed collision and rails to the skate world.
 - [ ] Milestone 4: Skate 3 crates plugged in.
 - [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets
