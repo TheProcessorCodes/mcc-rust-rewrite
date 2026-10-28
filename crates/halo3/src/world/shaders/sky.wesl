@@ -42,7 +42,8 @@ struct SkyParams {
     // x: sea level, y: Rayleigh height, z: Mie height, w: distance bias.
     heights: vec4<f32>,
     // x: max fog thickness, y: atmosphere on (1) or off (0),
-    // z: which of detail, detail2, detail3 are present (bits 0, 1, 2).
+    // z: which of detail, detail2, detail3 are present (bits 0, 1, 2),
+    // w: alpha test cutoff (0: none).
     extra: vec4<f32>,
     // Halogram edge fade: edge tint (w: 1 when on), centre tint (w: power).
     edge_tint: vec4<f32>,
@@ -181,6 +182,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let pbr_input = pbr_input_from_standard_material(in, is_front);
     let exposure = sky.mode.w;
     let a = albedo(in.uv);
+    if sky.extra.w > 0.0 && a.a < sky.extra.w {
+        discard;
+    }
     var rgb = a.rgb;
     if sky.mode.z > 0.5 {
         rgb = rgb * sky.light.rgb;
