@@ -44,6 +44,9 @@ struct SkyParams {
     // x: max fog thickness, y: atmosphere on (1) or off (0),
     // z: which of detail, detail2, detail3 are present (bits 0, 1, 2).
     extra: vec4<f32>,
+    // Halogram edge fade: edge tint (w: 1 when on), centre tint (w: power).
+    edge_tint: vec4<f32>,
+    centre_tint: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> sky: SkyParams;
@@ -182,8 +185,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if sky.mode.z > 0.5 {
         rgb = rgb * sky.light.rgb;
     }
-    if sky.illum_colour.w > 0.0 {
+    if sky.illum_colour.w > 1.5 {
+        // from_diffuse: the albedo glows; there is no illumination map.
+        rgb = rgb + a.rgb * sky.illum_colour.rgb * exposure;
+    } else if sky.illum_colour.w > 0.0 {
         rgb = rgb + tex(illum_map, sky.xform_illum, in.uv).rgb * sky.illum_colour.rgb * exposure;
+    }
+    if sky.edge_tint.w > 0.5 {
+        // Edge-on (|n.v| near 0) takes the edge tint, face-on the centre tint.
+        let v = normalize(view.world_position - in.world_position.xyz);
+        let facing = pow(saturate(abs(dot(normalize(in.world_normal), v))), sky.centre_tint.w);
+        rgb = rgb * mix(sky.edge_tint.rgb, sky.centre_tint.rgb, facing);
     }
     if sky.extra.y > 0.5 {
         let s = scatter(to_halo(view.world_position), to_halo(in.world_position.xyz));
