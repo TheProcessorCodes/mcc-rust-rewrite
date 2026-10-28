@@ -66,8 +66,12 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       still BC-compressed, about 1 s of extra load time. Checked by
       `cargo test` against `docs/format/bitmap.md` and `shaders.md`.
 - [x] The four-layer terrain blend (blend map, base x detail per layer, lightmapped).
+- [x] Water: animated waves from the shader's own slope arrays, sky
+      reflection, depth-based murk and shore fade, foam, flowing waterfalls;
+      the skater sinks in deep water and comes back at the last dry spot
+      (`docs/format/water.md`).
 - [ ] Real shaders: detail maps on ordinary shaders, normal maps,
-      water, self-illumination.
+      self-illumination.
 - [x] Milestone 3a: the game's real collision BSP decoded (the handoff's
       "known gap"): Valhalla gives 30,560 world and 39,678 instanced collision
       triangles with invisible walls, slip and two-sided surfaces flagged.
