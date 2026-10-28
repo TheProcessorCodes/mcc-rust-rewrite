@@ -308,6 +308,24 @@ mod tests {
         assert_eq!(of(1), [Some(1), Some(4)]);
     }
 
+    /// `docs/format/lod.md` 1: 010_jungle BSP 050's instance fade sizes.
+    #[test]
+    fn jungle_instance_fade_pixels() {
+        let Some(cache) = map("010_jungle") else { return };
+        let mut scene = Scene::default();
+        let options = crate::Options {
+            bsps: Some(vec![9]),
+            objects: false,
+            collision: false,
+            verbose: false,
+        };
+        crate::decode_into(&cache, &options, &mut scene).unwrap();
+        let count = |f: [u16; 2]| scene.placements.iter().filter(|p| p.fade_pixels == f).count();
+        assert_eq!(count([25, 18]), 35);
+        assert_eq!(count([8, 4]), 20);
+        assert!(scene.placements.iter().all(|p| p.fade_pixels[0] >= p.fade_pixels[1]));
+    }
+
     #[test]
     fn jungle_start_faces_its_yaw() {
         let Some(cache) = map("010_jungle") else { return };

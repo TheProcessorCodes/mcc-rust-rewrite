@@ -138,6 +138,10 @@ pub struct Placement {
     pub sky: Option<u32>,
     /// For [`Kind::Cluster`]: the cluster's index in its BSP.
     pub cluster: Option<u32>,
+    /// For [`Kind::Instance`]: the instance fades out as it shrinks on
+    /// screen from the first to the second size, in pixels (sbsp instance
+    /// `+0x6C`; `docs/format/lod.md`). Zero: never.
+    pub fade_pixels: [u16; 2],
 }
 
 /// Where a collision triangle came from.

@@ -96,6 +96,10 @@ pub struct Cull {
     /// The radius of its largest placement, render metres: the chunk is
     /// dropped when even that is too small to see. Infinite: never.
     pub detail: f32,
+    /// The instances' own fade-out size: dropped when the largest is
+    /// smaller on screen than this many pixels across (sbsp instance
+    /// `+0x6E`, `docs/format/lod.md`). Zero: only the size rule.
+    pub fade_pixels: f32,
 }
 
 pub struct BuiltChunk {
@@ -125,6 +129,8 @@ struct ChunkKey {
     cluster: Option<u16>,
     cell: [i32; 3],
     class: u8,
+    /// The instances' fade-out size in pixels (0: none).
+    fade: u16,
 }
 
 #[derive(Default)]
@@ -310,6 +316,7 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
             if shading == Shading::Invisible || hidden || part.indices.is_empty() {
                 continue;
             }
+            let fade = placement.fade_pixels[1];
             let key_at = |cell: [i32; 3], cluster: Option<u16>, class: u8| ChunkKey {
                 lit,
                 material: part.material,
@@ -317,6 +324,7 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
                 cluster,
                 cell,
                 class,
+                fade,
             };
             // Re-index this part's vertices into each chunk, winding
             // mirrored placements the other way round.
@@ -449,6 +457,7 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
                 bsp,
                 clusters,
                 detail: batch.detail,
+                fade_pixels: key.fade as f32,
             },
         });
     }

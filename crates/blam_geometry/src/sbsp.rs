@@ -225,6 +225,7 @@ pub fn decode(
             bsps: 1 << bsp.index,
             sky: None,
             cluster: Some(c as u32),
+            fade_pixels: [0; 2],
         });
         stats.cluster_placements += 1;
     }
@@ -238,6 +239,7 @@ pub fn decode(
         let section = r.at(o + 0x34).i16()?;
         let texcoord_block = r.at(o + 0x38).i16()?;
         let name = r.at(o + 0x54).string_id()?;
+        let fade_pixels = [r.at(o + 0x6C).u16()?, r.at(o + 0x6E).u16()?];
         let Some(mesh) = usize::try_from(section)
             .ok()
             .and_then(|s| mesh_of_section.get(s).copied().flatten())
@@ -269,6 +271,7 @@ pub fn decode(
             bsps: 1 << bsp.index,
             sky: None,
             cluster: None,
+            fade_pixels,
         });
         stats.instance_placements += 1;
     }

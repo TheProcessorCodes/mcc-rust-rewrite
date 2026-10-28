@@ -951,6 +951,7 @@ pub fn test_scene() -> Scene {
             bsps: 0,
             sky: None,
             cluster: None,
+            fade_pixels: [0; 2],
         }],
         bounds: Some((Vec3::new(-20.0, -20.0, 0.0), Vec3::new(20.0, 20.0, 3.0))),
         collision: Default::default(),
@@ -974,6 +975,7 @@ pub fn test_scene() -> Scene {
             bsps: 0,
             sky: None,
             cluster: None,
+            fade_pixels: [0; 2],
         });
     }
     scene

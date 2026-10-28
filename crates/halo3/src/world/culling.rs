@@ -11,7 +11,9 @@
 //!   outside the level) sees all of that BSP.
 //! - **Size**: a chunk of instances or objects whose largest placement
 //!   would cover less than [`MIN_PIXELS`] on screen at the chunk's nearest
-//!   point is hidden. Clusters and the sky are never dropped this way.
+//!   point is hidden, and a chunk of instances whose BSP gives them a
+//!   fade-out size (`docs/format/lod.md`) once smaller than that. Clusters
+//!   and the sky are never dropped this way.
 //!
 //! `HALO3_PORTALS=0` and `HALO3_MIN_PIXELS=0` turn the last two off, for
 //! comparisons.
@@ -250,14 +252,15 @@ fn apply_culling(
                 shown = false;
             }
             if shown
-                && min_px > 0.0
                 && cull.detail.is_finite()
                 && let (Some(eye), Some(aabb)) = (eye, aabb)
             {
                 let centre = Vec3::from(aabb.center);
                 let half = Vec3::from(aabb.half_extents);
                 let d = ((eye - centre).abs() - half).max(Vec3::ZERO).length();
-                if cull.detail * pixels < min_px * d {
+                // The largest placement's radius and diameter on screen.
+                let radius_px = cull.detail * pixels;
+                if (min_px > 0.0 && radius_px < min_px * d) || 2.0 * radius_px < cull.fade_pixels * d {
                     shown = false;
                 }
             }
