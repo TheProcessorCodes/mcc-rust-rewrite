@@ -105,6 +105,89 @@ pub fn scene_mean_irradiance(scene: &Scene, lightmaps: &[Option<LightmapTextures
     (n > 0).then(|| sum / n as f32)
 }
 
+/// The camera fx's auto-exposure range (`+0x10`, `+0x14`), set once.
+static AUTO_RANGE: std::sync::OnceLock<[f32; 2]> = std::sync::OnceLock::new();
+
+/// Records the map's auto-exposure range in stops (`camera_fx`).
+pub fn set_auto_range(range: [f32; 2]) {
+    if range.iter().all(|r| r.is_finite()) {
+        let _ = AUTO_RANGE.set(range);
+    }
+}
+
+/// The most the auto exposure brightens a dark place, in stops: the width
+/// of the camera fx's auto range (Valhalla 0..3; 120_halo 0..2), at most
+/// [`AUTO_MAX_STOPS`].
+fn auto_max_stops() -> f32 {
+    AUTO_RANGE.get().map_or(2.0, |r| (r[1] - r[0]).max(0.0)).min(AUTO_MAX_STOPS)
+}
+
+/// Cap on [`auto_max_stops`].
+pub const AUTO_MAX_STOPS: f32 = 3.0;
+
+/// How much of a place's darkness against the map's mean the auto exposure
+/// takes back (the rest stays: dark places should still look darker).
+pub const AUTO_STRENGTH: f32 = 0.6;
+
+/// A stand-in for Halo's auto exposure: in a place darker than the map's
+/// mean lit surface, the whole picture is brightened by up to the camera
+/// fx's auto range (through bevy's colour grading, so the world, the sky,
+/// the haze and the rider move together). The place's light is the lit
+/// surface nearest the camera (`SurfaceLights`, ground first), averaged
+/// over six directions. Adapts over about a second; snaps when the camera
+/// jumps. Never darkens: [`exposure`] already holds the bright maps back.
+/// `HALO3_AUTO_EXPOSURE=0` turns it off.
+pub fn auto_exposure(
+    mut commands: Commands,
+    time: Res<Time>,
+    lights: Option<Res<SceneLights>>,
+    loaded: Option<Res<super::zones::LoadedBsps>>,
+    mut cameras: Query<(Entity, &GlobalTransform, Option<&mut bevy::render::view::ColorGrading>), With<crate::fly_camera::FlyCamera>>,
+    mut state: Local<Option<(f32, Vec3)>>,
+) {
+    static OFF: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("HALO3_AUTO_EXPOSURE").is_ok_and(|v| v == "0"));
+    let (Some(lights), Some(mean)) = (lights, SCENE_MEAN.get()) else {
+        return;
+    };
+    if *OFF || lights.0.is_empty() {
+        return;
+    }
+    let Ok((entity, transform, grading)) = cameras.single_mut() else {
+        return;
+    };
+    let eye = super::to_halo(transform.translation());
+    let mask = loaded.map_or(0, |l| l.shown);
+    let light = lights.0.near_in(eye, mask);
+    let w = Vec3::new(0.212656, 0.715158, 0.0721856);
+    let local = [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z]
+        .iter()
+        .map(|n| light.irradiance(*n).max(Vec3::ZERO).dot(w))
+        .sum::<f32>()
+        / 6.0;
+    let target = ((mean / local.max(1e-4)).log2() * AUTO_STRENGTH).clamp(0.0, auto_max_stops());
+    let stops = match *state {
+        Some((s, at)) if at.distance(eye) < 20.0 => s + (target - s) * (1.0 - (-time.delta_secs() / 0.7).exp()),
+        _ => target,
+    };
+    if state.is_none_or(|(s, _)| (s * 4.0).round() != (stops * 4.0).round()) {
+        debug!("auto exposure: local light {local:.3} against mean {mean:.3}: +{stops:.2} stops");
+    }
+    *state = Some((stops, eye));
+    match grading {
+        Some(mut g) => {
+            if (g.global.exposure - stops).abs() > 1e-3 {
+                g.global.exposure = stops;
+            }
+        }
+        None => {
+            let mut g = bevy::render::view::ColorGrading::default();
+            g.global.exposure = stops;
+            commands.entity(entity).insert(g);
+        }
+    }
+}
+
 /// The scale from Halo's light to bevy's tonemapper input:
 /// `HALO3_EXPOSURE` when set, else `EXPOSURE * 2^(slope * (stops -
 /// VALHALLA_STOPS))` from the map's camera fx (else [`EXPOSURE`]), held so
@@ -306,7 +389,8 @@ pub struct LightingPlugin;
 impl Plugin for LightingPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/lightmap.wesl");
-        app.add_plugins(MaterialPlugin::<HaloMaterial>::default());
+        app.add_plugins(MaterialPlugin::<HaloMaterial>::default())
+            .add_systems(Update, auto_exposure);
     }
 }
 

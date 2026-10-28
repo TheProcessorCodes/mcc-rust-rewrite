@@ -104,10 +104,12 @@ fn main() -> anyhow::Result<()> {
             match blam_geometry::camera_fx::read(&cache) {
                 Ok(Some(fx)) => {
                     world::lighting::set_map_exposure(fx.exposure);
+                    world::lighting::set_auto_range(fx.auto_range);
                     eprintln!(
-                        "camera fx {}: exposure {:.2} stops, mean irradiance {:.3} -> x{:.2}",
+                        "camera fx {}: exposure {:.2} stops (auto range {:?}), mean irradiance {:.3} -> x{:.2}",
                         fx.tag,
                         fx.exposure,
+                        fx.auto_range,
                         mean.unwrap_or(0.0),
                         world::lighting::exposure()
                     );

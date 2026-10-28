@@ -19,7 +19,8 @@ pub struct CameraFx {
     /// light. -4.84 on Valhalla; more negative on brighter-lit maps.
     pub exposure: f32,
     /// `+0x10`, `+0x14`: probably the auto-exposure range in stops around
-    /// it (Valhalla 0 and 3). Not used.
+    /// it (Valhalla 0 and 3). The viewer brightens dark places by up to its
+    /// width.
     pub auto_range: [f32; 2],
 }
 
