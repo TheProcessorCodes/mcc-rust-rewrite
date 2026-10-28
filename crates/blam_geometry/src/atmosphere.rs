@@ -160,6 +160,27 @@ mod tests {
     }
 
     #[test]
+    fn halo_atmosphere_settings() {
+        // 120_halo's clusters pick these by index (`zone-sets.md` 3).
+        let Some(cache) = open("120_halo") else { return };
+        let a = read(&cache).unwrap().unwrap();
+        let names: Vec<&str> = a.settings.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "haze_used_for_halo_zig_sky",
+                "snow_light",
+                "snow_heavy",
+                "haze",
+                "interior",
+                "trench",
+                "zigg_activated",
+                "space"
+            ]
+        );
+    }
+
+    #[test]
     fn riverworld_atmosphere() {
         let Some(cache) = open("riverworld") else { return };
         let a = read(&cache).unwrap().unwrap();

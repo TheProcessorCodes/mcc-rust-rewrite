@@ -6,7 +6,7 @@
 //! [`LoadedBsps`] says which are loaded. [`load_zone_set`] and [`load_bsps`]
 //! are the whole API: change the resource and [`apply_visibility`] follows,
 //! the skate world rebuilds from the loaded BSPs' collision (`skate.rs`),
-//! and the sky follows the camera's cluster ([`follow_sky`]).
+//! and the sky and haze follow the camera's cluster ([`follow_cluster`]).
 //!
 //! Keys: PageDown / PageUp step to the next / previous zone set, Home loads
 //! every BSP at once. `docs/format/zone-sets.md` has the tag layout.
@@ -16,6 +16,7 @@ use bevy::prelude::*;
 use blam_geometry::{Kind, Scene};
 
 use super::CollisionOverlay;
+use super::sky::CameraAir;
 use crate::fly_camera::FlyCamera;
 
 /// Which BSPs (bit `n`: BSP `n`) a batch belongs to, and for a sky batch
@@ -85,7 +86,11 @@ pub struct LoadedBsps {
 
 impl LoadedBsps {
     pub fn shows(&self, m: &BspMember) -> bool {
-        (m.bsps == 0 || m.bsps & self.mask != 0) && (m.sky.is_none() || m.sky == self.sky)
+        // `HALO3_SKY=0` hides the sky, for telling sky pieces from the world.
+        static SKY_OFF: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| std::env::var("HALO3_SKY").is_ok_and(|v| v == "0"));
+        (m.bsps == 0 || m.bsps & self.mask != 0)
+            && (m.sky.is_none() || (m.sky == self.sky && !*SKY_OFF))
     }
 }
 
@@ -166,7 +171,7 @@ impl Plugin for ZonesPlugin {
         app.init_resource::<Zones>()
             .init_resource::<LoadedBsps>()
             .init_resource::<ShowCollision>()
-            .add_systems(Update, (zone_keys, follow_sky, apply_visibility).chain());
+            .add_systems(Update, (zone_keys, follow_cluster, apply_visibility).chain());
     }
 }
 
@@ -183,24 +188,41 @@ fn zone_keys(keys: Res<ButtonInput<KeyCode>>, zones: Res<Zones>, mut loaded: Res
     }
 }
 
-/// Halo picks the sky by the cluster the camera is in; indoors (no sky)
-/// the last one stays.
-fn follow_sky(
+/// Halo picks the sky and the air by the cluster the camera is in. Indoors
+/// (no sky) the last sky stays. Outside every cluster box, or in a cluster
+/// naming no air, the air most loaded clusters name.
+fn follow_cluster(
     zones: Res<Zones>,
     mut loaded: ResMut<LoadedBsps>,
+    mut air: ResMut<CameraAir>,
     cameras: Query<&GlobalTransform, With<FlyCamera>>,
+    mut main_air: Local<Option<(u32, Option<u32>)>>,
 ) {
-    if zones.skies.len() < 2 {
-        return;
-    }
     let Ok(camera) = cameras.single() else {
         return;
     };
+    let main = match *main_air {
+        Some((mask, a)) if mask == loaded.mask => a,
+        _ => {
+            let a = zones.layout.main_atmosphere(loaded.mask);
+            *main_air = Some((loaded.mask, a));
+            a
+        }
+    };
     let at = super::to_halo(camera.translation());
-    let Some(sky) = zones.layout.sky_at(at, loaded.mask) else {
+    let cluster = zones.layout.cluster_at(at, loaded.mask);
+    let want = cluster.and_then(|c| c.atmosphere).or(main);
+    if air.0 != want {
+        air.0 = want;
+    }
+    let Some(cluster) = cluster else {
         return;
     };
-    if loaded.sky != Some(sky) && zones.skies.iter().any(|(s, _)| *s == sky) {
+    if let Some(sky) = cluster.sky
+        && loaded.sky != Some(sky)
+        && zones.skies.len() > 1
+        && zones.skies.iter().any(|(s, _)| *s == sky)
+    {
         loaded.sky = Some(sky);
         info!("sky {sky}");
     }

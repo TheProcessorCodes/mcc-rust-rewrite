@@ -249,12 +249,14 @@ pub fn default_light() -> ShLight {
 #[derive(Resource)]
 pub struct SceneLights(pub SurfaceLights);
 
+/// A lit surface point: position, light, and its cluster's BSP mask.
+type Sample = (Vec3, ShLight, u32);
+
 /// Lighting sampled at every per-pixel lit cluster vertex, in a grid, for
 /// lighting objects by the nearest lit surface.
 pub struct SurfaceLights {
     cell: f32,
-    /// Position, light and the BSP mask of the cluster it was sampled on.
-    grid: HashMap<(i32, i32, i32), Vec<(Vec3, ShLight, u32)>>,
+    grid: HashMap<(i32, i32, i32), Vec<Sample>>,
     /// The mean over all samples, for things far from any.
     mean: ShLight,
 }
@@ -262,7 +264,7 @@ pub struct SurfaceLights {
 impl SurfaceLights {
     pub fn build(scene: &Scene, atlases: &[Option<Atlas<'_>>]) -> SurfaceLights {
         let cell = 8.0;
-        let mut grid: HashMap<(i32, i32, i32), Vec<(Vec3, ShLight, u32)>> = HashMap::new();
+        let mut grid: HashMap<(i32, i32, i32), Vec<Sample>> = HashMap::new();
         let mut sum = ShLight::default();
         let mut n = 0usize;
         for p in scene.placements.iter().filter(|p| p.kind == Kind::Cluster) {

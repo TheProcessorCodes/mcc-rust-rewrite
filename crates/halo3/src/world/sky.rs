@@ -81,6 +81,9 @@ pub struct SkyLook {
     pub blend: Blend,
     /// Lit by the sky light (`material_model` other than none).
     pub lit: bool,
+    /// The shader's `diffuse_coefficient` (1 when absent): scales the light
+    /// on lit surfaces (120_halo's ring plates use 0.3).
+    pub diffuse: f32,
 }
 
 /// Everything the sky needs, worked out before the window opens.
@@ -100,10 +103,17 @@ pub struct PendingSky(pub Option<SkyData>);
 #[derive(Component, Clone, Copy)]
 pub struct SkyBatch(pub u32);
 
+/// The atmosphere setting of the cluster the camera is in (`zones.rs`
+/// keeps it up to date); `None`: the map's default world setting.
+#[derive(Resource, Default)]
+pub struct CameraAir(pub Option<u32>);
+
 /// The world's haze for the camera (`None`: no atmosphere tag).
 #[derive(Resource, Default)]
 struct WorldHaze {
     setting: Option<AtmosphereSetting>,
+    /// Every setting of the atmosphere tag, for clusters that name one.
+    settings: Vec<AtmosphereSetting>,
     /// The sky's setting, for the clear colour.
     sky: Option<AtmosphereSetting>,
     exposure: f32,
@@ -144,6 +154,7 @@ fn look_of(s: &Shader) -> SkyLook {
         illum,
         blend: s.blend,
         lit: s.option("material_model").is_none_or(|m| m != "none"),
+        diffuse: s.param("diffuse_coefficient").map_or(1.0, |v| v[0]),
     }
 }
 
@@ -294,7 +305,8 @@ impl Plugin for SkyPlugin {
         app.add_plugins(MaterialPlugin::<SkyMaterial>::default())
             .init_resource::<PendingSky>()
             .init_resource::<WorldHaze>()
-            .add_systems(Update, (swap_sky_materials, add_haze, update_haze).chain());
+            .init_resource::<CameraAir>()
+            .add_systems(Update, (swap_sky_materials, update_sky_air, add_haze, update_haze).chain());
     }
 }
 
@@ -331,6 +343,7 @@ fn swap_sky_materials(
     let atmosphere = data.atmosphere.as_ref();
     haze.setting = atmosphere.and_then(Atmosphere::world).cloned();
     haze.sky = atmosphere.and_then(Atmosphere::sky).cloned();
+    haze.settings = atmosphere.map(|a| a.settings.clone()).unwrap_or_default();
     haze.exposure = exposure;
     haze.density = std::env::var("HALO3_HAZE")
         .ok()
@@ -389,7 +402,7 @@ fn swap_sky_materials(
                 look.lit as u32 as f32,
                 exposure,
             ),
-            light: light.extend(0.0),
+            light: (light * look.diffuse).extend(0.0),
             base: image(maps[0].as_ref()),
             detail: image(maps[1].as_ref()),
             detail2: image(maps[2].as_ref()),
@@ -420,6 +433,36 @@ fn swap_sky_materials(
         swapped += 1;
     }
     info!("sky: {swapped} batches drawn with their atmosphere");
+}
+
+/// The setting the sky is seen through: the camera's cluster's when it names
+/// one (campaign maps: 120_halo's Warthog run has thin air, its snowfields
+/// thick), else the map's sky setting (`sky-and-atmosphere.md` 3.3).
+fn sky_setting<'a>(haze: &'a WorldHaze, air: &CameraAir) -> Option<&'a AtmosphereSetting> {
+    air.0
+        .and_then(|i| haze.settings.get(i as usize))
+        .or(haze.sky.as_ref())
+}
+
+/// Re-aims the sky's scattering when the camera moves into other air.
+fn update_sky_air(
+    air: Res<CameraAir>,
+    haze: Res<WorldHaze>,
+    batches: Query<&MeshMaterial3d<SkyMaterial>>,
+    added: Query<(), Added<MeshMaterial3d<SkyMaterial>>>,
+    mut materials: ResMut<Assets<SkyMaterial>>,
+) {
+    if !air.is_changed() && added.is_empty() {
+        return;
+    }
+    let setting = sky_setting(&haze, &air);
+    for handle in &batches {
+        if let Some(mut m) = materials.get_mut(handle) {
+            let detail_bits = m.extension.extra.z;
+            set_atmosphere(&mut m.extension, setting);
+            m.extension.extra.z = detail_bits;
+        }
+    }
 }
 
 /// Gives the camera its haze once the world is up.
@@ -468,15 +511,18 @@ pub fn haze_at(a: &AtmosphereSetting, z: f32, exposure: f32) -> (Vec3, Vec3) {
 
 fn update_haze(
     haze: Res<WorldHaze>,
+    air: Res<CameraAir>,
     mut clear: ResMut<ClearColor>,
     mut cameras: Query<(&GlobalTransform, &mut DistanceFog)>,
 ) {
-    let Some(a) = &haze.setting else {
+    let Some(default) = &haze.setting else {
         return;
     };
+    // Campaign clusters name their own setting (`zone-sets.md` 3).
+    let a = air.0.and_then(|i| haze.settings.get(i as usize)).unwrap_or(default);
     for (transform, mut fog) in &mut cameras {
         let z = super::to_halo(transform.translation()).z;
-        if let Some(sky) = &haze.sky {
+        if let Some(sky) = sky_setting(&haze, &air) {
             // Where no sky geometry covers the view (below the dome's rim),
             // the colour of a long level ray through the sky's air.
             let (extinction, colour) = haze_at(sky, z, haze.exposure);

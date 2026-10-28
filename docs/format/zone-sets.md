@@ -77,11 +77,18 @@ first starting location, which is zone set 0 on every map checked.
 `FLT_MAX` in all six when the cluster has none), `0x18` **i8 sky index** into the scenario's sky
 block, -1 indoors. Every non-negative value seen is a sky whose mask includes that BSP (120_halo:
 000's clusters say 0 or 1, 020 and 050 say 0, 060/100/110/120 say 3, the interiors -1).
-riverworld: only its big outdoor cluster says 0. `0x19` is another small index (0-6 on 120_halo,
--1 on riverworld; atmosphere or camera fx? not used).
+riverworld: only its big outdoor cluster says 0. `0x19` **i8 atmosphere index** into the `skya`
+tag's settings (`sky-and-atmosphere.md` 3), -1 = none (every riverworld cluster). 120_halo has
+eight settings (`haze_used_for_halo_zig_sky`, `snow_light`, `snow_heavy`, `haze`, `interior`,
+`trench`, `zigg_activated`, `space`) and its clusters use 0-6: the crash site 1 (`snow_light`) or
+6, 020 0, 030 2 (`snow_heavy`), 050 3 (`haze`: zero density), 040 and 070 5 (`trench`), and the
+Warthog run (100/110/120) 4 (`interior`: thin Rayleigh-only air). The reading is an inference from
+the counts and the names matching the places, not proven byte-for-byte against the game.
 
-Viewer rule: the sky of the smallest loaded cluster around the camera; indoors (or outside every
-cluster box) the last one stays; at load time the sky most loaded clusters name.
+Viewer rule: the sky and the haze of the smallest loaded cluster around the camera; indoors (no
+sky) the last sky stays, outside every cluster box both stay; at load time the sky most loaded
+clusters name, and the old rule's world setting (`sky-and-atmosphere.md` 3.3) until the camera
+is in a cluster that names one.
 
 ## 4. Player starting location, 24 bytes
 
@@ -112,11 +119,18 @@ points (`Scene::spawns`).
 | `0x18` | 3 x f32 | up (0, 0, 1) |
 | `0x24` | 3 x f32 | position: a corner of the box, wu |
 | `0x30` | 3 x f32 | extents along forward, left, up, wu |
-| `0x3C` | f32 | unknown (21.9 on the first; z sink?) |
+| `0x3C` | f32 | bounding radius: half the box diagonal (21.9 for extents 3.95, 34.2, 27.1; checked on several) |
 | `0x40` | i16 | -1 |
 | `0x42` | i16 | 16 or 17 (flags?) |
 
-Which corner and which side the extents go is a reading of the numbers, not proven.
+Read as: the box spans `position + a*forward + b*(up x forward) + c*up` for `0 <= (a, b, c) <=
+extents`; the radius at `0x3C` being half the diagonal supports a corner origin. Not yet checked
+against the game's own containment test.
+
+**Kill volumes.** 120_halo has about 30 volumes named `kill`, `kill_100_01` ... `kill_120_05`,
+`ziggurat_kill_player01`: big boxes under the Warthog run and the crash site. The rail finder
+(`rails::outside_kill_volumes`) cuts rails inside them: on the Warthog run zone sets that drops
+31,500 rails to 6,600 (most were ledges of the structure far under the track).
 
 **Zone-set switch trigger volume, 8 bytes** (four i16):
 
@@ -145,5 +159,5 @@ the start) = no BSP: the viewer shows those whatever is loaded.
 ## 7. Not decoded
 
 The zone set PVS (`0x40`), the `0x4C` block, the rest of the zone set element, the BSP zones'
-second mask, the per-cluster `0x19` byte, the `zone` resource gestalt's own per-zone-set resource
+second mask, the `zone` resource gestalt's own per-zone-set resource
 lists (which resources a zone set needs: everything is read from the map regardless).

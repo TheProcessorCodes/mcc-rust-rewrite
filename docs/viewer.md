@@ -24,14 +24,61 @@ the camera without any map decoding.
 | Escape | give the cursor back |
 | P | print the camera's position in Halo units to the console |
 | V | show or hide the game's real collision: green shell for surfaces, red for invisible walls |
+| J | skate / fly (`crates/halo3/src/skate.rs`) |
+| PageDown / PageUp | next / previous zone set (campaign maps) |
+| Home | load every BSP at once |
 | gamepad left stick | move |
 | gamepad right stick | look |
 | gamepad right / left trigger | up / down |
 | gamepad A | fast |
 
 Normal speed is 25 m/s. The camera starts at the map's first respawn point, at
-Spartan eye height, facing the way the marker faces; a map without respawn
-points starts above the middle of its world.
+Spartan eye height, facing the way the marker faces. Campaign maps have no
+respawn points: they start at the scenario's first player starting location
+(`docs/format/zone-sets.md` 4). A map with neither starts above the middle of
+its world.
+
+## Zone sets (campaign maps)
+
+A campaign map is several structure BSPs, and the game loads a few at a time:
+a **zone set** (`docs/format/zone-sets.md`). 120_halo has 11 BSPs and 8 zone
+sets; the Warthog run is zone sets 4-7 (`120_04_100_110`, `120_100_110`,
+`120_110_120`, `120_120_130`). Some BSPs are two versions of one place
+(120_halo's `010` and `070`) and overlap if loaded together.
+
+The viewer decodes and uploads every BSP at start (120_halo: about 1 s to
+decode, 2.9 M triangles, 240 MiB of textures) and shows only the loaded zone
+set; switching is instant. Each BSP keeps its own lightmap. What is loaded:
+
+```
+& "target\debug\halo3.exe" 120_halo                 # the zone set the start is in (zone set 0)
+& "target\debug\halo3.exe" 120_halo --zone 6        # by index ...
+& "target\debug\halo3.exe" 120_halo --zone 120_110_120   # ... or by name
+& "target\debug\halo3.exe" 120_halo --bsps 7,8,9    # any BSPs (indices in the scenario)
+& "target\debug\halo3.exe" 120_halo --all-bsps      # everything (overlaps)
+```
+
+The console prints the zone sets and BSPs at start. Objects follow their
+origin BSP (objects with none always show); a sky shows only while it is the
+sky of the camera's cluster, so 120_halo switches from the snowfield sky to the
+Warthog run's ring sky (`sky_03`) as you cross over. The haze follows the
+camera's cluster too: each cluster names one of the atmosphere tag's settings
+(thick snow, the thin air of the run, none indoors), used for the world fog,
+the sky's scattering and the clear colour; outside every cluster the setting
+most loaded clusters name.
+
+Skating uses the collision of the loaded BSPs only. Changing zone set stops the
+ride and rebuilds the skate world in the background (title bar: "skate:
+loading the new zone set"); J works again when it is ready. Rails inside the
+scenario's kill volumes are dropped. 120_halo's Warthog run (zone set 6): the
+skate world is ready about 15 s after start (520 k triangles, 6,300 rails found
+in 4.6 s, the skater's own data 6 s). Rails over all 11 BSPs would take 16 s
+and give 58,600, most of them ledges under the run the player never reaches.
+
+`world/zones.rs` is the API a streaming step can drive: `LoadedBsps` (mask,
+zone set, sky), `load_zone_set`, `load_bsps`; the scene keeps the trigger
+volumes and zone-set switch volumes (`Scene::zone_switches`) for that.
+`HALO3_SKY=0` hides the sky, for telling sky pieces from the world.
 
 ## Frame and units
 
@@ -159,6 +206,9 @@ The log says how each placement was lit, e.g. Valhalla:
   distance haze needs no change there.
 - **Clear colour**: a long level ray through the sky's air at the camera's height, for the
   places below the dome's rim with no sky geometry (only seen out of bounds).
+- **Campaign clusters** name their own setting (see "Zone sets" above); when the camera is in
+  one, that setting replaces both the level and the sky setting. Lit sky surfaces are scaled by
+  their shader's `diffuse_coefficient` (120_halo's ring plates: 0.3).
 - `HALO3_HAZE` scales the world haze's density (`0` turns it off) for comparisons.
 
 Not done: the world haze uses one density for the whole ray (the eye's), so looking down from a

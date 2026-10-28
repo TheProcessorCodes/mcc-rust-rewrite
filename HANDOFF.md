@@ -14,7 +14,7 @@ so the user can **skate (Skate 3 physics) on real Halo 3 maps**.
 | 1 | get custom code into Halo 3, via a rewrite or a custom launcher | done as a rewrite: our code reads the real maps |
 | 2 | noclip: fly around the maps | built (`halo3.exe`), awaiting the user's first playtest |
 | 3 | skate on multiplayer maps | next: collision and rails are ready, the skate crates are not linked yet |
-| 4 | skate on campaign maps | campaign BSPs already decode; needs BSP switching and spawns |
+| 4 | skate on campaign maps | 120_halo built (zone sets, start location, per-cluster sky and haze, skating per zone set), awaiting a playtest; other campaign maps not checked |
 | later | dirt bike game (MX vs ATV Reflex) in the mix | not before skating works |
 
 ## The decision (made 2026-10-27)
@@ -83,10 +83,15 @@ target\debug\blam.exe geometry riverworld --obj out\riverworld.obj
    The user's converted Skate 3 data is at `D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\assets`.
 4. **Spawns** are done for multiplayer: every `objects\multi\spawning\respawn_point*` and
    `initial_spawn_point` placement is a `Scene::spawns` entry (position, yaw, kind); Valhalla
-   has 107, The Pit a similar number. The viewer starts at the first one. Campaign player
-   starting locations in `scnr` are not read (Reclaimer never reads them; see
-   `docs/format/scenario-and-tag-reading.md` section 6), so campaign maps start above the
-   middle of the world.
+   has 107, The Pit a similar number. The viewer starts at the first one. Campaign maps
+   start at the scenario's player starting location, found by our own probes
+   (`docs/format/zone-sets.md`, which also has zone sets, per-cluster sky and atmosphere,
+   trigger volumes and zone-set switch volumes).
+5. **Campaign (goal 4), 2026-10-28: 120_halo.** Zone sets switch with PageUp / PageDown or
+   `--zone`; every BSP is on the GPU, only the loaded ones show; skating rebuilds per zone set.
+   Next: zone-set streaming driven by the switch volumes (`Scene::zone_switches`), culling,
+   the other campaign maps (010_jungle's BSP 11 still fails with "segment has no page"), and
+   the black lower half of 120_halo's sky domes seen from above the playable space.
 
 ## Open questions and known gaps
 

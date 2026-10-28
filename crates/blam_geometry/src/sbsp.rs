@@ -172,15 +172,17 @@ pub fn decode(
     let mut cluster_info = Vec::new();
     for (c, o) in clusters.elements(280).enumerate() {
         stats.clusters += 1;
-        // Bounds (x, y, z ranges; FLT_MAX when unset) and the sky index at
-        // +0x18 (`zone-sets.md` 3).
+        // Bounds (x, y, z ranges; FLT_MAX when unset), the sky index at
+        // +0x18 and the atmosphere index at +0x19 (`zone-sets.md` 3).
         let mut r = cache.reader_at(o);
         let (x, y, z) = (r.f32x2()?, r.f32x2()?, r.f32x2()?);
-        let sky = r.at(o + 0x18).i8()?;
+        let mut r = r.at(o + 0x18);
+        let (sky, atmosphere) = (r.i8()?, r.i8()?);
         cluster_info.push(ClusterInfo {
             bounds: (x[0] <= x[1] && x[1] < 1e30)
                 .then(|| (Vec3::new(x[0], y[0], z[0]), Vec3::new(x[1], y[1], z[1]))),
             sky: u32::try_from(sky).ok(),
+            atmosphere: u32::try_from(atmosphere).ok(),
         });
         let section = cache.reader_at(o + 216).i16()?;
         let Some(mesh) = usize::try_from(section)

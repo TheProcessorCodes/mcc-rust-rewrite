@@ -79,4 +79,8 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       to the skater in `docs/rider.md`.
 - [ ] Milestone 3b: feed collision and rails to the skate world.
 - [ ] Milestone 4: Skate 3 crates plugged in.
-- [ ] Milestone 5: campaign BSPs and BSP switching.
+- [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets
+      (PageUp / PageDown, `--zone`), the player starting location, sky and
+      haze per cluster, skating on the loaded zone set with kill-volume rails
+      dropped. Other campaign maps load the same way but are not checked yet
+      (`docs/viewer.md` "Zone sets", `docs/format/zone-sets.md`).
