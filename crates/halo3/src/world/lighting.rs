@@ -564,14 +564,9 @@ impl SurfaceLights {
         self.grid.is_empty()
     }
 
-    /// The lighting of the lit surface vertex nearest `p` (Halo units),
-    /// searching a few cells out; the map's mean light past that.
-    pub fn near(&self, p: Vec3) -> ShLight {
-        self.near_in(p, 0)
-    }
-
-    /// [`near`](Self::near) over the surfaces of the BSPs in `mask` only
-    /// (zero: any), so an object is lit by its own BSP where BSPs overlap
+    /// The lighting of the lit surface nearest `p` (Halo units), searching
+    /// a few cells out (the map's mean light past that), over the surfaces
+    /// of the BSPs in `mask` only (zero: any), so an object is lit by its own BSP where BSPs overlap
     /// (campaign maps swap versions of one space between zone sets).
     /// Surfaces under `p` facing up count as nearer than walls and
     /// ceilings: an object stands on the ground it is lit like.
