@@ -1,7 +1,7 @@
 //! The pause menu: Escape, or Start on a pad, stops the game and lists the
 //! controls on three tabs: free roam (keyboard and controller), the dirt bike
-//! and skating (controller only). LB / RB, the d-pad or the arrow keys change
-//! tab. The same button carries on; Q, or View (Back) on a pad, quits the
+//! and skating (controller only). Click a tab, or change tab with LB / RB,
+//! the d-pad, A / D or the arrow keys. The same button carries on; Q, or View (Back) on a pad, quits the
 //! game.
 //!
 //! Pausing stops virtual time, and the systems that read input or move
@@ -14,6 +14,7 @@
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
+use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 pub struct PausePlugin;
@@ -23,7 +24,12 @@ impl Plugin for PausePlugin {
         app.init_resource::<Paused>()
             .init_resource::<ShownTab>()
             .add_systems(Startup, spawn_menu)
-            .add_systems(PreUpdate, (toggle, quit, switch_tab).chain().after(InputSystems));
+            .add_systems(
+                PreUpdate,
+                (toggle, quit, switch_tab)
+                    .chain()
+                    .after(InputSystems),
+            );
     }
 }
 
@@ -104,6 +110,7 @@ fn text(s: &str, size: f32, colour: Color) -> impl Bundle {
 
 const DIM: Color = Color::srgb(0.65, 0.70, 0.78);
 const LIT: Color = Color::srgb(1.0, 0.82, 0.35);
+const HOVER: Color = Color::WHITE;
 
 /// One row of cells, each a fixed width so the columns line up.
 fn row(parent: &mut ChildSpawnerCommands, cells: &[&str], widths: &[f32], colour: Color) {
@@ -176,7 +183,7 @@ fn spawn_menu(mut commands: Commands) {
                 panel.spawn(text("Q or View (Back) to quit the game", 16.0, DIM));
                 panel
                     .spawn(Node {
-                        column_gap: Val::Px(28.0),
+                        column_gap: Val::Px(12.0),
                         margin: UiRect::vertical(Val::Px(12.0)),
                         align_items: AlignItems::Baseline,
                         ..default()
@@ -184,7 +191,14 @@ fn spawn_menu(mut commands: Commands) {
                     .with_children(|tabs| {
                         tabs.spawn(text("LB", 16.0, DIM));
                         for (i, name) in TABS.iter().enumerate() {
-                            tabs.spawn((TabLabel(i), text(name, 22.0, if i == 0 { LIT } else { DIM })));
+                            tabs.spawn((
+                                TabLabel(i),
+                                Node {
+                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                    ..default()
+                                },
+                                text(name, 22.0, if i == 0 { LIT } else { DIM }),
+                            ));
                         }
                         tabs.spawn(text("RB", 16.0, DIM));
                     });
@@ -245,37 +259,64 @@ fn quit(
     }
 }
 
-/// LB / RB, the d-pad or the arrow keys step through the tabs.
+/// A click on a tab shows it; LB / RB, the d-pad, A / D or the arrow keys
+/// step through the tabs.
+#[allow(clippy::too_many_arguments)]
 fn switch_tab(
     paused: Res<Paused>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut shown: ResMut<ShownTab>,
     mut pages: Query<(&TabPage, &mut Node)>,
-    mut labels: Query<(&TabLabel, &mut TextColor)>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut labels: Query<(&TabLabel, &ComputedNode, &UiGlobalTransform, &mut TextColor)>,
 ) {
     if !paused.0 {
         return;
     }
-    let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
-    let step = if keys.just_pressed(KeyCode::ArrowRight)
-        || pad(GamepadButton::RightTrigger)
-        || pad(GamepadButton::DPadRight)
-    {
-        1
-    } else if keys.just_pressed(KeyCode::ArrowLeft)
-        || pad(GamepadButton::LeftTrigger)
-        || pad(GamepadButton::DPadLeft)
-    {
-        TABS.len() - 1
-    } else {
-        return;
+    let key = |a: KeyCode, b: KeyCode| keys.just_pressed(a) || keys.just_pressed(b);
+    let pad = |a: GamepadButton, b: GamepadButton| {
+        gamepads.iter().any(|p| p.just_pressed(a) || p.just_pressed(b))
     };
-    shown.0 = (shown.0 + step) % TABS.len();
-    for (page, mut node) in &mut pages {
-        node.display = if page.0 == shown.0 { Display::Flex } else { Display::None };
+    // The tab under the mouse, if any (node sizes are in physical pixels).
+    let cursor = windows.single().ok().and_then(Window::physical_cursor_position);
+    let hovered = cursor.and_then(|at| {
+        labels
+            .iter()
+            .find(|(_, node, transform, _)| node.contains_point(**transform, at))
+            .map(|(label, ..)| label.0)
+    });
+    let clicked = hovered.filter(|_| mouse.just_pressed(MouseButton::Left));
+    let wanted = if let Some(tab) = clicked {
+        tab
+    } else if key(KeyCode::KeyD, KeyCode::ArrowRight)
+        || pad(GamepadButton::RightTrigger, GamepadButton::DPadRight)
+    {
+        (shown.0 + 1) % TABS.len()
+    } else if key(KeyCode::KeyA, KeyCode::ArrowLeft)
+        || pad(GamepadButton::LeftTrigger, GamepadButton::DPadLeft)
+    {
+        (shown.0 + TABS.len() - 1) % TABS.len()
+    } else {
+        shown.0
+    };
+    if wanted != shown.0 {
+        shown.0 = wanted;
+        for (page, mut node) in &mut pages {
+            node.display = if page.0 == wanted { Display::Flex } else { Display::None };
+        }
     }
-    for (label, mut colour) in &mut labels {
-        colour.0 = if label.0 == shown.0 { LIT } else { DIM };
+    for (label, _, _, mut colour) in &mut labels {
+        let want = if label.0 == wanted {
+            LIT
+        } else if hovered == Some(label.0) {
+            HOVER
+        } else {
+            DIM
+        };
+        if colour.0 != want {
+            colour.0 = want;
+        }
     }
 }
