@@ -62,8 +62,7 @@ const TABS: [&str; 3] = ["Free roam", "Dirt bike", "Skate"];
 const FREE_ROAM: &[[&str; 3]] = &[
     ["Esc", "Start", "pause / resume"],
     ["W A S D", "left stick", "move"],
-    ["mouse (hold right button)", "right stick", "look around"],
-    ["Tab", "", "mouselook on / off"],
+    ["mouse", "right stick", "look around (click to take the mouse back)"],
     ["Space / E", "right trigger", "up"],
     ["C / Q", "left trigger", "down"],
     ["Shift (hold)", "A (hold)", "fast"],
@@ -82,6 +81,7 @@ const BIKE: &[[&str; 2]] = &[
     ["right stick", "lean the rider forward, back, left, right"],
     ["right trigger", "throttle"],
     ["left trigger", "brake"],
+    ["A (hold)", "back up"],
     ["Y", "stand the bike back up"],
     ["View / Back", "get off the bike"],
     ["Start", "pause"],

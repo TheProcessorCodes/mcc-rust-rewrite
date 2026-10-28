@@ -344,6 +344,7 @@ stick model). Dual-stick riding in the style of MX vs ATV Reflex:
 | right stick | arrow keys | rider: forward / back moves his weight (front down, wheelies); left / right tightens the turn; in the air it pitches, leans and whips the bike |
 | RT | W | throttle: one long gear, 7 m/s² linear acceleration to 90 km/h |
 | LT | S | brake (65 % front) |
+| A (hold) | Space (hold) | back up, up to 3 m/s |
 | Y | R | stand the bike back up |
 
 Hitting the bars or the rider's head, or landing upside down, is a crash: two

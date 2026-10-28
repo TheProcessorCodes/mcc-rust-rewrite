@@ -34,6 +34,9 @@ pub const INERTIA: Vec3 = Vec3::new(55.0, 40.0, 22.0);
 /// Linear acceleration of the one gear, m/s², and where it stops pulling.
 pub const ACCEL: f32 = 7.0;
 pub const TOP_SPEED: f32 = 25.0;
+/// Backing up (hold A): a gentle push to a walking pace, m/s² and m/s.
+pub const REVERSE_ACCEL: f32 = 2.5;
+pub const REVERSE_SPEED: f32 = 3.0;
 /// Full brakes, m/s², split front / rear.
 pub const BRAKE_DECEL: f32 = 9.0;
 pub const BRAKE_FRONT: f32 = 0.65;
@@ -156,6 +159,8 @@ pub struct Controls {
     pub lean: Vec2,
     pub throttle: f32,
     pub brake: f32,
+    /// Held: back up instead of driving forward.
+    pub reverse: bool,
 }
 
 /// A ray or probe hit on the world.
@@ -596,7 +601,10 @@ impl Bike {
             let v_lat = vc.dot(lat);
             let load = push;
             let mut f_long = -v_long * 6.0;
-            if i == 0 && c.throttle > 0.0 {
+            if i == 0 && c.reverse {
+                let pull = ((REVERSE_SPEED + v_long) / 0.5).clamp(0.0, 1.0);
+                f_long -= MASS * REVERSE_ACCEL * pull;
+            } else if i == 0 && c.throttle > 0.0 {
                 let pull = ((TOP_SPEED - v_long) / 1.5).clamp(0.0, 1.0);
                 f_long += c.throttle.min(1.0) * MASS * ACCEL * pull;
             }
@@ -785,6 +793,26 @@ mod tests {
         ride(&w, &mut bike, throttle, 4.5);
         let top = bike.speed();
         assert!((top - TOP_SPEED).abs() < 1.5, "top speed {top}");
+        assert!(bike.crashed.is_none());
+        assert!(bike.up().y > 0.95);
+    }
+
+    #[test]
+    fn backs_up_slowly() {
+        let w = floor();
+        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
+        ride(&w, &mut bike, Controls::default(), 0.5);
+        ride(
+            &w,
+            &mut bike,
+            Controls {
+                reverse: true,
+                ..default()
+            },
+            5.0,
+        );
+        let v = bike.speed();
+        assert!((v + REVERSE_SPEED).abs() < 0.3, "reversing at {v} m/s");
         assert!(bike.crashed.is_none());
         assert!(bike.up().y > 0.95);
     }
