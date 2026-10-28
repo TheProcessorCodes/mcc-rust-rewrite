@@ -58,8 +58,12 @@ impl ShLight {
     /// Direction toward the dominant light: luminance-weighted (-c3, -c1, c2).
     pub fn dominant_direction(&self) -> Vec3 {
         let c = &self.c;
-        Vec3::new(-c[3].dot(LUMINANCE), -c[1].dot(LUMINANCE), c[2].dot(LUMINANCE))
-            .normalize_or_zero()
+        Vec3::new(
+            -c[3].dot(LUMINANCE),
+            -c[1].dot(LUMINANCE),
+            c[2].dot(LUMINANCE),
+        )
+        .normalize_or_zero()
     }
 
     /// Diffuse irradiance for a unit normal (`lightmaps.md` 5.3).
@@ -68,7 +72,8 @@ impl ShLight {
     }
 
     pub fn is_zero(&self) -> bool {
-        self.c.iter().all(|c| c.abs().max_element() < 1e-3) && self.dominant.abs().max_element() < 1e-3
+        self.c.iter().all(|c| c.abs().max_element() < 1e-3)
+            && self.dominant.abs().max_element() < 1e-3
     }
 }
 
@@ -127,7 +132,12 @@ pub struct Probe {
 
 impl Probe {
     pub fn parse(b: &[u8]) -> Option<Probe> {
-        let h = |i: usize| -> Option<f32> { Some(f16(u16::from_le_bytes([*b.get(2 * i)?, *b.get(2 * i + 1)?]))) };
+        let h = |i: usize| -> Option<f32> {
+            Some(f16(u16::from_le_bytes([
+                *b.get(2 * i)?,
+                *b.get(2 * i + 1)?,
+            ])))
+        };
         let v3 = |i: usize| -> Option<Vec3> { Some(Vec3::new(h(i)?, h(i + 1)?, h(i + 2)?)) };
         let mut sh = [[0f32; 9]; 3];
         for (ch, row) in sh.iter_mut().enumerate() {
@@ -190,7 +200,11 @@ pub fn read_lightmap(cache: &CacheFile, lbsp_offset: usize, bsp: u32) -> Result<
 
 /// Lightmap texcoords (2 x u16 / 65535) of one vertex buffer, if it has
 /// exactly `count` vertices.
-pub fn texcoords(geometry: &GeometryResource, buffer: u16, count: usize) -> Result<Option<Vec<[f32; 2]>>> {
+pub fn texcoords(
+    geometry: &GeometryResource,
+    buffer: u16,
+    count: usize,
+) -> Result<Option<Vec<[f32; 2]>>> {
     let (info, bytes) = geometry.vertex_bytes(buffer)?;
     if info.count as usize != count || bytes.len() < 4 * count {
         return Ok(None);
@@ -214,12 +228,22 @@ pub fn texcoords(geometry: &GeometryResource, buffer: u16, count: usize) -> Resu
 /// Static per-vertex lighting of one vertex buffer, if it has exactly
 /// `count` 20-byte vertices and is not blank (some buffers are all
 /// `7f 7f 7f 00`, which decodes to no light at all).
-pub fn per_vertex_buffer(geometry: &GeometryResource, buffer: u16, count: usize) -> Result<Option<Vec<ShLight>>> {
+pub fn per_vertex_buffer(
+    geometry: &GeometryResource,
+    buffer: u16,
+    count: usize,
+) -> Result<Option<Vec<ShLight>>> {
     let (info, bytes) = geometry.vertex_bytes(buffer)?;
     if info.count as usize != count || bytes.len() < 20 * count {
         return Ok(None);
     }
-    let lights: Vec<ShLight> = bytes.as_chunks::<20>().0.iter().take(count).map(per_vertex_light).collect();
+    let lights: Vec<ShLight> = bytes
+        .as_chunks::<20>()
+        .0
+        .iter()
+        .take(count)
+        .map(per_vertex_light)
+        .collect();
     if lights.iter().all(ShLight::is_zero) {
         return Ok(None);
     }
@@ -266,10 +290,14 @@ impl Records {
         let (true, Some(vb)) = (image >= 0, texcoord_buffer) else {
             return Ok(Lighting::None);
         };
-        Ok(texcoords(geometry, vb, vertex_count)?.map_or(Lighting::None, |uvs| Lighting::PerPixel {
-            lightmap: self.lightmap,
-            uvs,
-        }))
+        Ok(
+            texcoords(geometry, vb, vertex_count)?.map_or(Lighting::None, |uvs| {
+                Lighting::PerPixel {
+                    lightmap: self.lightmap,
+                    uvs,
+                }
+            }),
+        )
     }
 
     /// An instance's lighting: per-pixel texcoords (`instance + 0x38`), else
@@ -346,9 +374,15 @@ mod tests {
             dominant: Vec3::new(2.735, 2.493, 2.354),
         };
         let e = light.irradiance(Vec3::new(0.91, 0.39, 0.16).normalize());
-        assert!((e - Vec3::new(0.728, 0.667, 0.653)).abs().max_element() < 0.01, "{e}");
+        assert!(
+            (e - Vec3::new(0.728, 0.667, 0.653)).abs().max_element() < 0.01,
+            "{e}"
+        );
         let d = light.dominant_direction();
-        assert!((d - Vec3::new(0.64, 0.34, 0.69)).abs().max_element() < 0.02, "{d}");
+        assert!(
+            (d - Vec3::new(0.64, 0.34, 0.69)).abs().max_element() < 0.02,
+            "{d}"
+        );
     }
 
     #[test]

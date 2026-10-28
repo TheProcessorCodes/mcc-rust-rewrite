@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result, bail};
 use blam_cache::{Block, CacheFile, ResourceId};
 use blam_geometry::render_geometry::{self, GeometryResource};
+use blam_geometry::lightmap::{ShLight, luvw};
 use blam_geometry::sbsp;
 use blam_texture::{bitmap, rgba};
 use glam::Vec3;
@@ -71,14 +72,9 @@ impl Layers {
     }
 }
 
-/// The game's `decode_bpp16_luvw`: two DXT5 layers to one signed RGB value.
-fn luvw(a: [f32; 4], b: [f32; 4], range: f32) -> Vec3 {
-    let l = a[3] * b[3] * range;
-    (Vec3::new(a[0] + b[0], a[1] + b[1], a[2] + b[2]) * 2.0 - Vec3::splat(2.0)) * l
-}
-
 /// Per-pixel lighting at one texel: four linear SH coefficients and the
-/// dominant light intensity, then the diffuse irradiance for `normal`.
+/// dominant light intensity, then the diffuse irradiance for `normal`
+/// (`blam_geometry::lightmap`, the same code the viewer uses).
 fn irradiance(
     sh: &Layers,
     dom: &Layers,
@@ -86,27 +82,11 @@ fn irradiance(
     uv: [f32; 2],
     normal: Vec3,
 ) -> (Vec3, [Vec3; 4], Vec3) {
-    let c: [Vec3; 4] =
-        std::array::from_fn(|i| luvw(sh.texel(2 * i, uv), sh.texel(2 * i + 1, uv), scale[i]));
-    let dl = luvw(dom.texel(0, uv), dom.texel(1, uv), scale[4]);
-    // Dominant direction: luminance-weighted (-c3, -c1, c2).
-    let w = Vec3::new(0.212656, 0.715158, 0.0721856);
-    let dir = Vec3::new(-c[3].dot(w), -c[1].dot(w), c[2].dot(w)).normalize_or_zero();
-    // pack_constants_texture_array_linear + ravi_order_2_with_dominant_light.
-    let mut k0 = c[0];
-    let mut kr = Vec3::new(c[3].x, c[1].x, -c[2].x);
-    let mut kg = Vec3::new(c[3].y, c[1].y, -c[2].y);
-    let mut kb = Vec3::new(c[3].z, c[1].z, -c[2].z);
-    let e = Vec3::new(-0.4886025 * dir.y, -0.4886025 * dir.z, -0.4886025 * dir.x);
-    let ezxy = Vec3::new(e.z, e.x, e.y);
-    kr -= ezxy * dl.x;
-    kg -= ezxy * dl.y;
-    kb -= ezxy * dl.z;
-    k0 -= dl * 0.2820948;
-    let x1 = Vec3::new(normal.dot(kr), normal.dot(kg), normal.dot(kb));
-    let probe = (k0 * 0.886227 + x1 * (-2.0 * 0.511664)) / std::f32::consts::PI;
-    let direct = dl * dir.dot(normal).max(0.0) * 0.281;
-    (probe + direct, c, dl)
+    let light = ShLight {
+        c: std::array::from_fn(|i| luvw(sh.texel(2 * i, uv), sh.texel(2 * i + 1, uv), scale[i])),
+        dominant: luvw(dom.texel(0, uv), dom.texel(1, uv), scale[4]),
+    };
+    (light.irradiance(normal), light.c, light.dominant)
 }
 
 pub fn run(cache: &CacheFile, bsp_index: u32, samples: usize) -> Result<()> {
@@ -425,16 +405,7 @@ pub fn run(cache: &CacheFile, bsp_index: u32, samples: usize) -> Result<()> {
     }
 
     // Half-float light probes (72 bytes: dir 3+pad, intensity 3+pad, SH r[9] g[9] b[9], pad).
-    let half = |h: u16| -> f32 {
-        let s = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
-        let e = ((h >> 10) & 0x1F) as i32;
-        let m = (h & 0x3FF) as f32;
-        s * match e {
-            0 => m * 2f32.powi(-24),
-            31 => f32::INFINITY,
-            _ => (1.0 + m / 1024.0) * 2f32.powi(e - 15),
-        }
-    };
+    let half = blam_geometry::lightmap::f16;
     let probe_line = |o: usize| -> Result<String> {
         let h: Vec<f32> = (0..36)
             .map(|k| cache.reader_at(o + 2 * k).u16().map(half))

@@ -18,11 +18,15 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use blam_geometry::{Kind, Scene, Shading, WORLD_UNIT_METRES};
+use blam_geometry::{Kind, Lighting, Scene, Shading, WORLD_UNIT_METRES};
 use blam_texture::{Blend, Format, Texture, rgba};
 
 use crate::fly_camera::FlyCamera;
 use crate::textures::{Look, MaterialTextures};
+
+pub mod lighting;
+
+use lighting::{Atlas, HaloLightmap, HaloMaterial, SurfaceLights};
 
 /// Halo world units, Z up, to renderer metres, Y up.
 pub fn to_render(h: Vec3) -> Vec3 {
@@ -51,7 +55,8 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(ClearColor(Color::srgb(0.53, 0.70, 0.90)))
+        app.add_plugins(lighting::LightingPlugin)
+            .insert_resource(ClearColor(Color::srgb(0.53, 0.70, 0.90)))
             .add_systems(Startup, spawn_world)
             .add_systems(Update, toggle_collision);
     }
@@ -284,12 +289,43 @@ fn standard_material(
     }
 }
 
+#[derive(Default)]
 struct Batch {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     uvs: Vec<[f32; 2]>,
+    /// Lightmap texcoords (per-pixel lit batches).
+    lightmap_uvs: Vec<[f32; 2]>,
+    /// Irradiance per vertex (every other batch but the sky).
+    colours: Vec<[f32; 4]>,
     indices: Vec<u32>,
     has_normals: bool,
+}
+
+/// How a batch is lit: the sky draws unlit; the world by a BSP's lightmap
+/// in the shader, or by irradiance baked into its vertex colours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Lit {
+    PerPixel(u32),
+    PerVertex,
+    Sky,
+}
+
+/// Where one placement's per-vertex irradiance comes from.
+enum VertexLight<'a> {
+    PerVertex(&'a [blam_geometry::lightmap::ShLight]),
+    Probe(&'a blam_geometry::lightmap::Probe),
+    One(blam_geometry::lightmap::ShLight),
+}
+
+impl VertexLight<'_> {
+    fn irradiance(&self, vertex: usize, n: Vec3) -> Vec3 {
+        match self {
+            VertexLight::PerVertex(v) => v.get(vertex).map_or(Vec3::ZERO, |l| l.irradiance(n)),
+            VertexLight::Probe(p) => p.irradiance(n),
+            VertexLight::One(l) => l.irradiance(n),
+        }
+    }
 }
 
 fn spawn_world(
@@ -297,6 +333,7 @@ fn spawn_world(
     mut pending: ResMut<PendingScene>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut halo_materials: ResMut<Assets<HaloMaterial>>,
     mut images: ResMut<Assets<Image>>,
     compressed: Option<Res<CompressedImageFormatSupport>>,
 ) {
@@ -308,18 +345,95 @@ fn spawn_world(
     let bc = compressed.is_some_and(|c| c.0.supports(TextureFormat::Bc3RgbaUnormSrgb));
     let look_of = |m: u32| textures.looks.get(m as usize).and_then(Option::as_ref);
 
+    // Each BSP's lightmap: two GPU arrays for the shader, and CPU reads for
+    // lighting objects by the surface under them.
+    let started = std::time::Instant::now();
+    let mut lightmap_images: Vec<Option<(Handle<Image>, Handle<Image>)>> = Vec::new();
+    let mut atlases: Vec<Option<Atlas>> = Vec::new();
+    for (i, lm) in scene.lightmaps.iter().enumerate() {
+        let tex = textures.lightmaps.get(i).and_then(Option::as_ref);
+        let gpu = tex.and_then(|t| {
+            match (
+                lighting::array_image(&t.coefficients, bc),
+                lighting::array_image(&t.intensity, bc),
+            ) {
+                (Ok(a), Ok(b)) => Some((images.add(a), images.add(b))),
+                (Err(e), _) | (_, Err(e)) => {
+                    warn!("lightmap of bsp {}: {e}; vertex lighting there", lm.bsp);
+                    None
+                }
+            }
+        });
+        atlases.push(tex.filter(|_| gpu.is_some()).map(|t| Atlas::new(t, lm.scales)));
+        lightmap_images.push(gpu);
+    }
+    let surface = SurfaceLights::build(&scene, &atlases);
+    info!(
+        "lighting: {} of {} lightmaps on the GPU, surface lights sampled in {:.2} s{}",
+        lightmap_images.iter().flatten().count(),
+        scene.lightmaps.len(),
+        started.elapsed().as_secs_f32(),
+        if surface.is_empty() { " (none: default sun)" } else { "" }
+    );
+    let exposure = lighting::exposure();
+
     // One batch per material, every placement baked into world space.
     // Keyed by (sky, material): the sky draws unlit, so it never shares a
     // batch with the world even when the shader is the same.
-    let mut batches: HashMap<(bool, u32), Batch> = HashMap::new();
+    let mut batches: HashMap<(Lit, u32), Batch> = HashMap::new();
     let mut lo = Vec3::splat(f32::INFINITY);
     let mut hi = Vec3::splat(f32::NEG_INFINITY);
+    let mut lit_counts: HashMap<&str, usize> = HashMap::new();
     for placement in &scene.placements {
         let sky = placement.kind == Kind::Sky;
         let mesh = &scene.meshes[placement.mesh as usize];
         let m = placement.transform;
         let normal_m = Mat3::from_mat4(m).inverse().transpose();
         let has_normals = mesh.normals.len() == mesh.positions.len();
+        // Per-pixel when the lightmap made it to the GPU; otherwise the
+        // placement's own per-vertex data or probe; otherwise the lit
+        // surface nearest its base.
+        let (lit, lightmap_uvs, vertex_light) = match &placement.lighting {
+            _ if sky => (Lit::Sky, None, None),
+            Lighting::PerPixel { lightmap, uvs }
+                if lightmap_images
+                    .get(*lightmap as usize)
+                    .is_some_and(Option::is_some) =>
+            {
+                (Lit::PerPixel(*lightmap), Some(uvs), None)
+            }
+            Lighting::PerVertex(v) => (Lit::PerVertex, None, Some(VertexLight::PerVertex(v))),
+            Lighting::Probe(p) => (Lit::PerVertex, None, Some(VertexLight::Probe(p))),
+            _ => {
+                let mut a = Vec3::splat(f32::INFINITY);
+                let mut b = Vec3::splat(f32::NEG_INFINITY);
+                for p in &mesh.positions {
+                    let w = m.transform_point3(*p);
+                    a = a.min(w);
+                    b = b.max(w);
+                }
+                let base = if a.x.is_finite() {
+                    Vec3::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5, a.z + 0.1)
+                } else {
+                    m.w_axis.truncate()
+                };
+                let light = if surface.is_empty() {
+                    lighting::default_light()
+                } else {
+                    surface.near(base)
+                };
+                (Lit::PerVertex, None, Some(VertexLight::One(light)))
+            }
+        };
+        *lit_counts
+            .entry(match (&lit, &vertex_light) {
+                (Lit::Sky, _) => "sky",
+                (Lit::PerPixel(_), _) => "per-pixel",
+                (_, Some(VertexLight::PerVertex(_))) => "per-vertex",
+                (_, Some(VertexLight::Probe(_))) => "probe",
+                _ => "nearest surface",
+            })
+            .or_default() += 1;
         for part in &mesh.parts {
             let shading = scene
                 .materials
@@ -329,12 +443,9 @@ fn spawn_world(
             if shading == Shading::Invisible || hidden || part.indices.is_empty() {
                 continue;
             }
-            let batch = batches.entry((sky, part.material)).or_insert_with(|| Batch {
-                positions: Vec::new(),
-                normals: Vec::new(),
-                uvs: Vec::new(),
-                indices: Vec::new(),
+            let batch = batches.entry((lit, part.material)).or_insert_with(|| Batch {
                 has_normals,
+                ..Default::default()
             });
             batch.has_normals &= has_normals;
             // Re-index this part's vertices into the batch, winding mirrored
@@ -355,12 +466,21 @@ fn spawn_world(
                         hi = hi.max(p);
                     }
                     batch.positions.push(p.to_array());
-                    let n = mesh
+                    let halo_n = mesh
                         .normals
                         .get(i as usize)
-                        .map(|n| to_render_dir(normal_m * *n).normalize_or(Vec3::Y))
-                        .unwrap_or(Vec3::Y);
-                    batch.normals.push(n.to_array());
+                        .map(|n| (normal_m * *n).normalize_or(Vec3::Z))
+                        .unwrap_or(Vec3::Z);
+                    batch.normals.push(to_render_dir(halo_n).to_array());
+                    if let Some(uvs) = lightmap_uvs {
+                        batch
+                            .lightmap_uvs
+                            .push(uvs.get(i as usize).copied().unwrap_or([0.0, 0.0]));
+                    }
+                    if let Some(l) = &vertex_light {
+                        let e = l.irradiance(i as usize, halo_n);
+                        batch.colours.push([e.x, e.y, e.z, 1.0]);
+                    }
                     batch
                         .uvs
                         .push(mesh.uvs.get(i as usize).copied().unwrap_or([0.0, 0.0]));
@@ -398,10 +518,11 @@ fn spawn_world(
     };
 
     let mut triangles = 0usize;
-    let mut keys: Vec<(bool, u32)> = batches.keys().copied().collect();
+    let mut keys: Vec<(Lit, u32)> = batches.keys().copied().collect();
     keys.sort_unstable();
-    for (sky, key) in keys {
-        let batch = batches.remove(&(sky, key)).unwrap();
+    for (lit, key) in keys {
+        let sky = lit == Lit::Sky;
+        let batch = batches.remove(&(lit, key)).unwrap();
         triangles += batch.indices.len() / 3;
         let material = scene.materials.get(key as usize);
         let name = material.map_or("unknown", |m| m.tag_path.as_str());
@@ -413,6 +534,12 @@ fn spawn_world(
         );
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, batch.positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, batch.uvs);
+        if !batch.lightmap_uvs.is_empty() {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, batch.lightmap_uvs);
+        }
+        if !batch.colours.is_empty() {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, batch.colours);
+        }
         mesh.insert_indices(Indices::U32(batch.indices));
         if batch.has_normals {
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, batch.normals);
@@ -429,11 +556,28 @@ fn spawn_world(
         std_material.unlit = sky;
         let translucent =
             sky || !matches!(std_material.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_));
-        let mut entity = commands.spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(materials.add(std_material)),
-            Name::new(name.to_string()),
-        ));
+        let mut entity = commands.spawn((Mesh3d(meshes.add(mesh)), Name::new(name.to_string())));
+        if sky {
+            entity.insert(MeshMaterial3d(materials.add(std_material)));
+        } else {
+            let (scales, arrays) = match lit {
+                Lit::PerPixel(l) => (
+                    scene.lightmaps[l as usize].scales,
+                    lightmap_images[l as usize].clone(),
+                ),
+                _ => ([0.0; 5], None),
+            };
+            let (coefficients, intensity) = arrays.map_or((None, None), |(a, b)| (Some(a), Some(b)));
+            entity.insert(MeshMaterial3d(halo_materials.add(HaloMaterial {
+                base: std_material,
+                extension: HaloLightmap {
+                    scales: Vec4::from_slice(&scales[..4]),
+                    extra: Vec4::new(scales[4], exposure, 0.0, 0.0),
+                    coefficients,
+                    intensity,
+                },
+            })));
+        }
         if translucent {
             entity.insert(NotShadowCaster);
         }
@@ -459,17 +603,14 @@ fn spawn_world(
         size.z
     );
 
+    let mut counts: Vec<_> = lit_counts.into_iter().collect();
+    counts.sort_unstable();
+    info!("lit placements: {counts:?}");
+
     spawn_collision(&mut commands, &mut meshes, &mut materials, &scene);
 
-    // The sun: high, warm, from the south-west of the renderer frame.
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 12_000.0,
-            shadow_maps_enabled: false,
-            ..default()
-        },
-        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -0.8, -1.0, 0.0)),
-    ));
+    // No bevy lights: the world carries Halo's baked lighting
+    // (`world/lighting.rs`), the sky its own, the collision shell is unlit.
 
     // Start at the first spawn point at Spartan eye height, facing the way
     // it faces; without spawns, above the middle of the world.
@@ -504,12 +645,6 @@ fn spawn_world(
         }),
         transform,
         cam,
-        // Sky light so the shaded side of things is not black.
-        AmbientLight {
-            color: Color::WHITE,
-            brightness: 900.0,
-            affects_lightmapped_meshes: true,
-        },
     ));
 }
 
@@ -614,10 +749,12 @@ pub fn test_scene() -> Scene {
             mesh: 0,
             transform: Mat4::IDENTITY,
             mirrored: false,
+            lighting: Default::default(),
         }],
         bounds: Some((Vec3::new(-20.0, -20.0, 0.0), Vec3::new(20.0, 20.0, 3.0))),
         collision: Default::default(),
         spawns: Vec::new(),
+        lightmaps: Vec::new(),
     };
     for i in 0..12 {
         let a = i as f32 * 0.52;
@@ -633,6 +770,7 @@ pub fn test_scene() -> Scene {
                 Vec3::new(a.cos() * r, a.sin() * r, 0.0),
             ),
             mirrored: false,
+            lighting: Default::default(),
         });
     }
     scene

@@ -385,3 +385,28 @@ Open questions:
    for moving parts.
 5. Exposure: map E to the screen with a fixed exposure (try 1.0 to 2.0 with a filmic curve) until
    the sky/exposure tags are read.
+
+## 8. What the renderer implements (2026-10-28)
+
+Decoding lives in `blam_geometry::lightmap` (records, texcoords, per-vertex values, probes, the
+irradiance formula of 5.3, unit-tested on the 5.4 worked example); `Scene::lightmaps` holds each
+BSP's two bitmap tag indices and five scales, and every BSP placement carries a
+`Placement::lighting` (`PerPixel { lightmap, uvs }`, `PerVertex`, `Probe` or `None`). Riverworld:
+23 clusters and 184 instances per-pixel, 58 per-vertex, 18 probe, 1 none (the image -1 instance).
+`blam lightmap` uses the same code.
+
+The viewer (`crates/halo3/src/world/lighting.rs`, shader `world/shaders/lightmap.wesl`):
+
+- per-pixel: both arrays go to the GPU as BC3 `D2Array` images (linear, clamp, bilinear, one
+  level), the texcoord as `UV_1`; the fragment shader evaluates 5.1-5.3 with the interpolated
+  vertex normal (no bump maps yet) and multiplies the albedo by it;
+- per-vertex instances: 6.1 per vertex on the CPU into the vertex colour. Blank buffers
+  (all `7f 7f 7f 00`) count as no data;
+- probe instances: the probe's L0/L1 terms with its stored direction and intensity through the same
+  formula, per vertex on the CPU. **The L2 terms are dropped** and whether the stored SH includes
+  the dominant light (so that subtracting it is right) is unverified;
+- scenery, crates, machines and anything else without data: the lightmap read at the lit cluster
+  vertex nearest the bottom centre of the placement's bounds (the scenery/machine probe blocks are
+  not matched to objects yet: their 8-byte object ids are not decoded);
+- exposure: a flat `x4` (`HALO3_EXPOSURE` overrides) before bevy's default tonemapper, picked by
+  comparing with in-game screenshots. Specular, fog and Halo's own exposure/tonemap are not done.

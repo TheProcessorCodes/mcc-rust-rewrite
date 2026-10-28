@@ -42,8 +42,8 @@ from the Reflex pipeline sidecars carry over.
 
 ## What is drawn
 
-One bevy mesh per material, every placement baked into world space; `Sky`
-placements are skipped.
+One bevy mesh per material and lighting mode, every placement baked into
+world space; `Sky` placements draw unlit.
 
 Before the window opens, `textures.rs` resolves every material's shader tag
 (`blam_texture::shader::resolve`) and decodes the bitmaps it needs, each
@@ -80,3 +80,32 @@ surfaces look smoother and lighter than in the game), normal maps (need
 tangents), the terrain blend, self-illumination, reflections, cube maps,
 animated water. Translucent materials are still one mesh per material, so
 two overlapping translucent materials can sort wrongly.
+
+## Lighting
+
+There are no bevy lights. The world is lit by Halo 3's own baked lighting
+(`docs/format/lightmaps.md`, section 8 has the details), through
+`ExtendedMaterial<StandardMaterial, HaloLightmap>` (`world/lighting.rs`,
+fragment shader `world/shaders/lightmap.wesl`, embedded in the binary). The
+StandardMaterial part still gives the albedo (texture, tint, tiling, alpha
+mask / blend); the shader multiplies it by Halo's diffuse irradiance, then
+by the exposure, then bevy's fog and tonemapping. Batches are split by how
+they are lit as well as by material.
+
+| what | lit by |
+|---|---|
+| BSP clusters, most instanced geometry | the BSP's per-pixel lightmap: two BC3 texture arrays sampled in the shader at the lightmap texcoord (`UV_1`) with the surface normal. Cliff, tree and building shadows on the ground come from here |
+| instances with static per-vertex lighting | their own coefficients, turned into irradiance per vertex on the CPU (vertex colour) |
+| instances with a light probe | the probe (L0 and L1 terms plus its dominant light), per vertex on the CPU |
+| scenery, crates, machines, controls | the lightmap at the lit BSP vertex nearest the bottom centre of the object, per vertex with each vertex's normal (an approximation: the scenario's own scenery/machine probes are not matched up yet) |
+| the sky | unlit, its textures as they are |
+| maps with no lightmap, `--test-scene` | a fixed sunny Valhalla texel (`lighting::default_light`) |
+
+Exposure is a flat x4 (`EXPOSURE` in `world/lighting.rs`; set
+`HALO3_EXPOSURE` to try others), picked against in-game Valhalla
+screenshots. Not done: specular, bump-mapped normals, Halo's own
+exposure/tonemap curve and its blue distance fog, the probes' L2 terms.
+
+The log says how each placement was lit, e.g. Valhalla:
+`lit placements: [("nearest surface", 401), ("per-pixel", 207),
+("per-vertex", 58), ("probe", 18), ("sky", 10)]`.
