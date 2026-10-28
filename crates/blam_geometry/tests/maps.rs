@@ -315,3 +315,84 @@ fn camera_fx_and_tangents() {
     assert!(checked > 50_000, "{checked} tangents");
     assert!(skewed * 100 < checked, "{skewed} of {checked} tangents not at right angles");
 }
+
+/// Where a vertical line through `(x, y)` crosses the triangle, if it does.
+fn crossing_height(t: &[glam::Vec3; 3], x: f32, y: f32) -> Option<f32> {
+    let [a, b, c] = *t;
+    let d = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+    if d.abs() < 1e-9 {
+        return None;
+    }
+    let u = ((x - a.x) * (c.y - a.y) - (c.x - a.x) * (y - a.y)) / d;
+    let v = ((b.x - a.x) * (y - a.y) - (x - a.x) * (b.y - a.y)) / d;
+    (u >= 0.0 && v >= 0.0 && u + v <= 1.0).then_some(a.z + u * (b.z - a.z) + v * (c.z - a.z))
+}
+
+/// Last Resort (`docs/format/reference-numbers.md` 9).
+#[test]
+fn last_resort_matches_haloexport() {
+    let Some(path) = map("zanzibar") else { return };
+    let scene = blam_geometry::load_map(&path).expect("zanzibar decodes");
+    let c = count(&scene);
+    // 40 clusters with 39 meshes, 1,130 instances with 1,123 placed.
+    assert_eq!(c.clusters_placed, 39);
+    assert_eq!(c.instances_placed, 1123);
+    assert_eq!(c.cluster_triangles, 38991);
+    assert_eq!(c.instance_triangles, 316212);
+    assert_eq!(c.scenery_triangles, 183060);
+    assert_eq!(c.crate_triangles, 82432);
+    assert_eq!(c.machine_triangles, 3192);
+    let control: usize = scene
+        .placements
+        .iter()
+        .filter(|p| p.kind == Kind::Control)
+        .map(|p| scene.meshes[p.mesh as usize].triangle_count())
+        .sum();
+    assert_eq!(control, 764);
+    assert!(c.sky_triangles > 0, "the sky model decodes");
+    let (lo, hi) = scene.bounds.expect("world bounds");
+    assert!((lo.x - -99.67684).abs() < 1e-3 && (hi.x - 44.225243).abs() < 1e-3);
+    assert!((lo.y - -68.49561).abs() < 1e-3 && (hi.y - 160.14279).abs() < 1e-3);
+    assert!((lo.z - -8.990257).abs() < 1e-3 && (hi.z - 20.045654).abs() < 1e-3);
+
+    let water: Vec<_> = scene.materials.iter().filter(|m| m.shader_class == "rmw ").collect();
+    assert_eq!(water.len(), 1);
+    assert!(water[0].tag_path.ends_with("zanzibar_water_awesome"));
+
+    // The collision BSP and the instanced collision.
+    let col = &scene.collision;
+    let bsp = col
+        .triangles
+        .iter()
+        .filter(|t| matches!(t.source, blam_geometry::CollisionSource::Bsp(_)))
+        .count();
+    assert_eq!(bsp, 31784);
+    assert_eq!(col.triangles.len() - bsp, 86394);
+
+    // 106 spawn points; each stands on collision a little under its feet,
+    // and no collision surface cuts through the body above it.
+    assert_eq!(scene.spawns.len(), 106);
+    let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> = std::collections::HashMap::new();
+    for (i, t) in col.triangles.iter().enumerate() {
+        let lo = t.points[0].min(t.points[1]).min(t.points[2]);
+        let hi = t.points[0].max(t.points[1]).max(t.points[2]);
+        for x in lo.x.floor() as i32..=hi.x.floor() as i32 {
+            for y in lo.y.floor() as i32..=hi.y.floor() as i32 {
+                cells.entry((x, y)).or_default().push(i);
+            }
+        }
+    }
+    for sp in &scene.spawns {
+        let p = sp.position;
+        let heights: Vec<f32> = cells
+            .get(&(p.x.floor() as i32, p.y.floor() as i32))
+            .into_iter()
+            .flatten()
+            .filter_map(|&i| crossing_height(&col.triangles[i].points, p.x, p.y))
+            .collect();
+        let ground = heights.iter().copied().filter(|h| *h <= p.z + 0.1).fold(f32::NEG_INFINITY, f32::max);
+        assert!(p.z - ground < 0.5, "{} at {p} has no ground under it (nearest {ground})", sp.name);
+        let body = heights.iter().copied().find(|h| *h > p.z + 0.15 && *h < p.z + 0.6);
+        assert!(body.is_none(), "{} at {p}: collision through the body at z {body:?}", sp.name);
+    }
+}
