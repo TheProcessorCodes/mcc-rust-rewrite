@@ -8,7 +8,7 @@
 //! blam string-id <map> <hex id>
 //! blam dump     <map> <tag index | class:name | name> [--len N] [--skip N]
 //! blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]
-//! blam rails    <map> [--obj PATH]
+//! blam rails    <map> [--bsp N[,M]] [--obj PATH]
 //! blam nodes    <map> <mode tag | object tag>      the skeleton and pieces of a render model
 //! blam bitmap   <map> <bitm tag> [--index N] [--png PATH]
 //! blam shader   <map> <shader tag>
@@ -124,17 +124,9 @@ fn main() -> Result<()> {
         "string-id" => string_id(&cache, &args),
         "dump" => dump(&cache, &args),
         "geometry" => {
-            let bsps = match args.flag("bsp") {
-                Some(list) => Some(
-                    list.split(',')
-                        .map(|n| n.trim().parse::<u32>().context("--bsp wants numbers"))
-                        .collect::<Result<Vec<_>>>()?,
-                ),
-                None => None,
-            };
             geometry::run(
                 &cache,
-                bsps,
+                bsp_list(&args)?,
                 !args.has("no-objects"),
                 args.flag("obj").map(Path::new),
             )
@@ -166,11 +158,23 @@ fn main() -> Result<()> {
     }
 }
 
-/// `blam rails <map> [--obj PATH]`: find the grind rails in a map's collision
+/// `--bsp N[,M]`: only these structure BSPs.
+fn bsp_list(args: &Args) -> Result<Option<Vec<u32>>> {
+    args.flag("bsp")
+        .map(|list| {
+            list.split(',')
+                .map(|n| n.trim().parse::<u32>().context("--bsp wants numbers"))
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()
+}
+
+/// `blam rails <map> [--bsp N[,M]] [--obj PATH]`: find the grind rails in a map's collision
 /// and print the census and the longest ones; with `--obj`, write them as OBJ
 /// polylines in metres, Y up, the frame `geometry --obj` uses.
 fn rails(cache: &CacheFile, args: &Args) -> Result<()> {
     let options = Options {
+        bsps: bsp_list(args)?,
         objects: false,
         collision: true,
         ..Default::default()
@@ -183,6 +187,11 @@ fn rails(cache: &CacheFile, args: &Args) -> Result<()> {
     blam_geometry::decode_into(cache, &options, &mut scene)?;
     let decoded = started.elapsed().as_secs_f32();
     let (rails, census) = blam_geometry::rails::find_rails(&scene.collision);
+    let found = rails.len();
+    let rails = blam_geometry::rails::outside_kill_volumes(rails, &scene.trigger_volumes);
+    if rails.len() != found {
+        eprintln!("kill volumes: {found} rails became {}", rails.len());
+    }
     eprintln!(
         "collision decoded in {decoded:.2} s, rails found in {:.2} s",
         started.elapsed().as_secs_f32() - decoded

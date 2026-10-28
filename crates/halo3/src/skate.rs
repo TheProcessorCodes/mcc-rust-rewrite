@@ -25,7 +25,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use skate_host::bridge::{InputFrame, Pose, Session};
 
-use blam_geometry::{Collision, rails};
+use blam_geometry::{Collision, TriggerVolume, rails};
 
 use crate::fly_camera::FlyCamera;
 use crate::world::zones::LoadedBsps;
@@ -35,9 +35,10 @@ use crate::world::{to_halo_dir, to_render};
 const DEFAULT_SCALE: f32 = 33.0 * 0.0254;
 const DEFAULT_ASSETS: &str = r"D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\assets";
 
-/// The map data the skate world is built from, handed over by `main`.
+/// The map data the skate world is built from, handed over by `main`: the
+/// collision, and the trigger volumes (rails in kill volumes are dropped).
 #[derive(Resource)]
-pub struct SkateInput(pub Option<Collision>);
+pub struct SkateInput(pub Option<Collision>, pub Vec<TriggerVolume>);
 
 pub struct SkatePlugin;
 
@@ -195,6 +196,7 @@ fn skate_triangles(collision: &Collision, k: f32) -> Vec<[[f32; 3]; 3]> {
 }
 
 fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: Res<LoadedBsps>) {
+    let volumes = std::mem::take(&mut input.1);
     let Some(collision) = input.0.take() else {
         return;
     };
@@ -238,6 +240,7 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                             let loaded = collision.of_bsps(mask);
                             let triangles = skate_triangles(&loaded, k);
                             let (found, _) = rails::find_rails(&loaded);
+                            let found = rails::outside_kill_volumes(found, &volumes);
                             let rails_found = started.elapsed().as_secs_f32();
                             let rails: Vec<Vec<[f32; 3]>> = found
                                 .iter()

@@ -155,6 +155,7 @@ fn main() -> anyhow::Result<()> {
     if skating {
         app.insert_resource(skate::SkateInput(
             (!scene.collision.triangles.is_empty()).then(|| scene.collision.clone()),
+            scene.trigger_volumes.clone(),
         ))
         .insert_resource(rider::PendingChief(chief))
         .add_plugins((skate::SkatePlugin, rider::RiderPlugin));

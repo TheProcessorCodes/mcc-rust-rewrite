@@ -7,7 +7,7 @@ use glam::Vec3;
 
 use blam_cache::{Block, CacheFile};
 
-use crate::scene::{Scene, StartingLocation, TriggerVolume, ZoneSet, ZoneSwitch};
+use crate::scene::{ClusterInfo, Scene, StartingLocation, TriggerVolume, ZoneSet, ZoneSwitch};
 use crate::{Error, Result};
 
 /// Offsets in the scenario (MCC U13), see `zone-sets.md` section 1.
@@ -143,16 +143,39 @@ impl Scene {
     /// The sky seen from the smallest loaded cluster around `p`, if that
     /// cluster names one (indoors it does not).
     pub fn sky_at(&self, p: Vec3, mask: u32) -> Option<u32> {
+        self.cluster_at(p, mask).and_then(|c| c.sky)
+    }
+
+    /// The atmosphere setting most clusters of the loaded BSPs (`mask`)
+    /// name, for a camera outside every cluster box.
+    pub fn main_atmosphere(&self, mask: u32) -> Option<u32> {
+        let mut votes: Vec<(u32, usize)> = Vec::new();
+        for b in self.bsps.iter().filter(|b| mask & (1 << b.index) != 0) {
+            for a in b.clusters.iter().filter_map(|c| c.atmosphere) {
+                match votes.iter_mut().find(|(i, _)| *i == a) {
+                    Some(v) => v.1 += 1,
+                    None => votes.push((a, 1)),
+                }
+            }
+        }
+        votes
+            .iter()
+            .max_by_key(|(i, n)| (*n, std::cmp::Reverse(*i)))
+            .map(|(i, _)| *i)
+    }
+
+    /// The smallest cluster of a loaded BSP (`mask`) whose bounds hold `p`.
+    pub fn cluster_at(&self, p: Vec3, mask: u32) -> Option<&ClusterInfo> {
         self.bsps
             .iter()
             .filter(|b| mask & (1 << b.index) != 0)
             .flat_map(|b| b.clusters.iter())
             .filter_map(|c| {
                 let (lo, hi) = c.bounds?;
-                (p.cmpge(lo).all() && p.cmple(hi).all()).then(|| ((hi - lo).element_product(), c.sky))
+                (p.cmpge(lo).all() && p.cmple(hi).all()).then(|| ((hi - lo).element_product(), c))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .and_then(|(_, sky)| sky)
+            .map(|(_, c)| c)
     }
 
     /// Every BSP the map has, as a mask.
@@ -202,6 +225,12 @@ mod tests {
         assert!((s.position - Vec3::new(-263.64, -433.77, -5.052)).length() < 0.01);
         assert_eq!(scene.trigger_volumes.len(), 254);
         assert_eq!(scene.trigger_volumes[1].name, "begin_zone_set:120_01_02_03");
+        // The kill box under the start of the Warthog run, corner
+        // (-96.3, 37.2, -158) extending (709, 472, 88.8).
+        let kills: Vec<&TriggerVolume> = scene.trigger_volumes.iter().filter(|v| v.kills()).collect();
+        assert!(kills.len() > 20, "{} kill volumes", kills.len());
+        assert!(kills.iter().any(|v| v.contains(Vec3::new(300.0, 200.0, -100.0))));
+        assert!(!kills.iter().any(|v| v.contains(scene.starts[0].position)));
         assert_eq!(scene.zone_switches.len(), 17);
         let z = &scene.zone_switches[2];
         assert_eq!((z.flags, z.begin, z.volume, z.commit), (1, Some(4), 3, None));

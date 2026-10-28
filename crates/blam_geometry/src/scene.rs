@@ -284,6 +284,9 @@ pub struct ClusterInfo {
     /// The scenario sky seen from inside it (index into the scenario's
     /// sky block); `None` indoors.
     pub sky: Option<u32>,
+    /// The atmosphere setting of the air in it (index into the `skya`
+    /// tag's settings, `atmosphere.rs`); `None`: the map's default.
+    pub atmosphere: Option<u32>,
 }
 
 /// A set of BSPs the game loads together.
@@ -314,6 +317,23 @@ pub struct TriggerVolume {
     /// (up x forward) and up from here.
     pub position: Vec3,
     pub extents: Vec3,
+}
+
+impl TriggerVolume {
+    /// Whether `p` is inside the box.
+    pub fn contains(&self, p: Vec3) -> bool {
+        let d = p - self.position;
+        let left = self.up.cross(self.forward);
+        let local = Vec3::new(d.dot(self.forward), d.dot(left), d.dot(self.up));
+        local.cmpge(Vec3::ZERO).all() && local.cmple(self.extents).all()
+    }
+
+    /// A volume that kills the player (`kill`, `kill_110_01`,
+    /// `ziggurat_kill_player01`...): nobody stands or grinds in there.
+    pub fn kills(&self) -> bool {
+        let n = self.name.to_ascii_lowercase();
+        n.starts_with("kill") || n.contains("_kill")
+    }
 }
 
 /// Entering `volume` begins loading zone set `begin` (prepare) or commits

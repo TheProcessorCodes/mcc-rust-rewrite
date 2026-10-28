@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 
-use crate::Collision;
+use crate::{Collision, TriggerVolume};
 use crate::collision::surface_flags;
 
 /// Inches per Halo world unit: one unit is ten feet.
@@ -98,6 +98,40 @@ pub fn find_rails(collision: &Collision) -> (Vec<Vec<Vec3>>, RailCensus) {
         .collect();
     census.rails = rails.len();
     (rails, census)
+}
+
+/// Cuts rails (Halo units) where they run through the scenario's kill
+/// volumes: the ledges under 120_halo's Warthog run are real lips, but the
+/// player dies before reaching them. A rail is split at every segment whose
+/// ends or middle lie in a kill volume; pieces of one point are dropped.
+pub fn outside_kill_volumes(rails: Vec<Vec<Vec3>>, volumes: &[TriggerVolume]) -> Vec<Vec<Vec3>> {
+    let kill: Vec<&TriggerVolume> = volumes.iter().filter(|v| v.kills()).collect();
+    if kill.is_empty() {
+        return rails;
+    }
+    let deadly = |p: Vec3| kill.iter().any(|v| v.contains(p));
+    let mut out = Vec::new();
+    for rail in rails {
+        let mut piece: Vec<Vec3> = Vec::new();
+        for w in rail.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if deadly(a) || deadly(b) || deadly((a + b) * 0.5) {
+                if piece.len() >= 2 {
+                    out.push(std::mem::take(&mut piece));
+                }
+                piece.clear();
+                continue;
+            }
+            if piece.is_empty() {
+                piece.push(a);
+            }
+            piece.push(b);
+        }
+        if piece.len() >= 2 {
+            out.push(piece);
+        }
+    }
+    out
 }
 
 /// Rails over `tris` (map units, z up), each a polyline of two or more points.
