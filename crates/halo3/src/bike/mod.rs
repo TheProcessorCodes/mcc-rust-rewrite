@@ -13,6 +13,7 @@
 //! | LT | S | brake |
 //! | A (hold) | Space (hold) | back up, to 3 m/s |
 //! | Y | R | stand the bike back up |
+//! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! `--shot DIR --bike` rides from the first view (or the start spawn) for a
 //! couple of seconds, then takes the rider pictures; `HALO3_BIKE_THROTTLE`
@@ -20,6 +21,7 @@
 
 pub mod physics;
 pub mod pose;
+pub mod tune;
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
@@ -33,7 +35,7 @@ use crate::skate::{RiderPose, Skating, assets_root};
 use crate::world::zones::LoadedBsps;
 use crate::world::{to_halo, to_render, to_render_dir};
 
-use physics::{Bike, Controls, World};
+use physics::{Bike, Controls, Tuning, World};
 
 /// The map's collision (Halo units), handed over by `main`.
 #[derive(Resource)]
@@ -57,10 +59,24 @@ impl Plugin for BikePlugin {
         app.init_resource::<Riding>()
             .init_resource::<AutoStart>()
             .init_resource::<StickPool>()
+            .init_resource::<BikeTuning>()
+            .add_plugins(tune::TunePlugin)
             .add_systems(Startup, setup)
-            .add_systems(Update, (ride.run_if(crate::pause::running), draw_bike, show_status).chain());
+            .add_systems(
+                Update,
+                (
+                    ride.run_if(crate::pause::running).run_if(tune::closed),
+                    draw_bike,
+                    show_status,
+                )
+                    .chain(),
+            );
     }
 }
+
+/// The physics the tuning menu has set; every bike rides on it.
+#[derive(Resource, Default)]
+pub struct BikeTuning(pub Tuning);
 
 #[derive(Resource, Default)]
 struct Riding {
@@ -169,6 +185,7 @@ fn ride(
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
     input: Option<Res<BikeInput>>,
+    tuning: Res<BikeTuning>,
     mut rider: ResMut<RiderPose>,
     loaded: Res<LoadedBsps>,
     time: Res<Time>,
@@ -255,6 +272,7 @@ fn ride(
         None => read_controls(pad, &keys),
     };
     let dt = time.delta_secs().min(0.1);
+    bike.tuning = tuning.0;
     bike.step(world, controls, dt);
     rider.skated += dt;
 
@@ -420,13 +438,17 @@ fn bike_sticks(bike: &Bike, gizmos: &mut Sticks) {
     let axis = physics::steering_axis();
 
     // Wheels: tyre, rim and spokes; the front turns with the bars.
-    for (axle, radius, across) in [
-        (rear, rear_leg.radius, Vec3::X),
-        (front, front_leg.radius, bars * Vec3::X),
+    for (axle, leg, across) in [
+        (rear, rear_leg, Vec3::X),
+        (front, front_leg, bars * Vec3::X),
     ] {
-        let centre = w(axle);
+        let (centre, radius) = (w(axle), leg.radius);
         let across = rot * across;
-        ring(gizmos, centre, across, radius, rubber);
+        // The tread: two rubber rings, the outer edges `width` apart.
+        let edge = (leg.width * 0.5 - COLOURS[rubber].3).max(0.0);
+        for s in [edge, -edge] {
+            ring(gizmos, centre + across * s, across, radius, rubber);
+        }
         ring(gizmos, centre, across, radius * 0.78, metal);
         let u = across.any_orthonormal_vector();
         let v = across.cross(u);

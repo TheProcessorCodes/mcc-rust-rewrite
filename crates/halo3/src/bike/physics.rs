@@ -42,8 +42,9 @@ pub const BRAKE_DECEL: f32 = 9.0;
 pub const BRAKE_FRONT: f32 = 0.65;
 
 /// Tyre grip (friction circle) and how hard a tyre resists sliding sideways.
-pub const GRIP: f32 = 1.4;
-pub const LATERAL_STIFFNESS: f32 = 3200.0;
+/// The wide tyres (see `Leg::width`) bite harder than stock knobblies.
+pub const GRIP: f32 = 1.6;
+pub const LATERAL_STIFFNESS: f32 = 3800.0;
 
 /// Handlebar: most lock at a standstill, least at speed, and how fast it turns.
 pub const STEER_LOCK_SLOW: f32 = 0.6;
@@ -67,6 +68,52 @@ pub const MAX_LEAN: f32 = 0.8;
 /// Seconds lying in the dirt before the bike comes back.
 pub const CRASH_SECONDS: f32 = 2.0;
 
+/// The values the tuning menu (`tune.rs`) can change while riding. The
+/// default is the stock bike: the constants above.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tuning {
+    pub accel: f32,
+    pub top_speed: f32,
+    pub brake_decel: f32,
+    pub brake_front: f32,
+    pub grip: f32,
+    pub lateral_stiffness: f32,
+    /// Scales both ends of the steering lock.
+    pub steer_lock: f32,
+    pub steer_rate: f32,
+    pub max_lean: f32,
+    /// Scales the balance controller: the spring by this, the damper by its
+    /// square root, so the lean settles the same way, only faster.
+    pub lean_speed: f32,
+    pub lean_gain: f32,
+    /// Scale the suspension springs and dampers.
+    pub spring: f32,
+    pub damper: f32,
+    /// Scales the rider's spin in the air.
+    pub air: f32,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Tuning {
+            accel: ACCEL,
+            top_speed: TOP_SPEED,
+            brake_decel: BRAKE_DECEL,
+            brake_front: BRAKE_FRONT,
+            grip: GRIP,
+            lateral_stiffness: LATERAL_STIFFNESS,
+            steer_lock: 1.0,
+            steer_rate: STEER_RATE,
+            max_lean: MAX_LEAN,
+            lean_speed: 1.0,
+            lean_gain: LEAN_GAIN,
+            spring: 1.0,
+            damper: 1.0,
+            air: 1.0,
+        }
+    }
+}
+
 /// One suspension leg and its wheel.
 #[derive(Clone, Copy, Debug)]
 pub struct Leg {
@@ -76,6 +123,8 @@ pub struct Leg {
     pub axis: Vec3,
     pub travel: f32,
     pub radius: f32,
+    /// Tread width, metres (drawn; the grip constants above carry its bite).
+    pub width: f32,
     /// Spring N/m and damper N·s/m.
     pub spring: f32,
     pub damper: f32,
@@ -91,14 +140,25 @@ pub fn steering_axis() -> Vec3 {
 /// Sag: how far each leg sits into its travel with the rider on.
 const SAG: f32 = 0.10;
 
+/// Where the axles sit along the bike, either side of the centre of mass.
+/// A long wheelbase (1.75 m) for a steadier ride.
+const REAR_Z: f32 = -0.85;
+const FRONT_Z: f32 = 0.90;
+
+/// The share of the weight each wheel carries, from the lever arms.
+fn front_share() -> f32 {
+    -REAR_Z / (FRONT_Z - REAR_Z)
+}
+
 pub fn rear_leg() -> Leg {
     let axis = Vec3::Y;
     Leg {
-        extended: Vec3::new(0.0, -0.30, -0.80) - axis * SAG,
+        extended: Vec3::new(0.0, -0.30, REAR_Z) - axis * SAG,
         axis,
         travel: 0.32,
         radius: 0.355,
-        spring: MASS * GRAVITY * 0.515 / SAG,
+        width: 0.13,
+        spring: MASS * GRAVITY * (1.0 - front_share()) / SAG,
         damper: 1100.0,
     }
 }
@@ -108,11 +168,12 @@ pub fn rear_leg() -> Leg {
 pub fn front_leg() -> Leg {
     let axis = Vec3::Y;
     Leg {
-        extended: Vec3::new(0.0, -0.30, 0.85) - axis * SAG,
+        extended: Vec3::new(0.0, -0.30, FRONT_Z) - axis * SAG,
         axis,
         travel: 0.32,
         radius: 0.37,
-        spring: MASS * GRAVITY * 0.485 / SAG,
+        width: 0.11,
+        spring: MASS * GRAVITY * front_share() / SAG,
         damper: 1000.0,
     }
 }
@@ -139,8 +200,8 @@ pub fn bar_centre() -> Vec3 {
 /// and whether touching anything with it is a crash.
 pub const PROBES: [(Vec3, f32, bool); 6] = [
     (Vec3::new(0.0, -0.40, 0.05), 0.14, false), // skid plate
-    (Vec3::new(0.0, 0.05, -1.08), 0.12, false), // rear fender
-    (Vec3::new(0.0, 0.10, 0.98), 0.12, false),  // front fender
+    (Vec3::new(0.0, 0.05, -1.13), 0.12, false), // rear fender
+    (Vec3::new(0.0, 0.10, 1.03), 0.12, false),  // front fender
     (Vec3::new(0.0, 0.18, -0.30), 0.16, false), // seat
     (Vec3::new(0.0, 0.62, 0.40), 0.16, true),   // bars and hands
     (Vec3::new(0.0, 1.30, 0.20), 0.24, true),   // the rider's head
@@ -390,6 +451,7 @@ pub struct Bike {
     pub wheels: [WheelState; 2],
     /// Seconds left lying in the dirt.
     pub crashed: Option<f32>,
+    pub tuning: Tuning,
     /// Where to come back after a crash: position and heading, recorded
     /// while both wheels are down, the oldest about two seconds back.
     safe: Vec<(Vec3, f32)>,
@@ -415,6 +477,7 @@ impl Bike {
             lean: Vec2::ZERO,
             wheels: [WheelState::default(); 2],
             crashed: None,
+            tuning: Tuning::default(),
             safe: Vec::new(),
             safe_clock: 0.0,
             candidates: Vec::new(),
@@ -519,16 +582,18 @@ impl Bike {
     /// Back on the wheels where it last rode well (or upright where it is).
     pub fn respawn(&mut self, world: &World) {
         let (at, heading) = self.safe.first().copied().unwrap_or((self.position, self.heading()));
-        let safe = std::mem::take(&mut self.safe);
+        let (safe, tuning) = (std::mem::take(&mut self.safe), self.tuning);
         *self = Bike::dropped(world, at + Vec3::Y * 0.5, heading);
         self.safe = safe;
+        self.tuning = tuning;
     }
 
     /// Stands the bike up where it is, facing the way it was going.
     pub fn reset_here(&mut self, world: &World) {
-        let safe = std::mem::take(&mut self.safe);
+        let (safe, tuning) = (std::mem::take(&mut self.safe), self.tuning);
         *self = Bike::dropped(world, self.position + Vec3::Y * 0.5, self.heading());
         self.safe = safe;
+        self.tuning = tuning;
     }
 
     fn sub_step(&mut self, world: &World, candidates: &[u32], c: Controls, dt: f32) {
@@ -540,12 +605,13 @@ impl Bike {
         let mut torque = Vec3::ZERO;
         let point_velocity = |b: &Bike, p: Vec3| b.velocity + b.spin.cross(p - b.position);
         let speed = self.velocity.dot(fwd);
+        let t = self.tuning;
 
         // The bars: less lock the faster it goes, turned at a steady rate.
         let fast = (speed.abs() / 14.0).clamp(0.0, 1.0);
-        let lock = STEER_LOCK_SLOW + (STEER_LOCK_FAST - STEER_LOCK_SLOW) * fast;
+        let lock = (STEER_LOCK_SLOW + (STEER_LOCK_FAST - STEER_LOCK_SLOW) * fast) * t.steer_lock;
         let target = -c.steer.clamp(-1.0, 1.0) * lock;
-        self.steer += (target - self.steer).clamp(-STEER_RATE * dt, STEER_RATE * dt);
+        self.steer += (target - self.steer).clamp(-t.steer_rate * dt, t.steer_rate * dt);
         // The rider's weight follows the stick quickly.
         let lean_target = c.lean.clamp_length_max(1.0);
         self.lean += (lean_target - self.lean) * (1.0 - (-12.0 * dt).exp());
@@ -568,7 +634,7 @@ impl Bike {
             let s = reach - hit.distance;
             let vc = point_velocity(self, hit.point);
             let s_rate = -vc.dot(axis);
-            let mut push = leg.spring * s.min(leg.travel) + leg.damper * s_rate;
+            let mut push = leg.spring * t.spring * s.min(leg.travel) + leg.damper * t.damper * s_rate;
             if s > leg.travel {
                 push += BUMP_STOP * (s - leg.travel);
             }
@@ -605,17 +671,17 @@ impl Bike {
                 let pull = ((REVERSE_SPEED + v_long) / 0.5).clamp(0.0, 1.0);
                 f_long -= MASS * REVERSE_ACCEL * pull;
             } else if i == 0 && c.throttle > 0.0 {
-                let pull = ((TOP_SPEED - v_long) / 1.5).clamp(0.0, 1.0);
-                f_long += c.throttle.min(1.0) * MASS * ACCEL * pull;
+                let pull = ((t.top_speed - v_long) / 1.5).clamp(0.0, 1.0);
+                f_long += c.throttle.min(1.0) * MASS * t.accel * pull;
             }
             if c.brake > 0.0 {
-                let share = if i == 1 { BRAKE_FRONT } else { 1.0 - BRAKE_FRONT };
-                let max = c.brake.min(1.0) * MASS * BRAKE_DECEL * share;
+                let share = if i == 1 { t.brake_front } else { 1.0 - t.brake_front };
+                let max = c.brake.min(1.0) * MASS * t.brake_decel * share;
                 f_long += (-v_long * 4000.0).clamp(-max, max);
             }
-            let f_lat = -v_lat * LATERAL_STIFFNESS;
+            let f_lat = -v_lat * t.lateral_stiffness;
             let mut f_tyre = long * f_long + lat * f_lat;
-            let limit = GRIP * load;
+            let limit = t.grip * load;
             if f_tyre.length() > limit {
                 f_tyre = f_tyre.normalize_or_zero() * limit;
             }
@@ -623,8 +689,8 @@ impl Bike {
             force += f;
             // Lean is the balance controller's alone (below): the tyres
             // only pitch and yaw the bike.
-            let t = (hit.point - self.position).cross(f);
-            torque += t - fwd * t.dot(fwd);
+            let tq = (hit.point - self.position).cross(f);
+            torque += tq - fwd * tq.dot(fwd);
         }
 
         let grounded = self.grounded();
@@ -632,8 +698,8 @@ impl Bike {
         if grounded > 0 {
             // The rider's weight, moved off the centre.
             let arm = r * lean_local;
-            let t = arm.cross(gravity * RIDER_MASS * LEAN_GAIN);
-            torque += t - fwd * t.dot(fwd);
+            let tq = arm.cross(gravity * RIDER_MASS * t.lean_gain);
+            torque += tq - fwd * tq.dot(fwd);
 
             // Balance: lean into the turn as far as speed and steer ask.
             let reference = ground_normal.normalize_or(Vec3::Y);
@@ -644,9 +710,10 @@ impl Bike {
             let yaw_rate = self.spin.dot(reference);
             let wanted = -(speed.max(0.0) * yaw_rate / GRAVITY).atan();
             // Leaning the rider over adds a little more.
-            let wanted = (wanted + self.lean.x * 0.25).clamp(-MAX_LEAN, MAX_LEAN);
+            let wanted = (wanted + self.lean.x * 0.25).clamp(-t.max_lean, t.max_lean);
             let share = grounded as f32 / 2.0;
-            let roll = ROLL_KP * (wanted - lean_now) - ROLL_KD * self.spin.dot(fwd);
+            let (kp, kd) = (ROLL_KP * t.lean_speed, ROLL_KD * t.lean_speed.sqrt());
+            let roll = kp * (wanted - lean_now) - kd * self.spin.dot(fwd);
             torque += fwd * roll * share;
         } else {
             // In the air the rider throws the bike around.
@@ -655,7 +722,7 @@ impl Bike {
                 self.lean.y * AIR_PITCH * i.x,
                 (-self.lean.x * AIR_YAW - c.steer * 1.5) * i.y,
                 self.lean.x * AIR_ROLL * i.z,
-            );
+            ) * t.air;
             torque += r * local;
             // A little air drag on the spin so it settles.
             torque -= self.spin * 4.0;
