@@ -361,6 +361,9 @@ pub struct ClusterInfo {
     /// tag's settings, `atmosphere.rs`, through the BSP's atmosphere
     /// palette); `None`: the map's default.
     pub atmosphere: Option<u32>,
+    /// Index into the BSP's acoustics palette (background sound and sound
+    /// environment, `docs/format/sound.md` 5); `None`: none.
+    pub acoustics: Option<u32>,
 }
 
 /// A set of BSPs the game loads together.
