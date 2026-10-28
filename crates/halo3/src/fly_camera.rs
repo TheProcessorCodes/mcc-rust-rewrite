@@ -2,14 +2,16 @@
 //!
 //! Keyboard: WASD moves, Space / C (or E / Q) goes up / down, Shift is fast,
 //! Alt is slow. Hold the right mouse button, or press Tab, to look around
-//! with the mouse; Escape gives the cursor back. P prints the camera's place
-//! in Halo units. Gamepad: left stick moves, right stick looks, right and
-//! left triggers go up and down, the A button is fast.
+//! with the mouse; Escape (the pause menu, `pause.rs`) gives the cursor
+//! back. P prints the camera's place in Halo units. Gamepad: left stick
+//! moves, right stick looks, right and left triggers go up and down, the A
+//! button is fast.
 
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use crate::pause::running;
 use crate::skate::Skating;
 use crate::world::{to_halo, to_halo_dir};
 
@@ -17,7 +19,7 @@ pub struct FlyCameraPlugin;
 
 impl Plugin for FlyCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (look, grab_cursor, fly, report).chain());
+        app.add_systems(Update, (look, grab_cursor, fly, report).chain().run_if(running));
     }
 }
 

@@ -209,7 +209,7 @@ impl Plugin for SwimPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SwimState::new())
             .init_resource::<Splashes>()
-            .add_systems(Update, (water_rules, draw_splashes).chain());
+            .add_systems(Update, (water_rules.run_if(crate::pause::running), draw_splashes).chain());
     }
 }
 

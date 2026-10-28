@@ -15,11 +15,13 @@
 //!
 //! In a map, J switches between flying and skating (see `skate.rs`),
 //! PageDown / PageUp step through the zone sets, Home loads every BSP.
+//! Escape or Start pauses and lists the controls (`pause.rs`).
 //! ```
 //!
 //! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install.
 
 mod fly_camera;
+mod pause;
 mod rider;
 mod shot;
 mod skate;
@@ -201,7 +203,7 @@ fn main() -> anyhow::Result<()> {
         .insert_resource(world::PendingScene(Some(scene), Some(textures)))
         .insert_resource(world::sky::PendingSky(Some(sky)))
         .insert_resource(world::water::PendingWater(Some(water)))
-        .add_plugins((fly_camera::FlyCameraPlugin, world::WorldPlugin))
+        .add_plugins((pause::PausePlugin, fly_camera::FlyCameraPlugin, world::WorldPlugin))
         .run();
     Ok(())
 }

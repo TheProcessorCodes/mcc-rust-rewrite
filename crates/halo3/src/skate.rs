@@ -49,7 +49,7 @@ impl Plugin for SkatePlugin {
             .init_resource::<AutoStart>()
             .init_resource::<Respawn>()
             .add_systems(Startup, start_worker)
-            .add_systems(Update, (update, draw_rider, show_status).chain());
+            .add_systems(Update, (update.run_if(crate::pause::running), draw_rider, show_status).chain());
     }
 }
 

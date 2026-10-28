@@ -171,7 +171,7 @@ impl Plugin for ZonesPlugin {
         app.init_resource::<Zones>()
             .init_resource::<LoadedBsps>()
             .init_resource::<ShowCollision>()
-            .add_systems(Update, (zone_keys, follow_cluster, apply_visibility).chain());
+            .add_systems(Update, (zone_keys.run_if(crate::pause::running), follow_cluster, apply_visibility).chain());
     }
 }
 

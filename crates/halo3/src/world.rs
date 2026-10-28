@@ -67,7 +67,7 @@ impl Plugin for WorldPlugin {
         ))
             .insert_resource(ClearColor(Color::srgb(0.53, 0.70, 0.90)))
             .add_systems(Startup, spawn_world)
-            .add_systems(Update, toggle_collision);
+            .add_systems(Update, toggle_collision.run_if(crate::pause::running));
     }
 }
 
