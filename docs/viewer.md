@@ -43,7 +43,7 @@ from the Reflex pipeline sidecars carry over.
 ## What is drawn
 
 One bevy mesh per material and lighting mode, every placement baked into
-world space; `Sky` placements draw unlit.
+world space; `Sky` placements get their own shader (see "Sky and haze" below).
 
 Before the window opens, `textures.rs` resolves every material's shader tag
 (`blam_texture::shader::resolve`) and decodes the bitmaps it needs, each
@@ -98,14 +98,44 @@ they are lit as well as by material.
 | instances with static per-vertex lighting | their own coefficients, turned into irradiance per vertex on the CPU (vertex colour) |
 | instances with a light probe | the probe (L0 and L1 terms plus its dominant light), per vertex on the CPU |
 | scenery, crates, machines, controls | the lightmap at the lit BSP vertex nearest the bottom centre of the object, per vertex with each vertex's normal (an approximation: the scenario's own scenery/machine probes are not matched up yet) |
-| the sky | unlit, its textures as they are |
+| the sky | its own shader and the map's atmosphere ("Sky and haze" below) |
 | maps with no lightmap, `--test-scene` | a fixed sunny Valhalla texel (`lighting::default_light`) |
 
 Exposure is a flat x4 (`EXPOSURE` in `world/lighting.rs`; set
 `HALO3_EXPOSURE` to try others), picked against in-game Valhalla
 screenshots. Not done: specular, bump-mapped normals, Halo's own
-exposure/tonemap curve and its blue distance fog, the probes' L2 terms.
+exposure/tonemap curve, the probes' L2 terms.
 
 The log says how each placement was lit, e.g. Valhalla:
 `lit placements: [("nearest surface", 401), ("per-pixel", 207),
 ("per-vertex", 58), ("probe", 18), ("sky", 10)]`.
+
+## Sky and haze
+
+`world/sky.rs` and `world/shaders/sky.wesl`, from the map's `skya` atmosphere tag
+(`docs/format/sky-and-atmosphere.md` has the layout and the evidence).
+
+- **Sky placements** keep their StandardMaterial for blending and culling but are drawn by
+  `SkyMaterial`: the shader's `albedo` option combines base and detail maps the way Halo does
+  (`default`, `detail_blend`, `three_detail_blend`, `two_detail`, `two_detail_overlay`,
+  `two_detail_black_point`, `constant_color`), adds self-illumination (stars, the sun disk),
+  multiplies lit surfaces by a fixed sunlit irradiance, and then runs Halo 3's light scattering
+  along the ray from the camera: `colour * extinction + inscatter`, Rayleigh and Mie with
+  exponential height falloff, using the setting flagged for the sky (`haze_skydome` on Valhalla).
+  The nearly black sky dome comes out blue from that, as in the game. Additive layers only get
+  the extinction. Sky bitmaps are sampled linear or sRGB as their DXGI format says.
+- **The world** gets bevy's `DistanceFog` (atmospheric falloff) from the level setting
+  (`haze_level`): per-channel extinction and the in-scattered colour, recomputed every frame for
+  the camera's height, since the haze thins with height (Mie scale height 6 wu over a sea level at
+  z 0 on Valhalla). It is applied in the lightmap shader's post-processing call, so bluish
+  distance haze needs no change there.
+- **Clear colour**: a long level ray through the sky's air at the camera's height, for the
+  places below the dome's rim with no sky geometry (only seen out of bounds).
+- `HALO3_HAZE` scales the world haze's density (`0` turns it off) for comparisons.
+
+Not done: the world haze uses one density for the whole ray (the eye's), so looking down from a
+height onto the lake under-hazes it; the level setting's distance bias (-15 wu, no haze in the
+first 15 wu) and the sun-angle dependence of the haze colour are not applied to the world (bevy's
+fog has neither); `desaturation` (used by The Pit, 0.2) is ignored; Halo's real sky lighting and
+exposure (`cfxs`) are not decoded; no sun glare or bloom; the sky does not move with the camera
+(it is at true size, about 7,500 wu out, which is what the haze distances need).
