@@ -36,9 +36,10 @@ const DEFAULT_SCALE: f32 = 33.0 * 0.0254;
 const DEFAULT_ASSETS: &str = r"D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\assets";
 
 /// The map data the skate world is built from, handed over by `main`: the
-/// collision, and the trigger volumes (rails in kill volumes are dropped).
+/// collision, the trigger volumes (rails in kill volumes are dropped) and the
+/// water surfaces (rails under deep water are dropped), all in Halo units.
 #[derive(Resource)]
-pub struct SkateInput(pub Option<Collision>, pub Vec<TriggerVolume>);
+pub struct SkateInput(pub Option<Collision>, pub Vec<TriggerVolume>, pub Vec<[Vec3; 3]>);
 
 pub struct SkatePlugin;
 
@@ -207,6 +208,7 @@ fn skate_triangles(collision: &Collision, k: f32) -> Vec<[[f32; 3]; 3]> {
 
 fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: Res<LoadedBsps>) {
     let volumes = std::mem::take(&mut input.1);
+    let water = std::mem::take(&mut input.2);
     let Some(collision) = input.0.take() else {
         return;
     };
@@ -251,6 +253,7 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                             let triangles = skate_triangles(&loaded, k);
                             let (found, _) = rails::find_rails(&loaded);
                             let found = rails::outside_kill_volumes(found, &volumes);
+                            let found = rails::out_of_deep_water(found, &water, rails::DEEP_WATER);
                             let rails_found = started.elapsed().as_secs_f32();
                             let rails: Vec<Vec<[f32; 3]>> = found
                                 .iter()

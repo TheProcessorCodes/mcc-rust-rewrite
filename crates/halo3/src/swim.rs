@@ -27,7 +27,7 @@ use crate::world::{to_halo, to_render};
 
 /// Water deeper than this (world units, 1 wu = 3.048 m) cannot be ridden:
 /// about 1.4 m, chest-deep on the skater.
-pub const DEEP_WU: f32 = 0.45;
+pub const DEEP_WU: f32 = blam_geometry::rails::DEEP_WATER;
 /// How long the board must stay under deep water before the skater is
 /// taken back.
 pub const SINK_SECONDS: f32 = 0.6;

@@ -349,6 +349,14 @@ pub struct ZoneSwitch {
 }
 
 impl Scene {
+    /// The triangles drawn with water shaders (`rmw `), in world space.
+    pub fn water_triangles(&self) -> Vec<[Vec3; 3]> {
+        self.world_triangles()
+            .filter(|(m, _)| self.materials.get(*m as usize).is_some_and(|m| m.shader_class == "rmw "))
+            .map(|(_, t)| t)
+            .collect()
+    }
+
     /// Every triangle of every placement in world space, with the material
     /// it is drawn with. The order is placements, then parts, then triangles.
     pub fn world_triangles(&self) -> impl Iterator<Item = (u32, [Vec3; 3])> + '_ {
