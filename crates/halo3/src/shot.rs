@@ -2,7 +2,7 @@
 //! exit. For looking at the renderer's output without anyone at the screen.
 //!
 //! ```text
-//! halo3 <map> --shot <dir> [--view x,y,z,yaw,pitch]... [--size 1280x720]
+//! halo3 <map> --shot <dir> [--view x,y,z,yaw,pitch | spawn[N] | overview]... [--size 1280x720]
 //! ```
 //!
 //! A view is a Halo position in world units and a facing in degrees (yaw
@@ -45,6 +45,60 @@ pub struct View {
     pub position: Vec3,
     pub yaw_deg: f32,
     pub pitch_deg: f32,
+}
+
+impl View {
+    /// Spawn point `n` at Spartan eye height, facing its way; spawn 0 is
+    /// where the viewer starts.
+    pub fn spawn(scene: &blam_geometry::Scene, n: usize) -> Option<View> {
+        let s = scene.spawns.get(n)?;
+        Some(View {
+            position: s.position + Vec3::Z * 0.6,
+            yaw_deg: s.yaw.to_degrees(),
+            pitch_deg: 0.0,
+        })
+    }
+
+    /// High over one corner of the spawn points (the playable space; the
+    /// BSP's own bounds reach far out to the scenery around it), looking
+    /// down at their middle. Without spawns, the BSP's clusters.
+    pub fn overview(scene: &blam_geometry::Scene) -> View {
+        let mut lo = Vec3::splat(f32::INFINITY);
+        let mut hi = Vec3::splat(f32::NEG_INFINITY);
+        for s in &scene.spawns {
+            lo = lo.min(s.position);
+            hi = hi.max(s.position);
+        }
+        if scene.spawns.len() < 2 {
+            for p in scene
+                .placements
+                .iter()
+                .filter(|p| p.kind == blam_geometry::Kind::Cluster)
+            {
+                for v in &scene.meshes[p.mesh as usize].positions {
+                    let w = p.transform.transform_point3(*v);
+                    lo = lo.min(w);
+                    hi = hi.max(w);
+                }
+            }
+        }
+        if !lo.x.is_finite() {
+            (lo, hi) = (Vec3::splat(-10.0), Vec3::splat(10.0));
+        }
+        let centre = (lo + hi) * 0.5;
+        let size = (hi - lo).max(Vec3::splat(10.0));
+        let eye = Vec3::new(
+            centre.x - size.x * 0.4,
+            centre.y - size.y * 0.4,
+            hi.z + size.x.max(size.y) * 0.45,
+        );
+        let d = centre - eye;
+        View {
+            position: eye,
+            yaw_deg: d.y.atan2(d.x).to_degrees(),
+            pitch_deg: d.z.atan2(d.truncate().length()).to_degrees(),
+        }
+    }
 }
 
 impl std::str::FromStr for View {

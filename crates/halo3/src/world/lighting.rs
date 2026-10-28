@@ -31,16 +31,99 @@ use blam_texture::{Format, Texture, rgba};
 
 use crate::textures::LightmapTextures;
 
-/// Multiplies Halo's irradiance before bevy's tonemapping. Halo's own
-/// exposure comes from tags not read yet; this was picked by comparing
-/// screenshots with the game (`docs/viewer.md`). `HALO3_EXPOSURE` overrides.
+/// Multiplies Halo's irradiance before bevy's tonemapping on Valhalla,
+/// picked by comparing screenshots with the game (`docs/viewer.md`).
 pub const EXPOSURE: f32 = 4.0;
 
+/// Valhalla's camera fx exposure in stops, the one [`EXPOSURE`] was picked
+/// on: other maps get `EXPOSURE * 2^(stops - VALHALLA_STOPS)`.
+pub const VALHALLA_STOPS: f32 = -4.8365;
+
+/// The map's own exposure in stops (`cfxs +0x18`), set once at startup.
+static MAP_STOPS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+
+/// Records the map's camera fx exposure (`blam_geometry::camera_fx`).
+/// Values outside -8..0 stops are ignored (Chillout stores -16.6, which
+/// reads as "auto exposure only"; [`EXPOSURE`] is used there).
+pub fn set_map_exposure(stops: f32) {
+    if (-8.0..=0.0).contains(&stops) {
+        let _ = MAP_STOPS.set(stops);
+    }
+}
+
+/// How much of the camera fx's difference from Valhalla is applied. The
+/// full difference (1.0) over-exposes the maps with the least negative
+/// stops (Avalanche x17, Standoff x20): Halo 3 also adapts its exposure to
+/// the view, which the viewer does not, so the stored value alone overshoots.
+/// Picked by eye over the 27 multiplayer maps; `HALO3_EXPOSURE_SLOPE`
+/// overrides.
+pub const EXPOSURE_SLOPE: f32 = 0.6;
+
+/// The most the mean lit-surface irradiance (luminance) may come out at
+/// after exposure. Valhalla sits at 1.2 (0.30 x 4), the rest of the 27
+/// multiplayer maps at 0.2-2.0; only maps whose lightmaps are far brighter
+/// than their camera fx allows for are held back: Sandbox (mean 1.23, else
+/// x7.5) and Sandtrap (1.15, else x4.3). A stand-in for Halo's auto
+/// exposure.
+pub const MAX_EXPOSED_MEAN: f32 = 3.0;
+
+/// The map's mean lit-surface irradiance luminance, set once at startup.
+static SCENE_MEAN: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+
+/// Records the map's mean irradiance ([`scene_mean_irradiance`]).
+pub fn set_scene_mean(mean: f32) {
+    if mean.is_finite() && mean > 0.0 {
+        let _ = SCENE_MEAN.set(mean);
+    }
+}
+
+/// The mean luminance of the diffuse irradiance over every 25th vertex of
+/// the per-pixel lit BSP clusters, each with its own normal (what `blam
+/// lightmap` prints as "mean diffuse irradiance"), or `None` without a
+/// lightmap.
+pub fn scene_mean_irradiance(scene: &Scene, lightmaps: &[Option<LightmapTextures>]) -> Option<f32> {
+    let w = Vec3::new(0.212656, 0.715158, 0.0721856);
+    let (mut sum, mut n) = (0.0f32, 0usize);
+    for p in scene.placements.iter().filter(|p| p.kind == Kind::Cluster) {
+        let Lighting::PerPixel { lightmap, uvs } = &p.lighting else {
+            continue;
+        };
+        let (Some(Some(tex)), Some(lm)) = (lightmaps.get(*lightmap as usize), scene.lightmaps.get(*lightmap as usize))
+        else {
+            continue;
+        };
+        let atlas = Atlas::new(tex, lm.scales);
+        let mesh = &scene.meshes[p.mesh as usize];
+        let normal_m = Mat3::from_mat4(p.transform).inverse().transpose();
+        for (i, uv) in uvs.iter().enumerate().step_by(25) {
+            let Some(normal) = mesh.normals.get(i) else { break };
+            let e = atlas.light(*uv).irradiance((normal_m * *normal).normalize_or(Vec3::Z));
+            sum += e.max(Vec3::ZERO).dot(w);
+            n += 1;
+        }
+    }
+    (n > 0).then(|| sum / n as f32)
+}
+
+/// The scale from Halo's light to bevy's tonemapper input:
+/// `HALO3_EXPOSURE` when set, else `EXPOSURE * 2^(slope * (stops -
+/// VALHALLA_STOPS))` from the map's camera fx (else [`EXPOSURE`]), held so
+/// that the map's mean irradiance stays under [`MAX_EXPOSED_MEAN`].
 pub fn exposure() -> f32 {
-    std::env::var("HALO3_EXPOSURE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(EXPOSURE)
+    let env = |name: &str| std::env::var(name).ok().and_then(|s| s.parse::<f32>().ok());
+    env("HALO3_EXPOSURE").unwrap_or_else(|| {
+        let e = match MAP_STOPS.get() {
+            Some(stops) => {
+                let slope = env("HALO3_EXPOSURE_SLOPE").unwrap_or(EXPOSURE_SLOPE);
+                EXPOSURE * (slope * (stops - VALHALLA_STOPS)).exp2()
+            }
+            None => EXPOSURE,
+        };
+        match SCENE_MEAN.get() {
+            Some(mean) => e.min(MAX_EXPOSED_MEAN / mean),
+            None => e,
+        }
+    })
 }
 
 pub type HaloMaterial = ExtendedMaterial<StandardMaterial, HaloLightmap>;
@@ -105,6 +188,105 @@ pub struct HaloLightmap {
     pub detail_2: Option<Handle<Image>>,
     #[texture(114)]
     pub detail_3: Option<Handle<Image>>,
+
+    // The material model (`docs/format/shaders.md` section 11); the
+    // uniform fields mirror `HaloLightmapParams` in the shader.
+    /// x: bump map on, y: bump detail coefficient (0: none), z: albedo
+    /// detail map on, w: specular mask source (0 none, 1 base alpha, 2 mask
+    /// texture).
+    #[uniform(100)]
+    pub surface: Vec4,
+    /// 1 where a normal map is BC5 signed: x bump, y bump detail.
+    #[uniform(100)]
+    pub signed: Vec4,
+    #[uniform(100)]
+    pub bump_xform: Vec4,
+    #[uniform(100)]
+    pub bump_detail_xform: Vec4,
+    #[uniform(100)]
+    pub detail_xform: Vec4,
+    #[uniform(100)]
+    pub mask_xform: Vec4,
+    #[uniform(100)]
+    pub illum_xform: Vec4,
+    #[uniform(100)]
+    pub illum_detail_xform: Vec4,
+    /// Specular coefficient, normal power, glancing power, fresnel
+    /// steepness.
+    #[uniform(100)]
+    pub spec: Vec4,
+    /// Normal specular tint; w: analytical contribution.
+    #[uniform(100)]
+    pub tint_normal: Vec4,
+    /// Glancing specular tint; w: area contribution.
+    #[uniform(100)]
+    pub tint_glancing: Vec4,
+    /// F0; w: model (0 diffuse, 1 phong, 2 cook-torrance, 3 glass).
+    #[uniform(100)]
+    pub f0: Vec4,
+    /// Reflection colour: environment tint times contribution.
+    #[uniform(100)]
+    pub env: Vec4,
+    /// x: self-illumination mode (0 off, 1 map, 2 map x detail, 3 from
+    /// diffuse, 4 map x diffuse, 5 three channels).
+    #[uniform(100)]
+    pub illum: Vec4,
+    #[uniform(100)]
+    pub illum_a: Vec4,
+    #[uniform(100)]
+    pub illum_b: Vec4,
+    #[uniform(100)]
+    pub illum_c: Vec4,
+    /// Terrain: 1 per layer with a bump map, and whether it is signed.
+    #[uniform(100)]
+    pub terrain_bump: Vec4,
+    #[uniform(100)]
+    pub terrain_bump_signed: Vec4,
+    #[uniform(100)]
+    pub terrain_bump_xforms: [Vec4; 4],
+    /// Terrain: specular coefficient (0 for diffuse-only layers) and power
+    /// per layer.
+    #[uniform(100)]
+    pub terrain_spec: Vec4,
+    #[uniform(100)]
+    pub terrain_power: Vec4,
+    /// Terrain: per layer specular tint, analytical contribution in w.
+    #[uniform(100)]
+    pub terrain_tints: [Vec4; 4],
+    /// x: 1 when an `alpha_test_map` gives the alpha (not the base map);
+    /// the map's xform after it.
+    #[uniform(100)]
+    pub alpha_flags: Vec4,
+    #[uniform(100)]
+    pub alpha_xform: Vec4,
+
+    /// A 1x1 image that only carries the repeating, anisotropic sampler
+    /// every map below is read with.
+    #[texture(115)]
+    #[sampler(116)]
+    pub surface_dummy: Option<Handle<Image>>,
+    #[texture(117)]
+    pub bump_map: Option<Handle<Image>>,
+    #[texture(118)]
+    pub bump_detail_map: Option<Handle<Image>>,
+    #[texture(119)]
+    pub detail_map: Option<Handle<Image>>,
+    #[texture(120)]
+    pub mask_map: Option<Handle<Image>>,
+    #[texture(121)]
+    pub illum_map: Option<Handle<Image>>,
+    #[texture(122)]
+    pub illum_detail_map: Option<Handle<Image>>,
+    #[texture(123)]
+    pub terrain_bump_0: Option<Handle<Image>>,
+    #[texture(124)]
+    pub terrain_bump_1: Option<Handle<Image>>,
+    #[texture(125)]
+    pub terrain_bump_2: Option<Handle<Image>>,
+    #[texture(126)]
+    pub terrain_bump_3: Option<Handle<Image>>,
+    #[texture(127)]
+    pub alpha_map: Option<Handle<Image>>,
 }
 
 /// Halo's detail-map multiplier: a detail map multiplies the base so that

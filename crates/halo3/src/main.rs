@@ -86,12 +86,30 @@ fn main() -> anyhow::Result<()> {
                 bytes as f64 / (1 << 20) as f64,
                 started.elapsed().as_secs_f32()
             );
+            let mean = world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps);
+            if let Some(mean) = mean {
+                world::lighting::set_scene_mean(mean);
+            }
+            match blam_geometry::camera_fx::read(&cache) {
+                Ok(Some(fx)) => {
+                    world::lighting::set_map_exposure(fx.exposure);
+                    eprintln!(
+                        "camera fx {}: exposure {:.2} stops, mean irradiance {:.3} -> x{:.2}",
+                        fx.tag,
+                        fx.exposure,
+                        mean.unwrap_or(0.0),
+                        world::lighting::exposure()
+                    );
+                }
+                Ok(None) => eprintln!("no camera fx: exposure x{}", world::lighting::exposure()),
+                Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
+            }
             let chief = rider::load_chief(&cache);
             let sky = world::sky::load(&cache, &scene);
             (scene, textures, chief, sky)
         }
     };
-    let shot = shot_plan(&args, &scene.name)?;
+    let shot = shot_plan(&args, &scene)?;
     let title = format!("Halo 3 - {}", scene.name);
     let mut app = App::new();
     match &shot {
@@ -146,7 +164,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// `--shot <dir>` with its `--view` and `--size` options, if given.
-fn shot_plan(args: &[String], name: &str) -> anyhow::Result<Option<shot::ShotPlan>> {
+fn shot_plan(args: &[String], scene: &blam_geometry::Scene) -> anyhow::Result<Option<shot::ShotPlan>> {
     let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1));
     let Some(dir) = value("--shot") else {
         return Ok(None);
@@ -154,7 +172,15 @@ fn shot_plan(args: &[String], name: &str) -> anyhow::Result<Option<shot::ShotPla
     let views = args
         .windows(2)
         .filter(|w| w[0] == "--view")
-        .map(|w| w[1].parse::<shot::View>().map_err(anyhow::Error::msg))
+        .map(|w| match w[1].as_str() {
+            "spawn" => shot::View::spawn(scene, 0).ok_or_else(|| anyhow::anyhow!("--view spawn: no spawn points")),
+            "overview" => Ok(shot::View::overview(scene)),
+            v if v.starts_with("spawn") => {
+                let n: usize = v["spawn".len()..].parse()?;
+                shot::View::spawn(scene, n).ok_or_else(|| anyhow::anyhow!("--view {v}: no such spawn point"))
+            }
+            v => v.parse::<shot::View>().map_err(anyhow::Error::msg),
+        })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let size = match value("--size") {
         Some(s) => {
@@ -165,7 +191,7 @@ fn shot_plan(args: &[String], name: &str) -> anyhow::Result<Option<shot::ShotPla
     };
     Ok(Some(shot::ShotPlan {
         dir: PathBuf::from(dir),
-        name: name.to_string(),
+        name: scene.name.clone(),
         views,
         size,
         skate: args.iter().any(|a| a == "--skate"),

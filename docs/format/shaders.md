@@ -677,3 +677,98 @@ From `probe_shaders.py --survey`:
 - Only riverworld was surveyed. Campaign maps have `rmcs`, `rmct`, `rmsk` (skin) and more
   `rmd` variants; `rmsk` and `rmct` probably follow the same `ShaderTag` layout (Reclaimer reads
   them with it) but their rmdf categories are not listed here.
+- The material model of section 11 is our approximation, not Halo's shader code: the lobe
+  normalisation, how area specular and the environment map are weighted, and the exact fresnel
+  curve are not derived from the game.
+
+---
+
+## 11. The material model: parameters past the colour map (2026-10-28)
+
+What the viewer reads for lighting a surface, from `blam shader` / `blam textures --list` on
+the multiplayer maps (all names are template argument and usage names, section 3, so they are
+read by name through `Shader::param` and `Shader::map`). No GPL code involved: these are the
+names and values in the user's maps.
+
+### 11.1 How common each option is (`blam textures <map>` prints the census)
+
+| map | rmsh materials | bump_mapping off / standard / detail | material_model | environment_mapping none / dynamic / per_pixel | self_illumination not off |
+|---|---|---|---|---|---|
+| riverworld | 70 | 25 / 28 / 17 | two_lobe_phong 31, diffuse_only 29, cook_torrance 4, glass 4 | 48 / 17 / 5 | 15 |
+| construct | 98 | 25 / 36 / 37 | two_lobe_phong 68, diffuse_only 17, glass 5, cook_torrance 3, single_lobe_phong 3 | 32 / 63 / 3 | 32 |
+
+So bump maps and the two-lobe phong are the norm on level geometry; `dynamic` environment
+mapping (a cube map the engine renders at runtime, nothing in the tag) is the usual reflection.
+
+### 11.2 Maps
+
+| usage | used when | format seen | meaning |
+|---|---|---|---|
+| `detail_map` | `albedo` default, detail_blend, two_detail* , three_detail_blend | colour (BC1/BC3) | `albedo = base * detail * 2^2.2` (the same multiplier as terrain, 7.5): mid grey is neutral |
+| `bump_map` | `bump_mapping` standard, detail, detail_masked ... | **DXN = BC5 signed (DXGI 84)**, 300 of 436 bump bitmaps on riverworld; U8V8 (R8G8 signed) 96; one A8R8G8B8 | tangent-space normal, x and y only, z = sqrt(1 - x^2 - y^2). Curve byte "linear" |
+| `bump_detail_map` | `bump_mapping` detail* | as above | added to the bump's x and y, scaled by `bump_detail_coefficient`, tiling much tighter |
+| `specular_mask_texture` | `specular_mask` from_texture / from_color_texture | colour | red is the mask |
+| (base map alpha) | `specular_mask` specular_mask_from_diffuse | | the mask |
+| `alpha_test_map` | `alpha_test` simple, when the template has it | A8R8G8B8 (cyberdyne grates), alpha replicated | the cut-out; the base map's alpha is then *not* the cut (it is the specular mask) |
+| `self_illum_map`, `self_illum_detail_map` | `self_illumination` not off | colour | emissive, see 11.4 |
+| `environment_map` | `environment_mapping` per_pixel | cube | not drawn yet (11.5) |
+| `bump_map_m_N`, `detail_bump_m_N` | terrain layer N | BC5 | the layer's normal (and its detail normal, not drawn) |
+
+The engine's stand-ins `shaders\default_bitmaps\bitmaps\default_vector` (flat normal),
+`default_detail` (0x80 grey) and `gray_50_percent` change nothing and are skipped.
+
+The tangent frame is Halo's own: `s_world_vertex` and `s_rigid_vertex` store a tangent and a
+binormal next to the normal (`sbsp-render-geometry.md` 5). The bumped normal is
+`normalize(T * x + B * y + N * z)` with `B` the stored binormal; the viewer keeps the tangent
+and the sign of `dot(cross(N, T), B)` (+1 or -1 per vertex) and rebuilds `B` from them, flipping
+the sign under a mirroring placement.
+
+### 11.3 Specular parameters by `material_model`
+
+| model | parameters (template argument names) |
+|---|---|
+| `two_lobe_phong` (and the `*_phong*` variants) | `specular_coefficient`, `normal_specular_power`, `normal_specular_tint`, `glancing_specular_power`, `glancing_specular_tint`, `fresnel_curve_steepness`, `area_specular_contribution`, `analytical_specular_contribution`, `environment_map_specular_contribution`, `albedo_specular_tint_blend`, `analytical_anti_shadow_control` |
+| `cook_torrance` (and `cook_torrance_*`) | `specular_coefficient`, `roughness`, `specular_tint`, `fresnel_color`, `area_specular_contribution`, `analytical_specular_contribution`, `environment_map_specular_contribution` |
+| `glass` | `specular_coefficient`, `fresnel_coefficient`, `fresnel_curve_steepness`, `fresnel_curve_bias`, `roughness`, `analytical_specular_contribution`, `area_specular_contribution` |
+| environment (any model, `environment_mapping` not none) | `env_tint_color`, `env_roughness_scale` |
+| terrain layer N (`material_N` = `diffuse_plus_specular*`) | `specular_coefficient_m_N`, `specular_power_m_N`, `specular_tint_m_N`, `fresnel_curve_steepness_m_N`, `area_specular_contribution_m_N`, `analytical_specular_contribution_m_N`, `environment_specular_contribution_m_N`; the mask is the layer's base alpha |
+| water (`rmw `) | `fresnel_coefficient` (0.1 on Valhalla), `reflection_coefficient`, `water_diffuse` ... |
+
+Typical values: Valhalla rock `specular_coefficient` 0.2, powers 22 / 10; Forerunner panels on
+The Construct coefficient 1, powers 10 / 10, `normal_specular_tint` a dull grey-green, env
+contribution 0.2-1.0; Last Resort cliffs (terrain) coefficient 1, power 5-10, tint (0.18, 0.14,
+0.09): the tints are small, so they matter.
+
+### 11.4 Self-illumination
+
+| option | viewer |
+|---|---|
+| `simple`, `simple_with_alpha_mask`, `plasma` (approximated), others with a map | `self_illum_map * self_illum_color * self_illum_intensity` |
+| `illum_detail` | the same times `self_illum_detail_map * 2^2.2` |
+| `from_diffuse` | albedo * colour |
+| `self_illum_times_diffuse` | map * albedo * colour |
+| `3_channel_self_illum` | `map.r * channel_a + map.g * channel_b + map.b * channel_c` |
+
+The emissive light goes through the same exposure as the lit surface.
+
+### 11.5 What the viewer does with it (`world/shaders/lightmap.wesl`)
+
+With the lightmap decoded at the pixel (`lightmaps.md` 5) giving the SH, the dominant direction
+`L` and intensity `D`:
+
+```
+n      = bumped normal; v = towards the eye; r = reflect(-v, n)
+E      = irradiance(n)                                   // diffuse, lightmaps.md 5.3
+edge   = (1 - n.v) ^ fresnel_curve_steepness
+phong:  power = mix(normal_power, glancing_power, edge); tint = mix(normal_tint, glancing_tint, edge)
+cook / glass / water: f = F0 + (1 - F0) * edge;  tint *= f     (F0 = fresnel_color / fresnel_coefficient)
+spec   = D * (r.L)^power * max(n.L, 0) * analytical      // the dominant light's lobe
+       + ambient(r) * area                               // the SH without the dominant light, towards r
+spec   = spec * tint + ambient(r) * env_tint * env_contribution * (tint or f)   // stand-in for the cube map
+colour = albedo * E + spec * specular_coefficient * mask + self_illum
+```
+
+Only per-pixel lightmapped surfaces (the BSP) get bump and specular; objects lit per vertex keep
+their vertex irradiance and flat normals, and get `0.5 * E_vertex * env_tint * env_contribution *
+specular_coefficient * mask` as their reflection. `per_pixel` cube maps are not sampled; the SH towards
+the reflection stands in for both kinds of environment map.

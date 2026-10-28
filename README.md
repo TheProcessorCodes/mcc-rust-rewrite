@@ -66,8 +66,12 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       still BC-compressed, about 1 s of extra load time. Checked by
       `cargo test` against `docs/format/bitmap.md` and `shaders.md`.
 - [x] The four-layer terrain blend (blend map, base x detail per layer, lightmapped).
-- [ ] Real shaders: detail maps on ordinary shaders, normal maps,
-      water, self-illumination.
+- [x] Materials: detail maps, normal maps on Halo's own tangents (BC5
+      kept compressed), specular from the lightmap's dominant light
+      (two-lobe phong, cook-torrance, glass), an SH stand-in for
+      environment maps, self-illumination, per-map exposure from the
+      camera fx; spawn markers hidden (`docs/viewer.md`).
+- [ ] Real cube-map reflections, animated water, parallax.
 - [x] Milestone 3a: the game's real collision BSP decoded (the handoff's
       "known gap"): Valhalla gives 30,560 world and 39,678 instanced collision
       triangles with invisible walls, slip and two-sided surfaces flagged.

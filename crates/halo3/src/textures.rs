@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use blam_cache::CacheFile;
 use blam_geometry::Scene;
 use blam_texture::shader::{self, Shader};
-use blam_texture::{Blend, Texture, Xform, bitmap, rgba};
+use blam_texture::{Blend, Texture, TextureSlot, Xform, bitmap, rgba};
 
 /// How one scene material is drawn.
 #[derive(Clone, Debug)]
@@ -30,6 +30,95 @@ pub struct Look {
     /// map and at least one layer decoded. `texture` then still holds the
     /// dominant layer, for drawing paths that take a single texture.
     pub terrain: Option<TerrainLook>,
+    /// Everything past the colour map: detail, bump, specular, environment
+    /// and self-illumination (`docs/format/shaders.md` section 11).
+    pub surface: SurfaceLook,
+}
+
+/// A bitmap tag index and the tiling it is sampled with.
+pub type MapRef = (u32, Xform);
+
+/// How a lit surface reflects light, from the shader's `material_model`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Model {
+    /// `diffuse_only`, `foliage`, `none` ...: no specular.
+    #[default]
+    Diffuse,
+    /// `two_lobe_phong`, `single_lobe_phong` and their kin: a normal and a
+    /// glancing lobe blended by a fresnel curve.
+    Phong,
+    /// `cook_torrance*`: roughness and a Schlick fresnel from `fresnel_color`.
+    CookTorrance,
+    /// `glass`: a fresnel-weighted reflection.
+    Glass,
+}
+
+/// Where the specular mask comes from (`specular_mask` option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SpecMask {
+    #[default]
+    None,
+    /// The base map's alpha.
+    BaseAlpha,
+    /// `specular_mask_texture` (red, or the colour for
+    /// `specular_mask_from_color_texture`).
+    Texture,
+}
+
+/// Self-illumination kinds the viewer draws (`self_illumination` option).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Illum {
+    #[default]
+    Off,
+    /// `self_illum_map * colour * intensity` (`simple`, `simple_with_alpha_mask`, `plasma` approximated).
+    Map,
+    /// `illum_detail`: the map times its detail map (scaled like a detail map).
+    MapDetail,
+    /// `from_diffuse`: the albedo times the colour.
+    FromDiffuse,
+    /// `self_illum_times_diffuse`: the map times the albedo.
+    TimesDiffuse,
+    /// `3_channel_self_illum`: the map's red, green and blue each tint a colour.
+    ThreeChannel,
+}
+
+/// A shader's parameters and extra maps beyond the base colour.
+#[derive(Clone, Debug, Default)]
+pub struct SurfaceLook {
+    /// The alpha test's own map (`alpha_test_map`) when it is not the base
+    /// map.
+    pub alpha_map: Option<MapRef>,
+    /// The albedo detail map, multiplied over the base (`albedo` default,
+    /// detail_blend, two_detail ...).
+    pub detail: Option<MapRef>,
+    pub bump: Option<MapRef>,
+    /// `bump_detail_map` and `bump_detail_coefficient`.
+    pub bump_detail: Option<(u32, Xform, f32)>,
+    pub spec_mask: SpecMask,
+    pub spec_mask_map: Option<MapRef>,
+    pub model: Model,
+    /// `specular_coefficient` (times `diffuse`-free models: 0).
+    pub specular: f32,
+    /// Phong: normal and glancing powers; Cook-Torrance: both from roughness.
+    pub power: [f32; 2],
+    /// Normal and glancing specular tints (linear RGB as stored).
+    pub tint: [[f32; 3]; 2],
+    /// `fresnel_curve_steepness`.
+    pub fresnel_steepness: f32,
+    /// Cook-Torrance `fresnel_color` / glass `fresnel_coefficient` (F0).
+    pub f0: [f32; 3],
+    pub analytical: f32,
+    pub area: f32,
+    /// `environment_mapping` is not `none`: the reflection's strength
+    /// (`environment_map_specular_contribution`, or 1 for glass).
+    pub env: f32,
+    pub env_tint: [f32; 3],
+    pub illum: Illum,
+    pub illum_map: Option<MapRef>,
+    pub illum_detail: Option<MapRef>,
+    /// `self_illum_color * self_illum_intensity`; three colours for
+    /// `3_channel_self_illum` (`channel_a/b/c`).
+    pub illum_colour: [[f32; 3]; 3],
 }
 
 /// A terrain shader's textures (`docs/format/shaders.md` 7.5): the blend
@@ -39,7 +128,9 @@ pub struct Look {
 pub struct TerrainLook {
     /// Tag index of the blend map (decoded into `MaterialTextures::bitmaps`;
     /// its texels are weights, not colours).
-    pub blend_map: u32,
+    /// `None` for a one-layer terrain whose template has no blend map
+    /// (Sandbox's sand): every layer that is on then weighs the same.
+    pub blend_map: Option<u32>,
     pub blend_xform: Xform,
     /// `None` when the layer is `off` or its base map did not decode.
     pub layers: [Option<TerrainLayerLook>; 4],
@@ -52,6 +143,17 @@ pub struct TerrainLayerLook {
     pub base_xform: Xform,
     /// `None` when the layer has no detail map or it did not decode.
     pub detail: Option<(u32, Xform)>,
+    /// `bump_map_m_N`, when it decoded.
+    pub bump: Option<(u32, Xform)>,
+    /// `specular_coefficient_m_N` when the layer is `diffuse_plus_specular*`
+    /// (its base alpha is the mask), else 0.
+    pub specular: f32,
+    /// `specular_power_m_N`.
+    pub power: f32,
+    /// `specular_tint_m_N`.
+    pub tint: [f32; 3],
+    /// `analytical_specular_contribution_m_N`.
+    pub analytical: f32,
 }
 
 #[derive(Default)]
@@ -81,7 +183,7 @@ fn dominant_layer(
     resources: &blam_cache::Resources,
     s: &Shader,
     means: &mut HashMap<u32, [f32; 4]>,
-) -> Option<blam_texture::TextureSlot> {
+) -> Option<TextureSlot> {
     let terrain = s.terrain.as_ref()?;
     let weights = terrain.blend_map.as_ref().and_then(|b| {
         if let Some(w) = means.get(&b.bitmap) {
@@ -99,6 +201,167 @@ fn dominant_layer(
         None => present.into_iter().next(),
     };
     best.map(|(_, l)| l.base.clone())
+}
+
+/// The engine's stand-in bitmaps that change nothing when sampled (flat
+/// normal, mid-grey detail): treated as absent.
+fn is_neutral(name: &str) -> bool {
+    let file = name.rsplit('\\').next().unwrap_or(name);
+    matches!(file, "default_vector" | "default_detail" | "gray_50_percent")
+}
+
+/// Shaders of things a player never sees outside Forge or their own game
+/// type: the spawn markers (black discs, white plasma columns), the
+/// capture-the-flag plates and the hill generator, and the engine's
+/// missing-shader grid.
+fn is_game_type_marker(shader: &str) -> bool {
+    shader.starts_with("objects\\multi\\shaders\\spawn_point")
+        || shader.starts_with("objects\\multi\\models\\shaders\\multiplayer_")
+        || shader == "objects\\multi\\shaders\\koth_shield_generator"
+        || shader == "shaders\\invalid"
+}
+
+/// A shader map as a texture slot, unless it is missing or neutral.
+fn useful_slot(m: &shader::ShaderMap) -> Option<TextureSlot> {
+    let bitmap = m.bitmap?;
+    (!is_neutral(&m.bitmap_name)).then(|| TextureSlot {
+        bitmap,
+        name: m.bitmap_name.clone(),
+        usage: m.usage.clone(),
+        xform: m.xform,
+    })
+}
+
+/// A Blinn-Phong power with the lobe width of a roughness.
+fn power_of_roughness(r: f32) -> f32 {
+    let r = r.clamp(0.02, 1.0);
+    (2.0 / (r * r) - 2.0).clamp(1.0, 2000.0)
+}
+
+/// Reads the material model, maps and parameters of an ordinary (`rmsh`
+/// and kin) shader (`docs/format/shaders.md` section 11). Terrain and
+/// water get the default (nothing extra).
+fn surface_look(s: &Shader, fetch: &mut dyn FnMut(&TextureSlot) -> Option<u32>) -> SurfaceLook {
+    let mut out = SurfaceLook::default();
+    if s.class == "rmw " {
+        // Water: a fresnel-weighted reflection of the light around it and
+        // a sharp sun glint; the waves and refraction are not drawn.
+        out.model = Model::Glass;
+        out.specular = 1.0;
+        out.power = [400.0; 2];
+        out.tint = [[1.0; 3]; 2];
+        out.f0 = [s.param("fresnel_coefficient").map_or(0.1, |v| v[0]); 3];
+        out.fresnel_steepness = 5.0;
+        out.analytical = 1.0;
+        out.env = 1.0;
+        out.env_tint = [1.0; 3];
+        return out;
+    }
+    if s.class == "rmtr" || s.special {
+        return out;
+    }
+    out.alpha_map = s.alpha_map.as_ref().and_then(|a| Some((fetch(a)?, a.xform)));
+    let mut map = |usage: &str| -> Option<MapRef> {
+        let slot = s.map(usage).and_then(useful_slot)?;
+        Some((fetch(&slot)?, slot.xform))
+    };
+    let p1 = |name: &str, default: f32| s.param(name).map_or(default, |v| v[0]);
+    let rgb = |name: &str, default: [f32; 3]| s.param(name).map_or(default, |v| [v[0], v[1], v[2]]);
+
+    let albedo = s.option("albedo").unwrap_or("default");
+    if matches!(
+        albedo,
+        "default" | "detail_blend" | "two_detail" | "two_detail_overlay" | "two_detail_black_point" | "three_detail_blend"
+    ) {
+        out.detail = map("detail_map");
+    }
+    match s.option("bump_mapping").unwrap_or("off") {
+        // Decals' `leave` keeps what is under them.
+        "off" | "leave" => {}
+        b => {
+            out.bump = map("bump_map");
+            if b != "standard" {
+                out.bump_detail = map("bump_detail_map").map(|(t, x)| (t, x, p1("bump_detail_coefficient", 1.0)));
+            }
+        }
+    }
+    out.spec_mask = match s.option("specular_mask").unwrap_or("no_specular_mask") {
+        "specular_mask_from_diffuse" => SpecMask::BaseAlpha,
+        "specular_mask_from_texture" | "specular_mask_from_color_texture" => {
+            out.spec_mask_map = map("specular_mask_texture");
+            if out.spec_mask_map.is_some() { SpecMask::Texture } else { SpecMask::None }
+        }
+        _ => SpecMask::None,
+    };
+    out.model = match s.option("material_model").unwrap_or("diffuse_only") {
+        m if m.starts_with("cook_torrance") => Model::CookTorrance,
+        m if m.contains("phong") => Model::Phong,
+        "glass" => Model::Glass,
+        _ => Model::Diffuse,
+    };
+    out.specular = p1("specular_coefficient", 0.0);
+    out.analytical = p1("analytical_specular_contribution", 0.5);
+    out.area = p1("area_specular_contribution", 0.0);
+    match out.model {
+        Model::Diffuse => out.specular = 0.0,
+        Model::Phong => {
+            let normal = p1("normal_specular_power", p1("specular_power", 10.0));
+            out.power = [normal, p1("glancing_specular_power", normal)];
+            let tint = rgb("normal_specular_tint", rgb("specular_tint", [1.0; 3]));
+            out.tint = [tint, rgb("glancing_specular_tint", tint)];
+            out.fresnel_steepness = p1("fresnel_curve_steepness", 5.0);
+        }
+        Model::CookTorrance => {
+            let power = power_of_roughness(p1("roughness", 0.3));
+            out.power = [power, power];
+            let tint = rgb("specular_tint", [1.0; 3]);
+            out.tint = [tint, tint];
+            out.f0 = rgb("fresnel_color", [0.5; 3]);
+            out.fresnel_steepness = 5.0;
+        }
+        Model::Glass => {
+            let power = power_of_roughness(p1("roughness", 0.0));
+            out.power = [power, power];
+            out.tint = [[1.0; 3]; 2];
+            out.f0 = [p1("fresnel_coefficient", 0.1); 3];
+            out.fresnel_steepness = p1("fresnel_curve_steepness", 5.0);
+        }
+    }
+    if s.option("environment_mapping").unwrap_or("none") != "none" && out.model != Model::Diffuse {
+        out.env = if out.model == Model::Glass {
+            1.0
+        } else {
+            p1("environment_map_specular_contribution", 0.0)
+        };
+        out.env_tint = rgb("env_tint_color", [1.0; 3]);
+    }
+    let intensity = p1("self_illum_intensity", 1.0);
+    out.illum_colour = [rgb("self_illum_color", [1.0; 3]).map(|x| x * intensity); 3];
+    out.illum = match s.option("self_illumination").unwrap_or("off") {
+        "off" => Illum::Off,
+        "from_diffuse" => Illum::FromDiffuse,
+        "self_illum_times_diffuse" => Illum::TimesDiffuse,
+        "illum_detail" => Illum::MapDetail,
+        "3_channel_self_illum" => {
+            out.illum_colour = [
+                rgb("channel_a", [1.0; 3]).map(|x| x * intensity),
+                rgb("channel_b", [1.0; 3]).map(|x| x * intensity),
+                rgb("channel_c", [1.0; 3]).map(|x| x * intensity),
+            ];
+            Illum::ThreeChannel
+        }
+        _ => Illum::Map,
+    };
+    if !matches!(out.illum, Illum::Off | Illum::FromDiffuse) {
+        out.illum_map = map("self_illum_map");
+        if out.illum_map.is_none() {
+            out.illum = Illum::Off;
+        }
+        if out.illum == Illum::MapDetail {
+            out.illum_detail = map("self_illum_detail_map");
+        }
+    }
+    out
 }
 
 /// Resolves every material's shader and decodes the colour bitmaps they
@@ -129,7 +392,7 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
             }
         };
         let water = s.class == "rmw ";
-        let mut fetch = |slot: &blam_texture::TextureSlot| -> Option<u32> {
+        let mut fetch = |slot: &TextureSlot| -> Option<u32> {
             match out.bitmaps.entry(slot.bitmap) {
                 Entry::Occupied(_) => Some(slot.bitmap),
                 Entry::Vacant(v) if !failed.contains(&slot.bitmap) => {
@@ -159,19 +422,44 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
         };
         let texture = slot.as_ref().and_then(&mut fetch);
         let terrain = s.terrain.as_ref().and_then(|t| {
-            let blend = t.blend_map.as_ref()?;
-            let blend_map = fetch(blend)?;
+            let blend_map = match t.blend_map.as_ref() {
+                Some(b) => Some(fetch(b)?),
+                None => None,
+            };
+            let blend_xform = t.blend_map.as_ref().map_or(Xform::IDENTITY, |b| b.xform);
+            let mut n = 0u8;
             let layers = t.layers.clone().map(|l| {
+                let k = n;
+                n += 1;
                 let l = l?;
+                let layer_map = |usage: &str| {
+                    s.maps
+                        .iter()
+                        .find(|m| m.layer == Some(k) && m.base_usage == usage)
+                        .and_then(useful_slot)
+                };
+                let specular = s
+                    .option(&format!("material_{k}"))
+                    .is_some_and(|o| o.starts_with("diffuse_plus_specular"));
+                let param = |name: &str, default: f32| {
+                    s.param(&format!("{name}_m_{k}")).map_or(default, |v| v[0])
+                };
                 Some(TerrainLayerLook {
                     base: fetch(&l.base)?,
                     base_xform: l.base.xform,
                     detail: l.detail.as_ref().and_then(|d| Some((fetch(d)?, d.xform))),
+                    bump: layer_map("bump_map").and_then(|b| Some((fetch(&b)?, b.xform))),
+                    specular: if specular { param("specular_coefficient", 0.0) } else { 0.0 },
+                    power: param("specular_power", 10.0),
+                    tint: s
+                        .param(&format!("specular_tint_m_{k}"))
+                        .map_or([1.0; 3], |v| [v[0], v[1], v[2]]),
+                    analytical: param("analytical_specular_contribution", 0.5),
                 })
             });
             layers.iter().any(Option::is_some).then_some(TerrainLook {
                 blend_map,
-                blend_xform: blend.xform,
+                blend_xform,
                 layers,
             })
         });
@@ -184,9 +472,10 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
             two_sided: s.two_sided,
             // Cut-outs with no colour map are light-emitting quads tested
             // against `color_black` (shaders.md 8.6): nothing is visible.
-            hidden: s.special || (s.alpha_test && s.base.is_none()),
+            hidden: s.special || (s.alpha_test && s.base.is_none()) || is_game_type_marker(&s.name),
             water,
             terrain,
+            surface: surface_look(&s, &mut fetch),
         }));
     }
     for lm in &scene.lightmaps {

@@ -223,6 +223,62 @@ pub(crate) fn texture_image_as(t: &Texture, bc: bool, srgb: bool) -> Result<Imag
     Ok(image)
 }
 
+/// A normal (bump) map as a bevy image, linear. DXN (BC5) goes up still
+/// compressed as `Bc5RgSnorm` when the GPU takes BC, and then reads -1..1
+/// (`true`); anything else is expanded on the CPU to RGBA8 reading 0..1
+/// (`false`; the CPU BC5 decoder maps -1..1 to 0..1).
+pub(crate) fn normal_image(t: &Texture, bc: bool) -> Result<(Image, bool), String> {
+    if t.format == Format::Bc5 && bc && t.width.is_multiple_of(4) && t.height.is_multiple_of(4) {
+        let levels = t.mips.len() as u32;
+        let mut data = Vec::with_capacity(t.byte_len());
+        for l in 0..levels {
+            data.extend_from_slice(t.level(l, 0).ok_or_else(|| format!("level {l} is short"))?);
+        }
+        let mut image = Image::new_uninit(
+            Extent3d {
+                width: t.width,
+                height: t.height,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            TextureFormat::Bc5RgSnorm,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        image.texture_descriptor.mip_level_count = levels;
+        image.data = Some(data);
+        image.sampler = tiling_sampler(levels);
+        return Ok((image, true));
+    }
+    Ok((texture_image_as(t, bc && t.format != Format::Bc5, false)?, false))
+}
+
+/// A 1x1 white image whose only job is to carry the repeating, trilinear,
+/// anisotropic sampler the surface maps are read with.
+fn sampler_carrier() -> Image {
+    let mut image = Image::new(
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![255; 4],
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = tiling_sampler(2);
+    image
+}
+
+/// How a bitmap is uploaded: as a colour (sRGB), as plain data (linear), or
+/// as a normal map ([`normal_image`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Upload {
+    Colour,
+    Linear,
+    Normal,
+}
+
 /// The `StandardMaterial` for one scene material.
 fn standard_material(
     name: &str,
@@ -299,7 +355,8 @@ fn standard_material(
 
 /// A terrain material's GPU images and xforms, ready for [`HaloLightmap`].
 struct TerrainImages {
-    blend_map: Handle<Image>,
+    /// `None`: no blend map, all layers that are on weigh the same.
+    blend_map: Option<Handle<Image>>,
     blend_xform: Vec4,
     layers: [Option<TerrainLayerImages>; 4],
 }
@@ -308,7 +365,15 @@ struct TerrainLayerImages {
     base: Handle<Image>,
     base_xform: Vec4,
     detail: Option<(Handle<Image>, Vec4)>,
+    /// The bump map, its xform and whether it reads signed.
+    bump: Option<(Handle<Image>, Vec4, bool)>,
+    specular: f32,
+    power: f32,
+    tint: Vec4,
 }
+
+/// An uploaded image and whether it reads -1..1 (BC5 normal maps).
+type Uploaded = Option<(Handle<Image>, bool)>;
 
 fn xform_vec(x: &blam_texture::Xform) -> Vec4 {
     Vec4::new(x.scale[0], x.scale[1], x.offset[0], x.offset[1])
@@ -318,15 +383,24 @@ fn xform_vec(x: &blam_texture::Xform) -> Vec4 {
 /// every layer failed, so the caller falls back to the dominant layer.
 fn terrain_textures(
     t: &crate::textures::TerrainLook,
-    image: &mut dyn FnMut(u32, bool) -> Option<Handle<Image>>,
+    image: &mut dyn FnMut(u32, Upload) -> Uploaded,
 ) -> Option<TerrainImages> {
-    let blend_map = image(t.blend_map, false)?;
+    let blend_map = match t.blend_map {
+        Some(b) => Some(image(b, Upload::Linear)?.0),
+        None => None,
+    };
     let layers = t.layers.clone().map(|l| {
         let l = l?;
         Some(TerrainLayerImages {
-            base: image(l.base, true)?,
+            base: image(l.base, Upload::Colour)?.0,
             base_xform: xform_vec(&l.base_xform),
-            detail: l.detail.and_then(|(d, x)| Some((image(d, true)?, xform_vec(&x)))),
+            detail: l.detail.and_then(|(d, x)| Some((image(d, Upload::Colour)?.0, xform_vec(&x)))),
+            bump: l
+                .bump
+                .and_then(|(b, x)| image(b, Upload::Normal).map(|(h, s)| (h, xform_vec(&x), s))),
+            specular: l.specular,
+            power: l.power,
+            tint: Vec3::from(l.tint).extend(l.analytical),
         })
     });
     layers.iter().any(Option::is_some).then(|| TerrainImages {
@@ -364,6 +438,21 @@ impl TerrainImages {
             };
             e.terrain_layers[k] = 1.0;
             e.base_xforms[k] = l.base_xform;
+            let on = materials_on();
+            e.terrain_spec[k] = if on { l.specular * specular_gain() } else { 0.0 };
+            e.terrain_power[k] = l.power;
+            e.terrain_tints[k] = l.tint;
+            if let Some((b, x, signed)) = l.bump.filter(|_| on) {
+                e.terrain_bump[k] = 1.0;
+                e.terrain_bump_signed[k] = if signed { 1.0 } else { 0.0 };
+                e.terrain_bump_xforms[k] = x;
+                match k {
+                    0 => e.terrain_bump_0 = Some(b),
+                    1 => e.terrain_bump_1 = Some(b),
+                    2 => e.terrain_bump_2 = Some(b),
+                    _ => e.terrain_bump_3 = Some(b),
+                }
+            }
             match l.detail {
                 Some((d, dx)) => {
                     details[k] = Some(d);
@@ -374,6 +463,11 @@ impl TerrainImages {
             }
             bases[k] = Some(l.base);
         }
+        if e.terrain_spec != Vec4::ZERO {
+            // One phong lobe per layer (tint and analytical contribution in
+            // `terrain_tints`), no area term.
+            e.spec.w = 5.0;
+        }
         e.terrain_extra = Vec4::new(
             lighting::DETAIL_MULTIPLIER,
             if normalise_terrain() { 1.0 } else { 0.0 },
@@ -381,10 +475,152 @@ impl TerrainImages {
             0.0,
         );
         e.blend_xform = self.blend_xform;
-        e.blend_map = Some(self.blend_map);
+        // Without a blend map the fallback image weighs the layers alike
+        // once normalised (and a zero sum falls back to equal weights).
+        if self.blend_map.is_none() {
+            e.terrain_extra.y = 1.0;
+        }
+        e.blend_map = self.blend_map;
         [e.base_0, e.base_1, e.base_2, e.base_3] = bases;
         [e.detail_0, e.detail_1, e.detail_2, e.detail_3] = details;
     }
+}
+
+/// Fills in the material model of an ordinary shader: its extra maps
+/// (detail, bump, specular mask, self-illumination) and parameters.
+fn apply_surface(
+    s: &crate::textures::SurfaceLook,
+    e: &mut HaloLightmap,
+    image: &mut dyn FnMut(u32, Upload) -> Uploaded,
+) {
+    use crate::textures::{Illum, Model, SpecMask};
+    let mut get = |m: Option<(u32, blam_texture::Xform)>, how: Upload| {
+        m.and_then(|(b, x)| image(b, how).map(|(h, signed)| (h, xform_vec(&x), signed)))
+    };
+    // The cut-out's own alpha map is not a material feature: always on.
+    if let Some((h, x, _)) = get(s.alpha_map, Upload::Linear) {
+        e.alpha_map = Some(h);
+        e.alpha_xform = x;
+        e.alpha_flags.x = 1.0;
+    }
+    if !materials_on() {
+        return;
+    }
+    if let Some((h, x, _)) = get(s.detail, Upload::Colour) {
+        e.detail_map = Some(h);
+        e.detail_xform = x;
+        e.surface.z = 1.0;
+        e.terrain_extra.x = lighting::DETAIL_MULTIPLIER;
+    }
+    if let Some((h, x, signed)) = get(s.bump, Upload::Normal) {
+        e.bump_map = Some(h);
+        e.bump_xform = x;
+        e.signed.x = if signed { 1.0 } else { 0.0 };
+        e.surface.x = 1.0;
+        if let Some((h, x, signed)) = get(s.bump_detail.map(|(b, x, _)| (b, x)), Upload::Normal) {
+            e.bump_detail_map = Some(h);
+            e.bump_detail_xform = x;
+            e.signed.y = if signed { 1.0 } else { 0.0 };
+            e.surface.y = s.bump_detail.map_or(0.0, |d| d.2);
+        }
+    }
+    e.surface.w = match s.spec_mask {
+        SpecMask::None => 0.0,
+        SpecMask::BaseAlpha => 1.0,
+        SpecMask::Texture => match get(s.spec_mask_map, Upload::Linear) {
+            Some((h, x, _)) => {
+                e.mask_map = Some(h);
+                e.mask_xform = x;
+                2.0
+            }
+            None => 0.0,
+        },
+    };
+    let model = match s.model {
+        Model::Diffuse => 0.0,
+        Model::Phong => 1.0,
+        Model::CookTorrance => 2.0,
+        Model::Glass => 3.0,
+    };
+    if model != 0.0 {
+        e.spec = Vec4::new(s.specular * specular_gain(), s.power[0], s.power[1], s.fresnel_steepness);
+        e.tint_normal = Vec3::from(s.tint[0]).extend(s.analytical);
+        e.tint_glancing = Vec3::from(s.tint[1]).extend(s.area);
+        e.f0 = Vec3::from(s.f0).extend(model);
+        e.env = (Vec3::from(s.env_tint) * s.env).extend(0.0);
+    }
+    let mut mode = match s.illum {
+        Illum::Off => 0.0,
+        Illum::Map => 1.0,
+        Illum::MapDetail => 2.0,
+        Illum::FromDiffuse => 3.0,
+        Illum::TimesDiffuse => 4.0,
+        Illum::ThreeChannel => 5.0,
+    };
+    if mode == 0.0 {
+        return;
+    }
+    if mode != 3.0 {
+        let Some((h, x, _)) = get(s.illum_map, Upload::Colour) else {
+            return;
+        };
+        e.illum_map = Some(h);
+        e.illum_xform = x;
+    }
+    if mode == 2.0 {
+        match get(s.illum_detail, Upload::Colour) {
+            Some((h, x, _)) => {
+                e.illum_detail_map = Some(h);
+                e.illum_detail_xform = x;
+                e.terrain_extra.x = lighting::DETAIL_MULTIPLIER;
+            }
+            // No detail map: the plain map.
+            None => mode = 1.0,
+        }
+    }
+    e.illum.x = mode;
+    let gain = illum_gain();
+    [e.illum_a, e.illum_b, e.illum_c] = s.illum_colour.map(|c| (Vec3::from(c) * gain).extend(0.0));
+}
+
+/// Multiplayer markers (`respawn_point`, the per-game-type
+/// `*_initial_spawn_point`, `*_respawn_zone`, flag and bomb spawn points,
+/// goal and return areas, hills and territories): Forge shows them, a game
+/// only its own game type's, and then mostly as effects. Unnamed placements
+/// are called after their object (`scenario.rs`), e.g. `respawn_point 12`.
+fn is_editor_only(placement: &str) -> bool {
+    let object = placement.split(' ').next().unwrap_or(placement);
+    [
+        "spawn_point",
+        "spawn_point_invisible",
+        "respawn_zone",
+        "_goal_area",
+        "_return_area",
+        "_destination_static",
+        "hill_static",
+        "territory_static",
+        "territory_flag",
+    ]
+    .iter()
+    .any(|end| object.ends_with(end))
+}
+
+/// Whether ordinary shaders get their material model and terrain its bump
+/// and specular (the default); `HALO3_MATERIALS=0` draws base colour and
+/// lightmap only, as before, for comparisons.
+fn materials_on() -> bool {
+    std::env::var("HALO3_MATERIALS").map_or(true, |v| v != "0")
+}
+
+/// Scales every specular term (`HALO3_SPECULAR`, default 1; 0 turns
+/// specular off) for comparisons.
+fn specular_gain() -> f32 {
+    std::env::var("HALO3_SPECULAR").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0)
+}
+
+/// Scales self-illumination (`HALO3_SELF_ILLUM`, default 1).
+fn illum_gain() -> f32 {
+    std::env::var("HALO3_SELF_ILLUM").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0)
 }
 
 #[derive(Default)]
@@ -396,8 +632,11 @@ struct Batch {
     lightmap_uvs: Vec<[f32; 2]>,
     /// Irradiance per vertex (every other batch but the sky).
     colours: Vec<[f32; 4]>,
+    /// Halo's tangents, render frame, handedness in w.
+    tangents: Vec<[f32; 4]>,
     indices: Vec<u32>,
     has_normals: bool,
+    has_tangents: bool,
 }
 
 /// How a batch is lit: the sky draws unlit; the world by a BSP's lightmap
@@ -482,12 +721,21 @@ fn spawn_world(
     let mut lo = Vec3::splat(f32::INFINITY);
     let mut hi = Vec3::splat(f32::NEG_INFINITY);
     let mut lit_counts: HashMap<&str, usize> = HashMap::new();
+    let mut editor_only = 0usize;
     for placement in &scene.placements {
+        if is_editor_only(&placement.name) {
+            editor_only += 1;
+            continue;
+        }
         let sky = placement.kind == Kind::Sky;
         let mesh = &scene.meshes[placement.mesh as usize];
         let m = placement.transform;
         let normal_m = Mat3::from_mat4(m).inverse().transpose();
         let has_normals = mesh.normals.len() == mesh.positions.len();
+        let has_tangents = has_normals && mesh.tangents.len() == mesh.positions.len();
+        let tangent_m = Mat3::from_mat4(m);
+        // A mirroring transform flips the binormal's side.
+        let handedness = if placement.mirrored { -1.0 } else { 1.0 };
         // Per-pixel when the lightmap made it to the GPU; otherwise the
         // placement's own per-vertex data or probe; otherwise the lit
         // surface nearest its base.
@@ -543,9 +791,11 @@ fn spawn_world(
             }
             let batch = batches.entry((lit, part.material)).or_insert_with(|| Batch {
                 has_normals,
+                has_tangents,
                 ..Default::default()
             });
             batch.has_normals &= has_normals;
+            batch.has_tangents &= has_tangents;
             // Re-index this part's vertices into the batch, winding mirrored
             // placements the other way round.
             let mut remap: HashMap<u32, u32> = HashMap::new();
@@ -570,6 +820,11 @@ fn spawn_world(
                         .map(|n| (normal_m * *n).normalize_or(Vec3::Z))
                         .unwrap_or(Vec3::Z);
                     batch.normals.push(to_render_dir(halo_n).to_array());
+                    if let Some(t) = mesh.tangents.get(i as usize) {
+                        let ht = (tangent_m * Vec3::new(t[0], t[1], t[2])).normalize_or(Vec3::X);
+                        let rt = to_render_dir(ht);
+                        batch.tangents.push([rt.x, rt.y, rt.z, t[3] * handedness]);
+                    }
                     if let Some(uvs) = lightmap_uvs {
                         batch
                             .lightmap_uvs
@@ -590,32 +845,39 @@ fn spawn_world(
     }
 
     // Each bitmap becomes one image, shared by every material using it.
-    // Keyed by (bitmap, sRGB): blend maps go up linear.
-    let mut handles: HashMap<(u32, bool), Option<Handle<Image>>> = HashMap::new();
+    // Keyed by (bitmap, upload): blend maps go up linear, bump maps as
+    // normal maps.
+    let mut handles: HashMap<(u32, Upload), Uploaded> = HashMap::new();
     let (mut uploaded, mut uploaded_bytes, mut kept_bc, mut textured) = (0usize, 0usize, 0usize, 0usize);
     let mut terrains = 0usize;
-    let mut image_as = |bitmap: u32, srgb: bool, images: &mut Assets<Image>| -> Option<Handle<Image>> {
+    let mut image_as = |bitmap: u32, how: Upload, images: &mut Assets<Image>| -> Uploaded {
         handles
-            .entry((bitmap, srgb))
+            .entry((bitmap, how))
             .or_insert_with(|| {
                 let t = textures.bitmaps.get(&bitmap)?;
-                match texture_image_as(t, bc, srgb) {
-                    Ok(image) => {
+                let made = match how {
+                    Upload::Colour => texture_image_as(t, bc, true).map(|i| (i, false)),
+                    Upload::Linear => texture_image_as(t, bc, false).map(|i| (i, false)),
+                    Upload::Normal => normal_image(t, bc),
+                };
+                match made {
+                    Ok((image, signed)) => {
                         uploaded += 1;
                         uploaded_bytes += image.data.as_ref().map_or(0, Vec::len);
                         if image.texture_descriptor.format.is_compressed() {
                             kept_bc += 1;
                         }
-                        Some(images.add(image))
+                        Some((images.add(image), signed))
                     }
                     Err(e) => {
-                        warn!("texture {}: {e}; flat colour instead", t.name);
+                        warn!("texture {}: {e}; left out", t.name);
                         None
                     }
                 }
             })
             .clone()
     };
+    let surface_sampler = images.add(sampler_carrier());
 
     let mut triangles = 0usize;
     let mut keys: Vec<(Lit, u32)> = batches.keys().copied().collect();
@@ -641,6 +903,14 @@ fn spawn_world(
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, batch.colours);
         }
         mesh.insert_indices(Indices::U32(batch.indices));
+        // Tangents only where a normal map will use them.
+        let bumped = look.is_some_and(|l| {
+            l.surface.bump.is_some()
+                || l.terrain.as_ref().is_some_and(|t| t.layers.iter().flatten().any(|x| x.bump.is_some()))
+        });
+        if batch.has_tangents && bumped && !sky && batch.tangents.len() == batch.normals.len() {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, batch.tangents);
+        }
         if batch.has_normals {
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, batch.normals);
         } else {
@@ -650,12 +920,13 @@ fn spawn_world(
         let terrain = look
             .and_then(|l| l.terrain.as_ref())
             .filter(|_| !sky && terrain_blend())
-            .and_then(|t| terrain_textures(t, &mut |b, srgb| image_as(b, srgb, &mut images)));
+            .and_then(|t| terrain_textures(t, &mut |b, how| image_as(b, how, &mut images)));
         let texture = if terrain.is_some() {
             None
         } else {
             look.and_then(|l| l.texture)
-                .and_then(|b| image_as(b, true, &mut images))
+                .and_then(|b| image_as(b, Upload::Colour, &mut images))
+                .map(|(h, _)| h)
         };
         textured += (texture.is_some() || terrain.is_some()) as usize;
         terrains += terrain.is_some() as usize;
@@ -691,8 +962,11 @@ fn spawn_world(
                 intensity,
                 ..default()
             };
+            extension.surface_dummy = Some(surface_sampler.clone());
             if let Some(t) = terrain {
                 t.apply(&mut extension);
+            } else if let Some(l) = look {
+                apply_surface(&l.surface, &mut extension, &mut |b, how| image_as(b, how, &mut images));
             }
             entity.insert(MeshMaterial3d(halo_materials.add(HaloMaterial {
                 base: std_material,
@@ -726,7 +1000,7 @@ fn spawn_world(
 
     let mut counts: Vec<_> = lit_counts.into_iter().collect();
     counts.sort_unstable();
-    info!("lit placements: {counts:?}");
+    info!("lit placements: {counts:?}; {editor_only} spawn-marker pieces not drawn");
 
     spawn_collision(&mut commands, &mut meshes, &mut materials, &scene);
 
@@ -915,6 +1189,16 @@ mod tests {
                 w * h * bytes
             })
             .sum()
+    }
+
+    #[test]
+    fn spawn_markers_are_not_drawn() {
+        for hidden in ["respawn_point 12", "slayer_initial_spawn_point 3", "ctf_flag_at_home_respawn_zone 0", "koth_hill_static 1"] {
+            assert!(is_editor_only(hidden), "{hidden}");
+        }
+        for drawn in ["fusion_coil 2", "box_l 0", "warthog", "spawn point lamp"] {
+            assert!(!is_editor_only(drawn), "{drawn}");
+        }
     }
 
     #[test]

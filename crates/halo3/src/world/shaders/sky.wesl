@@ -150,8 +150,9 @@ fn scatter(eye: vec3<f32>, p: vec3<f32>) -> Scatter {
     let dir = v / max(d, 1e-4);
     let dist = clamp(d + sky.heights.w, 0.0, sky.extra.x);
     // Heights above sea level, the far end shortened with the distance.
-    let h0 = eye.z - sky.heights.x;
-    let h1 = h0 + dir.z * dist;
+    // No thicker than at sea level below it (Sandtrap plays 20 wu under).
+    let h0 = max(eye.z - sky.heights.x, 0.0);
+    let h1 = max(h0 + dir.z * dist, 0.0);
     let dm = dist * mean_density(h0, h1, sky.heights.y);
     let dp = dist * mean_density(h0, h1, sky.heights.z);
     let tau = sky.beta_m.rgb * dm + sky.beta_p.rgb * dp;

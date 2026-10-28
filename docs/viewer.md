@@ -12,6 +12,16 @@ A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam MCC
 install. `--test-scene` shows a made-up room (floor, ramp, boxes) for checking
 the camera without any map decoding.
 
+Headless pictures (no window; `shot.rs`):
+
+```
+target\debug\halo3.exe riverworld --shot out\shots --view spawn --view overview --view spawn12 --view 10,-20,5,90,-10
+```
+
+A view is `x,y,z,yaw,pitch` in Halo units and degrees, `spawn` / `spawnN` the start (or Nth)
+spawn point at eye height, `overview` high over a corner of the spawn points looking at their
+middle.
+
 ## Controls
 
 | input | effect |
@@ -52,11 +62,13 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 | shader | drawn as |
 |---|---|
 | `rmsh`, `rmhg`, `rmd ` with a `base_map` | the base map, tinted by `albedo_color`, tiled by the base map's xform through `uv_transform` (the mesh keeps the raw UVs) |
-| foliage (`rmfl`) and any `alpha_test simple` shader | `AlphaMode::Mask(0.5)` on the base map's alpha, both sides drawn |
+| the rest of an ordinary shader's material | detail map, bump map (and bump detail), specular, environment reflection and self-illumination, in the lighting shader: see "Materials" below |
+| foliage (`rmfl`) and any `alpha_test simple` shader | `AlphaMode::Mask(0.5)` on the base map's alpha, or on `alpha_test_map` when the shader has its own (grates), both sides drawn |
 | `blend_mode` alpha_blend / pre_multiplied_alpha / additive / multiply | `Blend` / `Premultiplied` / `Add` / `Multiply`, no shadows |
 | opaque shaders | `Opaque`: the base map's alpha is a specular mask, not transparency, and is ignored |
 | terrain (`rmtr`) | the **four-layer blend**, in the lighting shader (see "Terrain" below). If the blend map or every layer fails to decode, or with `HALO3_TERRAIN_BLEND=0`, the single layer the blend map weights most over the whole map, as HaloExport does |
-| water (`rmw `) | flat `water_diffuse` colour at 75 % opacity (the watercolor texture's alpha is not opacity and its colour is the same) |
+| water (`rmw `) | flat `water_diffuse` colour at 75 % opacity (the watercolor texture's alpha is not opacity and its colour is the same), plus a fresnel-weighted reflection of the surrounding light and a sun glint (`fresnel_coefficient`) |
+| spawn markers: placements of `respawn_point`, `*_initial_spawn_point`, `*_respawn_zone` objects, and the `objects\multi\shaders\spawn_point*` and `shaders\invalid` shaders | not drawn: Forge shows them, a game never does (they were the black discs and white plasma columns on every map) |
 | constant-colour shaders (no base map) | flat `albedo_color` |
 | additive glows without a base map | `self_illum_map` tinted by `self_illum_color`, added |
 | "special" shaders (path segment `invisible`, `portal`, `sky_portal`, `z_only`, `black`; effect classes) and alpha-tested shaders without a colour map (light quads) | not drawn |
@@ -99,15 +111,56 @@ green grass, dirt edges, rock and snow where it was flat grey before (the
 grass colour lives in `detail_map_m_1`; the base is a grey overlay). Uploading
 the extra layers raises Valhalla's GPU texture memory from 30.6 to 45.9 MiB.
 
-Not yet done for terrain: the bump maps, specular on the `diffuse_plus_specular`
-layers (their base alpha is a specular mask), and `dynamic_morph` blending
-(no map uses it here).
+A terrain whose template has no blend map at all (Sandbox's one-layer
+`sand_tiling02`: `blend_map` is then a parameter, not a texture) weighs its
+layers alike instead of falling back to the bare overlay, which drew white.
+Each layer's `bump_map_m_N` is blended by the same weights, and the
+`diffuse_plus_specular` layers get a phong lobe (coefficient, power, tint and
+analytical contribution per layer, masked by the layer's base alpha). Not
+done for terrain: `detail_bump_m_N`, area and environment specular, and
+`dynamic_morph` blending (no map uses it here).
 
-Not yet: detail maps on ordinary shaders (they multiply over the base and
-tile 3-10x tighter, so surfaces look smoother and lighter than in the game),
-normal maps (need tangents), self-illumination, reflections, cube maps,
-animated water. Translucent materials are still one mesh per material, so
-two overlapping translucent materials can sort wrongly.
+### Materials
+
+Ordinary shaders (`rmsh` and kin) get the rest of their material in the same
+lighting shader (`docs/format/shaders.md` section 11 has the parameters and the
+formulas):
+
+- **detail map**: `base * detail * 4.595`, like terrain;
+- **bump map**: Halo's own tangent and binormal per vertex (decoded in
+  `blam_geometry::vertex`), the normal map's x and y (BC5 signed, uploaded
+  still compressed as `Bc5RgSnorm`; U8V8 and others expanded to RGBA8), z
+  rebuilt; `bump_detail_map` adds its x and y times `bump_detail_coefficient`.
+  The bumped normal feeds the lightmap's diffuse and the specular;
+- **specular**: the lightmap's dominant light (direction and intensity) as
+  the one light: two-lobe phong (normal and glancing powers and tints blended
+  by `fresnel_curve_steepness`), cook-torrance (power from `roughness`, Schlick
+  fresnel from `fresnel_color`), glass; times `specular_coefficient`,
+  `analytical_specular_contribution` and the specular mask (base alpha or
+  `specular_mask_texture`). The SH towards the reflection gives the area
+  specular;
+- **environment map**: `dynamic` (the usual, a runtime cube map) and
+  `per_pixel` are both stood in for by the lightmap's SH (without the
+  dominant light) towards the reflection, times `env_tint_color` and
+  `environment_map_specular_contribution`; the cube bitmaps are not sampled;
+- **self-illumination**: `simple` and kin (`self_illum_map * self_illum_color *
+  self_illum_intensity`), `illum_detail`, `from_diffuse`,
+  `self_illum_times_diffuse`, `3_channel_self_illum`; exposed like the rest.
+
+Bump and specular need the per-pixel lightmap (BSP clusters and most
+instances); objects lit per vertex keep flat normals and get only the
+reflection, with their vertex irradiance standing in for the surroundings
+(that is what turned The Construct's and The Citadel's black Forerunner
+blocks into the reflective panels they are: a near-black albedo under a
+strong specular mask).
+`HALO3_MATERIALS=0` turns all of this off (base colour and lightmap only, as
+before), `HALO3_SPECULAR` scales the specular (0 turns it off) and
+`HALO3_SELF_ILLUM` the self-illumination, for comparisons.
+
+Not yet: real cube-map reflections, parallax, animated water (waves,
+refraction, foam), `two_detail`'s second detail map, change colours, decal
+bump. Translucent materials are still one mesh per material, so two
+overlapping translucent materials can sort wrongly.
 
 ## Lighting
 
@@ -129,10 +182,18 @@ they are lit as well as by material.
 | the sky | its own shader and the map's atmosphere ("Sky and haze" below) |
 | maps with no lightmap, `--test-scene` | a fixed sunny Valhalla texel (`lighting::default_light`) |
 
-Exposure is a flat x4 (`EXPOSURE` in `world/lighting.rs`; set
-`HALO3_EXPOSURE` to try others), picked against in-game Valhalla
-screenshots. Not done: specular, bump-mapped normals, Halo's own
-exposure/tonemap curve, the probes' L2 terms.
+Exposure comes from the map's camera fx (`cfxs +0x18`, an exposure in stops;
+`docs/format/sky-and-atmosphere.md` section 5): `4 * 2^(0.6 * (stops +
+4.8365))`, so Valhalla keeps the x4 picked against in-game screenshots and
+the other maps move from it by 60 % of their difference in stops (Standoff
+x10.5, Avalanche x8.1, The Pit x7.5, Narrows x3.65). Then, standing in for
+Halo's auto exposure, the result is held so that the map's mean lit-surface
+irradiance (every 25th BSP cluster vertex, luminance) comes out at most 3.0
+(`MAX_EXPOSED_MEAN`; Valhalla is at 1.2): only Sandbox (mean 1.23, x2.45)
+and Sandtrap (1.15, x2.6) are held back. The log prints it (`camera fx ...:
+exposure -2.51 stops, mean irradiance 0.101 -> x10.51`). `HALO3_EXPOSURE` sets a fixed
+multiplier, `HALO3_EXPOSURE_SLOPE` the 0.6. Not done: Halo's own auto
+exposure and tonemap curve, the probes' L2 terms.
 
 The log says how each placement was lit, e.g. Valhalla:
 `lit placements: [("nearest surface", 401), ("per-pixel", 207),
@@ -160,10 +221,13 @@ The log says how each placement was lit, e.g. Valhalla:
 - **Clear colour**: a long level ray through the sky's air at the camera's height, for the
   places below the dome's rim with no sky geometry (only seen out of bounds).
 - `HALO3_HAZE` scales the world haze's density (`0` turns it off) for comparisons.
+- Below a setting's sea level the density stays at the sea level's (world haze and sky alike):
+  Sandtrap plays about 20 wu under its sea level, where the exponential falloff made the haze
+  e^10 times thicker and every ground-level view black.
 
 Not done: the world haze uses one density for the whole ray (the eye's), so looking down from a
 height onto the lake under-hazes it; the level setting's distance bias (-15 wu, no haze in the
 first 15 wu) and the sun-angle dependence of the haze colour are not applied to the world (bevy's
 fog has neither); `desaturation` (used by The Pit, 0.2) is ignored; Halo's real sky lighting and
-exposure (`cfxs`) are not decoded; no sun glare or bloom; the sky does not move with the camera
+exposure curve is not decoded (the `cfxs` exposure is, see "Lighting"); no sun glare or bloom; the sky does not move with the camera
 (it is at true size, about 7,500 wu out, which is what the haze distances need).
