@@ -65,8 +65,9 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       79 of 86 materials are textured from 58 bitmaps, 30.8 MiB uploaded
       still BC-compressed, about 1 s of extra load time. Checked by
       `cargo test` against `docs/format/bitmap.md` and `shaders.md`.
-- [ ] Real shaders: detail maps, normal maps, the four-layer terrain blend
-      (terrain draws its dominant layer for now), water, self-illumination.
+- [x] The four-layer terrain blend (blend map, base x detail per layer, lightmapped).
+- [ ] Real shaders: detail maps on ordinary shaders, normal maps,
+      water, self-illumination.
 - [x] Milestone 3a: the game's real collision BSP decoded (the handoff's
       "known gap"): Valhalla gives 30,560 world and 39,678 instanced collision
       triangles with invisible walls, slip and two-sided surfaces flagged.

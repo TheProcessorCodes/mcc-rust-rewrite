@@ -163,18 +163,20 @@ fn tiling_sampler(levels: u32) -> ImageSampler {
 /// A colour texture as a bevy image: layer 0 of every level, largest
 /// first. BC1/2/3 stay compressed when the GPU takes BC and the size is a
 /// whole number of blocks; A8R8G8B8 goes up as BGRA; everything else is
-/// expanded to RGBA8 on the CPU. Always sampled as sRGB: Halo's colour maps
-/// are authored that way whatever their curve byte says (the "linear"-curve
-/// `mountains_snow` only looks right read as sRGB).
-fn texture_image(t: &Texture, bc: bool) -> Result<Image, String> {
+/// expanded to RGBA8 on the CPU. Colour maps (`srgb`) are always sampled as
+/// sRGB: Halo's colour maps are authored that way whatever their curve byte
+/// says (the "linear"-curve `mountains_snow` only looks right read as sRGB).
+/// Data that is not a colour (a terrain blend map's weights) goes up linear.
+fn texture_image_as(t: &Texture, bc: bool, srgb: bool) -> Result<Image, String> {
     let levels = t.mips.len() as u32;
     if levels == 0 {
         return Err("no levels".into());
     }
+    let pick = |s: TextureFormat, l: TextureFormat| if srgb { s } else { l };
     let compressed = match t.format {
-        Format::Bc1 => Some(TextureFormat::Bc1RgbaUnormSrgb),
-        Format::Bc2 => Some(TextureFormat::Bc2RgbaUnormSrgb),
-        Format::Bc3 => Some(TextureFormat::Bc3RgbaUnormSrgb),
+        Format::Bc1 => Some(pick(TextureFormat::Bc1RgbaUnormSrgb, TextureFormat::Bc1RgbaUnorm)),
+        Format::Bc2 => Some(pick(TextureFormat::Bc2RgbaUnormSrgb, TextureFormat::Bc2RgbaUnorm)),
+        Format::Bc3 => Some(pick(TextureFormat::Bc3RgbaUnormSrgb, TextureFormat::Bc3RgbaUnorm)),
         _ => None,
     }
     .filter(|_| bc && t.width.is_multiple_of(4) && t.height.is_multiple_of(4));
@@ -187,7 +189,7 @@ fn texture_image(t: &Texture, bc: bool) -> Result<Image, String> {
     };
     let (format, data) = match (compressed, t.format) {
         (Some(f), _) => raw(f)?,
-        (None, Format::A8R8G8B8) => raw(TextureFormat::Bgra8UnormSrgb)?,
+        (None, Format::A8R8G8B8) => raw(pick(TextureFormat::Bgra8UnormSrgb, TextureFormat::Bgra8Unorm))?,
         (None, f) => {
             let mut data = Vec::new();
             for l in 0..levels {
@@ -195,7 +197,7 @@ fn texture_image(t: &Texture, bc: bool) -> Result<Image, String> {
                 let level = t.level(l, 0).ok_or_else(|| format!("level {l} is short"))?;
                 data.extend(rgba::decode_level(f, w, h, level).map_err(|e| e.to_string())?);
             }
-            (TextureFormat::Rgba8UnormSrgb, data)
+            (pick(TextureFormat::Rgba8UnormSrgb, TextureFormat::Rgba8Unorm), data)
         }
     };
     let mut image = Image::new_uninit(
@@ -286,6 +288,96 @@ fn standard_material(
         double_sided: two_sided,
         alpha_mode,
         ..default()
+    }
+}
+
+/// A terrain material's GPU images and xforms, ready for [`HaloLightmap`].
+struct TerrainImages {
+    blend_map: Handle<Image>,
+    blend_xform: Vec4,
+    layers: [Option<TerrainLayerImages>; 4],
+}
+
+struct TerrainLayerImages {
+    base: Handle<Image>,
+    base_xform: Vec4,
+    detail: Option<(Handle<Image>, Vec4)>,
+}
+
+fn xform_vec(x: &blam_texture::Xform) -> Vec4 {
+    Vec4::new(x.scale[0], x.scale[1], x.offset[0], x.offset[1])
+}
+
+/// Uploads (or reuses) a terrain's images; `None` when the blend map or
+/// every layer failed, so the caller falls back to the dominant layer.
+fn terrain_textures(
+    t: &crate::textures::TerrainLook,
+    image: &mut dyn FnMut(u32, bool) -> Option<Handle<Image>>,
+) -> Option<TerrainImages> {
+    let blend_map = image(t.blend_map, false)?;
+    let layers = t.layers.clone().map(|l| {
+        let l = l?;
+        Some(TerrainLayerImages {
+            base: image(l.base, true)?,
+            base_xform: xform_vec(&l.base_xform),
+            detail: l.detail.and_then(|(d, x)| Some((image(d, true)?, xform_vec(&x)))),
+        })
+    });
+    layers.iter().any(Option::is_some).then(|| TerrainImages {
+        blend_map,
+        blend_xform: xform_vec(&t.blend_xform),
+        layers,
+    })
+}
+
+/// Whether to normalise the terrain blend weights to sum to one (the
+/// default); `HALO3_TERRAIN_RAW=1` uses them as stored, for comparing.
+fn normalise_terrain() -> bool {
+    std::env::var("HALO3_TERRAIN_RAW").map_or(true, |v| v.is_empty() || v == "0")
+}
+
+/// Whether terrain draws its four-layer blend (the default);
+/// `HALO3_TERRAIN_BLEND=0` draws the dominant layer alone, as before.
+fn terrain_blend() -> bool {
+    std::env::var("HALO3_TERRAIN_BLEND").map_or(true, |v| v != "0")
+}
+
+impl TerrainImages {
+    fn apply(self, e: &mut HaloLightmap) {
+        // A layer that is off still binds a real texture (another layer's)
+        // and gets zero weight.
+        let fill = self.layers.iter().flatten().next().map(|l| l.base.clone());
+        let mut bases: [Option<Handle<Image>>; 4] = Default::default();
+        let mut details: [Option<Handle<Image>>; 4] = Default::default();
+        for (k, l) in self.layers.into_iter().enumerate() {
+            let Some(l) = l else {
+                bases[k] = fill.clone();
+                details[k] = fill.clone();
+                e.base_xforms[k] = Vec4::new(1.0, 1.0, 0.0, 0.0);
+                continue;
+            };
+            e.terrain_layers[k] = 1.0;
+            e.base_xforms[k] = l.base_xform;
+            match l.detail {
+                Some((d, dx)) => {
+                    details[k] = Some(d);
+                    e.detail_xforms[k] = dx;
+                }
+                // Zero detail scale: the shader skips it.
+                None => details[k] = Some(l.base.clone()),
+            }
+            bases[k] = Some(l.base);
+        }
+        e.terrain_extra = Vec4::new(
+            lighting::DETAIL_MULTIPLIER,
+            if normalise_terrain() { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        );
+        e.blend_xform = self.blend_xform;
+        e.blend_map = Some(self.blend_map);
+        [e.base_0, e.base_1, e.base_2, e.base_3] = bases;
+        [e.detail_0, e.detail_1, e.detail_2, e.detail_3] = details;
     }
 }
 
@@ -492,14 +584,16 @@ fn spawn_world(
     }
 
     // Each bitmap becomes one image, shared by every material using it.
-    let mut handles: HashMap<u32, Option<Handle<Image>>> = HashMap::new();
+    // Keyed by (bitmap, sRGB): blend maps go up linear.
+    let mut handles: HashMap<(u32, bool), Option<Handle<Image>>> = HashMap::new();
     let (mut uploaded, mut uploaded_bytes, mut kept_bc, mut textured) = (0usize, 0usize, 0usize, 0usize);
-    let mut image_for = |bitmap: u32, images: &mut Assets<Image>| -> Option<Handle<Image>> {
+    let mut terrains = 0usize;
+    let mut image_as = |bitmap: u32, srgb: bool, images: &mut Assets<Image>| -> Option<Handle<Image>> {
         handles
-            .entry(bitmap)
+            .entry((bitmap, srgb))
             .or_insert_with(|| {
                 let t = textures.bitmaps.get(&bitmap)?;
-                match texture_image(t, bc) {
+                match texture_image_as(t, bc, srgb) {
                     Ok(image) => {
                         uploaded += 1;
                         uploaded_bytes += image.data.as_ref().map_or(0, Vec::len);
@@ -547,11 +641,26 @@ fn spawn_world(
             mesh.compute_normals();
         }
 
-        let texture = look
-            .and_then(|l| l.texture)
-            .and_then(|b| image_for(b, &mut images));
-        textured += texture.is_some() as usize;
+        let terrain = look
+            .and_then(|l| l.terrain.as_ref())
+            .filter(|_| !sky && terrain_blend())
+            .and_then(|t| terrain_textures(t, &mut |b, srgb| image_as(b, srgb, &mut images)));
+        let texture = if terrain.is_some() {
+            None
+        } else {
+            look.and_then(|l| l.texture)
+                .and_then(|b| image_as(b, true, &mut images))
+        };
+        textured += (texture.is_some() || terrain.is_some()) as usize;
+        terrains += terrain.is_some() as usize;
         let mut std_material = standard_material(name, material, look, texture);
+        if terrain.is_some() {
+            // The blend replaces the texture: keep the tint, not the
+            // hashed stand-in colour.
+            let c = look.and_then(|l| l.colour).unwrap_or([1.0; 4]);
+            std_material.base_color =
+                Color::srgb(c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0));
+        }
         // Halo's sky carries its own light: draw its textures as they are.
         std_material.unlit = sky;
         let translucent =
@@ -568,14 +677,19 @@ fn spawn_world(
                 _ => ([0.0; 5], None),
             };
             let (coefficients, intensity) = arrays.map_or((None, None), |(a, b)| (Some(a), Some(b)));
+            let mut extension = HaloLightmap {
+                scales: Vec4::from_slice(&scales[..4]),
+                extra: Vec4::new(scales[4], exposure, 0.0, 0.0),
+                coefficients,
+                intensity,
+                ..default()
+            };
+            if let Some(t) = terrain {
+                t.apply(&mut extension);
+            }
             entity.insert(MeshMaterial3d(halo_materials.add(HaloMaterial {
                 base: std_material,
-                extension: HaloLightmap {
-                    scales: Vec4::from_slice(&scales[..4]),
-                    extra: Vec4::new(scales[4], exposure, 0.0, 0.0),
-                    coefficients,
-                    intensity,
-                },
+                extension,
             })));
         }
         if translucent {
@@ -584,7 +698,7 @@ fn spawn_world(
     }
 
     info!(
-        "textures: {textured} materials textured, {uploaded} images ({kept_bc} kept BC-compressed, BC support {bc}), {:.1} MiB to the GPU",
+        "textures: {textured} materials textured ({terrains} terrain blends), {uploaded} images ({kept_bc} kept BC-compressed, BC support {bc}), {:.1} MiB to the GPU",
         uploaded_bytes as f64 / (1 << 20) as f64
     );
 
@@ -815,10 +929,21 @@ mod tests {
         assert!(textures.bitmaps.len() >= 50, "{} bitmaps", textures.bitmaps.len());
         let textured = textures.looks.iter().flatten().filter(|l| l.texture.is_some()).count();
         assert!(textured >= 60, "{textured} textured materials");
+        // Valhalla's main ground blends all four layers, each with a detail
+        // map; the snow ground has layer 0 off.
+        let terrain_of = |path: &str| {
+            let i = scene.materials.iter().position(|m| m.tag_path.ends_with(path)).unwrap();
+            textures.looks[i].as_ref().unwrap().terrain.clone().unwrap()
+        };
+        let ground = terrain_of("shaders\\riverworld_ground");
+        assert!(ground.layers.iter().all(|l| l.as_ref().is_some_and(|l| l.detail.is_some())));
+        assert_eq!(ground.layers[0].as_ref().unwrap().base_xform.scale, [40.0, 80.0]);
+        let snow = terrain_of("shaders\\riverworld_ground_snow");
+        assert!(snow.layers[0].is_none() && snow.layers[1..].iter().all(Option::is_some));
         let mut gpu_bytes = [0usize; 2];
         for t in textures.bitmaps.values() {
             for bc in [true, false] {
-                let image = texture_image(t, bc).unwrap();
+                let image = texture_image_as(t, bc, true).unwrap();
                 let len = image.data.as_ref().unwrap().len();
                 gpu_bytes[bc as usize] += len;
                 assert_eq!(len, wgpu_chain_len(&image), "{} (bc {bc})", t.name);

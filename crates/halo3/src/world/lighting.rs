@@ -47,8 +47,10 @@ pub type HaloMaterial = ExtendedMaterial<StandardMaterial, HaloLightmap>;
 
 const SHADER: &str = "embedded://halo3/world/shaders/lightmap.wesl";
 
-/// The lightmap half of [`HaloMaterial`]: the BSP's two arrays (absent for
-/// vertex-lit batches) and the ranges that scale them.
+/// The Halo half of [`HaloMaterial`]: the BSP's two lightmap arrays
+/// (absent for vertex-lit batches) and the ranges that scale them, and for
+/// terrain (`rmtr`) the blend map and the four layers' base and detail maps
+/// that replace the StandardMaterial's base colour texture.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 pub struct HaloLightmap {
     /// Ranges of c0..c3.
@@ -62,7 +64,54 @@ pub struct HaloLightmap {
     pub coefficients: Option<Handle<Image>>,
     #[texture(103, dimension = "2d_array")]
     pub intensity: Option<Handle<Image>>,
+    /// Terrain: 1 for each layer that is drawn, 0 for one that is off. All
+    /// zero on anything that is not terrain.
+    #[uniform(100)]
+    pub terrain_layers: Vec4,
+    /// Terrain: x: the detail multiplier (`DETAIL_MULTIPLIER`), y: 1 when
+    /// the blend weights are normalised.
+    #[uniform(100)]
+    pub terrain_extra: Vec4,
+    /// Terrain: the blend map's xform (scale xy, offset zw).
+    #[uniform(100)]
+    pub blend_xform: Vec4,
+    /// Terrain: each layer's base map xform.
+    #[uniform(100)]
+    pub base_xforms: [Vec4; 4],
+    /// Terrain: each layer's detail map xform; zero scale means no detail.
+    #[uniform(100)]
+    pub detail_xforms: [Vec4; 4],
+    /// Terrain blend map, linear (its texels are weights).
+    #[texture(104)]
+    #[sampler(105)]
+    pub blend_map: Option<Handle<Image>>,
+    /// Terrain base maps of layers 0..3. A layer that is off gets another
+    /// layer's image so every slot binds a real texture; the sampler (repeat,
+    /// trilinear) is layer 0's.
+    #[texture(106)]
+    #[sampler(107)]
+    pub base_0: Option<Handle<Image>>,
+    #[texture(108)]
+    pub base_1: Option<Handle<Image>>,
+    #[texture(109)]
+    pub base_2: Option<Handle<Image>>,
+    #[texture(110)]
+    pub base_3: Option<Handle<Image>>,
+    #[texture(111)]
+    pub detail_0: Option<Handle<Image>>,
+    #[texture(112)]
+    pub detail_1: Option<Handle<Image>>,
+    #[texture(113)]
+    pub detail_2: Option<Handle<Image>>,
+    #[texture(114)]
+    pub detail_3: Option<Handle<Image>>,
 }
+
+/// Halo's detail-map multiplier: a detail map multiplies the base so that
+/// its mid grey leaves the base unchanged. The detail texels are authored in
+/// gamma space around 0.5; sampled as sRGB, mid grey reads as
+/// `0.5^2.2 = 0.2176`, and `1 / 0.2176 = 2^2.2 = 4.595`.
+pub const DETAIL_MULTIPLIER: f32 = 4.594_794;
 
 impl MaterialExtension for HaloLightmap {
     fn fragment_shader() -> ShaderRef {
