@@ -911,19 +911,24 @@ impl Bike {
             let v_long = point_velocity(self, hit.point).dot(long);
             // Rolling resistance; the ground drag is on the whole bike below.
             let mut f_long = -v_long * 2.0;
-            if i == 0 && c.reverse {
+            // The gas wins over backing up.
+            if i == 0 && c.reverse && throttle == 0.0 {
                 let (from, to) = REVERSE_FADE;
                 let fade = 1.0 - ((v_long.abs() - from) / (to - from)).clamp(0.0, 1.0);
                 f_long -= REVERSE_FORCE * if v_long > 0.5 { 0.0 } else { fade };
-            } else if i == 0 && v_long > -0.5 {
-                // Engine braking only holds back a turning wheel; it fades
-                // out as the throttle opens.
+            } else if i == 0 {
+                // Engine braking only holds back a wheel turning forwards; it
+                // fades out as the throttle opens. The drive pulls either way.
                 let drag = drag * (v_long / 1.0).clamp(0.0, 1.0);
                 f_long += (drag + (drive - drag) * throttle) / GEAR_RADIUS;
             }
-            if c.brake > 0.0 {
+            // Gas while rolling backwards also brakes, so it stops quickly
+            // and then drives off forwards.
+            let backwards = if v_long < 0.0 { throttle } else { 0.0 };
+            let brake = c.brake.min(1.0).max(backwards);
+            if brake > 0.0 {
                 let share = if i == 1 { t.brake_front } else { 1.0 - t.brake_front };
-                let max = c.brake.min(1.0) * MASS * t.brake_decel * share;
+                let max = brake * MASS * t.brake_decel * share;
                 f_long += (-v_long * 4000.0).clamp(-max, max);
             }
             tyres[i] = Some(Tyre {
@@ -1315,6 +1320,74 @@ mod tests {
         assert!(v < -2.0 && v > -4.0, "reversing at {v} m/s");
         assert!(bike.crashed.is_none());
         assert!(bike.up().y > 0.95);
+    }
+
+    /// A plane rising towards +Z at `degrees`, through the origin.
+    fn slope(degrees: f32) -> World {
+        let s = 200.0;
+        let t = degrees.to_radians().tan();
+        let p = |x: f32, z: f32| Vec3::new(x, z * t, z);
+        let (a, b, c, d) = (p(-s, -s), p(s, -s), p(s, s), p(-s, s));
+        World::new([([a, d, c], false), ([a, c, b], false)])
+    }
+
+    /// Seconds of `c` until the bike rolls forwards, and its speed after 2 s.
+    fn gas_from(w: &World, bike: &mut Bike, c: Controls) -> (Option<f32>, f32) {
+        let mut stopped = None;
+        for f in 0..120 {
+            bike.step(w, c, 1.0 / 60.0);
+            if stopped.is_none() && bike.speed() > 0.0 {
+                stopped = Some(f as f32 / 60.0);
+            }
+        }
+        (stopped, bike.speed())
+    }
+
+    #[test]
+    fn gas_while_rolling_back_stops_then_drives_forward() {
+        let gas = Controls {
+            throttle: 1.0,
+            ..default()
+        };
+        // Pushed backwards on the flat, slow and fast.
+        for back in [1.0f32, 3.0, 8.0] {
+            let w = floor();
+            let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
+            ride(&w, &mut bike, Controls::default(), 0.5);
+            bike.velocity = -bike.forward() * back;
+            let (stopped, v) = gas_from(&w, &mut bike, gas);
+            // About as quick as the brakes, then away.
+            let stopped = stopped.unwrap_or(f32::MAX);
+            assert!(stopped < back / 8.0 + 0.1, "from -{back} m/s: forwards after {stopped} s");
+            assert!(v > 3.0, "from -{back} m/s: {v} m/s after 2 s");
+            assert!(bike.crashed.is_none());
+        }
+        // Rolled back down a hill.
+        for deg in [10.0f32, 20.0] {
+            let w = slope(deg);
+            let mut bike = Bike::dropped(&w, Vec3::new(0.0, 2.0, 0.0), 0.0);
+            ride(&w, &mut bike, Controls::default(), 1.5);
+            assert!(bike.speed() < -1.0, "{deg} deg: not rolling back ({} m/s)", bike.speed());
+            let (stopped, v) = gas_from(&w, &mut bike, gas);
+            assert!(stopped.is_some_and(|s| s < 1.0), "{deg} deg: forwards after {stopped:?} s");
+            assert!(v > 1.0, "{deg} deg: {v} m/s after 2 s");
+        }
+    }
+
+    #[test]
+    fn gas_wins_over_backing_up() {
+        let w = floor();
+        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
+        ride(&w, &mut bike, Controls::default(), 0.5);
+        let back = Controls {
+            reverse: true,
+            ..default()
+        };
+        ride(&w, &mut bike, back, 3.0);
+        assert!(bike.speed() < -1.0);
+        let (stopped, v) = gas_from(&w, &mut bike, Controls { throttle: 1.0, ..back });
+        assert!(stopped.is_some_and(|s| s < 0.6), "forwards after {stopped:?} s");
+        assert!(v > 3.0, "{v} m/s after 2 s");
     }
 
     #[test]
