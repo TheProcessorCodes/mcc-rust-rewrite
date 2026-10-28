@@ -24,7 +24,9 @@ struct SkyParams {
     xform_detail3: vec4<f32>,
     xform_illum: vec4<f32>,
     albedo_colour: vec4<f32>,
-    // Self-illumination colour times intensity; w > 0 when present.
+    // Self-illumination colour times intensity; w: 0 none, 1 from the
+    // illum map, 2 from the albedo (`from_diffuse`), 3 plasma (the illum
+    // slot holds the alpha mask), 4 plasma times the overlay in detail3.
     illum_colour: vec4<f32>,
     // x: albedo mode, y: 1 for additive blending (no inscatter),
     // z: 1 when lit (diffuse), w: exposure.
@@ -189,11 +191,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if sky.mode.z > 0.5 {
         rgb = rgb * sky.light.rgb;
     }
-    if sky.illum_colour.w > 1.5 {
-        // from_diffuse: the albedo glows; there is no illumination map.
-        rgb = rgb + a.rgb * sky.illum_colour.rgb * exposure;
-    } else if sky.illum_colour.w > 0.0 {
+    let illum_mode = u32(sky.illum_colour.w + 0.5);
+    if illum_mode == 1u {
         rgb = rgb + tex(illum_map, sky.xform_illum, in.uv).rgb * sky.illum_colour.rgb * exposure;
+    } else if illum_mode == 2u {
+        rgb = rgb + a.rgb * sky.illum_colour.rgb * exposure;
+    } else if illum_mode >= 3u {
+        // Plasma: the mask's alpha (its colour channels are black), through
+        // the multiply overlay when there is one.
+        var glow = tex(illum_map, sky.xform_illum, in.uv).a * sky.illum_colour.rgb;
+        if illum_mode == 4u {
+            glow = glow * tex(detail_map3, sky.xform_detail3, in.uv).rgb;
+        }
+        rgb = rgb + glow * exposure;
     }
     if sky.edge_tint.w > 0.5 {
         // Edge-on (|n.v| near 0) takes the edge tint, face-on the centre tint.

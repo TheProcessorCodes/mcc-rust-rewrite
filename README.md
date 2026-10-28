@@ -48,7 +48,8 @@ target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_mu
 A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
-`sidewinder` Avalanche, `guardian` Guardian.
+`sidewinder` Avalanche, `guardian` Guardian,
+`lockout` Blackout.
 
 ## Status
 
@@ -123,6 +124,14 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       hand (M; the Warthog run on 120_halo); board roll, grind and landing
       sounds while skating. K mutes, `-` / `=` volume, `HALO3_AUDIO=0` off
       (`docs/format/sound.md`, `docs/viewer.md` "Sound").
+- [x] Blackout (`lockout`, DLC; built, awaiting a playtest): 21 clusters,
+      447 instances, 442 k triangles, 80 spawns (all on a floor), 19,326
+      world and 166,536 instanced collision triangles, about 4,150 rails.
+      A night sky: the sky's lit pieces get a tenth of the daylight
+      (`NIGHT_SKIES` in `world/sky.rs`), so the sea is black under white ice
+      floes, with the moon, its halo and the aurora (`plasma`) drawn.
+      Dropping off the rig (`kill_volume_bottom`, z -18.3) puts the skater
+      or the bike back. Pinned by `cargo test` (our own counts).
 - [ ] Milestone 3b: feed collision and rails to the skate world.
 - [ ] Milestone 4: Skate 3 crates plugged in.
 - [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets

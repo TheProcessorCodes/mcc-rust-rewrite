@@ -186,8 +186,17 @@ Two facts the pictures depended on:
   `clouds_altocumulus` are `BC3_UNORM_SRGB` (78). Reading the masks as sRGB made the patchy clouds
   dark grey. (`Texture::srgb` carries the flag.)
 - Lit sky surfaces (`material_model` diffuse_only) need light: the viewer uses the irradiance of a
-  sunlit Valhalla lightmap texel times the exposure for every map. Halo's own source of sky
-  lighting was not found.
+  sunlit Valhalla lightmap texel times the exposure for every map but the night ones (section 7).
+  Halo's own source of sky lighting was not found. The atmosphere's sun is no guide: Blackout's
+  is dim (luminance x intensity 0.023, Valhalla's sky setting 3.0), but so is Sandbox's (0.016),
+  a daylight map whose lit sky dome looks bright in the game. Nor is the lightmap: the brightest
+  tenth of Blackout's up-facing texels is lit by its lamps about half as strongly as Valhalla's by
+  the sun.
+- `self_illumination from_diffuse` (Blackout's and Sandbox's clouds, Chill's sun ring) glows with
+  the albedo times `self_illum_color` x `self_illum_intensity`; the shader has no
+  `self_illum_map`. `plasma` (`rmhg`, Blackout's aurora) glows by its `alpha_mask_map` (section
+  7). Any other self-illumination option without its map adds nothing; before, the empty slot read
+  white and every `from_diffuse` cloud layer glowed flat white.
 
 ## 5. Camera fx (`cfxs`): the exposure
 
@@ -235,3 +244,33 @@ exposure so that the mean E (luminance) comes out at most 3.0 (`docs/viewer.md`,
 a whiter, weaker sun (2.5) at elevation 40, heading 120, strong forward haze (g 0.6), 2 wu haze
 height. Its sky (`levels\multi\cyberdyne\sky\sky`: skydome, Kilimanjaro, puffy and wispy clouds,
 treeline, smoke) draws as a hazy savanna under cumulus.
+
+## 7. Blackout (lockout)
+
+`skya` `levels\dlc\lockout\sky\lockout`, four settings (`snow_heavy`, `water`, `cliff`,
+`horizon`), none flagged for the sky, so `snow_heavy` (the first) serves world and sky: a dim
+blue moon (colour 0.067 0.094 0.149, intensity 0.25) at elevation 45, heading 295, sea level
+-32.5, Rayleigh 50 wu and Mie 10 wu scale heights, dense haze (beta_p 0.026 per wu).
+
+The sky model holds the whole night outside the rig, all ordinary `rmsh` shaders but the aurora
+(none is water, `rmw `):
+
+| piece | shader | what it is |
+|---|---|---|
+| plane at z -33.3, 18,000 wu across | `water_far` (opaque, cook_torrance, base `water_base`: black but for a painted moon reflection) | the sea |
+| plane at z -32.65 around the rig | `icewater` (two_detail_black_point, alpha_blend) | ice floes on the sea |
+| quad at z -32.0 under the rig | `platform_shadow` (alpha_blend) | the rig's shadow on the ice |
+| shelf 30-900 wu out | `ice`, `ice2`, `ice3` and their `*alpha` | ice cliffs |
+| far band, 3,000-5,000 wu | `iceshelfbackground` (dark blue tint, cut-out top) | the distant ice shelf |
+| dome | `skydome` (constant_color **white**, lit), `space` (black, stars), `clouds_cirrus`, `clouds_wisps_*` (from_diffuse glow), `clouds_wispy_ground`, `matte_horizon` | the sky and the mist on the sea |
+| at heading 295, elevation 45 | `moon` (additive, illum x15), `moondog` (the halo), `water_shimmer` | the moon |
+| big curtains | `aurora_new` (`rmhg`, plasma with `alpha_mask_map` `aurora_mask`, overlay multiply `aurora_color`) | the aurora |
+| | `make_a_wish*` | shooting stars |
+
+Because the dome is white and lit, the sky only comes out dark when its light is dim; with the
+daylight of section 4 the dome, the sea and the mist were white. `sky.rs` lists Blackout as a
+night sky (`NIGHT_SKIES`) and gives its lit sky pieces a tenth of that light (`HALO3_SKY_LIGHT`
+overrides): a dark navy sky, a black sea under white floes, the moon and its halo. The aurora is
+drawn like the world's plasma (the mask's alpha times the band colours' mean), times the
+overlay's colour: blue-green curtains; the crawling noise bands and the warp are not drawn, so
+the curtains' card edges show in places.
