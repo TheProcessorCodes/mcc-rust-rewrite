@@ -14,7 +14,7 @@ The scenario (`scnr`) points at four per-level tags in a row:
 
 | scnr offset | class | riverworld | meaning |
 |---|---|---|---|
-| `0x660` | `cfxs` | #6875 `levels\multi\riverworld\riverworld` | camera fx (exposure, bloom...; not decoded, see 5) |
+| `0x660` | `cfxs` | #6875 `levels\multi\riverworld\riverworld` | camera fx: the exposure (section 5); bloom and the rest not decoded |
 | `0x670` | (null reference) | | unknown |
 | `0x680` | `skya` | #6876 `levels\multi\riverworld\sky\riverworld` | **sky_atm_parameters: the atmosphere** |
 | `0x690` | `chmt` | #6877 `levels\multi\riverworld\riverworld` | lighting globals (not decoded) |
@@ -189,12 +189,45 @@ Two facts the pictures depended on:
   sunlit Valhalla lightmap texel times the exposure for every map. Halo's own source of sky
   lighting was not found.
 
-## 5. Camera fx (`cfxs`), not decoded
+## 5. Camera fx (`cfxs`): the exposure
 
-Riverworld `cfxs` #6875, 0x288 bytes. Notable values: `0x18` = -4.8365 (an exposure in stops?),
-`0x14` = 3, `0x08` = 0.05, `0x0C` = 0.01, and a run of 1.0 / 0.1 entries with 0x11 / 0x13 flag
-words from `0x60` (bloom and colour settings, probably). Halo's real exposure would come from here;
-the viewer keeps its hand-picked x4.
+Riverworld `cfxs` #6875, 0x288 bytes; every multiplayer map has one level `cfxs` besides
+`globals\default` (scnr `+0x660`). The first 0x30 bytes over the 27 multiplayer maps
+(`blam_geometry::camera_fx` reads `+0x00`, `+0x10`, `+0x14`, `+0x18`):
+
+| map | `+0x00` | `+0x08` | `+0x0C` | `+0x10` | `+0x14` | **`+0x18`** | `+0x1C` | mean E (lightmap) |
+|---|---|---|---|---|---|---|---|---|
+| riverworld | 0x14 | 0.05 | 0.01 | 0 | 3 | **-4.837** | 0.033 | 0.22 |
+| bunkerworld | 0x14 | 0.1 | 0.025 | 2 | 3.5 | **-2.515** | 0.033 | 0.05 |
+| ghosttown | 0x14 | 0.1 | 0.04 | 1.5 | 3.5 | **-2.515** | 0.033 | 0.03 |
+| sidewinder | 0x14 | 0.05 | 0.025 | -0.25 | 2 | **-2.737** | 0.033 | 0.28 |
+| cyberdyne, docks | 0x14 | 0.2 | 0.01 / 0.035 | 0.5 / 1 | 2.5 / 2 | **-3.322** | 0.033 | 0.20 / 0.04 |
+| sandbox | 0x10 | 0.05 | 0.005 | 0 | 0.75 | **-3.322** | 0.5 | 1.35 |
+| shrine, deadlock | 0x14 | 0.2 | 0.014 | 0.25 / 0.5 | 2.5 / 3 | **-4.644** | 0.033 | 0.82 / 0.20 |
+| chill, isolation | 0x14 | 0.2 | 0.014 | -0.5 / 0 | 3 | **-5.059** | 0.033 | 0.70 / 0.14 |
+| chillout | 0x14 | 0.1 | 0.04 | 0.5 | 1.5 | **-16.61** | 0.033 | 0.13 |
+| s3d_waterfall | 0x16 | 0.05 | 0.01 | 0 | 3 | -4.837 | 0.1 | 0.22 |
+
+(Other maps: armory, fortress, midship -4.322; construct, guardian, salvation, zanzibar
+-4.474; descent, warehouse -4.059; lockout -3.837; s3d_edge -4.238; s3d_turf, snowbound
+-4.837; spacecamp -4.184. "mean E" is `blam lightmap`'s mean diffuse irradiance over sampled
+cluster vertices.)
+
+- `+0x18` is an **exposure in stops**: the values are round logs (-3.322 = log2(1/10),
+  -4.322 = log2(1/20), -4.644 = log2(1/25)), and darker-lit maps have less negative values
+  (Standoff -2.5 with mean E 0.05, Valhalla -4.8 with 0.22): `2^stops * E` varies about 10x over
+  the maps where E alone varies 45x. So the game scales its light by `2^stops`.
+- `+0x10` / `+0x14` look like an auto-exposure range in stops (min <= max on every map);
+  `+0x08` / `+0x0C` like adaptation speeds. Not used. Chillout's -16.6 (= log2(1e-5)) is an
+  outlier, probably meaning "auto exposure only".
+
+The viewer: `exposure = 4 * 2^(0.6 * (stops + 4.8365))`, i.e. Valhalla keeps the hand-picked x4
+and other maps move from it by 60 % of their stop difference (the full difference over-exposes
+Avalanche at x17 and Standoff at x20, plausibly because the game's auto exposure pulls them back).
+Values outside -8..0 stops (Chillout's -16.6) are ignored and get the plain x4. Sandbox's
+lightmap is so bright (mean E 1.35) that its -3.32 stops still blow it out; the viewer caps the
+exposure so that the mean E (luminance) comes out at most 3.0 (`docs/viewer.md`, "Lighting").
+`HALO3_EXPOSURE` (a fixed multiplier) and `HALO3_EXPOSURE_SLOPE` override.
 
 ## 6. The Pit (cyberdyne)
 

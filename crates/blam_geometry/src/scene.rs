@@ -64,6 +64,8 @@ pub struct Mesh {
     pub positions: Vec<Vec3>,
     pub normals: Vec<Vec3>,
     pub uvs: Vec<[f32; 2]>,
+    /// Halo's own tangents (xyz, handedness in w), one per vertex, or empty.
+    pub tangents: Vec<[f32; 4]>,
     pub parts: Vec<Part>,
     /// Bone weights when the mesh is skinned; its positions are then the
     /// bind pose in model space.

@@ -70,8 +70,12 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       reflection, depth-based murk and shore fade, foam, flowing waterfalls;
       the skater sinks in deep water and comes back at the last dry spot
       (`docs/format/water.md`).
-- [ ] Real shaders: detail maps on ordinary shaders, normal maps,
-      self-illumination.
+- [x] Materials: detail maps, normal maps on Halo's own tangents (BC5
+      kept compressed), specular from the lightmap's dominant light
+      (two-lobe phong, cook-torrance, glass), an SH stand-in for
+      environment maps, self-illumination, per-map exposure from the
+      camera fx; spawn markers hidden (`docs/viewer.md`).
+- [ ] Real cube-map reflections, parallax.
 - [x] Milestone 3a: the game's real collision BSP decoded (the handoff's
       "known gap"): Valhalla gives 30,560 world and 39,678 instanced collision
       triangles with invisible walls, slip and two-sided surfaces flagged.

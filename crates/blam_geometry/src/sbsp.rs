@@ -146,6 +146,7 @@ pub fn decode(
             positions: decoded.vertices.positions.clone(),
             normals: decoded.vertices.normals.clone(),
             uvs: decoded.vertices.uvs.clone(),
+            tangents: decoded.vertices.tangents.clone(),
             parts: Vec::new(),
             skin: None,
         };

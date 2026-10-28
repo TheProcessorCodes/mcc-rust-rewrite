@@ -398,8 +398,11 @@ BSP's two bitmap tag indices and five scales, and every BSP placement carries a
 The viewer (`crates/halo3/src/world/lighting.rs`, shader `world/shaders/lightmap.wesl`):
 
 - per-pixel: both arrays go to the GPU as BC3 `D2Array` images (linear, clamp, bilinear, one
-  level), the texcoord as `UV_1`; the fragment shader evaluates 5.1-5.3 with the interpolated
-  vertex normal (no bump maps yet) and multiplies the albedo by it;
+  level), the texcoord as `UV_1`; the fragment shader evaluates 5.1-5.3 with the bump-mapped
+  normal (Halo's tangent frame, `shaders.md` 11.2) and multiplies the albedo by it; the
+  dominant direction and intensity of 5.2 also drive a specular lobe, and the SH with the
+  dominant light removed, evaluated towards the reflection, the area specular and the
+  environment-map stand-in (`shaders.md` 11.5);
 - per-vertex instances: 6.1 per vertex on the CPU into the vertex colour. Blank buffers
   (all `7f 7f 7f 00`) count as no data;
 - probe instances: the probe's L0/L1 terms with its stored direction and intensity through the same
@@ -408,5 +411,6 @@ The viewer (`crates/halo3/src/world/lighting.rs`, shader `world/shaders/lightmap
 - scenery, crates, machines and anything else without data: the lightmap read at the lit cluster
   vertex nearest the bottom centre of the placement's bounds (the scenery/machine probe blocks are
   not matched to objects yet: their 8-byte object ids are not decoded);
-- exposure: a flat `x4` (`HALO3_EXPOSURE` overrides) before bevy's default tonemapper, picked by
-  comparing with in-game screenshots. Specular, fog and Halo's own exposure/tonemap are not done.
+- exposure: x4 on Valhalla (picked by comparing with in-game screenshots), other maps scaled from
+  it by their camera fx exposure (`sky-and-atmosphere.md` 5), before bevy's default tonemapper.
+  Halo's own auto exposure and tonemap curve are not done.

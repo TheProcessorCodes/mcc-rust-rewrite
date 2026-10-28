@@ -12,7 +12,7 @@
 //! blam nodes    <map> <mode tag | object tag>      the skeleton and pieces of a render model
 //! blam bitmap   <map> <bitm tag> [--index N] [--png PATH]
 //! blam shader   <map> <shader tag>
-//! blam textures <map> [--png-dir DIR]           decode every colour texture the map draws
+//! blam textures <map> [--png-dir DIR] [--list]  decode every colour texture the map draws
 //! blam lightmap <map> [--bsp N] [--samples N]   a BSP's lightmap tag, texcoord links and decoded texels
 //! ```
 //!
@@ -148,7 +148,7 @@ fn main() -> Result<()> {
             let tag = find_tag(&cache, what)?;
             texture::shader(&cache, tag)
         }
-        "textures" => texture::textures(&cache, args.flag("png-dir").map(Path::new)),
+        "textures" => texture::textures(&cache, args.flag("png-dir").map(Path::new), args.has("list")),
         "lightmap" => lightmap::run(
             &cache,
             args.flag("bsp").map_or(Ok(0), str::parse)?,

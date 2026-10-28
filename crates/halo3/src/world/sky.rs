@@ -492,7 +492,10 @@ pub fn haze_at(a: &AtmosphereSetting, z: f32, exposure: f32) -> (Vec3, Vec3) {
     // Bevy's fog has one density along the whole ray: take the one at the
     // eye, right for level rays (most of them), thin for rays down into a
     // valley.
-    let h = z - a.sea_level;
+    // Below the setting's sea level the density stays at the sea level's:
+    // Sandtrap's play space is 20 wu below it, where the falloff would make
+    // the air e^10 times thicker and the view black.
+    let h = (z - a.sea_level).max(0.0);
     let dm = mean_density(h, h, a.rayleigh_height);
     let dp = mean_density(h, h, a.mie_height);
     let bm = Vec3::from_array(a.beta_m);
