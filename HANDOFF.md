@@ -87,11 +87,16 @@ target\debug\blam.exe geometry riverworld --obj out\riverworld.obj
    start at the scenario's player starting location, found by our own probes
    (`docs/format/zone-sets.md`, which also has zone sets, per-cluster sky and atmosphere,
    trigger volumes and zone-set switch volumes).
-5. **Campaign (goal 4), 2026-10-28: 120_halo.** Zone sets switch with PageUp / PageDown or
-   `--zone`; every BSP is on the GPU, only the loaded ones show; skating rebuilds per zone set.
-   Next: zone-set streaming driven by the switch volumes (`Scene::zone_switches`), culling,
-   the other campaign maps (010_jungle's BSP 11 still fails with "segment has no page"), and
-   the black lower half of 120_halo's sky domes seen from above the playable space.
+5. **Campaign (goal 4), 2026-10-28: 120_halo.** Zone sets switch with PageUp / PageDown,
+   `--zone`, or the scenario's switch volumes as you move; only the loaded zone set is on the GPU
+   (streamed per BSP in the background, textures decoded with it); the world is chunked and
+   culled by frustum, cluster portals (`docs/format/sbsp-portals.md`) and screen size;
+   skating swaps the new zone set's collision in without stopping the ride
+   (`docs/viewer.md` "Streaming and culling"). Fixed in review: the run's haze (cluster
+   atmosphere goes through the BSP's palette: `trench`, not `interior`), the black rider (light
+   samples inside triangles), the dark start (auto exposure). Next: playtest the streaming on the
+   run; the other campaign maps (010_jungle's BSP 11 still fails with "segment has no page"); a
+   real look at the sky from far above the play space (now the trench haze colour, no black).
 
 ## Open questions and known gaps
 

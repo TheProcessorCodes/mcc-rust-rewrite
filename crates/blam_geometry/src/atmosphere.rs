@@ -161,7 +161,8 @@ mod tests {
 
     #[test]
     fn halo_atmosphere_settings() {
-        // 120_halo's clusters pick these by index (`zone-sets.md` 3).
+        // 120_halo's clusters pick these through their BSP's atmosphere
+        // palette (`sbsp-portals.md` 5).
         let Some(cache) = open("120_halo") else { return };
         let a = read(&cache).unwrap().unwrap();
         let names: Vec<&str> = a.settings.iter().map(|s| s.name.as_str()).collect();

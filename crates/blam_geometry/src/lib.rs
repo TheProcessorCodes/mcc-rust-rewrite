@@ -21,9 +21,9 @@ use std::path::Path;
 
 pub use rails::RailCensus;
 pub use scene::{
-    Bone, BspInfo, ClusterInfo, Collision, CollisionMaterial, CollisionSource, CollisionTriangle, Kind, Lighting,
+    Bone, BspInfo, ClusterInfo, ClusterLocator, Collision, CollisionMaterial, CollisionSource, CollisionTriangle, Kind, Lighting,
     Lightmap, Material, Mesh, Part, Placement, Scene, Shading, Skin, Spawn, SpawnKind, StartingLocation,
-    TriggerVolume, ZoneSet, ZoneSwitch, WORLD_UNIT_METRES,
+    Portal, TriggerVolume, ZoneSet, ZoneSwitch, WORLD_UNIT_METRES,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -138,6 +138,28 @@ pub fn decode_into(
                 }
                 Err(e) => eprintln!("  collision of bsp {} not decoded: {e}", bsp.index),
             }
+        }
+        // Point-to-cluster lookup for portal visibility: the collision tree
+        // and the structure BSP's leaf clusters, which must agree in count.
+        let locator = collision::tree(cache, &resources, bsp.sbsp).and_then(|(nodes, planes, leaves)| {
+            let leaf_clusters = sbsp::leaf_clusters(cache, bsp.sbsp)?;
+            if leaf_clusters.len() != leaves {
+                return Err(Error::Invalid(format!(
+                    "{} collision leaves but {} leaf clusters",
+                    leaves,
+                    leaf_clusters.len()
+                )));
+            }
+            Ok(ClusterLocator {
+                nodes,
+                planes,
+                leaf_clusters,
+            })
+        });
+        match (locator, scene.bsps.iter_mut().find(|b| b.index == bsp.index)) {
+            (Ok(l), Some(info)) => info.locator = Some(l),
+            (Err(e), _) => eprintln!("  bsp {}: no cluster lookup ({e}); portal culling off there", bsp.index),
+            _ => {}
         }
         stats.push(s);
         // A 90 MB page per BSP adds up on campaign maps.

@@ -787,6 +787,7 @@ fn light_rider(
     rider: Option<ResMut<Rider>>,
     pose: Res<RiderPose>,
     lights: Option<Res<SceneLights>>,
+    loaded: Option<Res<crate::world::zones::LoadedBsps>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let Some(mut rider) = rider else {
@@ -804,7 +805,9 @@ fn light_rider(
     }
     rider.lit_at = Some(at);
     let light = match lights.as_deref() {
-        Some(l) if !l.0.is_empty() => l.0.near(at),
+        // The shown BSPs' surfaces only: overlapping versions of a space
+        // (120_halo's 010 and 070) light differently.
+        Some(l) if !l.0.is_empty() => l.0.near_in(at, loaded.as_deref().map_or(0, |b| b.shown)),
         _ => default_light(),
     };
     let side: Vec3 = [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y]

@@ -77,15 +77,28 @@ first starting location, which is zone set 0 on every map checked.
 `FLT_MAX` in all six when the cluster has none), `0x18` **i8 sky index** into the scenario's sky
 block, -1 indoors. Every non-negative value seen is a sky whose mask includes that BSP (120_halo:
 000's clusters say 0 or 1, 020 and 050 say 0, 060/100/110/120 say 3, the interiors -1).
-riverworld: only its big outdoor cluster says 0. `0x19` **i8 atmosphere index** into the `skya`
-tag's settings (`sky-and-atmosphere.md` 3), -1 = none (every riverworld cluster). 120_halo has
-eight settings (`haze_used_for_halo_zig_sky`, `snow_light`, `snow_heavy`, `haze`, `interior`,
-`trench`, `zigg_activated`, `space`) and its clusters use 0-6: the crash site 1 (`snow_light`) or
-6, 020 0, 030 2 (`snow_heavy`), 050 3 (`haze`: zero density), 040 and 070 5 (`trench`), and the
-Warthog run (100/110/120) 4 (`interior`: thin Rayleigh-only air). The reading is an inference from
-the counts and the names matching the places, not proven byte-for-byte against the game.
+riverworld: only its big outdoor cluster says 0. `0x19` **i8 index into the BSP's atmosphere
+palette**, -1 = none (every riverworld cluster).
 
-Viewer rule: the sky and the haze of the smallest loaded cluster around the camera; indoors (no
+**Atmosphere palette (sbsp + 0x94, 8 bytes)**: `0x00` string id name, `0x04` i16 **index into the
+`skya` tag's settings** (`sky-and-atmosphere.md` 3), `0x06` pad. Corrected 2026-10-28: the cluster
+byte was first read as a `skya` index directly, which put the Warthog run in `interior` (thin,
+white Rayleigh air: the washed-out run). Every 120_halo BSP has the same seven entries
+`snow_light` 1, `snow_heavy` 2, `haze` 0, `interior` 4, `trench` 5, `zigg_activate` 6, `space` 7
+(palette name, setting index; the skya's eight settings are `haze_used_for_halo_zig_sky`,
+`snow_light`, `snow_heavy`, `haze`, `interior`, `trench`, `zigg_activated`, `space`). 010_jungle's
+palette `misty_fog` 0, `light_fog_and_haze` 1, `light_haze` 2, `fog_grunt_camp` 3, `fog_night` 5,
+`no_fog` 6 skips its setting 4 `sky_fog` and names 5 `sky_fog_night`: the index, not the
+position, picks the setting, and the names agree with the settings they point at. riverworld's
+palette is empty. Through the palette, 120_halo's clusters say: the crash site (000) `snow_heavy`
+and two `space`, 010 `snow_light` and `interior`, 020 `snow_light`, 030 `snow_light` and
+`interior`, 040 and 050 `interior`, 060 `zigg_activated`, 070 `interior` and `zigg_activated`, and
+the Warthog run (100/110/120) **`trench`**: thin air with a dim red sun (0.22, 0.06, 0.04 x 0.5),
+which gives the run its dark red distance and leaves the ring sky clear. Probe:
+`probe_sbsp_portals.py <map> air 0`; test `halo_cluster_atmospheres_go_through_the_palette`.
+
+Viewer rule: the sky and the haze of the loaded cluster the camera is in (found through the
+collision tree, `sbsp-portals.md` 3; else the smallest cluster box around it); indoors (no
 sky) the last sky stays, outside every cluster box both stay; at load time the sky most loaded
 clusters name, and the old rule's world setting (`sky-and-atmosphere.md` 3.3) until the camera
 is in a cluster that names one.

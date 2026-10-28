@@ -10,7 +10,7 @@ use crate::lightmap::{self, Lighting};
 use crate::materials::MaterialTable;
 use crate::render_geometry::{self, GeometryResource};
 use crate::render_model::matrix_from_rows;
-use crate::scene::{BspInfo, ClusterInfo, Kind, Mesh, Part, Placement, Scene};
+use crate::scene::{BspInfo, ClusterInfo, Kind, Mesh, Part, Placement, Portal, Scene};
 use crate::{Error, Result};
 
 /// The structure BSPs a scenario lists, with the lightmap tag that holds each
@@ -170,11 +170,20 @@ pub fn decode(
     }
     stats.sections = sections.len() as u32;
 
+    // The atmosphere palette (sbsp + 0x94, 8 bytes: string id name, i16
+    // index into the skya settings): what a cluster's atmosphere byte
+    // indexes (`sbsp-portals.md` 5).
+    let palette: Block = cache.reader_at(sbsp + 0x94).block()?;
+    let atmospheres: Vec<Option<u32>> = palette
+        .elements(8)
+        .map(|o| cache.reader_at(o + 4).i16().map(|i| u32::try_from(i).ok()))
+        .collect::<std::result::Result<_, _>>()?;
     let mut cluster_info = Vec::new();
     for (c, o) in clusters.elements(280).enumerate() {
         stats.clusters += 1;
         // Bounds (x, y, z ranges; FLT_MAX when unset), the sky index at
-        // +0x18 and the atmosphere index at +0x19 (`zone-sets.md` 3).
+        // +0x18 and the atmosphere palette index at +0x19 (`zone-sets.md`
+        // 3).
         let mut r = cache.reader_at(o);
         let (x, y, z) = (r.f32x2()?, r.f32x2()?, r.f32x2()?);
         let mut r = r.at(o + 0x18);
@@ -183,7 +192,9 @@ pub fn decode(
             bounds: (x[0] <= x[1] && x[1] < 1e30)
                 .then(|| (Vec3::new(x[0], y[0], z[0]), Vec3::new(x[1], y[1], z[1]))),
             sky: u32::try_from(sky).ok(),
-            atmosphere: u32::try_from(atmosphere).ok(),
+            atmosphere: usize::try_from(atmosphere)
+                .ok()
+                .and_then(|a| atmospheres.get(a).copied().flatten()),
         });
         let section = cache.reader_at(o + 216).i16()?;
         let Some(mesh) = usize::try_from(section)
@@ -213,6 +224,8 @@ pub fn decode(
             lighting,
             bsps: 1 << bsp.index,
             sky: None,
+            cluster: Some(c as u32),
+            fade_pixels: [0; 2],
         });
         stats.cluster_placements += 1;
     }
@@ -226,6 +239,7 @@ pub fn decode(
         let section = r.at(o + 0x34).i16()?;
         let texcoord_block = r.at(o + 0x38).i16()?;
         let name = r.at(o + 0x54).string_id()?;
+        let fade_pixels = [r.at(o + 0x6C).u16()?, r.at(o + 0x6E).u16()?];
         let Some(mesh) = usize::try_from(section)
             .ok()
             .and_then(|s| mesh_of_section.get(s).copied().flatten())
@@ -256,17 +270,63 @@ pub fn decode(
             lighting,
             bsps: 1 << bsp.index,
             sky: None,
+            cluster: None,
+            fade_pixels,
         });
         stats.instance_placements += 1;
     }
     stats.shaders = shaders.count;
+    let portals = read_portals(cache, sbsp, cluster_info.len())?;
     scene.bsps.push(BspInfo {
         index: bsp.index,
         name: bsp.sbsp.name().to_string(),
         bounds: (lo, hi),
         clusters: cluster_info,
+        portals,
+        locator: None,
     });
     Ok(stats)
+}
+
+/// The cluster portals at sbsp + 0x7C, 40 bytes each
+/// (`docs/format/sbsp-portals.md` 1). Portals naming a cluster the BSP does
+/// not have are dropped.
+fn read_portals(cache: &CacheFile, sbsp: usize, clusters: usize) -> Result<Vec<Portal>> {
+    let block: Block = cache.reader_at(sbsp + 0x7C).block()?;
+    let mut out = Vec::with_capacity(block.count as usize);
+    for o in block.elements(40) {
+        let mut r = cache.reader_at(o);
+        let (back, front) = (r.i16()?, r.i16()?);
+        let centroid = Vec3::from(r.at(o + 0x08).f32x3()?);
+        let radius = r.at(o + 0x14).f32()?;
+        let vertices: Block = r.at(o + 0x1C).block()?;
+        let vertices = vertices
+            .elements(12)
+            .map(|v| cache.reader_at(v).f32x3().map(Vec3::from))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let (Ok(back), Ok(front)) = (u32::try_from(back), u32::try_from(front)) else {
+            continue;
+        };
+        if back as usize >= clusters || front as usize >= clusters || vertices.len() < 3 {
+            continue;
+        }
+        out.push(Portal {
+            back,
+            front,
+            vertices,
+            centroid,
+            radius,
+        });
+    }
+    Ok(out)
+}
+
+/// The cluster of each collision BSP leaf: one signed byte per leaf at
+/// sbsp + 0x34 (`docs/format/sbsp-portals.md` 3).
+pub fn leaf_clusters(cache: &CacheFile, sbsp: &TagEntry) -> Result<Vec<i8>> {
+    let base = cache.tag_offset(sbsp)?;
+    let block: Block = cache.reader_at(base + 0x34).block()?;
+    block.elements(1).map(|o| Ok(cache.reader_at(o).i8()?)).collect()
 }
 
 /// Counts worth printing after a decode.

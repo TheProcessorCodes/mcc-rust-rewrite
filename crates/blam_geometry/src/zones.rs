@@ -164,8 +164,18 @@ impl Scene {
             .map(|(i, _)| *i)
     }
 
-    /// The smallest cluster of a loaded BSP (`mask`) whose bounds hold `p`.
+    /// The cluster of a loaded BSP (`mask`) that holds `p`: through the
+    /// collision tree where a BSP has one (`sbsp-portals.md` 3), else the
+    /// smallest cluster whose bounds hold it.
     pub fn cluster_at(&self, p: Vec3, mask: u32) -> Option<&ClusterInfo> {
+        let exact = self
+            .bsps
+            .iter()
+            .filter(|b| mask & (1 << b.index) != 0)
+            .find_map(|b| b.clusters.get(b.locator.as_ref()?.cluster(p)? as usize));
+        if exact.is_some() {
+            return exact;
+        }
         self.bsps
             .iter()
             .filter(|b| mask & (1 << b.index) != 0)
@@ -238,6 +248,82 @@ mod tests {
             scene.trigger_volumes[z.volume as usize].name,
             "begin_zone_set:120_04_100_110:*"
         );
+    }
+
+    /// `docs/format/sbsp-portals.md`: portal counts, and every spawn point
+    /// of Valhalla falls in a cluster through the collision tree (the side
+    /// rule: front child when the plane test is >= 0).
+    #[test]
+    fn riverworld_portals_and_spawn_clusters() {
+        let Some(cache) = map("riverworld") else { return };
+        let mut scene = Scene::default();
+        crate::decode_into(&cache, &crate::Options::default(), &mut scene).unwrap();
+        let bsp = &scene.bsps[0];
+        assert_eq!(bsp.clusters.len(), 26);
+        assert_eq!(bsp.portals.len(), 60);
+        let p = &bsp.portals[1];
+        assert_eq!((p.back, p.front, p.vertices.len()), (18, 2, 8));
+        let far = p.vertices.iter().map(|v| v.distance(p.centroid)).fold(0.0, f32::max);
+        assert!((far - p.radius).abs() < 1e-3);
+        let locator = bsp.locator.as_ref().expect("cluster lookup");
+        assert_eq!(locator.leaf_clusters.len(), 42101);
+        let mut found = 0;
+        for s in &scene.spawns {
+            let c = locator.cluster(s.position + Vec3::Z * 0.6);
+            // A spawn's cluster box must hold it.
+            if let Some(c) = c {
+                let (lo, hi) = bsp.clusters[c as usize].bounds.unwrap();
+                let p = s.position + Vec3::Z * 0.6;
+                assert!(p.cmpge(lo - 0.01).all() && p.cmple(hi + 0.01).all(), "{} in cluster {c}", s.name);
+                found += 1;
+            }
+        }
+        assert_eq!(found, scene.spawns.len());
+        // Far below the map is solid or outside.
+        assert_eq!(locator.cluster(Vec3::new(0.0, 0.0, -500.0)), None);
+    }
+
+    /// The cluster's atmosphere byte goes through the BSP's palette
+    /// (`sbsp-portals.md` 5): the Warthog run's clusters say 4, palette
+    /// entry 4 is `trench`, the skya's setting 5.
+    #[test]
+    fn halo_cluster_atmospheres_go_through_the_palette() {
+        let Some(cache) = map("120_halo") else { return };
+        let mut scene = Scene::default();
+        let options = crate::Options {
+            bsps: Some(vec![1, 9]),
+            objects: false,
+            collision: false,
+            verbose: false,
+        };
+        crate::decode_into(&cache, &options, &mut scene).unwrap();
+        let of = |b: u32| -> Vec<Option<u32>> {
+            let mut a: Vec<_> = scene.bsps.iter().find(|i| i.index == b).unwrap().clusters.iter().map(|c| c.atmosphere).collect();
+            a.sort_unstable();
+            a.dedup();
+            a
+        };
+        assert_eq!(of(9), [Some(5)]);
+        // 120_bsp_010: `snow_light` (setting 1) and, inside, `interior` (4).
+        assert_eq!(of(1), [Some(1), Some(4)]);
+    }
+
+    /// `docs/format/lod.md` 1: 010_jungle BSP 050's instance fade sizes.
+    #[test]
+    fn jungle_instance_fade_pixels() {
+        let Some(cache) = map("010_jungle") else { return };
+        let mut scene = Scene::default();
+        let options = crate::Options {
+            bsps: Some(vec![9]),
+            objects: false,
+            collision: false,
+            verbose: false,
+        };
+        crate::decode_into(&cache, &options, &mut scene).unwrap();
+        let count = |f: [u16; 2]| scene.placements.iter().filter(|p| p.fade_pixels == f).count();
+        assert_eq!(count([25, 18]), 35);
+        assert_eq!(count([8, 4]), 20);
+        assert!(scene.placements.iter().all(|p| p.fade_pixels[0] >= p.fade_pixels[1]));
     }
 
     #[test]

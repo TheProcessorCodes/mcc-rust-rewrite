@@ -57,9 +57,10 @@ sets; the Warthog run is zone sets 4-7 (`120_04_100_110`, `120_100_110`,
 `120_110_120`, `120_120_130`). Some BSPs are two versions of one place
 (120_halo's `010` and `070`) and overlap if loaded together.
 
-The viewer decodes and uploads every BSP at start (120_halo: about 1 s to
-decode, 2.9 M triangles, 240 MiB of textures) and shows only the loaded zone
-set; switching is instant. Each BSP keeps its own lightmap. What is loaded:
+The viewer decodes every BSP's geometry at start (120_halo: about 1 s,
+2.9 M triangles) but puts only the loaded zone set on the GPU, with the
+textures and lightmaps it uses; see "Streaming and culling" below. What is
+loaded first:
 
 ```
 & "target\debug\halo3.exe" 120_halo                 # the zone set the start is in (zone set 0)
@@ -69,27 +70,92 @@ set; switching is instant. Each BSP keeps its own lightmap. What is loaded:
 & "target\debug\halo3.exe" 120_halo --all-bsps      # everything (overlaps)
 ```
 
-The console prints the zone sets and BSPs at start. Objects follow their
-origin BSP (objects with none always show); a sky shows only while it is the
-sky of the camera's cluster, so 120_halo switches from the snowfield sky to the
-Warthog run's ring sky (`sky_03`) as you cross over. The haze follows the
-camera's cluster too: each cluster names one of the atmosphere tag's settings
-(thick snow, the thin air of the run, none indoors), used for the world fog,
-the sky's scattering and the clear colour; outside every cluster the setting
-most loaded clusters name.
+The console prints the zone sets and BSPs at start. As you fly or skate
+through the scenario's zone-set switch volumes the zone set follows, as in the
+game: entering a `begin_zone_set:` volume builds the next zone set's BSPs in
+the background, entering a `zone_set:` volume switches to it
+(`HALO3_ZONE_TRIGGERS=0` turns this off; it is off for `--shot` unless
+`HALO3_ZONE_TRIGGERS=1`, and whenever `--bsps`, `--all-bsps` or Home chose
+BSPs by hand). PageDown / PageUp still step by hand.
 
-Skating uses the collision of the loaded BSPs only. Changing zone set stops the
-ride and rebuilds the skate world in the background (title bar: "skate:
-loading the new zone set"); J works again when it is ready. Rails inside the
+Objects follow their origin BSP (objects with none always show); a sky shows
+only while it is the sky of the camera's cluster, so 120_halo switches from the
+snowfield sky to the Warthog run's ring sky (`sky_03`) as you cross over. The
+haze follows the camera's cluster too (found through the BSP's collision tree,
+`docs/format/sbsp-portals.md`): each cluster names an entry of its BSP's
+atmosphere palette, which names one of the atmosphere tag's settings (snow at
+the crash site, `interior` inside, the dim red `trench` air of the Warthog
+run), used for the world fog, the sky's scattering and the clear colour;
+outside every cluster the setting most loaded clusters name.
+
+Skating uses the collision of the loaded BSPs only. Changing zone set while
+riding does not stop the ride: the new zone set's collision and rails are built
+on a helper thread and swapped into the running session (title bar: "skate:
+building the new zone set's collision", then "skate: new zone set"; about 3.6 s
+for the Warthog run). Before the first ride the world is built as before. Rails inside the
 scenario's kill volumes are dropped. 120_halo's Warthog run (zone set 6): the
 skate world is ready about 15 s after start (520 k triangles, 6,300 rails found
 in 4.6 s, the skater's own data 6 s). Rails over all 11 BSPs would take 16 s
 and give 58,600, most of them ledges under the run the player never reaches.
 
-`world/zones.rs` is the API a streaming step can drive: `LoadedBsps` (mask,
-zone set, sky), `load_zone_set`, `load_bsps`; the scene keeps the trigger
-volumes and zone-set switch volumes (`Scene::zone_switches`) for that.
-`HALO3_SKY=0` hides the sky, for telling sky pieces from the world.
+`world/zones.rs` is the API: `LoadedBsps` (wanted mask, shown mask, zone set,
+sky), `load_zone_set`, `load_bsps`. `HALO3_SKY=0` hides the sky, for telling
+sky pieces from the world. `HALO3_ZONE_SWITCH_TEST=N@S` switches to zone set N
+after S seconds of skating (or of running), for testing without a keyboard.
+
+## Streaming and culling
+
+`world/build.rs`, `world/stream.rs`, `world/culling.rs`.
+
+- **Chunks.** The world is not one mesh per material any more: each
+  structure BSP is cut into chunks per material and lighting mode, cluster
+  triangles by 64 wu cells, instances and objects by cell, home cluster and
+  size class (bounding radius under 1.5 wu, under 6, larger). Every chunk
+  has its own bounds, so bevy's frustum culling skips what is off screen.
+  Chunks of one material share one material (and its textures).
+- **Units and streaming.** A unit is one BSP with its instances and the
+  objects whose origin it is, or the global unit (sky, objects of no BSP).
+  Only the loaded zone set's units are on the GPU. A unit that is needed is
+  built on a background thread, decoding the bitmaps and lightmap its
+  materials use from the map file, and uploaded about 400 k triangles a frame.
+  The old zone set stays on screen until the new one is complete; then its
+  entities are despawned, which frees their meshes, materials and (when
+  nothing else uses them) textures. 120_halo: building BSP 120 takes 1.1-1.4 s
+  in the background, the switch from zone set 5 to 6 drops BSP 100, and GPU
+  textures go from 190 to 206 MiB (all 11 BSPs: 472 MiB). The CPU no longer
+  keeps every decoded bitmap (396 MiB on 120_halo): only the lightmaps
+  (110 MiB) are decoded at start, for the surface lights, and dropped after
+  the first upload.
+- **Portals.** Each frame the camera's cluster is found in every shown BSP
+  and a flood through the cluster portals, keeping the screen rectangle each
+  portal covers, marks the clusters that can be seen; chunks of the others
+  are hidden (`docs/format/sbsp-portals.md` 4). A camera in no cluster (in a
+  wall, outside the level) sees the whole BSP. `HALO3_PORTALS=0` turns it off.
+- **Size.** Chunks of props whose largest member covers less than 1.5 pixels
+  (bounding radius, 720-line view) are hidden, as are BSP instances smaller
+  than their own fade size (`docs/format/lod.md`; Halo 3 has no other LOD or
+  draw-distance data). The sky is never culled but by the frustum.
+  `HALO3_MIN_PIXELS=0` turns the size rule off.
+
+`--bench N` times N frames before each `--shot` picture (waiting for the GPU
+every frame) and logs what was drawn and the portal state. Measured
+2026-10-28 at 1280x720 (frame ms mean; meshes drawn / entities; triangles
+drawn):
+
+| view | before (one mesh per material) | after |
+|---|---|---|
+| 120_halo `--zone 6`, run tunnel (410, 590, -45) | 3.01 ms; 83 / 567; 944 k | 3.21 ms; 1,134 / 3,171; 861 k (23 of 48 clusters) |
+| 120_halo `--zone 6`, over the run (300, 400, 150) | 3.85 ms; 118 / 567; 1.31 M | 3.89 ms; 1,684 / 3,171; 998 k (4 of 29 clusters) |
+| 120_halo `--all-bsps`, start | 8.47 ms; 392 / 567; 2.73 M | 7.53 ms; 3,393 / 6,530; 1.35 M |
+| riverworld, first spawn | 4.61 ms; 79 / 89; 148 k | 4.57 ms; 320 / 522; 129 k (13 of 26 clusters) |
+| riverworld, overview | 4.54 ms; 82 / 89; 148 k | 4.44 ms; 448 / 522; 144 k (all clusters) |
+
+On this GPU the frame is bound by pixel shading (water, terrain blends,
+haze), not triangles, so halving the triangles barely moves the frame time
+except with every BSP loaded; the wins are in GPU memory (zone set 6: 227 MiB
+of textures uploaded instead of 383) and on slower GPUs. Pictures with and
+without the culling match (`HALO3_PORTALS=0 HALO3_MIN_PIXELS=0`; under 0.1 % of
+pixels differ, a few far props).
 
 ## Frame and units
 
@@ -100,7 +166,7 @@ from the Reflex pipeline sidecars carry over.
 
 ## What is drawn
 
-One bevy mesh per material and lighting mode, every placement baked into
+Chunks of one material and lighting mode per place (see "Streaming and culling"), every placement baked into
 world space; `Sky` placements get their own shader (see "Sky and haze" below).
 
 Before the window opens, `textures.rs` resolves every material's shader tag
@@ -274,7 +340,7 @@ they are lit as well as by material.
 | BSP clusters, most instanced geometry | the BSP's per-pixel lightmap: two BC3 texture arrays sampled in the shader at the lightmap texcoord (`UV_1`) with the surface normal. Cliff, tree and building shadows on the ground come from here |
 | instances with static per-vertex lighting | their own coefficients, turned into irradiance per vertex on the CPU (vertex colour) |
 | instances with a light probe | the probe (L0 and L1 terms plus its dominant light), per vertex on the CPU |
-| scenery, crates, machines, controls | the lightmap at the lit BSP vertex nearest the bottom centre of the object, per vertex with each vertex's normal (an approximation: the scenario's own scenery/machine probes are not matched up yet) |
+| scenery, crates, machines, controls | the lightmap at the lit surface nearest the bottom centre of the object (samples inside every per-pixel lit cluster and instance triangle, about 3 wu apart; up-facing ground under the point counts as nearer than walls and ceilings), per vertex with each vertex's normal (an approximation: the scenario's own scenery/machine probes are not matched up yet). The rider is lit the same way |
 | the sky | its own shader and the map's atmosphere ("Sky and haze" below) |
 | maps with no lightmap, `--test-scene` | a fixed sunny Valhalla texel (`lighting::default_light`) |
 
@@ -289,6 +355,14 @@ irradiance (every 25th BSP cluster vertex, luminance) comes out at most 3.0
 and Sandtrap (1.15, x2.6) are held back. The log prints it (`camera fx ...:
 exposure -2.51 stops, mean irradiance 0.101 -> x10.51`). `HALO3_EXPOSURE` sets a fixed
 multiplier, `HALO3_EXPOSURE_SLOPE` the 0.6. Not done: Halo's own auto
+
+**Auto exposure** (a stand-in for Halo's): in a place more than 4 stops darker than the map's
+mean lit surface the picture is brightened, by the darkness beyond those 4 stops and at most the
+width of the camera fx's auto range (`+0x10..+0x14`; Valhalla 0..3, 120_halo 0..4, capped at 3), through bevy's
+colour grading so world, sky, haze and rider move together. The place's light is the lit surface
+nearest the camera averaged over six directions; it adapts over about a second, snaps when the
+camera jumps, and never darkens. 120_halo's start, inside `120_bsp_010` (whose lightmap is about a
+quarter as bright as the outdoor BSPs'), gets +2.7 stops; Valhalla's shaded first spawn (3.6 stops under) nothing. `HALO3_AUTO_EXPOSURE=0` turns it off.
 exposure and tonemap curve, the probes' L2 terms.
 
 The log says how each placement was lit, e.g. Valhalla:
@@ -324,10 +398,13 @@ The log says how each placement was lit, e.g. Valhalla:
   Sandtrap plays about 20 wu under its sea level, where the exponential falloff made the haze
   e^10 times thicker and every ground-level view black.
 
+The setting's distance bias is applied to the world haze too (no haze in the first 15 wu on
+Valhalla, 100 wu on the Warthog run): bevy's fog has no start, so the start is passed to the world
+and water shaders in the fog's unused directional-light exponent.
+
 Not done: the world haze uses one density for the whole ray (the eye's), so looking down from a
-height onto the lake under-hazes it; the level setting's distance bias (-15 wu, no haze in the
-first 15 wu) and the sun-angle dependence of the haze colour are not applied to the world (bevy's
-fog has neither); `desaturation` (used by The Pit, 0.2) is ignored; Halo's real sky lighting and
+height onto the lake under-hazes it; the sun-angle dependence of the haze colour is not applied
+to the world; `desaturation` (used by The Pit, 0.2) is ignored; Halo's real sky lighting and
 exposure curve is not decoded (the `cfxs` exposure is, see "Lighting"); no sun glare or bloom; the sky does not move with the camera
 (it is at true size, about 7,500 wu out, which is what the haze distances need).
 

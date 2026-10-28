@@ -523,6 +523,9 @@ fn update_haze(
     };
     // Campaign clusters name their own setting (`zone-sets.md` 3).
     let a = air.0.and_then(|i| haze.settings.get(i as usize)).unwrap_or(default);
+    if air.is_changed() {
+        info!("haze: {:?} ({})", air.0, a.name);
+    }
     for (transform, mut fog) in &mut cameras {
         let z = super::to_halo(transform.translation()).z;
         if let Some(sky) = sky_setting(&haze, &air) {
@@ -536,6 +539,9 @@ fn update_haze(
         let extinction = extinction * haze.density;
         fog.color = Color::linear_rgb(colour.x, colour.y, colour.z);
         fog.directional_light_color = Color::NONE;
+        // Where the fog starts, for the world shaders (`fog_position` in
+        // `lightmap.wesl`): unused by bevy while the light colour is none.
+        fog.directional_light_exponent = (-a.distance_bias).max(0.0) * WORLD_UNIT_METRES;
         fog.falloff = FogFalloff::Atmospheric {
             extinction,
             inscattering: extinction,

@@ -25,7 +25,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_dis
 
 use crate::fly_camera::FlyCamera;
 use crate::skate::RiderPose;
-use crate::world::{to_render, to_render_dir};
+use crate::world::{Triangles, to_render, to_render_dir};
 
 /// Seconds to wait before the first picture, for shaders to compile (they
 /// build in the background) and meshes and textures to reach the GPU; later
@@ -133,6 +133,8 @@ pub struct ShotPlan {
     pub size: UVec2,
     /// Skate before the pictures (`--skate`).
     pub skate: bool,
+    /// Frames to time before each picture (`--bench N`; 0: none).
+    pub bench: u32,
     /// Ride the dirt bike before the pictures (`--bike`).
     pub bike: bool,
 }
@@ -154,6 +156,9 @@ struct Progress {
     saved: usize,
     /// Seconds spent waiting for the skater.
     waited: f32,
+    /// The bench of the current view: frames left, frame times so far.
+    bench_left: Option<u32>,
+    frame_ms: Vec<f32>,
 }
 
 pub struct ShotPlugin(pub ShotPlan);
@@ -164,7 +169,19 @@ impl Plugin for ShotPlugin {
             .init_resource::<Progress>()
             .add_systems(PostStartup, aim_at_image)
             .add_systems(Update, step);
+        if self.0.bench > 0 {
+            // Without a swap chain nothing makes the CPU wait for the GPU, and
+            // frame times would only measure the CPU: wait for every frame.
+            app.sub_app_mut(bevy::render::RenderApp).add_systems(
+                bevy::render::Render,
+                wait_for_gpu.in_set(bevy::render::RenderSystems::Cleanup),
+            );
+        }
     }
+}
+
+fn wait_for_gpu(device: Res<bevy::render::renderer::RenderDevice>) {
+    let _ = device.poll(bevy::render::render_resource::PollType::wait_indefinitely());
 }
 
 fn place(view: &View, transform: &mut Transform) {
@@ -253,6 +270,32 @@ fn aim_at_image(
     }
 }
 
+/// Logs the frame times of a bench and what the last frame drew: mesh
+/// entities that passed visibility (hidden, frustum and portal culling) and
+/// their triangles.
+fn bench_report(view: usize, frame_ms: &[f32], drawn: &Query<(&ViewVisibility, Option<&Triangles>), With<Mesh3d>>) {
+    let mut sorted = frame_ms.to_vec();
+    sorted.sort_unstable_by(f32::total_cmp);
+    let n = sorted.len().max(1) as f32;
+    let mean = sorted.iter().sum::<f32>() / n;
+    let pct = |p: f32| sorted.get(((sorted.len() as f32 - 1.0) * p).round() as usize).copied().unwrap_or(0.0);
+    let (mut entities, mut visible, mut triangles) = (0usize, 0usize, 0usize);
+    for (v, m) in drawn {
+        entities += 1;
+        if v.get() {
+            visible += 1;
+            triangles += m.map_or(0, |t| t.0 as usize);
+        }
+    }
+    eprintln!(
+        "bench: view {view}: {} frames, mean {mean:.2} ms, median {:.2} ms, p95 {:.2} ms; {visible} of {entities} meshes drawn, {triangles} triangles",
+        sorted.len(),
+        pct(0.5),
+        pct(0.95)
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn step(
     mut commands: Commands,
     plan: Res<ShotPlan>,
@@ -261,6 +304,8 @@ fn step(
     pose: Option<Res<RiderPose>>,
     mut exit: MessageWriter<AppExit>,
     time: Res<Time<Real>>,
+    drawn: Query<(&ViewVisibility, Option<&Triangles>), With<Mesh3d>>,
+    portals: Option<Res<crate::world::culling::PortalView>>,
 ) {
     let Some(target) = progress.target.clone() else {
         return;
@@ -317,6 +362,31 @@ fn step(
     if progress.wait > 0.0 {
         progress.wait -= time.delta_secs();
         return;
+    }
+    if plan.bench > 0 {
+        let left = *progress.bench_left.get_or_insert(plan.bench);
+        if left > 0 {
+            // The first frame's delta still includes the wait.
+            if left < plan.bench {
+                progress.frame_ms.push(time.delta_secs() * 1000.0);
+            }
+            progress.bench_left = Some(left - 1);
+            return;
+        }
+        bench_report(progress.view, &progress.frame_ms, &drawn);
+        if let Some(v) = portals.as_deref() {
+            let seen: Vec<String> = v
+                .visible
+                .iter()
+                .map(|(b, s)| match s {
+                    Some(s) => format!("bsp {b}: {} of {} clusters", s.iter().filter(|x| **x).count(), s.len()),
+                    None => format!("bsp {b}: all"),
+                })
+                .collect();
+            eprintln!("bench: view {}: camera in clusters {:?}; {}", progress.view, v.camera, seen.join(", "));
+        }
+        progress.frame_ms.clear();
+        progress.bench_left = None;
     }
     let path = plan.dir.join(format!("{}_{}.png", plan.name, progress.view));
     eprintln!("shot: {}", path.display());

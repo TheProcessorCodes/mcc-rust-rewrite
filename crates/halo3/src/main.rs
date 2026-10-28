@@ -10,6 +10,9 @@
 //!                        the same, after two seconds of skating
 //! halo3 <map> --shot <dir> --bike [--view ...]
 //!                        the same, after two seconds on the dirt bike
+//! halo3 <map> --shot <dir> --bench N [--view ...]
+//!                        before each picture, time N frames and count what
+//!                        is drawn (log lines start with `bench:`)
 //!
 //! halo3 <map> --zone N|NAME | --bsps 0,3,5 | --all-bsps
 //!                        which structure BSPs to load first (default: the
@@ -58,11 +61,11 @@ fn resolve_map(arg: &str) -> PathBuf {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (scene, textures, chief, sky, water) = match args.first().map(String::as_str) {
+    let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
-  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike]
+  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike] [--bench N]
   halo3 --test-scene");
             std::process::exit(2);
         }
@@ -72,16 +75,19 @@ fn main() -> anyhow::Result<()> {
             None,
             world::sky::SkyData::default(),
             world::water::WaterData::default(),
+            None,
         ),
         Some(map) => {
             let path = resolve_map(map);
             let started = std::time::Instant::now();
-            let cache = blam_cache::CacheFile::open(&path)?;
+            // Kept open for the whole run: zone sets decode their textures
+            // from it when they load (`world/stream.rs`).
+            let cache: &'static blam_cache::CacheFile = Box::leak(Box::new(blam_cache::CacheFile::open(&path)?));
             let mut scene = blam_geometry::Scene {
                 name: cache.header.map_name.clone(),
                 ..Default::default()
             };
-            blam_geometry::decode_into(&cache, &blam_geometry::Options::default(), &mut scene)?;
+            blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
             eprintln!(
                 "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
                 scene.name,
@@ -91,11 +97,10 @@ fn main() -> anyhow::Result<()> {
                 started.elapsed().as_secs_f32()
             );
             let started = std::time::Instant::now();
-            let textures = textures::load(&cache, &scene);
-            let bytes: usize = textures.bitmaps.values().map(|t| t.byte_len()).sum();
+            let textures = textures::load_with(cache, &scene, false);
+            let bytes: usize = textures.lightmaps.iter().flatten().map(|t| t.coefficients.byte_len() + t.intensity.byte_len()).sum();
             eprintln!(
-                "textures: {} colour bitmaps for {} materials, {:.1} MiB, loaded in {:.1} s",
-                textures.bitmaps.len(),
+                "textures: {} materials resolved (their bitmaps load with their zone set), lightmaps {:.1} MiB, in {:.1} s",
                 scene.materials.len(),
                 bytes as f64 / (1 << 20) as f64,
                 started.elapsed().as_secs_f32()
@@ -104,13 +109,15 @@ fn main() -> anyhow::Result<()> {
             if let Some(mean) = mean {
                 world::lighting::set_scene_mean(mean);
             }
-            match blam_geometry::camera_fx::read(&cache) {
+            match blam_geometry::camera_fx::read(cache) {
                 Ok(Some(fx)) => {
                     world::lighting::set_map_exposure(fx.exposure);
+                    world::lighting::set_auto_range(fx.auto_range);
                     eprintln!(
-                        "camera fx {}: exposure {:.2} stops, mean irradiance {:.3} -> x{:.2}",
+                        "camera fx {}: exposure {:.2} stops (auto range {:?}), mean irradiance {:.3} -> x{:.2}",
                         fx.tag,
                         fx.exposure,
+                        fx.auto_range,
                         mean.unwrap_or(0.0),
                         world::lighting::exposure()
                     );
@@ -118,10 +125,10 @@ fn main() -> anyhow::Result<()> {
                 Ok(None) => eprintln!("no camera fx: exposure x{}", world::lighting::exposure()),
                 Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
             }
-            let chief = rider::load_chief(&cache);
-            let sky = world::sky::load(&cache, &scene);
-            let water = world::water::load(&cache, &scene);
-            (scene, textures, chief, sky, water)
+            let chief = rider::load_chief(cache);
+            let sky = world::sky::load(cache, &scene);
+            let water = world::water::load(cache, &scene);
+            (scene, textures, chief, sky, water, Some(cache))
         }
     };
     let shot = shot_plan(&args, &scene)?;
@@ -163,6 +170,7 @@ fn main() -> anyhow::Result<()> {
     };
     let skating = shot.as_ref().is_none_or(|p| p.rides());
     let collision = scene.collision.clone();
+    let shot_mode = shot.is_some();
     if let Some(plan) = shot {
         if plan.rides() {
             // Ride from the first view, or the start spawn.
@@ -214,8 +222,9 @@ fn main() -> anyhow::Result<()> {
         }
     }
     app.insert_resource(zones)
+        .insert_resource(world::stream::ZoneTriggers::new(shot_mode))
         .insert_resource(loaded)
-        .insert_resource(world::PendingScene(Some(scene), Some(textures)))
+        .insert_resource(world::PendingScene(Some(scene), Some(textures), map_file))
         .insert_resource(world::sky::PendingSky(Some(sky)))
         .insert_resource(world::water::PendingWater(Some(water)))
         .add_plugins((pause::PausePlugin, fly_camera::FlyCameraPlugin, world::WorldPlugin))
@@ -256,5 +265,6 @@ fn shot_plan(args: &[String], scene: &blam_geometry::Scene) -> anyhow::Result<Op
         size,
         skate: args.iter().any(|a| a == "--skate"),
         bike: args.iter().any(|a| a == "--bike"),
+        bench: value("--bench").map(|n| n.parse()).transpose()?.unwrap_or(0),
     }))
 }
