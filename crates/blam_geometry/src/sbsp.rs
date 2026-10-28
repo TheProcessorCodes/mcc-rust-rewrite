@@ -188,6 +188,9 @@ pub fn decode(
         let (x, y, z) = (r.f32x2()?, r.f32x2()?, r.f32x2()?);
         let mut r = r.at(o + 0x18);
         let (sky, atmosphere) = (r.i8()?, r.i8()?);
+        // +0x1C: i16 index into the BSP's acoustics palette (sbsp + 0x118,
+        // `docs/format/sound.md` 5), -1 none.
+        let acoustics = r.at(o + 0x1C).i16()?;
         cluster_info.push(ClusterInfo {
             bounds: (x[0] <= x[1] && x[1] < 1e30)
                 .then(|| (Vec3::new(x[0], y[0], z[0]), Vec3::new(x[1], y[1], z[1]))),
@@ -195,6 +198,7 @@ pub fn decode(
             atmosphere: usize::try_from(atmosphere)
                 .ok()
                 .and_then(|a| atmospheres.get(a).copied().flatten()),
+            acoustics: u32::try_from(acoustics).ok(),
         });
         let section = cache.reader_at(o + 216).i16()?;
         let Some(mesh) = usize::try_from(section)

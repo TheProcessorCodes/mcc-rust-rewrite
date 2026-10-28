@@ -22,6 +22,7 @@ the format descriptions the code is written from.
 |---|---|
 | `crates/blam_cache` | opens a `.map`: header, sections, tag index, tag names, string ids, a cursor for tag data, resource pages |
 | `crates/blam_geometry` | decodes structure BSPs (clusters and instances) into plain meshes with materials |
+| `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
 | `crates/halo3` | the viewer: a window, the BSP drawn, a flying camera (`docs/viewer.md`) |
@@ -39,6 +40,8 @@ target\debug\blam.exe geometry riverworld --obj out\riverworld.obj
 target\debug\blam.exe shader riverworld 11454
 target\debug\blam.exe bitmap riverworld 112 --png out\mountains_snow.png
 target\debug\blam.exe textures riverworld
+target\debug\blam.exe sound riverworld list
+target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_music_15"
 & "target\debug\halo3.exe" riverworld
 ```
 
@@ -103,6 +106,14 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       collision) puts the skater or the bike back where it last stood; the
       jump pads' and minilift's `plasma` glow is drawn. Pinned by
       `cargo test` (our own counts: there is no HaloExport reference).
+- [x] Sound (built, awaiting a playtest): Halo 3's own audio from MCC's FMOD
+      bank (`halo3\fmod\pc\sfx.fsb`, Vorbis; setup headers rebuilt from the
+      user's `halo3.dll`), driven by the map's tags: each cluster's background
+      ambience with its random details, cross-faded as you move; the sound
+      scenery placed in the world, panned and attenuated by distance; music by
+      hand (M; the Warthog run on 120_halo); board roll, grind and landing
+      sounds while skating. K mutes, `-` / `=` volume, `HALO3_AUDIO=0` off
+      (`docs/format/sound.md`, `docs/viewer.md` "Sound").
 - [ ] Milestone 3b: feed collision and rails to the skate world.
 - [ ] Milestone 4: Skate 3 crates plugged in.
 - [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets

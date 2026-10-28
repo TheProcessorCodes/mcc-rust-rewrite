@@ -20,6 +20,7 @@
 //! `$HALO3_MAPS` or the default MCC install.
 
 mod geometry;
+mod sound;
 mod lightmap;
 mod texture;
 
@@ -34,7 +35,7 @@ use glam::Vec3;
 const DEFAULT_MAPS: &str =
     r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps";
 
-fn maps_dir() -> PathBuf {
+pub(crate) fn maps_dir() -> PathBuf {
     std::env::var_os("HALO3_MAPS")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_MAPS))
@@ -52,7 +53,7 @@ fn resolve_map(arg: &str) -> PathBuf {
     maps_dir().join(name)
 }
 
-struct Args {
+pub(crate) struct Args {
     command: String,
     positional: Vec<String>,
     flags: Vec<(String, Option<String>)>,
@@ -102,7 +103,7 @@ impl Args {
     }
 }
 
-fn usage() -> ! {
+pub(crate) fn usage() -> ! {
     eprintln!(
         "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n\n<map> is a path or a bare name looked up in $HALO3_MAPS (default: the MCC install)."
     );
@@ -123,6 +124,8 @@ fn main() -> Result<()> {
         "strings" => strings(&cache, &args),
         "string-id" => string_id(&cache, &args),
         "dump" => dump(&cache, &args),
+        "blocks" => blocks(&cache, &args),
+        "sound" => sound::run(&cache, &args),
         "geometry" => {
             geometry::run(
                 &cache,
@@ -417,7 +420,7 @@ fn string_id(cache: &CacheFile, args: &Args) -> Result<()> {
     Ok(())
 }
 
-fn find_tag<'a>(cache: &'a CacheFile, what: &str) -> Result<&'a TagEntry> {
+pub(crate) fn find_tag<'a>(cache: &'a CacheFile, what: &str) -> Result<&'a TagEntry> {
     if let Ok(i) = what.parse::<u32>() {
         return cache.tags.get(i).with_context(|| format!("no tag #{i}"));
     }
@@ -450,6 +453,49 @@ fn find_tag_of<'a>(cache: &'a CacheFile, what: &str, class: &str) -> Result<&'a 
         return Ok(t);
     }
     find_tag(cache, what)
+}
+
+/// `blam blocks <map> <tag> [--len N] [--skip N]`: every plausible 12-byte tag
+/// block header in the first N bytes of a tag (from `--skip`), with the
+/// distance to the next block's elements divided by the count (an upper bound
+/// on the element size). For finding layouts by hand.
+fn blocks(cache: &CacheFile, args: &Args) -> Result<()> {
+    let Some(what) = args.positional.get(1) else {
+        usage()
+    };
+    let tag = find_tag(cache, what)?;
+    let len: usize = args.flag("len").map_or(Ok(0x400), str::parse)?;
+    let skip: usize = args.flag("skip").map_or(Ok(0), str::parse)?;
+    let start = cache.tag_offset(tag)? + skip;
+    let file_len = cache.bytes().len();
+    let mut found = Vec::new();
+    for off in (0..len).step_by(4) {
+        let mut r = cache.reader_at(start + off);
+        let (Ok(count), Ok(Some(at))) = (r.u32(), r.pointer()) else {
+            continue;
+        };
+        if (1..200_000).contains(&count) && at < file_len {
+            found.push((off, count, at));
+        }
+    }
+    let mut starts: Vec<usize> = found.iter().map(|f| f.2).collect();
+    starts.sort_unstable();
+    println!(
+        "#{} {} {}  tag data at {:#x}",
+        tag.index,
+        cache.tags.class_of(tag).code,
+        tag.name(),
+        start - skip
+    );
+    for (off, count, at) in found {
+        let next = starts.iter().find(|&&s| s > at).copied().unwrap_or(at);
+        println!(
+            "+{:#06x}  count {count:7}  at {at:#x}  gap/count {:9.1}",
+            off + skip,
+            (next - at) as f64 / count as f64
+        );
+    }
+    Ok(())
 }
 
 fn dump(cache: &CacheFile, args: &Args) -> Result<()> {

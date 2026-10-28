@@ -50,7 +50,28 @@ impl Plugin for SkatePlugin {
             .init_resource::<AutoStart>()
             .init_resource::<Respawn>()
             .add_systems(Startup, start_worker)
-            .add_systems(Update, (update.run_if(crate::pause::running), draw_rider, show_status).chain());
+            .init_resource::<SkateMotion>()
+            .add_systems(
+                Update,
+                (update.run_if(crate::pause::running), publish_motion, draw_rider, show_status).chain(),
+            );
+    }
+}
+
+/// How the ride is going, for the board sounds (`audio/`): whether the
+/// skater is riding, the board speed in m/s and the engine's state name.
+#[derive(Resource, Default, Clone, Debug)]
+pub struct SkateMotion {
+    pub riding: bool,
+    pub speed: f32,
+    pub state: String,
+}
+
+fn publish_motion(host: Res<Host>, mut motion: ResMut<SkateMotion>) {
+    if motion.riding != host.active || motion.speed != host.speed || motion.state != host.state {
+        motion.riding = host.active;
+        motion.speed = host.speed;
+        motion.state.clone_from(&host.state);
     }
 }
 
