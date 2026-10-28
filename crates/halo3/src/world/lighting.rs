@@ -385,6 +385,13 @@ impl MaterialExtension for HaloLightmap {
     fn fragment_shader() -> ShaderRef {
         SHADER.into()
     }
+
+    /// The depth prepass (maps with water) must cut `alpha_test_map`
+    /// cut-outs too, or their whole cards hide what is behind them (Last
+    /// Resort's palm fronds drew as white haze-coloured squares).
+    fn prepass_fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
 }
 
 pub struct LightingPlugin;

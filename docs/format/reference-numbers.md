@@ -673,3 +673,45 @@ distinct sections), World 12,240 triangles / 18,839 vertices / 23 materials, ins
 scenery 132 nodes 139,652 / 224,356, crates 131 nodes 50,382 / 68,739, machines 8 nodes 3,200 / 4,162
 (tags `jump_fan` x 2, `brute_target`, `jackal_target`), 134 materials, World wu X (-50.0, 50.0) Y (-21.433,
 85.338) Z (-2.700, 8.500); `jump_fan#machine-0000` matrix in 5.3.
+
+---
+
+## 9. Last Resort (`zanzibar`), added 2026-10-28
+
+HaloExport sidecar `D:\reflex-tools\halo-exports\zanzibar\halo_export.json` (same build, `MccHalo3U13`)
+against `blam geometry zanzibar`. Every count matches exactly; `last_resort_matches_haloexport` in
+`crates/blam_geometry/tests/maps.rs` pins them.
+
+| item | sidecar | ours |
+|---|---|---|
+| bsps | 1, `levels\multi\zanzibar\zanzibar` | same |
+| clusters / with a mesh | 40 / 39 | 40 / 39 |
+| instances / placed | 1,130 / 1,123 | 1,130 / 1,123 |
+| bounds_wu x / y / z | [-99.67684, 44.225243] / [-68.49561, 160.14279] / [-8.990257, 20.045654] | same (stated sbsp bounds) |
+| triangles: world / instance | 38,991 / 316,212 | same |
+| triangles: scenery / crate / machine / control | 183,060 / 82,432 / 3,192 / 764 | same |
+| nodes: scenery / crate / machine / control | 178 / 168 / 3 / 1 | 312 / 273 / 3 / 2 placements (one per mesh of a multi-mesh object) |
+| materials | 141 | 155 scene materials (14 more from the sky model, which HaloExport left out) |
+| colour bitmaps | 146 written, 0 missing | 146 decoded, 0 failed (`blam textures`) |
+| water | `zanzibar_water_awesome`, 1,846 triangles | same; a flat sheet at z -3.0 from x -74.2 to 34.9, y 16.1 to 112.6 |
+| skies | [`levels\multi\zanzibar\sky\sky`] | 12 sky placements, 11,026 triangles |
+
+Ours only (no sidecar equivalent):
+
+| item | value |
+|---|---|
+| shaders in the sbsp | 112 |
+| sections / with geometry | 376 / 368 |
+| collision | 31,784 BSP triangles, 86,394 instanced from 790 of 1,130 instances (340 have no collision), 65 materials; 1,908 invisible, 2,621 slip, 3,158 two-sided |
+| placed geometry bounds (sky left out) | x -74.224..41.792, y -68.496..112.634, z -11.563..16.904 |
+| spawn points | 106 (`respawn_point` and `respawn_point_invisible`); each stands on collision less than 0.5 wu over it, with nothing through the body (checked by the test) |
+| start spawn | 0: [14.96, 23.92, -0.86] facing -168 deg, on the beach |
+| camera fx | exposure -4.47 stops, mean irradiance 0.317 -> x4.65 |
+| rails | 45,973 walkable edges, 11,517 lips, 10,094 runs, 3,954 rails; 3,828 outside the kill volumes; 3,824 out of deep water (a 108 wu rail along the sea bed off the beach, z -5.2 to -3.5, ran up to 2 wu under the surface) |
+
+Shaders borrowed from other levels resolve like the map's own: `levels\solo\040_voi\...` (metals, concrete,
+signs, `light_volume_a`), `levels\solo\020_base\...`, `levels\solo\010_jungle\...` (palms, bark),
+`levels\multi\deadlock\...` (chain-link fence, rubble edge). Decals (`panel_logo_decal`,
+`human_military_decals*`, `military_decals`, `panel_crate_shipping`) are `rmd ` alpha blend;
+`forklift_glass` is a glass `rmsh` with additive blending; `deadlock_screen` is opaque with a scrolling
+`self_illum_map`; the 21 `box_*` / `wall_*` scenery pieces (Forge blocks) use `objects\multi\shaders\invisible` and are not drawn.

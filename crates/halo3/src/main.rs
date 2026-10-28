@@ -199,6 +199,7 @@ fn main() -> anyhow::Result<()> {
         app.insert_resource(skate::SkateInput(
             (!scene.collision.triangles.is_empty()).then(|| scene.collision.clone()),
             scene.trigger_volumes.clone(),
+            scene.water_triangles(),
         ))
         .insert_resource(rider::PendingChief(chief))
         .add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));

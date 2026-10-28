@@ -192,6 +192,11 @@ fn rails(cache: &CacheFile, args: &Args) -> Result<()> {
     if rails.len() != found {
         eprintln!("kill volumes: {found} rails became {}", rails.len());
     }
+    let dry = rails.len();
+    let rails = blam_geometry::rails::out_of_deep_water(rails, &scene.water_triangles(), blam_geometry::rails::DEEP_WATER);
+    if rails.len() != dry {
+        eprintln!("deep water: {dry} rails became {}", rails.len());
+    }
     eprintln!(
         "collision decoded in {decoded:.2} s, rails found in {:.2} s",
         started.elapsed().as_secs_f32() - decoded

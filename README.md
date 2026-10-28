@@ -57,6 +57,14 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       campaign maps decode all their BSPs. Checked by `cargo test`.
 - [x] Milestone 2 (built, awaiting a playtest): window, BSP drawn in flat
       colours per material, flying camera with keyboard, mouse and gamepad.
+- [x] Last Resort (`zanzibar`, 2026-10-28): every HaloExport count matches
+      (39 cluster meshes, 1,123 instances, 624,651 triangles with objects),
+      146 of 146 colour bitmaps decode, 106 spawns all on the ground and
+      clear of walls; checked by `cargo test`
+      (`docs/format/reference-numbers.md` 9). Fixed on the way: palm fronds
+      cut by their own `alpha_test_map` in the water depth prepass, the
+      sky's `from_diffuse` glow and halogram edge fade (white slabs on the
+      sea), rails under deep water dropped.
 - [x] Milestone 1c: scenery, crates, machines, controls and the sky placed
       from the scenario, again matching HaloExport's triangle counts exactly.
 - [x] Textures (built, awaiting a playtest): every material draws its real

@@ -78,6 +78,13 @@ pub struct SkyLook {
     pub albedo_colour: [f32; 4],
     /// Self-illumination colour times intensity.
     pub illum: Option<[f32; 3]>,
+    /// `self_illumination from_diffuse`: the albedo itself glows, there is
+    /// no self-illumination map (Last Resort's `island_water_edges`).
+    pub illum_from_diffuse: bool,
+    /// Halogram `edge_fade simple`: edge tint, centre tint and power; the
+    /// colour runs from the edge tint where the surface is seen edge-on to
+    /// the centre tint where it faces the camera.
+    pub edge_fade: Option<([f32; 3], [f32; 3], f32)>,
     pub blend: Blend,
     /// Lit by the sky light (`material_model` other than none).
     pub lit: bool,
@@ -141,7 +148,17 @@ fn look_of(s: &Shader) -> SkyLook {
         let k = s.param("self_illum_intensity").map_or(1.0, |v| v[0]);
         [c[0] * k, c[1] * k, c[2] * k]
     });
+    let rgb = |name: &str, default: f32| s.param(name).map_or([default; 3], |v| [v[0], v[1], v[2]]);
+    let edge_fade = s.option("edge_fade").is_some_and(|o| o != "none").then(|| {
+        (
+            rgb("edge_fade_edge_tint", 0.0),
+            rgb("edge_fade_center_tint", 1.0),
+            s.param("edge_fade_power").map_or(1.0, |v| v[0]),
+        )
+    });
     SkyLook {
+        illum_from_diffuse: s.option("self_illumination") == Some("from_diffuse"),
+        edge_fade,
         albedo,
         maps: [
             map("base_map"),
@@ -252,6 +269,11 @@ pub struct SkyShading {
     /// (bits 0-2).
     #[uniform(100)]
     pub extra: Vec4,
+    /// Halogram edge fade: edge tint (w: 1 when on) and centre tint (w: power).
+    #[uniform(100)]
+    pub edge_tint: Vec4,
+    #[uniform(100)]
+    pub centre_tint: Vec4,
     #[texture(101)]
     #[sampler(102)]
     pub base: Option<Handle<Image>>,
@@ -395,7 +417,12 @@ fn swap_sky_materials(
             xform_detail3: xform(maps[3].as_ref()),
             xform_illum: xform(maps[4].as_ref()),
             albedo_colour: Vec4::from_array(look.albedo_colour),
-            illum_colour: look.illum.map_or(Vec4::ZERO, |c| v3(c, 1.0)),
+            // w: 1 adds the self-illumination map, 2 the albedo (from_diffuse).
+            illum_colour: look
+                .illum
+                .map_or(Vec4::ZERO, |c| v3(c, if look.illum_from_diffuse { 2.0 } else { 1.0 })),
+            edge_tint: look.edge_fade.map_or(Vec4::ZERO, |(e, _, _)| v3(e, 1.0)),
+            centre_tint: look.edge_fade.map_or(Vec4::ONE, |(_, c, p)| v3(c, p)),
             mode: Vec4::new(
                 look.albedo as u32 as f32,
                 (look.blend == Blend::Additive) as u32 as f32,

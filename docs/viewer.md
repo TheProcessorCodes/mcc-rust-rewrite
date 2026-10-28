@@ -177,7 +177,7 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 |---|---|
 | `rmsh`, `rmhg`, `rmd ` with a `base_map` | the base map, tinted by `albedo_color`, tiled by the base map's xform through `uv_transform` (the mesh keeps the raw UVs) |
 | the rest of an ordinary shader's material | detail map, bump map (and bump detail), specular, environment reflection and self-illumination, in the lighting shader: see "Materials" below |
-| foliage (`rmfl`) and any `alpha_test simple` shader | `AlphaMode::Mask(0.5)` on the base map's alpha, or on `alpha_test_map` when the shader has its own (grates), both sides drawn |
+| foliage (`rmfl`) and any `alpha_test simple` shader | `AlphaMode::Mask(0.5)` on the base map's alpha, or on `alpha_test_map` when the shader has its own (grates; Last Resort's palm fronds cut by their bump map's alpha), both sides drawn. The lighting shader is also the depth prepass's fragment shader, so maps with water (which get a depth prepass) cut the same way there; with bevy's own prepass the whole frond cards hid what was behind them and showed the haze colour |
 | `blend_mode` alpha_blend / pre_multiplied_alpha / additive / multiply | `Blend` / `Premultiplied` / `Add` / `Multiply`, no shadows |
 | opaque shaders | `Opaque`: the base map's alpha is a specular mask, not transparency, and is ignored |
 | terrain (`rmtr`) | the **four-layer blend**, in the lighting shader (see "Terrain" below). If the blend map or every layer fails to decode, or with `HALO3_TERRAIN_BLEND=0`, the single layer the blend map weights most over the whole map, as HaloExport does |
@@ -308,7 +308,8 @@ the collision, so the board rides the river bed and drops to the lake floor on i
 of that, while skating: the last spot where the board stood on dry ground is remembered; going
 into water throws a splash (small white droplets) and logs the depth; in water deeper than
 0.45 wu (about 1.4 m) the skater sinks for 0.6 s and is put back at the last dry spot (the start
-spawn if there was none) through `Session::activate`. Shallow water is ridden on its bed, with
+spawn if there was none) through `Session::activate`. Rails more than that deep under a water
+surface are dropped (`rails::out_of_deep_water`; Last Resort's sea bed had a 108 wu one). Shallow water is ridden on its bed, with
 no drag (the engine takes no outside forces). The fly camera passes through water. Log lines
 start with `water:`.
 
@@ -392,6 +393,11 @@ The log says how each placement was lit, e.g. Valhalla:
   exponential height falloff, using the setting flagged for the sky (`haze_skydome` on Valhalla).
   The nearly black sky dome comes out blue from that, as in the game. Additive layers only get
   the extinction. Sky bitmaps are sampled linear or sRGB as their DXGI format says.
+  `self_illumination from_diffuse` makes the albedo itself glow (there is no illumination map to
+  sample), and a halogram's `edge_fade simple` runs the colour from `edge_fade_edge_tint` where the
+  surface is seen edge-on to `edge_fade_center_tint` face-on, by `|n.v|^edge_fade_power`. Last
+  Resort's foam rings round the distant islands (`island_water_edges`, additive, x2.75) drew as
+  solid white slabs on the sea without these two.
 - **The world** gets bevy's `DistanceFog` (atmospheric falloff) from the level setting
   (`haze_level`): per-channel extinction and the in-scattered colour, recomputed every frame for
   the camera's height, since the haze thins with height (Mie scale height 6 wu over a sea level at

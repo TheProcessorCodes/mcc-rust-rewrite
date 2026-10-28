@@ -36,9 +36,10 @@ const DEFAULT_SCALE: f32 = 33.0 * 0.0254;
 const DEFAULT_ASSETS: &str = r"D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\assets";
 
 /// The map data the skate world is built from, handed over by `main`: the
-/// collision, and the trigger volumes (rails in kill volumes are dropped).
+/// collision, the trigger volumes (rails in kill volumes are dropped) and the
+/// water surfaces (rails under deep water are dropped), all in Halo units.
 #[derive(Resource)]
-pub struct SkateInput(pub Option<Collision>, pub Vec<TriggerVolume>);
+pub struct SkateInput(pub Option<Collision>, pub Vec<TriggerVolume>, pub Vec<[Vec3; 3]>);
 
 pub struct SkatePlugin;
 
@@ -220,6 +221,7 @@ fn skate_triangles(collision: &Collision, k: f32) -> Vec<[[f32; 3]; 3]> {
 fn skate_world(
     collision: &Collision,
     volumes: &[TriggerVolume],
+    water: &[[Vec3; 3]],
     mask: u32,
     k: f32,
 ) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>) {
@@ -227,6 +229,7 @@ fn skate_world(
     let triangles = skate_triangles(&loaded, k);
     let (found, _) = rails::find_rails(&loaded);
     let found = rails::outside_kill_volumes(found, volumes);
+    let found = rails::out_of_deep_water(found, water, rails::DEEP_WATER);
     let rails = found
         .iter()
         .map(|r| r.iter().map(|p| (to_render(*p) * k).to_array()).collect())
@@ -236,6 +239,7 @@ fn skate_world(
 
 fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: Res<LoadedBsps>) {
     let volumes = std::mem::take(&mut input.1);
+    let water = std::mem::take(&mut input.2);
     let Some(collision) = input.0.take() else {
         return;
     };
@@ -251,6 +255,7 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
     let resend = send.clone();
     let collision = std::sync::Arc::new(collision);
     let volumes = std::sync::Arc::new(volumes);
+    let water = std::sync::Arc::new(water);
     let spawned = std::thread::Builder::new()
         .name("halo3-skate".into())
         // The engine recurses deeply.
@@ -269,14 +274,18 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                             request += 1;
                             let n = request;
                             let builder = session.as_ref().unwrap().collision_builder();
-                            let (collision, volumes, resend) =
-                                (std::sync::Arc::clone(&collision), std::sync::Arc::clone(&volumes), resend.clone());
+                            let (collision, volumes, water, resend) = (
+                                std::sync::Arc::clone(&collision),
+                                std::sync::Arc::clone(&volumes),
+                                std::sync::Arc::clone(&water),
+                                resend.clone(),
+                            );
                             let spawned = std::thread::Builder::new()
                                 .name("halo3-skate-collision".into())
                                 .stack_size(32 * 1024 * 1024)
                                 .spawn(move || {
                                     let started = std::time::Instant::now();
-                                    let (triangles, rails) = skate_world(&collision, &volumes, mask, k);
+                                    let (triangles, rails) = skate_world(&collision, &volumes, &water, mask, k);
                                     let counts = (triangles.len(), rails.len());
                                     match builder.build(triangles, rails) {
                                         Ok(prepared) => {
@@ -325,7 +334,7 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                             // Free the old world before building the next.
                             drop(session.take());
                             let started = std::time::Instant::now();
-                            let (triangles, rails) = skate_world(&collision, &volumes, mask, k);
+                            let (triangles, rails) = skate_world(&collision, &volumes, &water, mask, k);
                             let rails_found = started.elapsed().as_secs_f32();
                             let counts = (triangles.len(), rails.len());
                             session = Some(Session::new(&root, triangles, rails, [0.0; 3], 0.0)?);
