@@ -355,13 +355,13 @@ and Sandtrap (1.15, x2.6) are held back. The log prints it (`camera fx ...:
 exposure -2.51 stops, mean irradiance 0.101 -> x10.51`). `HALO3_EXPOSURE` sets a fixed
 multiplier, `HALO3_EXPOSURE_SLOPE` the 0.6. Not done: Halo's own auto
 
-**Auto exposure** (a stand-in for Halo's): in a place darker than the map's mean lit surface the
-picture is brightened, by 60 % of the difference in stops and at most the width of the camera
-fx's auto range (`+0x10..+0x14`; Valhalla 0..3, 120_halo 0..4, capped at 3), through bevy's
+**Auto exposure** (a stand-in for Halo's): in a place more than 4 stops darker than the map's
+mean lit surface the picture is brightened, by the darkness beyond those 4 stops and at most the
+width of the camera fx's auto range (`+0x10..+0x14`; Valhalla 0..3, 120_halo 0..4, capped at 3), through bevy's
 colour grading so world, sky, haze and rider move together. The place's light is the lit surface
 nearest the camera averaged over six directions; it adapts over about a second, snaps when the
 camera jumps, and never darkens. 120_halo's start, inside `120_bsp_010` (whose lightmap is about a
-quarter as bright as the outdoor BSPs'), gets +3 stops. `HALO3_AUTO_EXPOSURE=0` turns it off.
+quarter as bright as the outdoor BSPs'), gets +2.7 stops; Valhalla's shaded first spawn (3.6 stops under) nothing. `HALO3_AUTO_EXPOSURE=0` turns it off.
 exposure and tonemap curve, the probes' L2 terms.
 
 The log says how each placement was lit, e.g. Valhalla:

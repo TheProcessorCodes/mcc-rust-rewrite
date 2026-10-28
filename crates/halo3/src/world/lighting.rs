@@ -125,12 +125,15 @@ fn auto_max_stops() -> f32 {
 /// Cap on [`auto_max_stops`].
 pub const AUTO_MAX_STOPS: f32 = 3.0;
 
-/// How much of a place's darkness against the map's mean the auto exposure
-/// takes back (the rest stays: dark places should still look darker).
-pub const AUTO_STRENGTH: f32 = 0.6;
+/// How much darker than the map's mean (stops) a place may be before the
+/// auto exposure starts brightening: shade outdoors (Valhalla's first spawn,
+/// under a base's overhang) is part of the look; only real interiors (120_halo's
+/// start, 6.7 stops under the mean; Valhalla's first spawn is 3.6) are brightened, by what lies beyond this.
+pub const AUTO_THRESHOLD: f32 = 4.0;
 
-/// A stand-in for Halo's auto exposure: in a place darker than the map's
-/// mean lit surface, the whole picture is brightened by up to the camera
+/// A stand-in for Halo's auto exposure: in a place much darker than the
+/// map's mean lit surface ([`AUTO_THRESHOLD`]), the whole picture is
+/// brightened by up to the camera
 /// fx's auto range (through bevy's colour grading, so the world, the sky,
 /// the haze and the rider move together). The place's light is the lit
 /// surface nearest the camera (`SurfaceLights`, ground first), averaged
@@ -165,7 +168,7 @@ pub fn auto_exposure(
         .map(|n| light.irradiance(*n).max(Vec3::ZERO).dot(w))
         .sum::<f32>()
         / 6.0;
-    let target = ((mean / local.max(1e-4)).log2() * AUTO_STRENGTH).clamp(0.0, auto_max_stops());
+    let target = ((mean / local.max(1e-4)).log2() - AUTO_THRESHOLD).clamp(0.0, auto_max_stops());
     let stops = match *state {
         Some((s, at)) if at.distance(eye) < 20.0 => s + (target - s) * (1.0 - (-time.delta_secs() / 0.7).exp()),
         _ => target,
