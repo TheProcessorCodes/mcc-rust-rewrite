@@ -23,6 +23,7 @@ mod fly_camera;
 mod rider;
 mod shot;
 mod skate;
+mod swim;
 mod textures;
 mod world;
 
@@ -51,7 +52,7 @@ fn resolve_map(arg: &str) -> PathBuf {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (scene, textures, chief, sky) = match args.first().map(String::as_str) {
+    let (scene, textures, chief, sky, water) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
@@ -64,6 +65,7 @@ fn main() -> anyhow::Result<()> {
             textures::MaterialTextures::default(),
             None,
             world::sky::SkyData::default(),
+            world::water::WaterData::default(),
         ),
         Some(map) => {
             let path = resolve_map(map);
@@ -94,7 +96,8 @@ fn main() -> anyhow::Result<()> {
             );
             let chief = rider::load_chief(&cache);
             let sky = world::sky::load(&cache, &scene);
-            (scene, textures, chief, sky)
+            let water = world::water::load(&cache, &scene);
+            (scene, textures, chief, sky, water)
         }
     };
     let shot = shot_plan(&args, &scene.name)?;
@@ -158,12 +161,28 @@ fn main() -> anyhow::Result<()> {
             scene.trigger_volumes.clone(),
         ))
         .insert_resource(rider::PendingChief(chief))
-        .add_plugins((skate::SkatePlugin, rider::RiderPlugin));
+        .add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
+        // Water surfaces and the ground under them, for sinking and
+        // respawning (`swim.rs`).
+        let mut water_materials: Vec<u32> = water
+            .looks
+            .iter()
+            .filter(|(_, l)| matches!(l, world::water::WaterLook::Water(_)))
+            .map(|(m, _)| *m)
+            .collect();
+        water_materials.sort_unstable();
+        if !water_materials.is_empty() {
+            app.insert_resource(swim::WaterWorld::build(&scene, &water_materials));
+            if let Some(s) = scene.spawns.first() {
+                app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
+            }
+        }
     }
     app.insert_resource(zones)
         .insert_resource(loaded)
         .insert_resource(world::PendingScene(Some(scene), Some(textures)))
         .insert_resource(world::sky::PendingSky(Some(sky)))
+        .insert_resource(world::water::PendingWater(Some(water)))
         .add_plugins((fly_camera::FlyCameraPlugin, world::WorldPlugin))
         .run();
     Ok(())

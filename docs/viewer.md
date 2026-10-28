@@ -103,7 +103,8 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 | `blend_mode` alpha_blend / pre_multiplied_alpha / additive / multiply | `Blend` / `Premultiplied` / `Add` / `Multiply`, no shadows |
 | opaque shaders | `Opaque`: the base map's alpha is a specular mask, not transparency, and is ignored |
 | terrain (`rmtr`) | the **four-layer blend**, in the lighting shader (see "Terrain" below). If the blend map or every layer fails to decode, or with `HALO3_TERRAIN_BLEND=0`, the single layer the blend map weights most over the whole map, as HaloExport does |
-| water (`rmw `) | flat `water_diffuse` colour at 75 % opacity (the watercolor texture's alpha is not opacity and its colour is the same) |
+| water (`rmw `) | its own water material: animated waves, sky reflection, murk and foam (see "Water" below) |
+| alpha-blended `two_detail` shaders whose detail maps scroll (Valhalla's waterfall) | the water material's flow mode: the maps scroll by the shader's own functions (see "Water") |
 | constant-colour shaders (no base map) | flat `albedo_color` |
 | additive glows without a base map | `self_illum_map` tinted by `self_illum_color`, added |
 | "special" shaders (path segment `invisible`, `portal`, `sky_portal`, `z_only`, `black`; effect classes) and alpha-tested shaders without a colour map (light quads) | not drawn |
@@ -152,9 +153,57 @@ layers (their base alpha is a specular mask), and `dynamic_morph` blending
 
 Not yet: detail maps on ordinary shaders (they multiply over the base and
 tile 3-10x tighter, so surfaces look smoother and lighter than in the game),
-normal maps (need tangents), self-illumination, reflections, cube maps,
-animated water. Translucent materials are still one mesh per material, so
+normal maps (need tangents), self-illumination, reflections, cube maps.
+Translucent materials are still one mesh per material, so
 two overlapping translucent materials can sort wrongly.
+
+### Water
+
+`world/water.rs` and `world/shaders/water.wesl`; the tag layout and the evidence are in
+`docs/format/water.md`. `world.rs` tags every world batch with its material
+(`BatchMaterial`); the water module swaps the material of `rmw ` batches and of flowing
+shaders, keeping their lightmap, and gives the camera a depth prepass when the map has water.
+
+- **Waves**: the shader's wave slope array (16 slices of signed slopes) sampled in world
+  space, the slice stepped by the shader's `time_warp` function (0.8 s a cycle on Valhalla),
+  scrolled by its own translation functions, plus a finer detail sample on `time_warp_aux`.
+- **Reflection**: Schlick fresnel with the shader's `fresnel_coefficient`; the sky's own
+  scattering (the map's atmosphere, as the sky dome uses) along the reflected ray, and a sun
+  glint. Looking down you see into the water, at grazing angles the sky.
+- **Murk and shores**: the depth prepass gives how much water lies between the surface and
+  the ground behind it; the bed shows through shallow water and fades with
+  `water_murkiness`, the water colour (`water_diffuse`, lit by the lightmap) takes its place;
+  the banks fade out over `bankalpha_infuence_depth`.
+- **Foam**: on steep waves (`foam auto`), the foam texture scrolled by its functions.
+- **Waterfalls**: an alpha-blended `two_detail` shader whose detail maps scroll (Valhalla's
+  `vahalla_waterfall`) is drawn as base x detail x detail2 with the xforms moving, lit by the
+  lightmap: the water runs down the fall.
+- `HALO3_WATER_OFF=<bits>` turns parts off for comparison (1 waves, 2 foam, 64 lightmap,
+  128 sky reflection; see `WaterShading::params3`). `HALO3_WATER_MASKS=1` samples the painted
+  masks (shape, watercolor, painted foam) at the mesh UV, which is the wrong texcoord: they
+  come out in triangle patches (water.md 4.1), so they are off by default.
+
+**Skating and water** (`swim.rs`, `docs/format/water.md` 6). Halo's water surface is not in
+the collision, so the board rides the river bed and drops to the lake floor on its own. On top
+of that, while skating: the last spot where the board stood on dry ground is remembered; going
+into water throws a splash (small white droplets) and logs the depth; in water deeper than
+0.45 wu (about 1.4 m) the skater sinks for 0.6 s and is put back at the last dry spot (the start
+spawn if there was none) through `Session::activate`. Shallow water is ridden on its bed, with
+no drag (the engine takes no outside forces). The fly camera passes through water. Log lines
+start with `water:`.
+
+For testing without a pad, `HALO3_SWIM_TEST=x,y,z` throws the skater to that Halo point once it
+has stood on dry ground for a second, and `HALO3_SKATE_FOR=<s>` rides that long before the
+`--skate` pictures:
+
+```
+$env:HALO3_SWIM_TEST="70,20,1.0"; $env:HALO3_SKATE_FOR="8"
+& "target\debug\halo3.exe" riverworld --shot out\shots\lake --skate --view "79.76,-56.73,1.5,-88,0"
+```
+
+Not done: refraction (no copy of the scene behind, so no wave distortion of the bed), the
+static cube reflection, vertex wave displacement, painted foam, `global_shape` and the
+watercolor texture (they need the mask texcoord), water seen from below.
 
 ## Lighting
 

@@ -77,6 +77,66 @@ pub struct Terrain {
     pub layers: [Option<TerrainLayer>; 4],
 }
 
+/// What an animated shader argument changes (`docs/format/water.md` 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnimationKind {
+    /// A scalar argument (`time_warp`).
+    Value,
+    Color,
+    ScaleUniform,
+    ScaleX,
+    ScaleY,
+    /// A texture's xform offset x (the map scrolls).
+    TranslationX,
+    TranslationY,
+    FrameIndex,
+    Alpha,
+    Other(i32),
+}
+
+impl AnimationKind {
+    fn of(v: i32) -> AnimationKind {
+        match v {
+            0 => AnimationKind::Value,
+            1 => AnimationKind::Color,
+            2 => AnimationKind::ScaleUniform,
+            3 => AnimationKind::ScaleX,
+            4 => AnimationKind::ScaleY,
+            5 => AnimationKind::TranslationX,
+            6 => AnimationKind::TranslationY,
+            7 => AnimationKind::FrameIndex,
+            8 => AnimationKind::Alpha,
+            v => AnimationKind::Other(v),
+        }
+    }
+}
+
+/// One argument driven by a function of time: the shader property's
+/// function list (`+0x5C`) joined to its routing list (`+0x50`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Animation {
+    /// The template argument it drives (a texture usage for xforms).
+    pub argument: String,
+    pub kind: AnimationKind,
+    /// Seconds per cycle.
+    pub period: f32,
+    /// The function's output range over one cycle, read as
+    /// `from + (to - from) * fract(t / period)` (a sawtooth; see water.md).
+    pub from: f32,
+    pub to: f32,
+}
+
+impl Animation {
+    /// Units per second the value moves by.
+    pub fn rate(&self) -> f32 {
+        if self.period > 1e-4 {
+            (self.to - self.from) / self.period
+        } else {
+            0.0
+        }
+    }
+}
+
 /// Everything the renderer needs from one shader tag.
 #[derive(Clone, Debug)]
 pub struct Shader {
@@ -107,9 +167,24 @@ pub struct Shader {
     /// geometry, effects classes (HaloExport's "special").
     pub special: bool,
     pub terrain: Option<Terrain>,
+    /// Arguments animated over time (scrolling maps, `time_warp`).
+    pub animations: Vec<Animation>,
 }
 
 impl Shader {
+    /// The animation of `kind` on `argument`, if any.
+    pub fn animation(&self, argument: &str, kind: AnimationKind) -> Option<&Animation> {
+        self.animations
+            .iter()
+            .find(|a| a.argument == argument && a.kind == kind)
+    }
+
+    /// How fast a texture's xform offset moves, in UV units per second.
+    pub fn scroll(&self, usage: &str) -> [f32; 2] {
+        let rate = |k| self.animation(usage, k).map_or(0.0, Animation::rate);
+        [rate(AnimationKind::TranslationX), rate(AnimationKind::TranslationY)]
+    }
+
     pub fn option(&self, category: &str) -> Option<&str> {
         self.options
             .iter()
@@ -282,6 +357,40 @@ pub fn resolve(cache: &CacheFile, tag_index: u32) -> Result<Shader> {
         .map(|(a, v)| (a.clone(), *v))
         .collect();
 
+    // 5. animated arguments: functions (36 bytes: kind, two string ids,
+    // period, data reference to the function bytes) and the routing entries
+    // (4 bytes: register, register type, function index, argument index)
+    // that tie each function to the argument it drives.
+    let mut animations = Vec::new();
+    let routes = bounded(pr.at(prop + 0x50).block()?, "the routing list", n)?;
+    let functions = bounded(pr.at(prop + 0x5C).block()?, "the function list", n)?;
+    let mut seen = std::collections::HashSet::new();
+    for o in routes.elements(4) {
+        let mut rr = cache.reader_at(o + 2);
+        let (function, argument) = (rr.u8()? as u32, rr.u8()? as usize);
+        if !seen.insert((function, argument)) {
+            continue;
+        }
+        let (Some(f), Some(arg)) = (functions.element(function, 36), arguments.get(argument)) else {
+            continue;
+        };
+        let mut fr = cache.reader_at(f);
+        let kind = AnimationKind::of(fr.i32()?);
+        let period = fr.at(f + 0xC).f32()?;
+        let data = fr.at(f + 0x10).data_ref()?;
+        let (from, to) = match data.offset.filter(|_| data.size >= 12) {
+            Some(d) => (cache.reader_at(d + 4).f32()?, cache.reader_at(d + 8).f32()?),
+            None => (0.0, 0.0),
+        };
+        animations.push(Animation {
+            argument: arg.clone(),
+            kind,
+            period,
+            from,
+            to,
+        });
+    }
+
     let mut shader = Shader {
         tag_index,
         name: name.clone(),
@@ -298,6 +407,7 @@ pub fn resolve(cache: &CacheFile, tag_index: u32) -> Result<Shader> {
         two_sided: false,
         special: false,
         terrain: None,
+        animations,
     };
     classify(&mut shader);
     Ok(shader)

@@ -47,6 +47,7 @@ impl Plugin for SkatePlugin {
         app.init_resource::<Host>()
             .init_resource::<RiderPose>()
             .init_resource::<AutoStart>()
+            .init_resource::<Respawn>()
             .add_systems(Startup, start_worker)
             .add_systems(Update, (update, draw_rider, show_status).chain());
     }
@@ -98,6 +99,12 @@ impl AutoStart {
         AutoStart(Some((spawn, yaw + std::f32::consts::FRAC_PI_2)))
     }
 }
+
+/// Put the riding skater back at a Halo position (world units) facing a
+/// Halo yaw (radians), through `Session::activate`; taken by `update`
+/// (`swim.rs` uses it after the skater sinks).
+#[derive(Resource, Default)]
+pub struct Respawn(pub Option<(Vec3, f32)>);
 
 /// Marks the camera while the skate engine drives it.
 #[derive(Component)]
@@ -401,6 +408,7 @@ fn update(
     mut host: ResMut<Host>,
     mut rider: ResMut<RiderPose>,
     mut auto: ResMut<AutoStart>,
+    mut respawn: ResMut<Respawn>,
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
@@ -506,6 +514,18 @@ fn update(
         host.neutral = true;
         rider.skated = 0.0;
         commands.entity(camera).insert(Skating);
+        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+        return;
+    }
+    if let Some((position, yaw)) = respawn.0.take()
+        && host.ready
+        && host.active
+    {
+        // A new epoch drops poses still in flight from the old spot.
+        host.epoch = host.epoch.wrapping_add(1);
+        let AutoStart(Some((spawn, heading))) = AutoStart::at(position, yaw) else {
+            return;
+        };
         let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
         return;
     }
