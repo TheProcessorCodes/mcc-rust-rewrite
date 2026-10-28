@@ -472,6 +472,36 @@ rendering.)
 - The blend-map bitmap format (which channels exist) is a bitmaps.md matter; HaloExport read it
   as RGBA.
 
+**What the viewer does (2026-10-28, `docs/viewer.md` "Terrain").** It uses the composite
+above, with the weights normalised. The blend map is read linear, both colour maps sRGB, and
+the detail factor is **2^2.2 = 4.595** instead of 2, because the product is formed in linear
+light: the engine default `shaders\default_bitmaps\bitmaps\default_detail` is one texel of
+0x80 grey (xRGB curve), and 0.502^2.2 * 4.595 = 1.00, so the default detail leaves the base
+unchanged. Measured on riverworld:
+
+| bitmap | curve | mean RGB (bytes / 255) |
+|---|---|---|
+| `cliff_snow_distant_blend` (blend, ground and snow) | linear | R 0.358 G 0.140 B 0.190 A 0.348 |
+| `riverworld_cliff_blend` (layers 0..2; layer 3 off) | linear | 0.571 0.420 0.009 |
+| `cliff_snow_distant_cliff_blend` (layer 1 off) | linear | 0.361 (G 0.008) 0.140 A 0.504 |
+| `riverworld_ground_grass_overlay` (ground base 0 and 1) | linear | 0.25 grey |
+| `riverworld_ground_grass` (detail 1) | xRGB | 0.400 0.453 0.159 |
+| `riverworld_ground_dirt` (detail 0) | linear | 0.366 0.300 0.227 |
+| `default_detail` | xRGB | 0.502 grey (one texel 0x80) |
+| `gray_50_percent` | **linear** | **0.251** grey (one texel 0x40) |
+
+Two things follow. On the main ground, the colour comes from the detail maps (dirt, grass)
+and the bases are grey overlays. And the blend maps on Valhalla and The Pit already sum to
+about 1 over the layers that are on, so normalising changes very little.
+
+The `gray_50_percent` texel is a clue about the bitmap curve. If "50 percent" is meant at
+face value, the engine reads linear-curve bitmaps raw (0x40 = 0.25, the same as an xRGB 0x80
+read with gamma 2), not as sRGB. Then `riverworld_distant`'s layers 1 and 2 (base
+`gray_50_percent`) would be exactly their detail map. A trial reading linear-curve colour maps
+raw with exposure 1 washed the whole of Valhalla out and lost the reference screenshots'
+contrast, so the viewer still reads every colour map as sRGB. Under that reading, layers with
+a `gray_50_percent` base come out darker than intended. This is still open.
+
 ---
 
 ## 8. Expected values (riverworld.map), for Rust tests
@@ -639,6 +669,8 @@ From `probe_shaders.py --survey`:
   against the game.
 - The exact terrain `morph` blend (whether the engine normalises the four weights, and what
   `dynamic_morph` does) is not derived; the weighted sum is an approximation.
+- How the engine reads "linear"-curve colour maps (raw, or with a gamma). `gray_50_percent`
+  points to raw; the viewer reads them as sRGB (7.5).
 - The unread fields flagged "?" in sections 2 to 4 (sampler flag bytes at `+0x12`/`+0x13` of a
   shader map, the per-entry-point tables, the water function blocks) are described from the
   bytes only.

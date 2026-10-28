@@ -9,6 +9,11 @@
 // - every other mesh carries the irradiance per vertex in its vertex colour,
 //   computed on the CPU, which StandardMaterial already multiplies in.
 // Then exposure, and bevy's own fog and tonemapping.
+//
+// Terrain (`rmtr`, any `terrain_layers` non-zero) has no StandardMaterial
+// texture: its albedo is the four-layer blend computed here (see
+// `terrain_albedo`), multiplied into the StandardMaterial colour (tint and,
+// on vertex-lit batches, the irradiance).
 
 import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -21,12 +26,32 @@ struct HaloLightmapParams {
     scales: vec4<f32>,
     // x: dominant light intensity range, y: exposure.
     extra: vec4<f32>,
+    // Terrain: 1 per layer drawn, 0 per layer off; all 0 on non-terrain.
+    terrain_layers: vec4<f32>,
+    // Terrain: x: detail multiplier, y: 1 to normalise the blend weights.
+    terrain_extra: vec4<f32>,
+    // Terrain xforms: scale in xy, offset in zw.
+    blend_xform: vec4<f32>,
+    base_xforms: array<vec4<f32>, 4>,
+    // A zero scale means the layer has no detail map.
+    detail_xforms: array<vec4<f32>, 4>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> halo: HaloLightmapParams;
 @group(constants::MATERIAL_BIND_GROUP) @binding(101) var coefficients: texture_2d_array<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(102) var lightmap_sampler: sampler;
 @group(constants::MATERIAL_BIND_GROUP) @binding(103) var intensity: texture_2d_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(104) var blend_map: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(105) var blend_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(106) var base_0: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(107) var tiling_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(108) var base_1: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(109) var base_2: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(110) var base_3: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(111) var detail_0: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(112) var detail_1: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(113) var detail_2: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(114) var detail_3: texture_2d<f32>;
 
 // decode_bpp16_luvw: base and residual layer to a signed RGB value.
 fn luvw(a: vec4<f32>, b: vec4<f32>, range: f32) -> vec3<f32> {
@@ -65,6 +90,42 @@ fn halo_irradiance(uv: vec2<f32>, n: vec3<f32>) -> vec3<f32> {
     return max(ambient + direct, vec3(0.0));
 }
 
+fn xform(uv: vec2<f32>, x: vec4<f32>) -> vec2<f32> {
+    return uv * x.xy + x.zw;
+}
+
+// One terrain layer's colour: its base map, times its detail map scaled so
+// that the detail's mid grey leaves the base as it is. Both textures are
+// sampled as sRGB, so the product is in linear light.
+fn terrain_layer(base: texture_2d<f32>, detail: texture_2d<f32>, uv: vec2<f32>, k: i32) -> vec3<f32> {
+    let c = textureSample(base, tiling_sampler, xform(uv, halo.base_xforms[k])).rgb;
+    let d = halo.detail_xforms[k];
+    // Sampled either way, keeping control flow uniform.
+    let dc = textureSample(detail, tiling_sampler, xform(uv, d)).rgb * halo.terrain_extra.x;
+    return c * select(vec3(1.0), dc, d.x != 0.0);
+}
+
+// The four-layer terrain blend (`docs/format/shaders.md` 7.5): the blend
+// map's red, green, blue and alpha weight layers 0..3; layers that are off
+// get no weight; the weights are normalised to sum to one.
+fn terrain_albedo(uv: vec2<f32>) -> vec3<f32> {
+    var w = textureSample(blend_map, blend_sampler, xform(uv, halo.blend_xform)) * halo.terrain_layers;
+    if halo.terrain_extra.y != 0.0 {
+        let sum = w.x + w.y + w.z + w.w;
+        if sum > 1e-4 {
+            w = w / sum;
+        } else {
+            w = halo.terrain_layers / max(dot(halo.terrain_layers, vec4(1.0)), 1.0);
+        }
+    }
+    // Every layer is sampled (uniform control flow for the derivatives);
+    // the weights pick.
+    return terrain_layer(base_0, detail_0, uv, 0) * w.x
+        + terrain_layer(base_1, detail_1, uv, 1) * w.y
+        + terrain_layer(base_2, detail_2, uv, 2) * w.z
+        + terrain_layer(base_3, detail_3, uv, 3) * w.w;
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
@@ -74,6 +135,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         pbr_input.material.base_color,
     );
     var colour = pbr_input.material.base_color;
+
+@if(VERTEX_UVS_A) {
+    if dot(halo.terrain_layers, vec4(1.0)) > 0.0 {
+        colour = vec4(colour.rgb * terrain_albedo(in.uv), colour.a);
+    }
+}
 
 @if(VERTEX_UVS_B) {
     // Renderer frame (Y up) to Halo frame (Z up): (x, -z, y).

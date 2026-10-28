@@ -26,6 +26,32 @@ pub struct Look {
     pub hidden: bool,
     /// Water: drawn see-through in a flat colour.
     pub water: bool,
+    /// Terrain (`rmtr`): the blend map and the four layers, when the blend
+    /// map and at least one layer decoded. `texture` then still holds the
+    /// dominant layer, for drawing paths that take a single texture.
+    pub terrain: Option<TerrainLook>,
+}
+
+/// A terrain shader's textures (`docs/format/shaders.md` 7.5): the blend
+/// map, sampled at the raw UV through its own xform, weights layer N by its
+/// channel N (red, green, blue, alpha).
+#[derive(Clone, Debug)]
+pub struct TerrainLook {
+    /// Tag index of the blend map (decoded into `MaterialTextures::bitmaps`;
+    /// its texels are weights, not colours).
+    pub blend_map: u32,
+    pub blend_xform: Xform,
+    /// `None` when the layer is `off` or its base map did not decode.
+    pub layers: [Option<TerrainLayerLook>; 4],
+}
+
+/// One terrain layer: base map times detail map, each with its own tiling.
+#[derive(Clone, Debug)]
+pub struct TerrainLayerLook {
+    pub base: u32,
+    pub base_xform: Xform,
+    /// `None` when the layer has no detail map or it did not decode.
+    pub detail: Option<(u32, Xform)>,
 }
 
 #[derive(Default)]
@@ -103,6 +129,25 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
             }
         };
         let water = s.class == "rmw ";
+        let mut fetch = |slot: &blam_texture::TextureSlot| -> Option<u32> {
+            match out.bitmaps.entry(slot.bitmap) {
+                Entry::Occupied(_) => Some(slot.bitmap),
+                Entry::Vacant(v) if !failed.contains(&slot.bitmap) => {
+                    match bitmap::decode(cache, &resources, slot.bitmap, 0) {
+                        Ok(t) => {
+                            v.insert(t);
+                            Some(slot.bitmap)
+                        }
+                        Err(e) => {
+                            eprintln!("bitmap {} (for {}): {e}", slot.name, m.tag_path);
+                            failed.insert(slot.bitmap);
+                            None
+                        }
+                    }
+                }
+                Entry::Vacant(_) => None,
+            }
+        };
         let slot = if s.terrain.is_some() {
             dominant_layer(cache, &resources, &s, &mut blend_means)
         } else if water {
@@ -112,25 +157,24 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
         } else {
             s.base.clone()
         };
-        let mut texture = None;
-        if let Some(slot) = &slot {
-            match out.bitmaps.entry(slot.bitmap) {
-                Entry::Occupied(_) => texture = Some(slot.bitmap),
-                Entry::Vacant(v) if !failed.contains(&slot.bitmap) => {
-                    match bitmap::decode(cache, &resources, slot.bitmap, 0) {
-                        Ok(t) => {
-                            v.insert(t);
-                            texture = Some(slot.bitmap);
-                        }
-                        Err(e) => {
-                            eprintln!("bitmap {} (for {}): {e}", slot.name, m.tag_path);
-                            failed.insert(slot.bitmap);
-                        }
-                    }
-                }
-                Entry::Vacant(_) => {}
-            }
-        }
+        let texture = slot.as_ref().and_then(&mut fetch);
+        let terrain = s.terrain.as_ref().and_then(|t| {
+            let blend = t.blend_map.as_ref()?;
+            let blend_map = fetch(blend)?;
+            let layers = t.layers.clone().map(|l| {
+                let l = l?;
+                Some(TerrainLayerLook {
+                    base: fetch(&l.base)?,
+                    base_xform: l.base.xform,
+                    detail: l.detail.as_ref().and_then(|d| Some((fetch(d)?, d.xform))),
+                })
+            });
+            layers.iter().any(Option::is_some).then_some(TerrainLook {
+                blend_map,
+                blend_xform: blend.xform,
+                layers,
+            })
+        });
         out.looks.push(Some(Look {
             texture,
             xform: slot.as_ref().map_or(Xform::IDENTITY, |s| s.xform),
@@ -142,6 +186,7 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
             // against `color_black` (shaders.md 8.6): nothing is visible.
             hidden: s.special || (s.alpha_test && s.base.is_none()),
             water,
+            terrain,
         }));
     }
     for lm in &scene.lightmaps {
