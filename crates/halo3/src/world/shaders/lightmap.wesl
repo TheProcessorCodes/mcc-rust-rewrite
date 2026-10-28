@@ -20,12 +20,25 @@
 // approximation of Halo's: the dominant light of the lightmap is the one
 // analytic light; the SH towards the reflection stands in for the area
 // specular and for dynamic cube maps.
+//
+// The same file is the material's prepass fragment shader (`PREPASS_PIPELINE`,
+// the depth prepass maps with water get): there it only cuts cut-outs whose
+// shader has its own `alpha_test_map`, which bevy's prepass cannot know about.
 
+@if(!PREPASS_PIPELINE)
 import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
 };
+@if(PREPASS_PIPELINE)
+import bevy_pbr::{prepass::io::VertexOutput, render::pbr_prepass_functions::prepass_sample_color_and_alpha_discard};
+@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
+import bevy_pbr::prepass::io::FragmentOutput;
+@if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS)
+import bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector;
+@if(PREPASS_PIPELINE && !BINDLESS)
+import bevy_pbr::render::pbr_bindings::material;
 
 struct HaloLightmapParams {
     // Ranges of SH coefficients c0..c3.
@@ -273,6 +286,47 @@ fn to_halo_dir(r: vec3<f32>) -> vec3<f32> {
     return vec3(r.x, -r.z, r.y);
 }
 
+// Prepass: the alpha test, by `alpha_test_map` when the shader has one, else
+// bevy's own (the base map's alpha).
+@if(PREPASS_PIPELINE)
+fn prepass_cut(in: VertexOutput) {
+@if(VERTEX_UVS_A) {
+    if halo.alpha_flags.x != 0.0 {
+@if(!BINDLESS)
+        let cutoff = material.alpha_cutoff;
+@else
+        let cutoff = 0.5;
+        let cut = textureSample(alpha_map, surface_sampler, xform(in.uv, halo.alpha_xform)).a;
+        if cut < cutoff {
+            discard;
+        }
+        return;
+    }
+}
+    prepass_sample_color_and_alpha_discard(in);
+}
+
+@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
+@fragment
+fn fragment(in: VertexOutput) -> FragmentOutput {
+    prepass_cut(in);
+    var out: FragmentOutput;
+@if(UNCLIPPED_DEPTH_ORTHO_EMULATION)
+    out.frag_depth = in.unclipped_depth;
+@if(NORMAL_PREPASS)
+    out.normal = vec4(normalize(in.world_normal) * 0.5 + vec3(0.5), 1.0);
+@if(MOTION_VECTOR_PREPASS)
+    out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);
+    return out;
+}
+
+@if(PREPASS_PIPELINE && !PREPASS_FRAGMENT)
+@fragment
+fn fragment(in: VertexOutput) {
+    prepass_cut(in);
+}
+
+@if(!PREPASS_PIPELINE)
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
