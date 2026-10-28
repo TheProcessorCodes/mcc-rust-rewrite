@@ -9,7 +9,12 @@
 //! halo3 <map> --shot <dir> --skate [--view ...]
 //!                        the same, after two seconds of skating
 //!
-//! In a map, J switches between flying and skating (see `skate.rs`).
+//! halo3 <map> --zone N|NAME | --bsps 0,3,5 | --all-bsps
+//!                        which structure BSPs to load first (default: the
+//!                        zone set the player starts in; `world/zones.rs`)
+//!
+//! In a map, J switches between flying and skating (see `skate.rs`),
+//! PageDown / PageUp step through the zone sets, Home loads every BSP.
 //! ```
 //!
 //! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install.
@@ -49,7 +54,8 @@ fn main() -> anyhow::Result<()> {
     let (scene, textures, chief, sky) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
-  halo3 <map>          e.g. riverworld
+  halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
+  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate]
   halo3 --test-scene");
             std::process::exit(2);
         }
@@ -92,6 +98,17 @@ fn main() -> anyhow::Result<()> {
         }
     };
     let shot = shot_plan(&args, &scene.name)?;
+    let zones = world::zones::Zones::of(&scene);
+    let loaded = world::zones::initial(&args, &zones)?;
+    if !zones.layout.zone_sets.is_empty() {
+        eprintln!(
+            "{} zone sets, {} BSPs, {} player starting locations; loaded: {}",
+            zones.layout.zone_sets.len(),
+            zones.layout.bsps.len(),
+            zones.layout.starts.len(),
+            zones.describe(loaded.mask)
+        );
+    }
     let title = format!("Halo 3 - {}", scene.name);
     let mut app = App::new();
     match &shot {
@@ -123,7 +140,11 @@ fn main() -> anyhow::Result<()> {
             // Ride from the first view, or the start spawn.
             let start = match plan.views.first() {
                 Some(v) => Some((v.position, v.yaw_deg.to_radians())),
-                None => scene.spawns.first().map(|s| (s.position, s.yaw)),
+                None => scene
+                    .spawns
+                    .first()
+                    .map(|s| (s.position, s.yaw))
+                    .or_else(|| scene.starts.first().map(|s| (s.position, s.yaw))),
             };
             if let Some((position, yaw)) = start {
                 app.insert_resource(skate::AutoStart::at(position, yaw));
@@ -138,7 +159,9 @@ fn main() -> anyhow::Result<()> {
         .insert_resource(rider::PendingChief(chief))
         .add_plugins((skate::SkatePlugin, rider::RiderPlugin));
     }
-    app.insert_resource(world::PendingScene(Some(scene), Some(textures)))
+    app.insert_resource(zones)
+        .insert_resource(loaded)
+        .insert_resource(world::PendingScene(Some(scene), Some(textures)))
         .insert_resource(world::sky::PendingSky(Some(sky)))
         .add_plugins((fly_camera::FlyCameraPlugin, world::WorldPlugin))
         .run();

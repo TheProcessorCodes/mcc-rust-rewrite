@@ -1,0 +1,149 @@
+# Zone sets, starting locations, trigger volumes, skies per BSP (MCC Halo 3, U13)
+
+What a campaign scenario says about which structure BSPs are loaded together, where the player
+starts and which sky is seen where. Written 2026-10-28 from our own probes of the user's
+`120_halo.map` (Halo, the last mission), cross-checked on `010_jungle`, `030_outskirts`,
+`100_citadel` and `riverworld`. No GPL code or plugin XML was used: the offsets were found by
+walking the scenario's block headers (`docs/format/scripts/probe_scnr_blocks.py`) and matching
+contents against things whose meaning is obvious (zone set names that list their BSPs, positions
+that land on the ground, string ids that name zone sets).
+
+Code: `crates/blam_geometry/src/zones.rs` (reader and tests), `sbsp.rs` (cluster sky index),
+`scenario.rs` (object origin BSP, sky masks), viewer `crates/halo3/src/world/zones.rs`.
+
+Probe: `python -I docs/format/scripts/probe_scnr_blocks.py <map> [scan length hex] [mode]`, mode
+`OFF:STRIDE:N` dumps N elements of the block at scnr + OFF, `origin:OFF:STRIDE` groups a
+placement block by origin BSP, `clusters` lists every BSP's cluster bytes.
+
+## 1. Scenario blocks (offsets from the start of the `scnr` tag data)
+
+Blocks are the usual 12-byte headers (`container.md`). Element sizes are the distance between
+consecutive blocks' elements divided by the count, exact on every map checked.
+
+| offset | element | count on 120_halo | what |
+|---|---|---|---|
+| `0x18` | 108 | 11 | structure BSPs (`scenario-and-tag-reading.md` 2.2). **A BSP's index here is its bit in every mask below** |
+| `0x34` | 20 | 4 | skies (section 3) |
+| `0x40` | ~1904 | 8 | one per zone set: probably the zone set's PVS (big, not decoded) |
+| `0x4C` | 100 | 8 | one per zone set, holds data references (audibility?; not decoded) |
+| `0x58` | 40 | 8 | **zone sets** (section 2) |
+| `0x64` | 12 | 12 | BSP zones: string id `120_bsp_000` ..., u32 mask of the BSP itself, u32 second mask (neighbours?; not used) |
+| `0x24C` | 24 | 4 | **player starting locations** (section 4) |
+| `0x258` | 68 | 254 | **trigger volumes** (section 5) |
+| `0x270` | 8 | 17 | **zone-set switch trigger volumes** (section 5) |
+
+## 2. Zone set, 40 bytes
+
+| offset | type | meaning |
+|---|---|---|
+| `0x00` | string id | name, e.g. `120_00_01_02` |
+| `0x04` | i32 | an index (a permutation of 0..n-1 on 120_halo; PVS slot?) |
+| `0x08` | u32 | flags (bit 0 set on the last zone sets of 120_halo and 030_outskirts) |
+| `0x0C` | u32 | **BSP mask**: bit n set = structure BSP n is loaded |
+| `0x10..0x27` | | more masks and indices (design zones, cinematic zones?); not used |
+
+The names spell the BSPs out, which pins the mask: on 120_halo the BSP block is `000 010 020 030
+040 050 060 100 110 120 070` (indices 0..10), and
+
+| # | name | mask | BSPs |
+|---|---|---|---|
+| 0 | `120_00_01_02` | `0x007` | 000 010 020 |
+| 1 | `120_01_02_03` | `0x00E` | 010 020 030 |
+| 2 | `120_03_05` | `0x028` | 030 050 |
+| 3 | `120_07_06_04_03` | `0x458` | 030 040 060 070 |
+| 4 | `120_04_100_110` | `0x190` | 040 100 110 |
+| 5 | `120_100_110` | `0x180` | 100 110 |
+| 6 | `120_110_120` | `0x300` | 110 120 |
+| 7 | `120_120_130` | `0x201` | 000 120 |
+
+So the Warthog run is BSPs 100 -> 110 -> 120 (zone sets 4-7). BSPs can stand for **different
+versions of one space**: `120_bsp_010` and `120_bsp_070` have the same bounds and the same
+20,888 collision triangles, and are never in one zone set; loading every BSP at once (the
+viewer's Home key) draws both on top of each other. 010_jungle has 13 zone sets over 12 BSPs,
+riverworld one (`mask 1`).
+
+The game starts in zone set 0. The viewer loads the first zone set whose BSP bounds contain the
+first starting location, which is zone set 0 on every map checked.
+
+## 3. Skies per BSP and per cluster
+
+**Sky block entry (20 bytes)**: `0x00` tag reference (`scen`), `0x10` i16 object name index,
+`0x12` u16 **mask of the BSPs the sky is active in**. 120_halo: `120_halo_sky` `0x0025` (000 020
+050), `sky_01` `0x0001` (000), `sky_02` `0x0000` (nowhere; its model has no geometry resource),
+`sky_03` `0x03C0` (060 100 110 120, the Warthog run's sky). 010_jungle: `0x07FF` and `0x0800`
+(the intro BSP 11 has its own). riverworld: `0x0001`.
+
+**Cluster (280 bytes, sbsp + 0xC4)**: `0x00` bounds as three f32 pairs (x min max, y, z;
+`FLT_MAX` in all six when the cluster has none), `0x18` **i8 sky index** into the scenario's sky
+block, -1 indoors. Every non-negative value seen is a sky whose mask includes that BSP (120_halo:
+000's clusters say 0 or 1, 020 and 050 say 0, 060/100/110/120 say 3, the interiors -1).
+riverworld: only its big outdoor cluster says 0. `0x19` is another small index (0-6 on 120_halo,
+-1 on riverworld; atmosphere or camera fx? not used).
+
+Viewer rule: the sky of the smallest loaded cluster around the camera; indoors (or outside every
+cluster box) the last one stays; at load time the sky most loaded clusters name.
+
+## 4. Player starting location, 24 bytes
+
+| offset | type | meaning |
+|---|---|---|
+| `0x00` | 3 x f32 | position, wu (feet on the ground) |
+| `0x0C` | f32 | facing yaw, radians from +X about +Z |
+| `0x10` | f32 | pitch, radians (tiny, -0.0046 on 010_jungle) |
+| `0x14` | i16 | 0 on every entry seen |
+| `0x16` | i16 | 0, 1, 4, 4 on the four co-op entries of 120_halo / 010_jungle / 100_citadel (player slots?) |
+
+Campaign maps list four, the co-op players standing side by side; the viewer and `--skate` use
+the first. 120_halo: (-263.64, -433.77, -5.05), yaw 0. 010_jungle: (-9.14, 175.69, 4.76), yaw
+-2.27. riverworld has one at (78.1, -56.8, 1.56), but multiplayer maps start on their respawn
+points (`Scene::spawns`).
+
+## 5. Trigger volumes and zone-set switches
+
+**Trigger volume, 68 bytes**:
+
+| offset | type | meaning |
+|---|---|---|
+| `0x00` | string id | name, e.g. `120_03_valley_floor_start`, `begin_zone_set:120_01_02_03`, `zone_set:120_04_100_110:*` |
+| `0x04` | i16 | object name index (-1) |
+| `0x06` | i16 | -1 |
+| `0x08` | string id | node name (0) |
+| `0x0C` | 3 x f32 | forward (1, 0, 0 on most) |
+| `0x18` | 3 x f32 | up (0, 0, 1) |
+| `0x24` | 3 x f32 | position: a corner of the box, wu |
+| `0x30` | 3 x f32 | extents along forward, left, up, wu |
+| `0x3C` | f32 | unknown (21.9 on the first; z sink?) |
+| `0x40` | i16 | -1 |
+| `0x42` | i16 | 16 or 17 (flags?) |
+
+Which corner and which side the extents go is a reading of the numbers, not proven.
+
+**Zone-set switch trigger volume, 8 bytes** (four i16):
+
+| offset | meaning |
+|---|---|
+| `0x00` | flags (0 or 1) |
+| `0x02` | zone set to begin loading (prepare), -1 none |
+| `0x04` | trigger volume index |
+| `0x06` | zone set to commit (switch to), -1 none |
+
+Pinned by the names: switch 0 = (0, begin 1, volume 1 `begin_zone_set:120_01_02_03`, -1);
+switch 2 = (1, begin 4, volume 3 `begin_zone_set:120_04_100_110:*`, -1); switch 1 = (1, -1,
+volume 2 `zone_set:120_04_100_110:*`, commit 4). So the game prepares the next zone set when the
+player enters a `begin_zone_set:` volume and switches when they enter the `zone_set:` one.
+Decoded into `Scene::trigger_volumes` and `Scene::zone_switches`; the viewer does not act on them
+yet (zone-set streaming is a later step).
+
+## 6. Objects and their BSP
+
+Scenery, machine, control and crate placements carry an object id at `+0x38`: u32 unique id,
+then **i16 origin BSP at `+0x3C`**, u8 object type (6 for scenery), u8 source. On 120_halo the
+scenery whose origin is BSP n sits inside BSP n's bounds, and the origins follow the level
+(000/010/020 near the start, 100/110/120 along the Warthog run). -1 (all crates, 29 scenery near
+the start) = no BSP: the viewer shows those whatever is loaded.
+
+## 7. Not decoded
+
+The zone set PVS (`0x40`), the `0x4C` block, the rest of the zone set element, the BSP zones'
+second mask, the per-cluster `0x19` byte, the `zone` resource gestalt's own per-zone-set resource
+lists (which resources a zone set needs: everything is read from the map regardless).

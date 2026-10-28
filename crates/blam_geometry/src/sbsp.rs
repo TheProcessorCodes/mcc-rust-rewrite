@@ -10,7 +10,7 @@ use crate::lightmap::{self, Lighting};
 use crate::materials::MaterialTable;
 use crate::render_geometry::{self, GeometryResource};
 use crate::render_model::matrix_from_rows;
-use crate::scene::{Kind, Mesh, Part, Placement, Scene};
+use crate::scene::{BspInfo, ClusterInfo, Kind, Mesh, Part, Placement, Scene};
 use crate::{Error, Result};
 
 /// The structure BSPs a scenario lists, with the lightmap tag that holds each
@@ -169,8 +169,19 @@ pub fn decode(
     }
     stats.sections = sections.len() as u32;
 
+    let mut cluster_info = Vec::new();
     for (c, o) in clusters.elements(280).enumerate() {
         stats.clusters += 1;
+        // Bounds (x, y, z ranges; FLT_MAX when unset) and the sky index at
+        // +0x18 (`zone-sets.md` 3).
+        let mut r = cache.reader_at(o);
+        let (x, y, z) = (r.f32x2()?, r.f32x2()?, r.f32x2()?);
+        let sky = r.at(o + 0x18).i8()?;
+        cluster_info.push(ClusterInfo {
+            bounds: (x[0] <= x[1] && x[1] < 1e30)
+                .then(|| (Vec3::new(x[0], y[0], z[0]), Vec3::new(x[1], y[1], z[1]))),
+            sky: u32::try_from(sky).ok(),
+        });
         let section = cache.reader_at(o + 216).i16()?;
         let Some(mesh) = usize::try_from(section)
             .ok()
@@ -197,6 +208,8 @@ pub fn decode(
             transform: Mat4::IDENTITY,
             mirrored: false,
             lighting,
+            bsps: 1 << bsp.index,
+            sky: None,
         });
         stats.cluster_placements += 1;
     }
@@ -238,10 +251,18 @@ pub fn decode(
             transform,
             mirrored,
             lighting,
+            bsps: 1 << bsp.index,
+            sky: None,
         });
         stats.instance_placements += 1;
     }
     stats.shaders = shaders.count;
+    scene.bsps.push(BspInfo {
+        index: bsp.index,
+        name: bsp.sbsp.name().to_string(),
+        bounds: (lo, hi),
+        clusters: cluster_info,
+    });
     Ok(stats)
 }
 

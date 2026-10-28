@@ -145,6 +145,12 @@ pub fn decode(
             let position = Vec3::from(r.at(o + 0x08).f32x3()?);
             let [yaw, pitch, roll] = r.at(o + 0x14).f32x3()?;
             let scale = r.at(o + 0x20).f32()?;
+            // The object id's origin BSP (`zone-sets.md` 2); -1 for none.
+            let origin_bsp = r.at(o + 0x3C).i16()?;
+            let bsps = u32::try_from(origin_bsp)
+                .ok()
+                .filter(|b| *b < 32)
+                .map_or(0, |b| 1 << b);
             let Some(object) = usize::try_from(palette_index)
                 .ok()
                 .and_then(|p| palette_tags.get(p).copied().flatten())
@@ -191,6 +197,8 @@ pub fn decode(
                     transform: world * piece.transform,
                     mirrored: piece.mirrored,
                     lighting: Default::default(),
+                    bsps,
+                    sky: None,
                 });
             }
             *stats.placed.entry(k.kind).or_default() += 1;
@@ -199,7 +207,13 @@ pub fn decode(
 
     // The sky: scenery objects drawn around everything, at the origin.
     let skies: Block = cache.reader_at(scnr_off + 0x34).block()?;
-    for o in skies.elements(20) {
+    for (sky_index, o) in skies.elements(20).enumerate() {
+        // The BSPs the sky is active in (`zone-sets.md` 3). A sky active
+        // nowhere (120_halo's `sky_02`) is not drawn when the map has others.
+        let bsps = u32::from(cache.reader_at(o + 0x12).u16()?);
+        if bsps == 0 && skies.count > 1 {
+            continue;
+        }
         let Some(sky) = cache.reader_at(o).tag_ref()?.index.and_then(|i| cache.tags.get(i)) else {
             continue;
         };
@@ -214,6 +228,8 @@ pub fn decode(
                 transform: piece.transform,
                 mirrored: piece.mirrored,
                 lighting: Default::default(),
+                bsps,
+                sky: Some(sky_index as u32),
             });
         }
         *stats.placed.entry(Kind::Sky).or_default() += 1;

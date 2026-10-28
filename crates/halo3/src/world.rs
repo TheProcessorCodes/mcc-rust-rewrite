@@ -26,8 +26,10 @@ use crate::textures::{Look, MaterialTextures};
 
 pub mod lighting;
 pub mod sky;
+pub mod zones;
 
 use lighting::{Atlas, HaloLightmap, HaloMaterial, SurfaceLights};
+use zones::{BspMember, ShowCollision};
 
 /// Halo world units, Z up, to renderer metres, Y up.
 pub fn to_render(h: Vec3) -> Vec3 {
@@ -56,7 +58,7 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((lighting::LightingPlugin, sky::SkyPlugin))
+        app.add_plugins((lighting::LightingPlugin, sky::SkyPlugin, zones::ZonesPlugin))
             .insert_resource(ClearColor(Color::srgb(0.53, 0.70, 0.90)))
             .add_systems(Startup, spawn_world)
             .add_systems(Update, toggle_collision);
@@ -67,18 +69,9 @@ impl Plugin for WorldPlugin {
 #[derive(Component)]
 pub struct CollisionOverlay;
 
-fn toggle_collision(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut overlays: Query<&mut Visibility, With<CollisionOverlay>>,
-) {
-    if !keys.just_pressed(KeyCode::KeyV) {
-        return;
-    }
-    for mut v in &mut overlays {
-        *v = match *v {
-            Visibility::Hidden => Visibility::Visible,
-            _ => Visibility::Hidden,
-        };
+fn toggle_collision(keys: Res<ButtonInput<KeyCode>>, mut show: ResMut<ShowCollision>) {
+    if keys.just_pressed(KeyCode::KeyV) {
+        show.0 = !show.0;
     }
 }
 
@@ -92,11 +85,22 @@ fn spawn_collision(
     if col.triangles.is_empty() {
         return;
     }
-    // Two shells: ordinary surfaces in green, invisible walls in red.
-    for (invisible, colour) in [(false, Color::srgba(0.2, 0.9, 0.3, 0.35)), (true, Color::srgba(0.95, 0.25, 0.2, 0.45))] {
+    // Two shells per BSP: ordinary surfaces in green, invisible walls in red.
+    let mut bsps: Vec<u32> = col.triangles.iter().map(|t| t.source.bsp()).collect();
+    bsps.sort_unstable();
+    bsps.dedup();
+    let shells = bsps.iter().flat_map(|b| {
+        [(*b, false, Color::srgba(0.2, 0.9, 0.3, 0.35)), (*b, true, Color::srgba(0.95, 0.25, 0.2, 0.45))]
+    });
+    let mut counts = [0usize; 2];
+    for (bsp, invisible, colour) in shells {
         let mut positions: Vec<[f32; 3]> = Vec::new();
         let mut normals: Vec<[f32; 3]> = Vec::new();
-        for t in col.triangles.iter().filter(|t| (t.flags & 2 != 0) == invisible) {
+        for t in col
+            .triangles
+            .iter()
+            .filter(|t| t.source.bsp() == bsp && (t.flags & 2 != 0) == invisible)
+        {
             let n = to_render_dir(t.normal()).to_array();
             for p in t.points {
                 positions.push(to_render(p).to_array());
@@ -106,7 +110,7 @@ fn spawn_collision(
         if positions.is_empty() {
             continue;
         }
-        let count = positions.len() / 3;
+        counts[invisible as usize] += positions.len() / 3;
         let mut mesh = Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::RENDER_WORLD,
@@ -125,11 +129,18 @@ fn spawn_collision(
             })),
             Visibility::Hidden,
             CollisionOverlay,
+            BspMember {
+                bsps: 1u32.checked_shl(bsp).unwrap_or(0),
+                sky: None,
+            },
             NotShadowCaster,
             Name::new(if invisible { "collision (invisible walls)" } else { "collision" }),
         ));
-        info!("collision overlay: {count} {} triangles (press V)", if invisible { "invisible-wall" } else { "surface" });
     }
+    info!(
+        "collision overlay: {} surface and {} invisible-wall triangles (press V)",
+        counts[0], counts[1]
+    );
 }
 
 /// A steady, distinct colour per material name, so the untextured world is
@@ -478,12 +489,17 @@ fn spawn_world(
     // One batch per material, every placement baked into world space.
     // Keyed by (sky, material): the sky draws unlit, so it never shares a
     // batch with the world even when the shader is the same.
-    let mut batches: HashMap<(Lit, u32), Batch> = HashMap::new();
+    // Also by BSP, so zone sets can show and hide them (`world/zones.rs`).
+    let mut batches: HashMap<(Lit, u32, BspMember), Batch> = HashMap::new();
     let mut lo = Vec3::splat(f32::INFINITY);
     let mut hi = Vec3::splat(f32::NEG_INFINITY);
     let mut lit_counts: HashMap<&str, usize> = HashMap::new();
     for placement in &scene.placements {
         let sky = placement.kind == Kind::Sky;
+        let member = BspMember {
+            bsps: placement.bsps,
+            sky: placement.sky.filter(|_| sky),
+        };
         let mesh = &scene.meshes[placement.mesh as usize];
         let m = placement.transform;
         let normal_m = Mat3::from_mat4(m).inverse().transpose();
@@ -518,7 +534,7 @@ fn spawn_world(
                 let light = if surface.is_empty() {
                     lighting::default_light()
                 } else {
-                    surface.near(base)
+                    surface.near_in(base, placement.bsps)
                 };
                 (Lit::PerVertex, None, Some(VertexLight::One(light)))
             }
@@ -541,7 +557,7 @@ fn spawn_world(
             if shading == Shading::Invisible || hidden || part.indices.is_empty() {
                 continue;
             }
-            let batch = batches.entry((lit, part.material)).or_insert_with(|| Batch {
+            let batch = batches.entry((lit, part.material, member)).or_insert_with(|| Batch {
                 has_normals,
                 ..Default::default()
             });
@@ -618,11 +634,11 @@ fn spawn_world(
     };
 
     let mut triangles = 0usize;
-    let mut keys: Vec<(Lit, u32)> = batches.keys().copied().collect();
+    let mut keys: Vec<(Lit, u32, BspMember)> = batches.keys().copied().collect();
     keys.sort_unstable();
-    for (lit, key) in keys {
+    for (lit, key, member) in keys {
         let sky = lit == Lit::Sky;
-        let batch = batches.remove(&(lit, key)).unwrap();
+        let batch = batches.remove(&(lit, key, member)).unwrap();
         triangles += batch.indices.len() / 3;
         let material = scene.materials.get(key as usize);
         let name = material.map_or("unknown", |m| m.tag_path.as_str());
@@ -671,7 +687,12 @@ fn spawn_world(
         std_material.unlit = sky;
         let translucent =
             sky || !matches!(std_material.alpha_mode, AlphaMode::Opaque | AlphaMode::Mask(_));
-        let mut entity = commands.spawn((Mesh3d(meshes.add(mesh)), Name::new(name.to_string())));
+        let mut entity = commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            Name::new(name.to_string()),
+            member,
+            Visibility::Hidden,
+        ));
         if sky {
             // `sky.rs` swaps in the sky shader and its atmosphere.
             entity.insert((MeshMaterial3d(materials.add(std_material)), sky::SkyBatch(key)));
@@ -734,9 +755,24 @@ fn spawn_world(
     // (`world/lighting.rs`), the sky its own, the collision shell is unlit.
 
     // Start at the first spawn point at Spartan eye height, facing the way
-    // it faces; without spawns, above the middle of the world.
-    let (cam, transform) = match scene.spawns.first() {
-        Some(spawn) => {
+    // it faces; campaign maps have no spawn points but the scenario's
+    // player starting locations; without either, above the middle of the
+    // world.
+    let start = scene.starts.first().filter(|_| scene.spawns.is_empty());
+    let (cam, transform) = match (scene.spawns.first(), start) {
+        (None, Some(s)) => {
+            let eye = to_render(s.position + Vec3::Z * 0.6);
+            let facing = Vec3::new(s.yaw.cos() * s.pitch.cos(), s.yaw.sin() * s.pitch.cos(), s.pitch.sin());
+            info!(
+                "start at the player starting location: halo [{:.2}, {:.2}, {:.2}] yaw {:.0} deg",
+                s.position.x,
+                s.position.y,
+                s.position.z,
+                s.yaw.to_degrees()
+            );
+            FlyCamera::looking_at(eye, eye + to_render_dir(facing))
+        }
+        (Some(spawn), _) => {
             let eye = to_render(spawn.position + Vec3::Z * 0.6);
             let target = eye + to_render_dir(spawn.facing());
             info!(
@@ -750,7 +786,7 @@ fn spawn_world(
             );
             FlyCamera::looking_at(eye, target)
         }
-        None => {
+        (None, None) => {
             let eye = centre + Vec3::new(0.0, size.y * 0.6 + 20.0, size.z * 0.35 + 20.0);
             FlyCamera::looking_at(eye, centre)
         }
@@ -872,11 +908,12 @@ pub fn test_scene() -> Scene {
             transform: Mat4::IDENTITY,
             mirrored: false,
             lighting: Default::default(),
+            bsps: 0,
+            sky: None,
         }],
         bounds: Some((Vec3::new(-20.0, -20.0, 0.0), Vec3::new(20.0, 20.0, 3.0))),
         collision: Default::default(),
-        spawns: Vec::new(),
-        lightmaps: Vec::new(),
+        ..Default::default()
     };
     for i in 0..12 {
         let a = i as f32 * 0.52;
@@ -893,6 +930,8 @@ pub fn test_scene() -> Scene {
             ),
             mirrored: false,
             lighting: Default::default(),
+            bsps: 0,
+            sky: None,
         });
     }
     scene

@@ -128,6 +128,12 @@ pub struct Placement {
     /// The baked lighting the game uses for it (structure BSP clusters and
     /// instances); [`Lighting::None`] for objects.
     pub lighting: Lighting,
+    /// The structure BSPs it belongs to, bit `n` for BSP `n`: its own BSP
+    /// for clusters and instances, the origin BSP for objects, the active
+    /// BSPs for skies. Zero: shown whatever is loaded.
+    pub bsps: u32,
+    /// For [`Kind::Sky`]: which entry of the scenario's sky block it is.
+    pub sky: Option<u32>,
 }
 
 /// Where a collision triangle came from.
@@ -202,6 +208,30 @@ pub struct Collision {
     pub materials: Vec<CollisionMaterial>,
 }
 
+impl CollisionSource {
+    /// The structure BSP the triangle belongs to.
+    pub fn bsp(self) -> u32 {
+        match self {
+            CollisionSource::Bsp(b) | CollisionSource::Instance(b) => b,
+        }
+    }
+}
+
+impl Collision {
+    /// Only the triangles of the BSPs in `mask` (bit `n` for BSP `n`).
+    pub fn of_bsps(&self, mask: u32) -> Collision {
+        Collision {
+            triangles: self
+                .triangles
+                .iter()
+                .filter(|t| t.source.bsp() < 32 && mask & (1 << t.source.bsp()) != 0)
+                .copied()
+                .collect(),
+            materials: self.materials.clone(),
+        }
+    }
+}
+
 /// A whole map as decoded: every mesh once, every placement of them, and the
 /// materials they share.
 #[derive(Clone, Debug, Default)]
@@ -219,6 +249,81 @@ pub struct Scene {
     /// One per structure BSP that has a lightmap; `Lighting::PerPixel`
     /// indexes this.
     pub lightmaps: Vec<Lightmap>,
+    /// The structure BSPs that decoded, by scenario index.
+    pub bsps: Vec<BspInfo>,
+    /// Which BSPs the game loads together (campaign maps have several).
+    pub zone_sets: Vec<ZoneSet>,
+    /// The scenario's player starting locations (campaign: four co-op
+    /// players; multiplayer maps have one, spawns are in `spawns`).
+    pub starts: Vec<StartingLocation>,
+    /// Named boxes scripts test the player against.
+    pub trigger_volumes: Vec<TriggerVolume>,
+    /// Trigger volumes that begin or commit a zone-set switch.
+    pub zone_switches: Vec<ZoneSwitch>,
+}
+
+/// A structure BSP that decoded.
+#[derive(Clone, Debug)]
+pub struct BspInfo {
+    /// Position in the scenario's structure BSP block; bit `index` of a
+    /// zone set's mask.
+    pub index: u32,
+    /// The `sbsp` tag path.
+    pub name: String,
+    /// The BSP's stated world bounds, min and max.
+    pub bounds: (Vec3, Vec3),
+    /// Every cluster of the BSP, by index.
+    pub clusters: Vec<ClusterInfo>,
+}
+
+/// What a cluster says about its surroundings.
+#[derive(Clone, Copy, Debug)]
+pub struct ClusterInfo {
+    /// Bounds, min and max; `None` when the cluster stores none.
+    pub bounds: Option<(Vec3, Vec3)>,
+    /// The scenario sky seen from inside it (index into the scenario's
+    /// sky block); `None` indoors.
+    pub sky: Option<u32>,
+}
+
+/// A set of BSPs the game loads together.
+#[derive(Clone, Debug)]
+pub struct ZoneSet {
+    pub name: String,
+    /// Bit `n` set: structure BSP `n` is loaded.
+    pub bsps: u32,
+}
+
+/// A player starting location.
+#[derive(Clone, Copy, Debug)]
+pub struct StartingLocation {
+    /// Feet position, Halo world units.
+    pub position: Vec3,
+    /// Facing about +Z in radians from +X, and pitch up.
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+/// An oriented box, Halo world units.
+#[derive(Clone, Debug)]
+pub struct TriggerVolume {
+    pub name: String,
+    pub forward: Vec3,
+    pub up: Vec3,
+    /// One corner of the box; it extends `extents` along forward, left
+    /// (up x forward) and up from here.
+    pub position: Vec3,
+    pub extents: Vec3,
+}
+
+/// Entering `volume` begins loading zone set `begin` (prepare) or commits
+/// the switch to zone set `commit`; see `docs/format/zone-sets.md` 4.
+#[derive(Clone, Copy, Debug)]
+pub struct ZoneSwitch {
+    pub flags: u16,
+    pub begin: Option<u32>,
+    pub volume: u32,
+    pub commit: Option<u32>,
 }
 
 impl Scene {

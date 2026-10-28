@@ -28,6 +28,7 @@ use skate_host::bridge::{InputFrame, Pose, Session};
 use blam_geometry::{Collision, rails};
 
 use crate::fly_camera::FlyCamera;
+use crate::world::zones::LoadedBsps;
 use crate::world::{to_halo_dir, to_render};
 
 /// What IW4L ships: a Spartan-sized skater (`docs/skate-interface.md` 10).
@@ -102,6 +103,9 @@ impl AutoStart {
 pub struct Skating;
 
 enum Job {
+    /// Build the skate world from the collision of these BSPs (bit `n`:
+    /// BSP `n`), replacing any session before.
+    World(u32),
     Activate(u64, [f32; 3], f32, f32),
     Step(u64, f32, InputFrame, f32),
     Suspend,
@@ -128,6 +132,8 @@ struct Host {
     speed: f32,
     state: String,
     status: String,
+    /// The BSPs the skate world was last asked to hold.
+    world: Option<u32>,
 }
 
 /// The skate scale `k`: `HALO3_SKATE_SCALE` or the default.
@@ -153,6 +159,7 @@ impl Default for Host {
             speed: 0.0,
             state: String::new(),
             status: String::new(),
+            world: None,
         }
     }
 }
@@ -187,7 +194,7 @@ fn skate_triangles(collision: &Collision, k: f32) -> Vec<[[f32; 3]; 3]> {
         .collect()
 }
 
-fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>) {
+fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: Res<LoadedBsps>) {
     let Some(collision) = input.0.take() else {
         return;
     };
@@ -206,28 +213,59 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>) {
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
             let result = (|| -> Result<(), String> {
-                let started = std::time::Instant::now();
-                let triangles = skate_triangles(&collision, k);
-                let (found, _) = rails::find_rails(&collision);
-                let rails: Vec<Vec<[f32; 3]>> = found
-                    .iter()
-                    .map(|r| r.iter().map(|p| (to_render(*p) * k).to_array()).collect())
-                    .collect();
-                let counts = (triangles.len(), rails.len());
-                let mut session = Session::new(&root, triangles, rails, [0.0; 3], 0.0)?;
-                eprintln!(
-                    "skate: session ready in {:.1} s ({} triangles, {} rails)",
-                    started.elapsed().as_secs_f32(),
-                    counts.0,
-                    counts.1
-                );
-                if publish.send(Reply::Ready(counts.0, counts.1)).is_err() {
-                    return Ok(());
-                }
+                let mut session: Option<Session> = None;
                 let mut epoch = 0;
                 let mut accumulated = 0.0;
                 while let Ok(job) = jobs.recv() {
+                    // Only the latest world request matters: skip ahead
+                    // when the zone set was changed several times.
+                    let job = match job {
+                        Job::World(mask) => {
+                            let mut mask = mask;
+                            let mut next = None;
+                            for j in jobs.try_iter() {
+                                match j {
+                                    Job::World(m) => mask = m,
+                                    other => {
+                                        next = Some(other);
+                                        break;
+                                    }
+                                }
+                            }
+                            // Free the old world before building the next.
+                            drop(session.take());
+                            let started = std::time::Instant::now();
+                            let loaded = collision.of_bsps(mask);
+                            let triangles = skate_triangles(&loaded, k);
+                            let (found, _) = rails::find_rails(&loaded);
+                            let rails_found = started.elapsed().as_secs_f32();
+                            let rails: Vec<Vec<[f32; 3]>> = found
+                                .iter()
+                                .map(|r| r.iter().map(|p| (to_render(*p) * k).to_array()).collect())
+                                .collect();
+                            let counts = (triangles.len(), rails.len());
+                            session = Some(Session::new(&root, triangles, rails, [0.0; 3], 0.0)?);
+                            eprintln!(
+                                "skate: session ready in {:.1} s ({} triangles, {} rails found in {rails_found:.1} s)",
+                                started.elapsed().as_secs_f32(),
+                                counts.0,
+                                counts.1
+                            );
+                            if publish.send(Reply::Ready(counts.0, counts.1)).is_err() {
+                                return Ok(());
+                            }
+                            match next {
+                                Some(j) => j,
+                                None => continue,
+                            }
+                        }
+                        other => other,
+                    };
+                    let Some(session) = session.as_mut() else {
+                        continue;
+                    };
                     match job {
+                        Job::World(_) => {}
                         Job::Activate(new_epoch, spawn, heading, aspect) => {
                             epoch = new_epoch;
                             accumulated = 0.0;
@@ -273,6 +311,9 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>) {
                 let _ = publish.send(Reply::Error(e));
             }
         });
+    let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
+    let _ = send.send(Job::World(mask));
+    host.world = Some(mask);
     match spawned {
         Ok(_) => {
             host.send = Some(send);
@@ -362,11 +403,15 @@ fn update(
     gamepads: Query<&Gamepad>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut cameras: Query<(Entity, &mut Transform, &mut FlyCamera, &mut Projection)>,
+    loaded: Res<LoadedBsps>,
 ) {
     let host = &mut *host;
     let Some(receive) = host.receive.as_ref() else {
         return;
     };
+    // Another zone set: rebuild the skate world from its collision.
+    let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
+    let new_world = host.world != Some(mask);
     let aspect = windows
         .single()
         .map_or(16.0 / 9.0, |w| w.width() / w.height().max(1.0));
@@ -435,6 +480,20 @@ fn update(
     let Some(send) = host.send.clone() else {
         return;
     };
+    if new_world {
+        host.world = Some(mask);
+        host.ready = false;
+        host.status = "skate: loading the new zone set".into();
+        if host.active {
+            host.epoch = host.epoch.wrapping_add(1);
+            host.active = false;
+            rider.active = false;
+            rider.bones.clear();
+            commands.entity(camera).remove::<Skating>();
+        }
+        let _ = send.send(Job::World(mask));
+        return;
+    }
     if host.ready
         && !host.active
         && let Some((spawn, heading)) = auto.0.take()

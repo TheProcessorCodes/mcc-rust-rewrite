@@ -253,7 +253,8 @@ pub struct SceneLights(pub SurfaceLights);
 /// lighting objects by the nearest lit surface.
 pub struct SurfaceLights {
     cell: f32,
-    grid: HashMap<(i32, i32, i32), Vec<(Vec3, ShLight)>>,
+    /// Position, light and the BSP mask of the cluster it was sampled on.
+    grid: HashMap<(i32, i32, i32), Vec<(Vec3, ShLight, u32)>>,
     /// The mean over all samples, for things far from any.
     mean: ShLight,
 }
@@ -261,7 +262,7 @@ pub struct SurfaceLights {
 impl SurfaceLights {
     pub fn build(scene: &Scene, atlases: &[Option<Atlas<'_>>]) -> SurfaceLights {
         let cell = 8.0;
-        let mut grid: HashMap<(i32, i32, i32), Vec<(Vec3, ShLight)>> = HashMap::new();
+        let mut grid: HashMap<(i32, i32, i32), Vec<(Vec3, ShLight, u32)>> = HashMap::new();
         let mut sum = ShLight::default();
         let mut n = 0usize;
         for p in scene.placements.iter().filter(|p| p.kind == Kind::Cluster) {
@@ -280,7 +281,7 @@ impl SurfaceLights {
                 }
                 sum.dominant += light.dominant;
                 n += 1;
-                grid.entry(Self::key(w, cell)).or_default().push((w, light));
+                grid.entry(Self::key(w, cell)).or_default().push((w, light, p.bsps));
             }
         }
         let mean = if n == 0 {
@@ -310,6 +311,13 @@ impl SurfaceLights {
     /// The lighting of the lit surface vertex nearest `p` (Halo units),
     /// searching a few cells out; the map's mean light past that.
     pub fn near(&self, p: Vec3) -> ShLight {
+        self.near_in(p, 0)
+    }
+
+    /// [`near`](Self::near) over the surfaces of the BSPs in `mask` only
+    /// (zero: any), so an object is lit by its own BSP where BSPs overlap
+    /// (campaign maps swap versions of one space between zone sets).
+    pub fn near_in(&self, p: Vec3, mask: u32) -> ShLight {
         let (cx, cy, cz) = Self::key(p, self.cell);
         let mut best: Option<(f32, ShLight)> = None;
         for r in 0..4i32 {
@@ -322,7 +330,10 @@ impl SurfaceLights {
                         let Some(v) = self.grid.get(&(cx + dx, cy + dy, cz + dz)) else {
                             continue;
                         };
-                        for (q, l) in v {
+                        for (q, l, bsps) in v {
+                            if mask != 0 && bsps & mask == 0 {
+                                continue;
+                            }
                             let d = q.distance_squared(p);
                             if best.is_none_or(|b| d < b.0) {
                                 best = Some((d, *l));
@@ -337,6 +348,10 @@ impl SurfaceLights {
                 break;
             }
         }
-        best.map_or(self.mean, |b| b.1)
+        match best {
+            Some(b) => b.1,
+            None if mask != 0 => self.near_in(p, 0),
+            None => self.mean,
+        }
     }
 }

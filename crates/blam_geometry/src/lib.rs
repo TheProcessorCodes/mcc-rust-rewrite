@@ -14,13 +14,15 @@ pub mod sbsp;
 pub mod scenario;
 pub mod scene;
 pub mod vertex;
+pub mod zones;
 
 use std::path::Path;
 
 pub use rails::RailCensus;
 pub use scene::{
-    Bone, Collision, CollisionMaterial, CollisionSource, CollisionTriangle, Kind, Lighting,
-    Lightmap, Material, Mesh, Part, Placement, Scene, Shading, Skin, Spawn, SpawnKind, WORLD_UNIT_METRES,
+    Bone, BspInfo, ClusterInfo, Collision, CollisionMaterial, CollisionSource, CollisionTriangle, Kind, Lighting,
+    Lightmap, Material, Mesh, Part, Placement, Scene, Shading, Skin, Spawn, SpawnKind, StartingLocation,
+    TriggerVolume, ZoneSet, ZoneSwitch, WORLD_UNIT_METRES,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -139,6 +141,9 @@ pub fn decode_into(
         stats.push(s);
         // A 90 MB page per BSP adds up on campaign maps.
         resources.clear_page_cache();
+    }
+    if let Err(e) = zones::decode(cache, scene) {
+        eprintln!("zone sets and starting locations not read: {e}");
     }
     if options.objects {
         let started = std::time::Instant::now();
