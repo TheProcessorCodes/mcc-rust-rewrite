@@ -18,6 +18,7 @@ mod fly_camera;
 mod rider;
 mod shot;
 mod skate;
+mod swim;
 mod textures;
 mod world;
 
@@ -138,7 +139,22 @@ fn main() -> anyhow::Result<()> {
             (!scene.collision.triangles.is_empty()).then(|| scene.collision.clone()),
         ))
         .insert_resource(rider::PendingChief(chief))
-        .add_plugins((skate::SkatePlugin, rider::RiderPlugin));
+        .add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
+        // Water surfaces and the ground under them, for sinking and
+        // respawning (`swim.rs`).
+        let mut water_materials: Vec<u32> = water
+            .looks
+            .iter()
+            .filter(|(_, l)| matches!(l, world::water::WaterLook::Water(_)))
+            .map(|(m, _)| *m)
+            .collect();
+        water_materials.sort_unstable();
+        if !water_materials.is_empty() {
+            app.insert_resource(swim::WaterWorld::build(&scene, &water_materials));
+            if let Some(s) = scene.spawns.first() {
+                app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
+            }
+        }
     }
     app.insert_resource(world::PendingScene(Some(scene), Some(textures)))
         .insert_resource(world::sky::PendingSky(Some(sky)))

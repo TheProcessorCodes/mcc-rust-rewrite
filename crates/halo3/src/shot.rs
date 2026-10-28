@@ -214,7 +214,12 @@ fn step(
         None => plan.views.get(n),
     };
     if let Some(pose) = skate {
-        if pose.skated < SKATE_FOR {
+        // `HALO3_SKATE_FOR` rides longer (or shorter) before the pictures.
+        let skate_for = std::env::var("HALO3_SKATE_FOR")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(SKATE_FOR);
+        if pose.skated < skate_for {
             progress.waited += time.delta_secs();
             if progress.waited > SKATE_TIMEOUT {
                 error!("shot: the skater never got going");
