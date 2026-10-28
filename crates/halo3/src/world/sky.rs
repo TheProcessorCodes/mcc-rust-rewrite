@@ -266,7 +266,7 @@ pub struct SkyShading {
     #[uniform(100)]
     pub heights: Vec4,
     /// x: max fog thickness, y: atmosphere on, z: detail maps present
-    /// (bits 0-2).
+    /// (bits 0-2), w: alpha test cutoff (0: no alpha test).
     #[uniform(100)]
     pub extra: Vec4,
     /// Halogram edge fade: edge tint (w: 1 when on) and centre tint (w: power).
@@ -303,10 +303,11 @@ fn v3(c: [f32; 3], w: f32) -> Vec4 {
     Vec4::new(c[0], c[1], c[2], w)
 }
 
-/// Fills in the atmosphere part of a [`SkyShading`].
+/// Fills in the atmosphere part of a [`SkyShading`] (keeping the detail
+/// bits and the alpha cutoff in `extra.zw`).
 fn set_atmosphere(s: &mut SkyShading, a: Option<&AtmosphereSetting>) {
     let Some(a) = a else {
-        s.extra = Vec4::new(0.0, 0.0, 0.0, 0.0);
+        s.extra = Vec4::new(0.0, 0.0, s.extra.z, s.extra.w);
         return;
     };
     s.sun_dir = a.sun_direction().extend(a.mie_g);
@@ -316,7 +317,7 @@ fn set_atmosphere(s: &mut SkyShading, a: Option<&AtmosphereSetting>) {
     s.beta_m_theta = v3(a.beta_m_theta, 0.0);
     s.beta_p_theta = v3(a.beta_p_theta, 0.0);
     s.heights = Vec4::new(a.sea_level, a.rayleigh_height, a.mie_height, a.distance_bias);
-    s.extra = Vec4::new(a.max_fog_thickness.max(1.0), 1.0, 0.0, 0.0);
+    s.extra = Vec4::new(a.max_fog_thickness.max(1.0), 1.0, s.extra.z, s.extra.w);
 }
 
 pub struct SkyPlugin;
@@ -437,16 +438,25 @@ fn swap_sky_materials(
             illum: image(maps[4].as_ref()),
             ..default()
         };
-        set_atmosphere(&mut shading, atmosphere.and_then(Atmosphere::sky));
         // Empty detail slots read as neutral grey in the shader (a missing
         // texture binds white, which a detail would scale by 4.6).
         shading.extra.z = (shading.detail.is_some() as u32
             | (shading.detail2.is_some() as u32) << 1
             | (shading.detail3.is_some() as u32) << 2) as f32;
+        // Alpha-tested sky cards (High Ground's `water_edge_breakup` round
+        // the island) cut by the albedo's alpha; drawn whole they were white
+        // sheets on the sea. The base map stays on the StandardMaterial so
+        // bevy's depth prepass (maps with water) cuts the same way.
+        let mask = match base.alpha_mode {
+            AlphaMode::Mask(c) => Some(c),
+            _ => None,
+        };
+        shading.extra.w = mask.unwrap_or(0.0);
+        set_atmosphere(&mut shading, atmosphere.and_then(Atmosphere::sky));
         let material = SkyMaterial {
             base: StandardMaterial {
                 base_color: Color::WHITE,
-                base_color_texture: None,
+                base_color_texture: if mask.is_some() { base.base_color_texture.clone() } else { None },
                 unlit: true,
                 fog_enabled: false,
                 ..base
@@ -485,9 +495,7 @@ fn update_sky_air(
     let setting = sky_setting(&haze, &air);
     for handle in &batches {
         if let Some(mut m) = materials.get_mut(handle) {
-            let detail_bits = m.extension.extra.z;
             set_atmosphere(&mut m.extension, setting);
-            m.extension.extra.z = detail_bits;
         }
     }
 }

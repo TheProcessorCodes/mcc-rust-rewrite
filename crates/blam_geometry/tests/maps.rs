@@ -433,6 +433,13 @@ fn last_resort_matches_haloexport() {
     // 106 spawn points; each stands on collision a little under its feet,
     // and no collision surface cuts through the body above it.
     assert_eq!(scene.spawns.len(), 106);
+    check_spawns(&scene);
+}
+
+/// Every spawn stands on collision less than 0.5 wu under it, with no
+/// collision surface through the body (0.15 to 0.6 wu up).
+fn check_spawns(scene: &Scene) {
+    let col = &scene.collision;
     let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> = std::collections::HashMap::new();
     for (i, t) in col.triangles.iter().enumerate() {
         let lo = t.points[0].min(t.points[1]).min(t.points[2]);
@@ -456,4 +463,65 @@ fn last_resort_matches_haloexport() {
         let body = heights.iter().copied().find(|h| *h > p.z + 0.15 && *h < p.z + 0.6);
         assert!(body.is_none(), "{} at {p}: collision through the body at z {body:?}", sp.name);
     }
+}
+
+/// High Ground (`docs/format/reference-numbers.md` 10).
+#[test]
+fn high_ground_matches_haloexport() {
+    let Some(path) = map("deadlock") else { return };
+    let scene = blam_geometry::load_map(&path).expect("deadlock decodes");
+    let c = count(&scene);
+    // 43 clusters, all with a mesh; 857 instances with 849 placed.
+    assert_eq!(c.clusters_placed, 43);
+    assert_eq!(c.instances_placed, 849);
+    assert_eq!(c.cluster_triangles, 38754);
+    assert_eq!(c.instance_triangles, 313216);
+    assert_eq!(c.scenery_triangles, 141099);
+    assert_eq!(c.crate_triangles, 68677);
+    assert_eq!(c.machine_triangles, 2276);
+    let control: usize = scene
+        .placements
+        .iter()
+        .filter(|p| p.kind == Kind::Control)
+        .map(|p| scene.meshes[p.mesh as usize].triangle_count())
+        .sum();
+    assert_eq!(control, 72);
+    assert!(c.sky_triangles > 0, "the sky model decodes");
+    let (lo, hi) = scene.bounds.expect("world bounds");
+    assert!((lo.x - -62.073673).abs() < 1e-3 && (hi.x - 48.44192).abs() < 1e-3);
+    assert!((lo.y - -72.087036).abs() < 1e-3 && (hi.y - 83.86857).abs() < 1e-3);
+    assert!((lo.z - 2.225637).abs() < 1e-3 && (hi.z - 41.033073).abs() < 1e-3);
+
+    // The gate (`wall_door`, a machine) in the base wall, where HaloExport
+    // put it: x -8.58..-4.68, y 3.40..8.68, z 11.60..13.75 together with
+    // the switch lever.
+    let gate = scene
+        .placements
+        .iter()
+        .find(|p| p.kind == Kind::Machine && p.name == "wall_door")
+        .expect("the gate");
+    let t = gate.transform.w_axis;
+    assert!((t.x - -6.153).abs() < 0.01 && (t.y - 4.273).abs() < 0.01 && (t.z - 11.588).abs() < 0.01);
+
+    let water: Vec<_> = scene.materials.iter().filter(|m| m.shader_class == "rmw ").collect();
+    assert_eq!(water.len(), 1);
+    assert!(water[0].tag_path.ends_with("deadlock_water_awesome"));
+
+    let col = &scene.collision;
+    let bsp = col
+        .triangles
+        .iter()
+        .filter(|t| matches!(t.source, blam_geometry::CollisionSource::Bsp(_)))
+        .count();
+    assert_eq!(bsp, 35890);
+    assert_eq!(col.triangles.len() - bsp, 89094);
+
+    // The sea's kill volume lies out past the beach; no spawn is in it.
+    let kills: Vec<_> = scene.trigger_volumes.iter().filter(|v| v.kills()).collect();
+    assert_eq!(kills.len(), 1);
+    assert_eq!(kills[0].name, "kill_water2");
+    assert!(!scene.spawns.iter().any(|s| kills[0].contains(s.position)));
+
+    assert_eq!(scene.spawns.len(), 85);
+    check_spawns(&scene);
 }

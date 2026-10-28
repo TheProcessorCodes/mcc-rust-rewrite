@@ -182,7 +182,7 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 | `rmsh`, `rmhg`, `rmd ` with a `base_map` | the base map, tinted by `albedo_color`, tiled by the base map's xform through `uv_transform` (the mesh keeps the raw UVs) |
 | the rest of an ordinary shader's material | detail map, bump map (and bump detail), specular, environment reflection and self-illumination, in the lighting shader: see "Materials" below |
 | foliage (`rmfl`) and any `alpha_test simple` shader | `AlphaMode::Mask(0.5)` on the base map's alpha, or on `alpha_test_map` when the shader has its own (grates; Last Resort's palm fronds cut by their bump map's alpha), both sides drawn. The lighting shader is also the depth prepass's fragment shader, so maps with water (which get a depth prepass) cut the same way there; with bevy's own prepass the whole frond cards hid what was behind them and showed the haze colour |
-| `blend_mode` alpha_blend / pre_multiplied_alpha / additive / multiply | `Blend` / `Premultiplied` / `Add` / `Multiply`, no shadows |
+| `blend_mode` alpha_blend / pre_multiplied_alpha / additive / multiply | `Blend` / `Premultiplied` / `Add` / `Multiply`, no shadows. Multiply decals (High Ground's `medical_decals` on the medical crates) are drawn unlit, unexposed and unfogged: they scale the lit surface under them by their own colour. Lit and exposed, their white background times the exposure brightened what lay under them and washed the red crosses out |
 | opaque shaders | `Opaque`: the base map's alpha is a specular mask, not transparency, and is ignored |
 | terrain (`rmtr`) | the **four-layer blend**, in the lighting shader (see "Terrain" below). If the blend map or every layer fails to decode, or with `HALO3_TERRAIN_BLEND=0`, the single layer the blend map weights most over the whole map, as HaloExport does |
 | water (`rmw `) | its own water material: animated waves, sky reflection, murk and foam (see "Water" below) |
@@ -334,6 +334,14 @@ skater who falls in is put back at the same last safe spot as after sinking (the
 if there is none yet; log lines start with `fall:`). The bike is put back where it last rode
 well, as after a crash. The start prints `kill volumes: N; out of the world below z ...`.
 
+High Ground's cove (`deadlock_water_awesome`, a flat sheet at z 4.41 over x -37.0..15.1,
+y -67.8..-25.5) ends in a straight hard edge out at sea, where the sky model's far sea (`lake`,
+an opaque `rmsh` at z about 2.9-3.7, lit like the rest of the sky) takes over about 1 wu lower and
+greener. The game probably hides that seam with the shader's painted bank alpha (`bankalpha paint`),
+which needs the mask texcoord (`docs/format/water.md` 4.1); the depth fade only fades the beach
+side. Skating: the beach spawns stand in ankle-deep water (0.2 wu); out in the cove the bed is
+1.5 wu down and the skater sinks; the `kill_water2` kill volume lies under the sea bed.
+
 Not done: refraction (no copy of the scene behind, so no wave distortion of the bed), the
 static cube reflection, vertex wave displacement, painted foam, `global_shape` and the
 watercolor texture (they need the mask texcoord), water seen from below.
@@ -402,6 +410,9 @@ The log says how each placement was lit, e.g. Valhalla:
   surface is seen edge-on to `edge_fade_center_tint` face-on, by `|n.v|^edge_fade_power`. Last
   Resort's foam rings round the distant islands (`island_water_edges`, additive, x2.75) drew as
   solid white slabs on the sea without these two.
+- Alpha-tested sky shaders are cut by the albedo's alpha in the sky shader, and keep their base map
+  on the StandardMaterial so bevy's depth prepass cuts them too. High Ground's `water_edge_breakup`
+  cards (alpha mean 0.14) round the cove drew as pale slabs along the edge of the sea.
 - **The world** gets bevy's `DistanceFog` (atmospheric falloff) from the level setting
   (`haze_level`): per-channel extinction and the in-scattered colour, recomputed every frame for
   the camera's height, since the haze thins with height (Mie scale height 6 wu over a sea level at

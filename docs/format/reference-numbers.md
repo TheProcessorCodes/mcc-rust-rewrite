@@ -715,3 +715,46 @@ signs, `light_volume_a`), `levels\solo\020_base\...`, `levels\solo\010_jungle\..
 `human_military_decals*`, `military_decals`, `panel_crate_shipping`) are `rmd ` alpha blend;
 `forklift_glass` is a glass `rmsh` with additive blending; `deadlock_screen` is opaque with a scrolling
 `self_illum_map`; the 21 `box_*` / `wall_*` scenery pieces (Forge blocks) use `objects\multi\shaders\invisible` and are not drawn.
+
+## 10. High Ground (`deadlock`), added 2026-10-28
+
+HaloExport sidecar `D:\reflex-tools\halo-exports\deadlock\halo_export.json` (same build, `MccHalo3U13`)
+against `blam geometry deadlock`. Every count matches exactly; `high_ground_matches_haloexport` in
+`crates/blam_geometry/tests/maps.rs` pins them.
+
+| item | sidecar | ours |
+|---|---|---|
+| bsps | 1, `levels\multi\deadlock\deadlock` | same |
+| clusters / with a mesh | 43 / 43 | 43 / 43 |
+| instances / placed | 857 / 849 | 857 / 849 |
+| bounds_wu x / y / z | [-62.073673, 48.44192] / [-72.087036, 83.86857] / [2.225637, 41.033073] | same (stated sbsp bounds) |
+| triangles: world / instance | 38,754 / 313,216 | same |
+| triangles: scenery / crate / machine / control | 141,099 / 68,677 / 2,276 / 72 | same |
+| nodes: scenery / crate / machine / control | 154 / 196 / 2 / 2 | 277 / 271 / 2 / 2 placements (one per mesh of a multi-mesh object) |
+| machine bounds (m) | min (-26.14, 35.36, -26.45), max (-14.27, 41.91, -10.37) | the gate `wall_door` at (-6.153, 4.273, 11.588) wu and `switch_lever` at (-8.544, 8.745, 13.270): together x -8.58..-4.69, y 3.40..8.68, z 11.60..13.75 wu, the same box |
+| materials | 110 | 122 scene materials (the sky model's, which HaloExport left out, and the spawn markers) |
+| colour bitmaps | 100 written, 0 missing | 101 decoded, 0 failed (`blam textures`) |
+| water | `deadlock_water_awesome`, 635 triangles | same; a flat sheet at z 4.41 over x -37.0..15.1, y -67.8..-25.5 (the cove) |
+| skies | [`levels\multi\deadlock\sky\deadlock`] | 9 sky placements, 8,649 triangles |
+
+Ours only (no sidecar equivalent):
+
+| item | value |
+|---|---|
+| shaders in the sbsp | 79 |
+| sections / with geometry | 318 / 310 |
+| collision | 35,890 BSP triangles, 89,094 instanced from 857 instances, 40 materials; 5,124 invisible, 6,510 two-sided. Every up-facing opaque render floor (clusters and instances, sampled every 0.25 wu) has collision within 0.3 wu but 124 scattered samples, none in a cluster: no holes to fall through |
+| placed geometry bounds (sky left out) | x -59.063..42.328, y -67.846..83.869, z -0.907..29.620 |
+| spawn points | 85 (79 `respawn_point`, 6 `respawn_point_invisible`); each stands on collision less than 0.5 wu over it, with nothing through the body (checked by the test). Seven on the beach (spawns 8, 16, 17, 46, 71-73, z 4.17-4.30) stand in 0.1-0.25 wu of water |
+| start spawn | 0: [1.70, 14.15, 11.75] facing 177 deg, inside the base |
+| kill volume | `kill_water2`, under the sea bed past the cove (corner (-12.9, -100.2, -4.3), 56 x 60 x 5.6 wu); no spawn in it. `safe_zone` and `flock0` are other trigger volumes |
+| camera fx | exposure -4.64 stops (auto range 0.5..3.0), mean irradiance 0.456 -> x4.33 |
+| rails | 52,662 walkable edges, 10,085 lips, 9,850 runs, 3,306 rails; 3,305 out of deep water |
+| lit placements (viewer) | 368 nearest surface, 192 per-pixel, 693 per-vertex, 9 sky; 191 spawn-marker pieces not drawn |
+
+The sky model's far sea, `lake` (63 triangles, z 2.86..3.67 out to x -190..196, y -361..37), is an opaque
+cook-torrance `rmsh` whose base map is the sky's `terrain_africa`; it also runs under the cove's bed. Round
+the cove lie `water_edge_breakup` cards (17 triangles, z 3.0..3.8), alpha-tested by their own map (alpha
+mean 0.14). The two controls `wall_switch` and `wall_switch_on` are the same 36-triangle switch box placed
+at the same spot. Shaders shared with Last Resort (`deadlock_screen`, industrial and medical gear) resolve the
+same way; `medical_decals` is a `rmd ` with `blend_mode multiply`.
