@@ -46,7 +46,7 @@ fn resolve_map(arg: &str) -> PathBuf {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (scene, textures, chief, sky) = match args.first().map(String::as_str) {
+    let (scene, textures, chief, sky, water) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map>          e.g. riverworld
@@ -58,6 +58,7 @@ fn main() -> anyhow::Result<()> {
             textures::MaterialTextures::default(),
             None,
             world::sky::SkyData::default(),
+            world::water::WaterData::default(),
         ),
         Some(map) => {
             let path = resolve_map(map);
@@ -88,7 +89,8 @@ fn main() -> anyhow::Result<()> {
             );
             let chief = rider::load_chief(&cache);
             let sky = world::sky::load(&cache, &scene);
-            (scene, textures, chief, sky)
+            let water = world::water::load(&cache, &scene);
+            (scene, textures, chief, sky, water)
         }
     };
     let shot = shot_plan(&args, &scene.name)?;
@@ -140,6 +142,7 @@ fn main() -> anyhow::Result<()> {
     }
     app.insert_resource(world::PendingScene(Some(scene), Some(textures)))
         .insert_resource(world::sky::PendingSky(Some(sky)))
+        .insert_resource(world::water::PendingWater(Some(water)))
         .add_plugins((fly_camera::FlyCameraPlugin, world::WorldPlugin))
         .run();
     Ok(())

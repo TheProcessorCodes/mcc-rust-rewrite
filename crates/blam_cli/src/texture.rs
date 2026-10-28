@@ -109,7 +109,42 @@ pub fn bitmap(cache: &CacheFile, tag: &TagEntry, index: u32, png: Option<&Path>)
     if let Some(path) = png {
         write_png(&tex, path)?;
         println!("wrote mip 0 (layer 0) to {}", path.display());
+        if tex.layers > 1 {
+            let strip = path.with_extension("layers.png");
+            write_layers_png(&tex, &strip)?;
+            println!("wrote mip 0 of all {} layers side by side, opaque, to {}", tex.layers, strip.display());
+        }
     }
+    Ok(())
+}
+
+/// Writes level 0 of every layer (cube faces, array slices) side by side,
+/// alpha forced opaque so colour stored under a small alpha stays visible;
+/// prints each layer's mean RGBA.
+pub fn write_layers_png(tex: &Texture, path: &Path) -> Result<()> {
+    let (w, h) = (tex.width as usize, tex.height as usize);
+    let n = tex.layers as usize;
+    let mut out = vec![0u8; w * n * h * 4];
+    for l in 0..n {
+        let level = tex.level(0, l as u32).context("short layer")?;
+        let px = rgba::decode_level(tex.format, tex.width, tex.height, level)?;
+        let m = rgba::channel_means(&px);
+        println!("  layer {l}: mean RGBA {:.3} {:.3} {:.3} {:.3}", m[0], m[1], m[2], m[3]);
+        for y in 0..h {
+            for x in 0..w {
+                let s = 4 * (y * w + x);
+                let d = 4 * (y * w * n + l * w + x);
+                out[d..d + 3].copy_from_slice(&px[s..s + 3]);
+                out[d + 3] = 255;
+            }
+        }
+    }
+    let file =
+        std::fs::File::create(path).with_context(|| format!("creating {}", path.display()))?;
+    let mut enc = png::Encoder::new(BufWriter::new(file), (w * n) as u32, h as u32);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header()?.write_image_data(&out)?;
     Ok(())
 }
 
@@ -162,6 +197,20 @@ pub fn print_shader(s: &Shader) {
     println!("params:");
     for (n, v) in &s.params {
         println!("  {n:<36} {:?}", v);
+    }
+    if !s.animations.is_empty() {
+        println!("animations:");
+        for a in &s.animations {
+            println!(
+                "  {:<28} {:?} period {} s, {} -> {} ({:.4}/s)",
+                a.argument,
+                a.kind,
+                a.period,
+                a.from,
+                a.to,
+                a.rate()
+            );
+        }
     }
     println!(
         "=> blend {:?}, alpha test {}, two-sided {}, special {}",

@@ -26,6 +26,7 @@ use crate::textures::{Look, MaterialTextures};
 
 pub mod lighting;
 pub mod sky;
+pub mod water;
 
 use lighting::{Atlas, HaloLightmap, HaloMaterial, SurfaceLights};
 
@@ -56,12 +57,17 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((lighting::LightingPlugin, sky::SkyPlugin))
+        app.add_plugins((lighting::LightingPlugin, sky::SkyPlugin, water::WaterPlugin))
             .insert_resource(ClearColor(Color::srgb(0.53, 0.70, 0.90)))
             .add_systems(Startup, spawn_world)
             .add_systems(Update, toggle_collision);
     }
 }
+
+/// The scene material a world batch draws (its index in `Scene::materials`),
+/// for systems that swap in a material of their own (`water.rs`).
+#[derive(Component, Clone, Copy)]
+pub struct BatchMaterial(pub u32);
 
 /// The game's collision drawn as a translucent shell; V shows and hides it.
 #[derive(Component)]
@@ -694,10 +700,13 @@ fn spawn_world(
             if let Some(t) = terrain {
                 t.apply(&mut extension);
             }
-            entity.insert(MeshMaterial3d(halo_materials.add(HaloMaterial {
-                base: std_material,
-                extension,
-            })));
+            entity.insert((
+                MeshMaterial3d(halo_materials.add(HaloMaterial {
+                    base: std_material,
+                    extension,
+                })),
+                BatchMaterial(key),
+            ));
         }
         if translucent {
             entity.insert(NotShadowCaster);
