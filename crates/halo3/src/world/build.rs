@@ -78,6 +78,9 @@ pub struct BuildInput {
     /// arrays decoded); the rest fall back to vertex light.
     pub lightmap_ok: Vec<bool>,
     pub surface: Arc<SurfaceLights>,
+    /// The open map: each unit decodes the bitmaps and lightmap it needs
+    /// (`None`: everything was decoded up front, `WorldSource`).
+    pub cache: Option<&'static blam_cache::CacheFile>,
 }
 
 impl BuildInput {
@@ -119,6 +122,10 @@ pub struct BuiltUnit {
     /// Render-space bounds of the non-sky geometry.
     pub extent: Option<(Vec3, Vec3)>,
     pub seconds: f32,
+    /// The bitmaps and lightmaps its materials need, decoded with it (CPU
+    /// copies, dropped once uploaded).
+    pub bitmaps: HashMap<u32, blam_texture::Texture>,
+    pub lightmaps: HashMap<u32, crate::textures::LightmapTextures>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -463,7 +470,33 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
     }
     let mut lit_counts: Vec<_> = lit_counts.into_iter().collect();
     lit_counts.sort_unstable();
+    // Decode what the chunks' materials sample.
+    let (bitmaps, lightmaps) = match input.cache {
+        Some(cache) => {
+            let mut wanted: Vec<u32> = Vec::new();
+            let mut maps: Vec<u32> = Vec::new();
+            let mut seen: HashSet<u32> = HashSet::new();
+            for c in &chunks {
+                if let Lit::PerPixel(l) = c.lit
+                    && !maps.contains(&l)
+                {
+                    maps.push(l);
+                }
+                if seen.insert(c.material)
+                    && let Some(look) = input.look(c.material)
+                {
+                    wanted.extend(crate::textures::bitmaps_of(look));
+                }
+            }
+            wanted.sort_unstable();
+            wanted.dedup();
+            crate::textures::decode_bitmaps(cache, scene, &wanted, &maps)
+        }
+        None => Default::default(),
+    };
     BuiltUnit {
+        bitmaps,
+        lightmaps,
         unit,
         chunks,
         lit_counts,

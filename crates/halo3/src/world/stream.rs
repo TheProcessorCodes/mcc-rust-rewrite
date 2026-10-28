@@ -73,7 +73,14 @@ impl GpuCache {
             .sum()
     }
 
-    fn image(&mut self, source: &WorldSource, images: &mut Assets<Image>, bitmap: u32, how: Upload) -> Uploaded {
+    fn image(
+        &mut self,
+        source: &WorldSource,
+        decoded: &HashMap<u32, Texture>,
+        images: &mut Assets<Image>,
+        bitmap: u32,
+        how: Upload,
+    ) -> Uploaded {
         if let Some(entry) = self.images.get(&(bitmap, how)) {
             match entry {
                 None => return None,
@@ -84,7 +91,7 @@ impl GpuCache {
                 }
             }
         }
-        let t = source.bitmaps.get(&bitmap)?;
+        let t = source.bitmaps.get(&bitmap).or_else(|| decoded.get(&bitmap))?;
         let made = match how {
             Upload::Colour => super::texture_image_as(t, source.bc, true).map(|i| (i, false)),
             Upload::Linear => super::texture_image_as(t, source.bc, false).map(|i| (i, false)),
@@ -106,13 +113,23 @@ impl GpuCache {
         }
     }
 
-    fn lightmap(&mut self, source: &WorldSource, images: &mut Assets<Image>, l: u32) -> Option<(Handle<Image>, Handle<Image>)> {
+    fn lightmap(
+        &mut self,
+        source: &WorldSource,
+        decoded: &HashMap<u32, LightmapTextures>,
+        images: &mut Assets<Image>,
+        l: u32,
+    ) -> Option<(Handle<Image>, Handle<Image>)> {
         if let Some((a, b)) = self.lightmaps.get(&l)
             && let (Some(a), Some(b)) = (images.get_strong_handle(*a), images.get_strong_handle(*b))
         {
             return Some((a, b));
         }
-        let t = source.lightmaps.get(l as usize)?.as_ref()?;
+        let t = source
+            .lightmaps
+            .get(l as usize)
+            .and_then(Option::as_ref)
+            .or_else(|| decoded.get(&l))?;
         match (lighting::array_image(&t.coefficients, source.bc), lighting::array_image(&t.intensity, source.bc)) {
             (Ok(a), Ok(b)) => {
                 let bytes = (a.data.as_ref().map_or(0, Vec::len), b.data.as_ref().map_or(0, Vec::len));
@@ -250,6 +267,7 @@ pub fn build_now(source: &WorldSource, mask: u32) -> Vec<BuiltUnit> {
 #[allow(clippy::too_many_arguments)]
 fn chunk_material(
     chunk: &BuiltChunk,
+    decoded: (&HashMap<u32, Texture>, &HashMap<u32, LightmapTextures>),
     source: &WorldSource,
     cache: &mut GpuCache,
     images: &mut Assets<Image>,
@@ -281,12 +299,12 @@ fn chunk_material(
     let terrain = look
         .and_then(|l| l.terrain.as_ref())
         .filter(|_| !sky && super::terrain_blend())
-        .and_then(|t| super::terrain_textures(t, &mut |b, how| cache.image(source, images, b, how)));
+        .and_then(|t| super::terrain_textures(t, &mut |b, how| cache.image(source, decoded.0, images, b, how)));
     let texture = if terrain.is_some() {
         None
     } else {
         look.and_then(|l| l.texture)
-            .and_then(|b| cache.image(source, images, b, Upload::Colour))
+            .and_then(|b| cache.image(source, decoded.0, images, b, Upload::Colour))
             .map(|(h, _)| h)
     };
     if texture.is_some() || terrain.is_some() {
@@ -312,7 +330,7 @@ fn chunk_material(
         return (Some(h), None, translucent);
     }
     let (scales, arrays) = match lit {
-        Lit::PerPixel(l) => (scene.lightmaps[l as usize].scales, cache.lightmap(source, images, l)),
+        Lit::PerPixel(l) => (scene.lightmaps[l as usize].scales, cache.lightmap(source, decoded.1, images, l)),
         _ => ([0.0; 5], None),
     };
     let (coefficients, intensity) = arrays.map_or((None, None), |(a, b)| (Some(a), Some(b)));
@@ -331,7 +349,7 @@ fn chunk_material(
     if let Some(t) = terrain {
         t.apply(&mut extension);
     } else if let Some(l) = look {
-        super::apply_surface(&l.surface, &mut extension, &mut |b, how| cache.image(source, images, b, how));
+        super::apply_surface(&l.surface, &mut extension, &mut |b, how| cache.image(source, decoded.0, images, b, how));
     }
     let h = halo_materials.add(HaloMaterial {
         base: std_material,
@@ -363,7 +381,7 @@ pub fn upload(
             break;
         };
         done += chunk.triangles;
-        let (standard, halo, translucent) = chunk_material(&chunk, source, cache, images, materials, halo_materials);
+        let (standard, halo, translucent) = chunk_material(&chunk, (&built.bitmaps, &built.lightmaps), source, cache, images, materials, halo_materials);
         let name = source
             .input
             .scene

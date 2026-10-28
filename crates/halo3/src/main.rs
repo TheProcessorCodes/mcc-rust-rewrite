@@ -55,7 +55,7 @@ fn resolve_map(arg: &str) -> PathBuf {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (scene, textures, chief, sky, water) = match args.first().map(String::as_str) {
+    let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
@@ -69,16 +69,19 @@ fn main() -> anyhow::Result<()> {
             None,
             world::sky::SkyData::default(),
             world::water::WaterData::default(),
+            None,
         ),
         Some(map) => {
             let path = resolve_map(map);
             let started = std::time::Instant::now();
-            let cache = blam_cache::CacheFile::open(&path)?;
+            // Kept open for the whole run: zone sets decode their textures
+            // from it when they load (`world/stream.rs`).
+            let cache: &'static blam_cache::CacheFile = Box::leak(Box::new(blam_cache::CacheFile::open(&path)?));
             let mut scene = blam_geometry::Scene {
                 name: cache.header.map_name.clone(),
                 ..Default::default()
             };
-            blam_geometry::decode_into(&cache, &blam_geometry::Options::default(), &mut scene)?;
+            blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
             eprintln!(
                 "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
                 scene.name,
@@ -88,11 +91,10 @@ fn main() -> anyhow::Result<()> {
                 started.elapsed().as_secs_f32()
             );
             let started = std::time::Instant::now();
-            let textures = textures::load(&cache, &scene);
-            let bytes: usize = textures.bitmaps.values().map(|t| t.byte_len()).sum();
+            let textures = textures::load_with(cache, &scene, false);
+            let bytes: usize = textures.lightmaps.iter().flatten().map(|t| t.coefficients.byte_len() + t.intensity.byte_len()).sum();
             eprintln!(
-                "textures: {} colour bitmaps for {} materials, {:.1} MiB, loaded in {:.1} s",
-                textures.bitmaps.len(),
+                "textures: {} materials resolved (their bitmaps load with their zone set), lightmaps {:.1} MiB, in {:.1} s",
                 scene.materials.len(),
                 bytes as f64 / (1 << 20) as f64,
                 started.elapsed().as_secs_f32()
@@ -101,7 +103,7 @@ fn main() -> anyhow::Result<()> {
             if let Some(mean) = mean {
                 world::lighting::set_scene_mean(mean);
             }
-            match blam_geometry::camera_fx::read(&cache) {
+            match blam_geometry::camera_fx::read(cache) {
                 Ok(Some(fx)) => {
                     world::lighting::set_map_exposure(fx.exposure);
                     world::lighting::set_auto_range(fx.auto_range);
@@ -117,10 +119,10 @@ fn main() -> anyhow::Result<()> {
                 Ok(None) => eprintln!("no camera fx: exposure x{}", world::lighting::exposure()),
                 Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
             }
-            let chief = rider::load_chief(&cache);
-            let sky = world::sky::load(&cache, &scene);
-            let water = world::water::load(&cache, &scene);
-            (scene, textures, chief, sky, water)
+            let chief = rider::load_chief(cache);
+            let sky = world::sky::load(cache, &scene);
+            let water = world::water::load(cache, &scene);
+            (scene, textures, chief, sky, water, Some(cache))
         }
     };
     let shot = shot_plan(&args, &scene)?;
@@ -205,7 +207,7 @@ fn main() -> anyhow::Result<()> {
     app.insert_resource(zones)
         .insert_resource(world::stream::ZoneTriggers::new(shot_mode))
         .insert_resource(loaded)
-        .insert_resource(world::PendingScene(Some(scene), Some(textures)))
+        .insert_resource(world::PendingScene(Some(scene), Some(textures), map_file))
         .insert_resource(world::sky::PendingSky(Some(sky)))
         .insert_resource(world::water::PendingWater(Some(water)))
         .add_plugins((fly_camera::FlyCameraPlugin, world::WorldPlugin))

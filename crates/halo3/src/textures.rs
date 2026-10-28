@@ -367,6 +367,14 @@ fn surface_look(s: &Shader, fetch: &mut dyn FnMut(&TextureSlot) -> Option<u32>) 
 /// Resolves every material's shader and decodes the colour bitmaps they
 /// need. Failures are logged and leave that material flat-coloured.
 pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
+    load_with(cache, scene, true)
+}
+
+/// [`load`], decoding the bitmaps now (`decode`) or leaving that to
+/// [`decode_bitmaps`] when a zone set needs them (`bitmaps` stays empty;
+/// a bitmap that later fails to decode leaves its slot empty then).
+/// Lightmaps are always decoded (the surface lights need them all).
+pub fn load_with(cache: &CacheFile, scene: &Scene, decode: bool) -> MaterialTextures {
     let mut out = MaterialTextures::default();
     let resources = match cache.resources() {
         Ok(r) => r,
@@ -393,6 +401,9 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
         };
         let water = s.class == "rmw ";
         let mut fetch = |slot: &TextureSlot| -> Option<u32> {
+            if !decode {
+                return Some(slot.bitmap);
+            }
             match out.bitmaps.entry(slot.bitmap) {
                 Entry::Occupied(_) => Some(slot.bitmap),
                 Entry::Vacant(v) if !failed.contains(&slot.bitmap) => {
@@ -479,21 +490,9 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
         }));
     }
     for lm in &scene.lightmaps {
-        let load = |tag: Option<u32>, layers: u32| -> Result<Texture, String> {
-            let tag = tag.ok_or("no bitmap")?;
-            let t = bitmap::decode(cache, &resources, tag, 0).map_err(|e| e.to_string())?;
-            if t.layers < layers || t.mips.is_empty() {
-                return Err(format!("{}: {} layers, {} levels", t.name, t.layers, t.mips.len()));
-            }
-            Ok(t)
-        };
-        match (load(lm.coefficients_bitmap, 8), load(lm.intensity_bitmap, 2)) {
-            (Ok(coefficients), Ok(intensity)) => out.lightmaps.push(Some(LightmapTextures {
-                coefficients,
-                intensity,
-            })),
-            (a, b) => {
-                let e = a.err().or(b.err()).unwrap_or_default();
+        match lightmap_textures(cache, &resources, lm) {
+            Ok(t) => out.lightmaps.push(Some(t)),
+            Err(e) => {
                 eprintln!("lightmap of bsp {}: {e}; fallback lighting there", lm.bsp);
                 out.lightmaps.push(None);
             }
@@ -502,4 +501,84 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> MaterialTextures {
     // The 90 MB local page and the shared.map pages are no longer needed.
     resources.clear_page_cache();
     out
+}
+
+/// One BSP's two lightmap arrays (`docs/format/lightmaps.md` 2.2).
+pub fn lightmap_textures(
+    cache: &CacheFile,
+    resources: &blam_cache::Resources,
+    lm: &blam_geometry::Lightmap,
+) -> Result<LightmapTextures, String> {
+    let load = |tag: Option<u32>, layers: u32| -> Result<Texture, String> {
+        let tag = tag.ok_or("no bitmap")?;
+        let t = bitmap::decode(cache, resources, tag, 0).map_err(|e| e.to_string())?;
+        if t.layers < layers || t.mips.is_empty() {
+            return Err(format!("{}: {} layers, {} levels", t.name, t.layers, t.mips.len()));
+        }
+        Ok(t)
+    };
+    Ok(LightmapTextures {
+        coefficients: load(lm.coefficients_bitmap, 8)?,
+        intensity: load(lm.intensity_bitmap, 2)?,
+    })
+}
+
+/// Every bitmap a material's look samples.
+pub fn bitmaps_of(look: &Look) -> Vec<u32> {
+    let s = &look.surface;
+    let mut out: Vec<u32> = look.texture.into_iter().collect();
+    if let Some(t) = &look.terrain {
+        out.extend(t.blend_map);
+        for l in t.layers.iter().flatten() {
+            out.push(l.base);
+            out.extend(l.detail.map(|d| d.0));
+            out.extend(l.bump.map(|b| b.0));
+        }
+    }
+    out.extend(
+        [s.alpha_map, s.detail, s.bump, s.spec_mask_map, s.illum_map, s.illum_detail]
+            .iter()
+            .flatten()
+            .map(|m| m.0),
+    );
+    out.extend(s.bump_detail.map(|b| b.0));
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// Decodes `bitmaps` (and the lightmaps `lightmaps` of `scene`) now, for
+/// a zone set's BSP being built; failures are logged and left out.
+pub fn decode_bitmaps(
+    cache: &CacheFile,
+    scene: &Scene,
+    bitmaps: &[u32],
+    lightmaps: &[u32],
+) -> (HashMap<u32, Texture>, HashMap<u32, LightmapTextures>) {
+    let Ok(resources) = cache.resources() else {
+        return Default::default();
+    };
+    let mut out = HashMap::new();
+    for &b in bitmaps {
+        match bitmap::decode(cache, &resources, b, 0) {
+            Ok(t) => {
+                out.insert(b, t);
+            }
+            Err(e) => eprintln!("bitmap {b}: {e}"),
+        }
+    }
+    let mut maps = HashMap::new();
+    for &l in lightmaps {
+        let Some(lm) = scene.lightmaps.get(l as usize) else {
+            continue;
+        };
+        match lightmap_textures(cache, &resources, lm) {
+            Ok(t) => {
+                maps.insert(l, t);
+            }
+            Err(e) => eprintln!("lightmap of bsp {}: {e}", lm.bsp),
+        }
+    }
+    resources.clear_page_cache();
+    (out, maps)
 }

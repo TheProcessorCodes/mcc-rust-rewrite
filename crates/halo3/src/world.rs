@@ -58,7 +58,12 @@ pub fn to_render_dir(h: Vec3) -> Vec3 {
 /// The scene and its decoded textures, handed from `main` to the startup
 /// system.
 #[derive(Resource)]
-pub struct PendingScene(pub Option<Scene>, pub Option<MaterialTextures>);
+pub struct PendingScene(
+    pub Option<Scene>,
+    pub Option<MaterialTextures>,
+    /// The open map, for decoding a zone set's textures when it loads.
+    pub Option<&'static blam_cache::CacheFile>,
+);
 
 pub struct WorldPlugin;
 
@@ -709,6 +714,7 @@ fn spawn_world(
             looks,
             lightmap_ok,
             surface: Arc::clone(&surface),
+            cache: pending.2,
         }),
         bitmaps,
         lightmaps,
@@ -823,6 +829,13 @@ fn spawn_world(
         cam,
     ));
     commands.insert_resource(lighting::SceneLights(surface));
+    // Later zone sets decode their own lightmaps and bitmaps with their
+    // units: the start's CPU copies can go.
+    let mut source = source;
+    if source.input.cache.is_some() {
+        source.lightmaps.clear();
+        source.bitmaps.clear();
+    }
     commands.insert_resource(source);
 }
 
