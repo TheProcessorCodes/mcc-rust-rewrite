@@ -1,6 +1,6 @@
 //! The pause menu: Escape, or Start on a pad, stops the game and lists the
 //! controls for flying about (the skate and bike controls are not listed).
-//! The same button carries on.
+//! The same button carries on; Q, or View (Back) on a pad, quits the game.
 //!
 //! Pausing stops virtual time, and the systems that read input or move
 //! things run only `while running`, so nothing reacts to keys behind the
@@ -16,7 +16,7 @@ impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Paused>()
             .add_systems(Startup, spawn_menu)
-            .add_systems(PreUpdate, toggle.after(InputSystems));
+            .add_systems(PreUpdate, (toggle, quit).chain().after(InputSystems));
     }
 }
 
@@ -88,6 +88,7 @@ fn spawn_menu(mut commands: Commands) {
             .with_children(|panel| {
                 panel.spawn(text("PAUSED", 36.0, Color::WHITE));
                 panel.spawn(text("Esc or Start to resume", 16.0, dim));
+                panel.spawn(text("Q or View (Back) to quit the game", 16.0, dim));
                 panel.spawn(Node {
                     height: Val::Px(12.0),
                     ..default()
@@ -135,5 +136,20 @@ fn toggle(
     }
     for mut v in &mut menus {
         *v = if paused.0 { Visibility::Visible } else { Visibility::Hidden };
+    }
+}
+
+/// Q, or View (Back) on a pad, closes the game from the menu.
+fn quit(
+    paused: Res<Paused>,
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if !paused.0 {
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyQ) || gamepads.iter().any(|p| p.just_pressed(GamepadButton::Select)) {
+        exit.write(AppExit::Success);
     }
 }
