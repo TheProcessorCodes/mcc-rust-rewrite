@@ -543,8 +543,10 @@ fn show_status(
         return;
     };
     let status = format!(
-            "bike {:.0} km/h, {} wheel{} down{}",
+            "bike {:.0} km/h, gear {}, {:.0} rpm, {} wheel{} down{}",
             b.speed() * 3.6,
+            b.gear + 1,
+            b.rpm,
             b.grounded(),
             if b.grounded() == 1 { "" } else { "s" },
         if b.crashed.is_some() { ", CRASHED" } else { "" },

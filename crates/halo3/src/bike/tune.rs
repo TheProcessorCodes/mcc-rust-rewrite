@@ -56,28 +56,46 @@ struct Knob {
 
 const KMH: f32 = 3.6;
 
-const KNOBS: [Knob; 15] = [
+const KNOBS: [Knob; 16] = [
     Knob {
         group: "Engine and brakes",
         name: "Engine power",
         low: "less",
         high: "more",
-        range: (2.0, 16.0),
-        step: 0.5,
-        get: |t| t.accel,
-        set: |t, v| t.accel = v,
-        show: |v| format!("{v:.1} m/s², 0-50 km/h in {:.1} s", 50.0 / KMH / v),
+        range: (0.3, 2.5),
+        step: 0.05,
+        get: |t| t.torque,
+        set: |t, v| t.torque = v,
+        show: |v| format!("peak {:.0} N·m at 5400 rpm, x{v:.2} stock", physics::engine_torque(5400.0) * v),
     },
     Knob {
         group: "",
-        name: "Top speed",
-        low: "slower",
-        high: "faster",
-        range: (10.0, 45.0),
-        step: 1.0,
-        get: |t| t.top_speed,
-        set: |t, v| t.top_speed = v,
-        show: |v| format!("{:.0} km/h", v * KMH),
+        name: "Gearing",
+        low: "taller (faster)",
+        high: "shorter (punchier)",
+        range: (0.6, 1.6),
+        step: 0.02,
+        get: |t| t.gearing,
+        set: |t, v| t.gearing = v,
+        show: |v| {
+            let limit = |g: f32| physics::LIMITER_RPM / 60.0 * std::f32::consts::TAU / (g * v) * physics::GEAR_RADIUS * KMH;
+            format!(
+                "limiter at {:.0} km/h in 1st, {:.0} km/h in 5th",
+                limit(physics::GEARS[0]),
+                limit(physics::GEARS[4])
+            )
+        },
+    },
+    Knob {
+        group: "",
+        name: "Engine braking",
+        low: "freewheels",
+        high: "holds back",
+        range: (0.0, 3.0),
+        step: 0.1,
+        get: |t| t.engine_brake,
+        set: |t, v| t.engine_brake = v,
+        show: |v| format!("up to {:.0} N·m drag at the crank off the gas", physics::ENGINE_DRAG * v),
     },
     Knob {
         group: "",
