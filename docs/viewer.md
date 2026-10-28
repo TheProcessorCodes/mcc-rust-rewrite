@@ -328,6 +328,10 @@ under the lowest collision triangle, so nothing falls for ever on maps without o
 skater who falls in is put back at the same last safe spot as after sinking (the start spawn
 if there is none yet; log lines start with `fall:`). The bike is put back where it last rode
 well, as after a crash. The start prints `kill volumes: N; out of the world below z ...`.
+Blackout (`lockout`) has one too, `kill_volume_bottom`, from z -18.3 down past the sea (z -33):
+anyone who drops off the rig falls about six world units past the lowest deck (-12.6) and is
+put back. The rig's legs and cross beams at z -13 to -18 are above it, so a fall can land on
+them; their grind rails (about 660) are kept.
 
 Not done: refraction (no copy of the scene behind, so no wave distortion of the bed), the
 static cube reflection, vertex wave displacement, painted foam, `global_shape` and the
@@ -403,6 +407,12 @@ The log says how each placement was lit, e.g. Valhalla:
   one, that setting replaces both the level and the sky setting. Lit sky surfaces are scaled by
   their shader's `diffuse_coefficient` (120_halo's ring plates: 0.3).
 - `HALO3_HAZE` scales the world haze's density (`0` turns it off) for comparisons.
+- **Night skies.** Halo's source of light for lit sky surfaces is not decoded; every map gets
+  the sunlit Valhalla irradiance, except the maps listed in `NIGHT_SKIES` (`world/sky.rs`):
+  Blackout (`lockout`) gets a tenth of it, since its sky dome is a white lit surface and its
+  sea a lit plane (`docs/format/sky-and-atmosphere.md` 7). `HALO3_SKY_LIGHT` sets the fraction
+  for any map. Sky self-illumination: `from_diffuse` glows with the albedo, `plasma` (Blackout's
+  aurora) with its alpha mask through the overlay colour.
 - Below a setting's sea level the density stays at the sea level's (world haze and sky alike):
   Sandtrap plays about 20 wu under its sea level, where the exponential falloff made the haze
   e^10 times thicker and every ground-level view black.
