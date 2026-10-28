@@ -13,7 +13,8 @@
 //! With `--skate` the skater is dropped at the first view (or the start
 //! spawn) and left to ride with the sticks at rest for two seconds; then the
 //! pictures are the engine's chase camera, the rider from the side, from the
-//! front and the board close up, followed by any further views.
+//! front, the board close up and the neck close up, followed by any
+//! further views.
 
 use std::path::PathBuf;
 
@@ -37,7 +38,7 @@ const SKATE_FOR: f32 = 2.0;
 const SKATE_TIMEOUT: f32 = 240.0;
 
 /// The pictures taken around the rider in `--skate` mode.
-const RIDER_VIEWS: usize = 4;
+const RIDER_VIEWS: usize = 5;
 
 #[derive(Clone, Copy, Debug)]
 pub struct View {
@@ -137,7 +138,12 @@ fn place_rider(n: usize, pose: &RiderPose, transform: &mut Transform, projection
         },
         1 => (chest + side * 3.5 + Vec3::Y * 0.3, chest - Vec3::Y * 0.3),
         2 => (chest + forward * 3.5 + Vec3::Y * 0.3, chest - Vec3::Y * 0.3),
-        _ => (board + side * 1.3 + Vec3::Y * 0.6 + forward * 0.4, board + Vec3::Y * 0.2),
+        3 => (board + side * 1.3 + Vec3::Y * 0.6 + forward * 0.4, board + Vec3::Y * 0.2),
+        // The collar and helmet, close.
+        _ => {
+            let neck = at("NECK").unwrap_or(chest + Vec3::Y * 0.5);
+            (neck + side * 0.9 + forward * 0.5 + Vec3::Y * 0.15, neck)
+        }
     };
     if n != 0 || pose.camera.is_none() {
         *transform = Transform::from_translation(eye).looking_at(target, Vec3::Y);

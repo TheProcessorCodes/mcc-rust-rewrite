@@ -38,6 +38,8 @@ use blam_texture::{Texture, rgba};
 
 use crate::skate::{RiderPose, assets_root};
 use crate::textures::MaterialTextures;
+use crate::world::lighting::{SceneLights, default_light, exposure};
+use crate::world::to_halo;
 
 /// Render model tags to try, multiplayer Spartan first.
 const CHIEF_TAGS: [&str; 2] = [
@@ -150,12 +152,27 @@ pub fn load_chief(cache: &CacheFile) -> Option<ChiefModel> {
     let resources = cache.resources().ok()?;
     let mut materials = blam_geometry::materials::MaterialTable::default();
     let mut scene = Scene::default();
-    let parts = match blam_geometry::render_model::decode(
+    // The Mark VI look: each region's `base` / Mark VI permutation where
+    // there is one (the first is not always it; the helmet's is Air
+    // Assault on riverworld).
+    let pick = |region: &str, perms: &[String]| -> usize {
+        let found = perms
+            .iter()
+            .position(|p| p == "base")
+            .or_else(|| perms.iter().position(|p| p.contains("mark_vi")))
+            .unwrap_or(0);
+        if std::env::var_os("HALO3_RIDER_PERMUTATIONS").is_some() {
+            eprintln!("rider: region {region}: {perms:?} -> {:?}", perms.get(found));
+        }
+        found
+    };
+    let parts = match blam_geometry::render_model::decode_with(
         cache,
         &resources,
         &mut materials,
         mode,
         &mut scene,
+        &pick,
     ) {
         Ok(p) => p,
         Err(e) => {
@@ -210,7 +227,10 @@ pub struct RiderPlugin;
 impl Plugin for RiderPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_rider)
-            .add_systems(PostUpdate, pose_rider.before(TransformSystems::Propagate));
+            .add_systems(
+                PostUpdate,
+                (pose_rider, light_rider).chain().before(TransformSystems::Propagate),
+            );
     }
 }
 
@@ -261,14 +281,33 @@ struct Joint {
     entity: Entity,
     target: String,
     offset: Mat4,
+    /// Keep the Spartan's own bone length: the joint sits at this offset
+    /// (Halo model units) in the frame of an earlier joint, by index into
+    /// `Rider::joints`, and takes only its rotation from the skate bone.
+    attach: Option<(usize, Vec3)>,
 }
 
 #[derive(Resource, Default)]
 struct Rider {
     joints: Vec<Joint>,
     meshes: Vec<Entity>,
+    /// Every rider material with its unlit colour, scaled by the light
+    /// where the rider is.
+    materials: Vec<(Handle<StandardMaterial>, LinearRgba)>,
+    /// Where the light was last sampled (Halo units).
+    lit_at: Option<Vec3>,
     shown: bool,
 }
+
+/// Bones that keep the Spartan's own offset from their parent instead of
+/// jumping to the skater's joint: the skater's neck is longer and bends
+/// with SPINE3, which left the helmet floating above the collar.
+const ATTACHED: [&str; 2] = ["neck", "head"];
+
+/// Feet keep the bind pose's flat sole instead of aligning heel to toe:
+/// the Spartan's ankle-to-toe line is far steeper than the skater's, so
+/// aligning it tipped the toes up.
+const FLAT_FEET: [&str; 4] = ["l_foot", "r_foot", "l_toe", "r_toe"];
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -375,6 +414,7 @@ fn spawn_rider(
                     entity,
                     target: j.target.clone(),
                     offset: RB,
+                    attach: None,
                 });
                 entities.push(entity);
                 inverse.push(Mat4::from_cols_array(&r.inverse_bind));
@@ -425,17 +465,18 @@ fn spawn_rider(
                         v.iter().map(|v| v.weights).collect(),
                         indices,
                     );
-                    let material = StandardMaterial {
+                    let material = materials.add(StandardMaterial {
                         base_color_texture: textures.get(s.texture).cloned(),
-                        perceptual_roughness: 0.7,
                         double_sided: true,
                         cull_mode: None,
+                        unlit: true,
                         ..default()
-                    };
+                    });
+                    rider.materials.push((material.clone(), LinearRgba::WHITE));
                     let e = commands
                         .spawn((
                             Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(materials.add(material)),
+                            MeshMaterial3d(material),
                             SkinnedMesh {
                                 inverse_bindposes: inverse.clone(),
                                 joints: entities.clone(),
@@ -514,6 +555,18 @@ fn spawn_chief(
         let parent = bone.parent.map(usize::from).filter(|&p| p < i);
         let mapped = MAPPING.iter().find(|m| m.0 == bone.name).and_then(|&(_, skate, child)| {
             let bind = skate_bind(skate)?;
+            if FLAT_FEET.contains(&bone.name.as_str()) {
+                // The ground point under the ankle onto the skater's,
+                // turned only to face the same way: soles flat on the deck.
+                // Toes move with their foot.
+                let foot = if bone.name.ends_with("toe") { parent? } else { i };
+                let ankle = MAPPING.iter().find(|m| m.0 == bones[foot].name)?.1;
+                let ground = Vec3::new(1.0, 0.0, 1.0);
+                let from = chief_at(foot) * ground;
+                let to = skate_at(ankle)? * ground;
+                let fit = Mat4::from_rotation_translation(facing, to - facing * from);
+                return Some((skate.to_string(), bind.inverse() * fit * h));
+            }
             let (from, to) = (chief_at(i), bind.w_axis.truncate());
             let rotation = child
                 .and_then(|(halo_child, skate_child)| {
@@ -540,13 +593,24 @@ fn spawn_chief(
     }
 
     let mut joints = Vec::with_capacity(bones.len());
+    let first = rider.joints.len();
     for (bone, f) in bones.iter().zip(&follow) {
         let (target, delta) = f.clone().unwrap_or(("HIPS".into(), h));
         let entity = commands.spawn(GlobalTransform::IDENTITY).id();
+        let attach = bone
+            .parent
+            .map(usize::from)
+            .filter(|_| ATTACHED.contains(&bone.name.as_str()))
+            .and_then(|p| {
+                let parent = bones.get(p)?;
+                let local = parent.world.inverse().transform_point3(bone.world.w_axis.truncate());
+                Some((first + p, local))
+            });
         rider.joints.push(Joint {
             entity,
             target,
             offset: delta * bone.world,
+            attach,
         });
         joints.push(entity);
     }
@@ -627,15 +691,17 @@ fn spawn_chief(
             } else {
                 AlphaMode::Opaque
             };
-            let material = StandardMaterial {
+            // Unlit: the world has no bevy lights, only baked ones;
+            // `light_rider` scales the colour by the light at the rider.
+            let material = materials.add(StandardMaterial {
                 base_color,
                 base_color_texture: texture,
                 uv_transform,
-                perceptual_roughness: 0.55,
-                metallic: 0.2,
                 alpha_mode,
+                unlit: true,
                 ..default()
-            };
+            });
+            rider.materials.push((material.clone(), base_color.to_linear()));
             let used: Vec<u32> = part.indices.clone();
             let e = commands
                 .spawn((
@@ -647,7 +713,7 @@ fn spawn_chief(
                         weights.clone(),
                         used,
                     ))),
-                    MeshMaterial3d(materials.add(material)),
+                    MeshMaterial3d(material),
                     SkinnedMesh {
                         inverse_bindposes: inverse.clone(),
                         joints: joints.clone(),
@@ -688,12 +754,61 @@ fn pose_rider(
     let by_name: HashMap<&str, &Mat4> =
         pose.names.iter().map(String::as_str).zip(pose.bones.iter()).collect();
     let s = Mat4::from_scale(Vec3::splat(1.0 / pose.scale));
+    let mut world: Vec<Mat4> = Vec::with_capacity(rider.joints.len());
     for j in &rider.joints {
         let Some(bone) = by_name.get(j.target.as_str()) else {
+            world.push(Mat4::IDENTITY);
             continue;
         };
+        let mut m = s * **bone * j.offset;
+        if let Some((parent, offset)) = j.attach
+            && let Some(p) = world.get(parent)
+        {
+            m.w_axis = p.transform_point3(offset).extend(1.0);
+        }
+        world.push(m);
         if let Ok(mut g) = joints.get_mut(j.entity) {
-            *g = GlobalTransform::from(Affine3A::from_mat4(s * **bone * j.offset));
+            *g = GlobalTransform::from(Affine3A::from_mat4(m));
+        }
+    }
+}
+
+/// Lights the rider the way the world lights objects: Halo's baked
+/// lighting at the nearest lit surface under the board, evaluated for an
+/// up-weighted spread of normals, times the viewer's exposure. Resampled
+/// when the rider has moved a little.
+fn light_rider(
+    rider: Option<ResMut<Rider>>,
+    pose: Res<RiderPose>,
+    lights: Option<Res<SceneLights>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let Some(mut rider) = rider else {
+        return;
+    };
+    if !rider.shown {
+        return;
+    }
+    let Some(i) = pose.names.iter().position(|n| n == "SKATEBOARD_ROOT") else {
+        return;
+    };
+    let at = to_halo(pose.bones[i].w_axis.truncate() / pose.scale) + Vec3::Z * 0.1;
+    if rider.lit_at.is_some_and(|p| p.distance(at) < 0.2) {
+        return;
+    }
+    rider.lit_at = Some(at);
+    let light = match lights.as_deref() {
+        Some(l) if !l.0.is_empty() => l.0.near(at),
+        _ => default_light(),
+    };
+    let side: Vec3 = [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y]
+        .iter()
+        .map(|n| light.irradiance(*n).max(Vec3::ZERO))
+        .sum();
+    let e = (light.irradiance(Vec3::Z).max(Vec3::ZERO) * 0.4 + side * 0.15) * exposure();
+    for (handle, colour) in &rider.materials {
+        if let Some(mut m) = materials.get_mut(handle) {
+            m.base_color = LinearRgba::rgb(colour.red * e.x, colour.green * e.y, colour.blue * e.z).into();
         }
     }
 }

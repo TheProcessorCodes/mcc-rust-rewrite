@@ -646,6 +646,7 @@ fn spawn_world(
         transform,
         cam,
     ));
+    commands.insert_resource(lighting::SceneLights(surface));
 }
 
 /// A small made-up scene for checking the camera before any map decodes: a

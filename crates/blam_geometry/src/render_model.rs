@@ -70,6 +70,23 @@ pub fn decode(
     mode: &TagEntry,
     scene: &mut Scene,
 ) -> Result<ModelParts> {
+    decode_with(cache, resources, materials, mode, scene, &|_, _| 0)
+}
+
+/// Picks a permutation for a region: given the region's name and its
+/// permutations' names, the index to draw.
+pub type PermutationPick<'a> = dyn Fn(&str, &[String]) -> usize + 'a;
+
+/// [`decode`], choosing each region's permutation with `pick` (an index
+/// out of range falls back to the first).
+pub fn decode_with(
+    cache: &CacheFile,
+    resources: &Resources<'_>,
+    materials: &mut MaterialTable,
+    mode: &TagEntry,
+    scene: &mut Scene,
+    pick: &PermutationPick<'_>,
+) -> Result<ModelParts> {
     let base = cache.tag_offset(mode)?;
     let mut r = cache.reader_at(base);
     let name = r.string_id()?;
@@ -148,11 +165,22 @@ pub fn decode(
             world: *world,
         })
         .collect();
-    // Which sections the first permutation of each region draws.
+    // Which sections the chosen permutation of each region draws.
     let mut wanted: Vec<usize> = Vec::new();
+    let name_of = |offset: usize| -> String {
+        cache
+            .reader_at(offset)
+            .string_id()
+            .ok()
+            .and_then(|id| cache.string(id))
+            .unwrap_or_default()
+            .to_string()
+    };
     for ro in regions.elements(16) {
         let perms = cache.reader_at(ro + 4).block()?;
-        let Some(po) = perms.element(0, 24) else {
+        let names: Vec<String> = perms.elements(24).map(name_of).collect();
+        let chosen = pick(&name_of(ro), &names);
+        let Some(po) = perms.element(u32::try_from(chosen).unwrap_or(0), 24).or_else(|| perms.element(0, 24)) else {
             continue;
         };
         let mut r = cache.reader_at(po + 4);
