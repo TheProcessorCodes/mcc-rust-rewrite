@@ -8,6 +8,7 @@ pub mod falls;
 pub mod fly_camera;
 pub mod pause;
 pub mod skate;
+pub mod weapons;
 pub mod zones;
 
 /// The default MCC Halo 3 maps folder; `%HALO3_MAPS%` overrides it.

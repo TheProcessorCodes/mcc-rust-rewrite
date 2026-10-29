@@ -31,7 +31,12 @@ pub fn run(
     };
     blam_geometry::decode_into(cache, &options, &mut scene)?;
     eprintln!("decoded in {:.2} s", started.elapsed().as_secs_f32());
+    report(&scene, obj)
+}
 
+/// Prints what a decoded scene holds and optionally writes it as OBJ (also
+/// used for Halo 2 maps, `halo2.rs`).
+pub fn report(scene: &Scene, obj: Option<&Path>) -> Result<()> {
     // Totals by kind, and the bounds of everything placed.
     let mut tris: BTreeMap<String, usize> = BTreeMap::new();
     let mut placed: BTreeMap<String, usize> = BTreeMap::new();
@@ -170,11 +175,11 @@ pub fn run(
     }
 
     if let Some(path) = obj {
-        write_obj(&scene, path).with_context(|| format!("writing {}", path.display()))?;
+        write_obj(scene, path).with_context(|| format!("writing {}", path.display()))?;
         println!("wrote {}", path.display());
         if !scene.collision.triangles.is_empty() {
             let cpath = path.with_extension("collision.obj");
-            write_collision_obj(&scene, &cpath)
+            write_collision_obj(scene, &cpath)
                 .with_context(|| format!("writing {}", cpath.display()))?;
             println!("wrote {}", cpath.display());
         }

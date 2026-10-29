@@ -8,6 +8,7 @@ pub mod camera_fx;
 pub mod collision;
 pub mod lightmap;
 pub mod materials;
+pub mod movement;
 pub mod rails;
 pub mod render_geometry;
 pub mod render_model;
@@ -15,10 +16,12 @@ pub mod sbsp;
 pub mod scenario;
 pub mod scene;
 pub mod vertex;
+pub mod weapons;
 pub mod zones;
 
 use std::path::Path;
 
+pub use movement::Movement;
 pub use rails::RailCensus;
 pub use scene::{
     Bone, BspInfo, ClusterInfo, ClusterLocator, Collision, CollisionMaterial, CollisionSource, CollisionTriangle, Kind, Lighting,

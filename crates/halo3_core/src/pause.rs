@@ -11,7 +11,3 @@ pub fn running(paused: Res<Paused>) -> bool {
     !paused.0
 }
 
-/// The pause menu's key handling (`halo3`'s `pause.rs`), for menus that must
-/// see Escape first (the bike tuning menu runs before it).
-#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PauseKeys;

@@ -34,6 +34,7 @@ middle.
 | Escape | give the cursor back; click the window to take it again |
 | P | print the camera's position in Halo units to the console |
 | V | show or hide the game's real collision: green shell for surfaces, red for invisible walls |
+| F, or gamepad d-pad up | on foot / fly (see "On foot" below) |
 | J | skate / fly (`crates/halo3_skate/src/lib.rs`) |
 | B, or gamepad View / Back | dirt bike / fly (see "Dirt bike" below) |
 | PageDown / PageUp | next / previous zone set (campaign maps) |
@@ -190,6 +191,8 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 | spawn markers: placements of `respawn_point`, `*_initial_spawn_point`, `*_respawn_zone` objects, and the `objects\multi\shaders\spawn_point*` and `shaders\invalid` shaders | not drawn: Forge shows them, a game never does (they were the black discs and white plasma columns on every map) |
 | constant-colour shaders (no base map) | flat `albedo_color` |
 | additive glows without a base map | `self_illum_map` tinted by `self_illum_color`, added |
+| `self_illumination plasma` (Guardian's jump pads and minilift, Narrows' light strips and energy walls) | `alpha_mask_map`'s **alpha** (its red when the alpha is flat white, as on Narrows' `plasma_mask`) times the three band colours, each weighted by how much of its band shows on average (`2/(n+2)` for thinness `n`, `docs/format/shaders.md` 11.6), times `self_illum_intensity`, added; the crawling noise bands are not drawn. Until Narrows the weights were a plain mean, which blew its energy walls out to white and drew its corridor strips as solid slabs |
+| additive halograms (`rmhg`) without a base map (Sandbox's Forge grids `sandbox_grid`, `sandbox_grid_dim`) | the `overlay_map` (grid lines, tiled 62 times) tinted by `overlay_tint`, added; with no overlay, black, so only the glow adds. Their flat `albedo_color` grey, lit and added, drew a white sheet over Sandbox's floor (`docs/format/shaders.md` 8.7). The plasma glow on them still needs its mask read from red (the Narrows plasma commit), or it too is a sheet |
 | `self_illumination plasma` (Guardian's jump pads and minilift) | `alpha_mask_map`'s **alpha** (its colour channels are black) times the mean of `color_medium`, `color_wide` and `color_sharp` times `self_illum_intensity`, added; the crawling noise bands are not drawn. Before, these had no `self_illum_map` and drew nothing |
 | "special" shaders (path segment `invisible`, `portal`, `sky_portal`, `z_only`, `black`; effect classes) and alpha-tested shaders without a colour map (light quads) | not drawn |
 | anything that fails to resolve or decode | the old steady hashed colour, with a message on the console |
@@ -281,6 +284,17 @@ Not yet: real cube-map reflections, parallax, `two_detail`'s second detail map, 
 bump. Translucent materials are still one mesh per material, so two
 overlapping translucent materials can sort wrongly.
 
+**Isolation** (`isolation`). The glowing slits round the outer wall are three additive `plasma`
+shaders whose intensity pulses 0 -> 55; two of them store 0 as their intensity and drew nothing,
+so a pulsing intensity stored as 0 now glows at the top of its pulse (`textures.rs`
+`illum_intensity`; `docs/format/shaders.md` 11.4). The pulse is not animated. How bright the
+slits come out also depends on the plasma band weighting (thinness 512 makes the sharp band
+faint). The Flood (`material_model organism` balls, `two_lobe_phong` mounds and plates) is drawn
+diffuse; the tunnels' warm and cool light beams are additive `illum_detail` cones. Isolation
+has no water and no kill volume (only `safe_zone` and three bird flocks): the walls keep the
+skater in, and the floor 20 wu under the lowest collision (z -31.3) catches anything else
+(`docs/format/reference-numbers.md` 11).
+
 ### Water
 
 `world/water.rs` and `world/shaders/water.wesl`; the tag layout and the evidence are in
@@ -337,6 +351,60 @@ Blackout (`lockout`) has one too, `kill_volume_bottom`, from z -18.3 down past t
 anyone who drops off the rig falls about six world units past the lowest deck (-12.6) and is
 put back. The rig's legs and cross beams at z -13 to -18 are above it, so a fall can land on
 them; their grind rails (about 660) are kept.
+Narrows (`chill`) has four: `kill_drop` fills the chasm from z -60 up to 48.7, about ten world
+units under the bridge and the bases (walkways and spawns at z 58.7 to 63.3), and three tilted
+boxes `kill_zone1..3` sit under the bases and the middle of the bridge. The ledges and support
+tops under the bridge (z 44 to 48.7) are inside `kill_drop`, so their rails are dropped (about
+1,090 of 4,204). Headless check:
+
+```
+$env:HALO3_SWIM_TEST="20,0,55"; $env:HALO3_SKATE_FOR="8"
+& "target\debug\halo3.exe" chill --shot .scratch\shots\chill\fall --skate --view spawn
+```
+
+throws the skater off the side of the bridge; it logs `fall: into kill_drop at halo [20.03,
+0.20, 48.61]` and is back at the spawn. Narrows' scenario also lists the kill volumes and a
+`safe_zone` in blocks of their own (`docs/format/zone-sets.md` 5); the viewer goes by name.
+Rat's Nest (`armory`) has `kill_vol_cliff` over the canyon west of the overlook (x under -8.75,
+z -46.5 to -16.4; the overlook's floor is at -10): a rider who goes over the edge lands on the
+cliff's ledges or falls into it and is put back. Its 47 rails are dropped. Under the volume, on
+the canyon floor at z -52, the scenario stacks a pile of Forge blocks (`box_*`, `wall_*`, two of
+each size); nobody reaches them and they are not seen from the play space.
+
+Rat's Nest's crates and props (`crate_packing_giant_mp` in the hangar, jersey barriers, barrels)
+have no collision yet: the collision is the structure BSP and its instances only, and scenery and
+crates' own collision models (`coll`) are not decoded, on any map. The skater and the bike ride
+through them.
+
+Sandtrap (`shrine`) has no kill volumes and no invisible walls round its desert: in the game, six
+Guardians on the obelisks round the edge (`shrine_defender` vehicles at z 52) shoot anyone who
+wanders off. Each watches one `tv_turret_*` trigger volume, a slab about 95 wu deep reaching from
+its obelisk in towards the middle, and the play space is the scenario's `safe_zone` (x -94.4 to
+88.9, y -100.1 to 81.4). So a point inside a watch volume and outside the safe zone, both seen
+from above, counts as a fall (`blam_geometry::scene::guarded`, `falls.rs`): riding onto the
+Forerunner wall's walkway in the east, over the dunes in the west, or out past the bases. Heights
+are left out on purpose: the west dunes rise to z 22, over the tops of the watch volumes (z -7 to
+-24), and a jump in the middle of the desert can rise over the safe zone's top. The start prints
+`Guardian watch volumes: 6`. Without this the bike could ride out over the dunes to the edge of the
+collision, 250 to 330 wu out, before dropping out of the world. Grind rails where the Guardians
+shoot are cut too: of about 2,940 found, about 2,124 are left, all inside the play space (the
+wall's long rims, 320 and 406 m, are gone). Sandbox has the same Guardians and volumes and gets
+the same rule.
+
+The Elephants (Sandtrap's two team bases, `behemoth` vehicles) are drawn parked where the
+scenario puts them, with the Guardians, but have no collision yet (object collision models are
+not decoded, as for scenery and crates): the six spawn points on their decks, 1.65 wu over the
+sand, drop a skater or the bike through the deck onto the sand under it. The viewer starts on
+spawn 0, the first of them.
+
+Sandbox (`sandbox`, DLC) has one `kill` volume, a 2 wu slab at z 35.07..37.07 under the sky
+level's grid disc (z 37.5): a fall from the sky level ends there. Its `tv_turret_*` volumes and
+`safe_zone` are the Guardian towers' edge rule (the Sandtrap branch's `scene::guarded`); the
+ring wall round the desert keeps everyone in otherwise. Most of the middle is Forge pieces
+(crates and scenery) with no collision yet (known for every map): 28 of the 80 spawns, the start
+spawn among them, stand on such pieces 1.7 to 2 wu up, so the skater and the bike drop to the
+floor (z -22.76) at the start. About 1,095 grind rails, the longest round the top of the outer
+wall.
 
 High Ground's cove (`deadlock_water_awesome`, a flat sheet at z 4.41 over x -37.0..15.1,
 y -67.8..-25.5) ends in a straight hard edge out at sea, where the sky model's far sea (`lake`,
@@ -414,6 +482,10 @@ The log says how each placement was lit, e.g. Valhalla:
   surface is seen edge-on to `edge_fade_center_tint` face-on, by `|n.v|^edge_fade_power`. Last
   Resort's foam rings round the distant islands (`island_water_edges`, additive, x2.75) drew as
   solid white slabs on the sea without these two.
+- Pre-multiplied-alpha sky shaders multiply their colour (haze included) by their alpha in the sky
+  shader: their colour maps are not pre-multiplied (white or grey where the alpha is 0). Sandbox's
+  horizon cloud band (`fortress_clouds_horizon`) and sunlit cloud cards (`clouds_sunbathed`) drew
+  as a whole band with a hard top edge across the sky and as pale polygons.
 - Alpha-tested sky shaders are cut by the albedo's alpha in the sky shader, and keep their base map
   on the StandardMaterial so bevy's depth prepass cuts them too. High Ground's `water_edge_breakup`
   cards (alpha mean 0.14) round the cove drew as pale slabs along the edge of the sea.
@@ -448,20 +520,84 @@ to the world; `desaturation` (used by The Pit, 0.2) is ignored; Halo's real sky 
 exposure curve is not decoded (the `cfxs` exposure is, see "Lighting"); no sun glare or bloom; the sky does not move with the camera
 (it is at true size, about 7,500 wu out, which is what the haze distances need).
 
+## On foot
+
+F (or the controller's d-pad up) drops the Spartan on the ground under the
+camera; F again flies. `--foot` starts on foot at the start spawn. Code:
+`crates/halo3_foot/src/` (`physics.rs` the body, `pose.rs` the skeleton,
+`lib.rs` controls and camera) and `crates/halo3_weapons/src/`.
+
+| controller | keyboard and mouse | effect |
+|---|---|---|
+| left stick | W A S D | run (forward, back, strafe) |
+| right stick | mouse | aim; he faces where he aims |
+| A | Space | jump |
+| left stick click (hold) | Ctrl or C (hold) | crouch |
+| d-pad down | T | camera: his eyes (the start) / over the right shoulder |
+| RT | left button | fire |
+| right stick click | right button | zoom through the scope's levels |
+| X or RB | R | reload |
+| X or RB by a weapon | E | swap the weapon in hand for it |
+| Y | Tab, wheel, 1 / 2 | switch weapons |
+
+**Movement** uses the map's own player numbers (`docs/format/movement.md`,
+`blam movement <map>`): run 2.25 wu/s forward, 2.0 back and sideways, 9.6
+wu/s² on the ground and 1.05 in the air; crouched 0.9 wu/s; body 0.725 wu tall
+(0.5 crouched), 0.175 wu radius; eyes at 0.62 wu (0.45); ground up to 50°
+holds him. The jump is the tag's 3.08 wu/s under 9.78 m/s² gravity, a 1.48 wu
+(4.5 m) jump: high, and unchecked against the real game; `HALO3_JUMP=<metres>`
+sets the jump height instead. The step he walks up without jumping (0.45 m)
+is ours: Halo has no such number.
+
+The body is three spheres stacked from a step's height to the top of the
+head, against the same collision as the bike; rays under the feet hold him on
+the ground. Kill volumes, the bottom of the world, and water over his head
+put him back where he last stood.
+
+**The skeleton** is made up, not Halo's animations: a gait cycle (each foot
+half planted, half swinging) with two-bone IK for the legs, the hips bobbing
+and twisting, a lean into the run, tucked legs in the air, bent knees on a
+hard landing. The weapon points where he aims; the right hand takes its grip
+(`right_hand` marker) and the left hand reaches for its `left_hand` marker.
+`rider.rs` draws the Spartan from it as it does on the board. In his eyes his
+body is hidden and the weapon sits low and right in front of the camera; the
+over-shoulder camera also switches to his eyes when a wall pushes it into his
+helmet.
+
+**Weapons.** The map's weapons lie where the scenario places them (42 on
+Valhalla, nine kinds); taken ones come back after the placement's respawn
+time. He starts with the assault rifle. Walking over a weapon he lacks takes it
+into a free hand; over one he carries, takes its ammo; E swaps. Magazines,
+spare rounds, rounds per second, bursts (battle rifle), single shots,
+charging (plasma pistol, Spartan laser), spread, zoom levels, projectile
+speeds and ranges are the tags' (`docs/format/weapons.md`, `blam weapons`).
+Rounds fly at their speed and are traced against the collision; they leave
+tracers, sparks, scorch marks, explosions for the brute shot and missile pod.
+Not from the tags: reload times (2.1 s; 2.6 sniper, 3 missile pod, 0.6 per
+shotgun shell), the shotgun's 15 pellets, the battery use, charge times,
+grenades falling under gravity. Nothing takes damage yet. The HUD shows the
+crosshair (red when empty), both weapons' ammo, and prompts.
+
+Headless check: `halo3 riverworld --shot DIR --foot --view spawn12` stands him
+at spawn 12 for `HALO3_SKATE_FOR` seconds, then takes the rider pictures;
+`HALO3_FOOT_WALK=x,y` holds the stick (X right, Y forward) and
+`HALO3_FOOT_FIRE=1` holds the trigger (the log counts rounds and hits).
+
 ## Dirt bike
 
 B (or the controller's View / Back button) drops a dirt bike under the camera
-with the Spartan standing on it; B again flies. Code: `crates/halo3/src/bike/`
-(`physics.rs` the bike, `pose.rs` the rider, `mod.rs` controls, camera and the
-stick model). Dual-stick riding in the style of MX vs ATV Reflex:
+with the Spartan standing on it; B again flies. Code: `crates/halo3_bike/src/`
+(`physics.rs` the bike, `unleashed.rs` its numbers, `pose.rs` the rider,
+`lib.rs` controls, camera and the stick model). The handling is MX vs ATV
+Unleashed's stock Pro 250 (`docs/bike-unleashed.md`):
 
 | controller | keyboard | effect |
 |---|---|---|
-| left stick X | A / D | handlebars (less lock at speed); the bike leans into the turn itself |
-| right stick | arrow keys | rider: forward / back moves his weight (front down, wheelies); left / right tightens the turn; in the air it pitches, leans and whips the bike |
-| RT | W | throttle: one long gear, 7 m/s² linear acceleration to 90 km/h |
-| LT | S | brake (65 % front) |
-| A (hold) | Space (hold) | back up, up to 3 m/s |
+| left stick X | A / D | handlebars (30°, less at speed); the bike leans with them, up to 45° at 35 mph |
+| right stick | arrow keys | rider: back moves the weight back, and back with gas holds a wheelie (more stick, higher); full forward on the brake holds a stoppie; in the air it pitches the bike, X turns and banks it |
+| RT | W | throttle: five-speed engine with automatic shifts, about 80 mph flat out |
+| LT | S | brakes (both wheels); in the air it drops the nose, the gas lifts it |
+| A (hold) | Space (hold) | back up, up to 10 mph |
 | Y | R | stand the bike back up |
 
 Hitting the bars or the rider's head, or landing upside down, is a crash: two
@@ -478,7 +614,7 @@ seconds, then takes the rider pictures.
 
 ## Sound
 
-`crates/halo3/src/audio/` plays Halo 3's own sound from the user's install: the
+`crates/halo3_audio/src/` plays Halo 3's own sound from the user's install: the
 `snd!` / `lsnd` / `ssce` tags of the map (`crates/blam_sound`, `docs/format/sound.md`) and
 the samples of MCC's FMOD bank `halo3\fmod\pc\sfx.fsb` (Vorbis, decoded with lewton;
 the Vorbis setup headers are rebuilt from the user's `halo3.dll`). Nothing is copied into
@@ -513,10 +649,15 @@ this repo. `HALO3_AUDIO=0` turns sound off; `--shot` never opens the sound devic
   start (`--music 120_music_15` or an index into the list the log prints). N moves to the
   alternate loop through its transition at the end of the current loop, and back. M again
   plays the outro (or fades out over the track's fade time).
-- **Board sounds while skating** (Skate 3's data has no audio): Halo's own samples, picked
-  from the bank by folder: the Brute chopper's hard-wheel loop for rolling (gain and pitch
-  with speed), a vehicle scrape while grinding, the Chief's hard concrete landing after
-  more than 0.25 s in the air (louder the longer the air). The skate engine's state names
+- **Board sounds while skating**: Halo's own samples, picked from the bank by folder: the
+  physics tire's hard-surface roll loop for rolling (`materials\havok\tire`, gain and pitch
+  with speed, pitched up for small wheels), a vehicle scrape while grinding, and after more
+  than 0.25 s in the air a wooden pallet hit (`materials\havok\wooden_palette_hits`, the
+  deck) over a tire bounce (`tire_hits`, the wheels), louder the longer the air, each at a
+  slightly random pitch. Until 2026-10-28 these were the Brute chopper's spiked wheels and
+  the Chief's armoured landing, which sounded wrong. Skate 3's own audio is in the user's
+  360 dump (`data\audio\wheels.big`, `grains.big`, `audiofiles.big`, EA "EB" v3 archives)
+  but nothing reads it yet. The skate engine's state names
   (`PhysicsGround`, `PhysicsAir`, `GrindFiftyFifty`, ...) come through `skate::SkateMotion`.
 - **Volume**: `HALO3_VOLUME` (default 0.8) sets the start level, `-` / `=` change it, K mutes.
 
@@ -537,3 +678,35 @@ first; dialogue (the per-language banks); weapon, vehicle, footstep and impact s
 game world; HaloScript-driven music cues (music is by hand); the dirt bike's engine
 (the Mongoose engine loops are in the bank). Halo's real distance curve and the meaning of
 the playback parameters' first two distances are not checked against the game.
+
+## Halo 2 maps
+
+Halo 2 multiplayer maps from MCC (classic graphics, `halo2\h2_maps_win64_dx11`) open the same
+way:
+
+```
+& "target\debug\halo3.exe" coagulation
+& "target\debug\halo3.exe" "C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11\coagulation.map"
+target\debug\halo3.exe coagulation --shot .scratch\shots\coagulation --view spawn --view overview
+```
+
+A bare name is tried as a Halo 3 map first, then in `%HALO2_MAPS%` (default: the MCC folder
+above); `h2:NAME` asks for the Halo 2 one when both games have a map of that name (`h2:lockout`,
+`h2:zanzibar`). The header tells the two games apart (`blam_h2::is_halo2`). Only Coagulation
+has been checked. `blam info|tags|strings|geometry|rails|shader|bitmap|textures` work on Halo 2
+maps too.
+
+`crates/blam_h2` (`docs/format/halo2.md`) decodes the whole map up front into the same `Scene`
+(clusters, instances, scenery, crates, sky, the collision BSP, the 123 player starting
+locations as spawns) and the viewer's material looks (`crates/halo3/src/halo2.rs`), so flying,
+skating (J), the dirt bike (B), rails and the fall-out-of-the-world respawn work unchanged.
+With no atmosphere tag the camera gets a fog that never thickens (the world shaders need the
+fog binding).
+
+Drawn: each material's base map with its tiling and its detail map, the ground's two detail
+maps blended by the base map's alpha (through the terrain path), alpha-tested foliage and
+banners, additive glows and light bands. The rider is Halo 3's Spartan, borrowed from
+`riverworld.map` when Halo 3 is installed. Not yet: the sky (its model decodes, but its layers
+need Halo 2's sky blending; drawn as plain translucent meshes they walled the canyon in flat
+blue, so the clear colour stands in), Halo 2's lightmaps (the world is lit by the default sun
+and sky), bump and environment maps, water as water (a plain see-through surface), fog, sound.

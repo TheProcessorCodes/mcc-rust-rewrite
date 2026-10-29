@@ -422,6 +422,25 @@ fn slot(m: &ShaderMap) -> Option<TextureSlot> {
     })
 }
 
+/// An additive halogram (`rmhg`) with no colour map of its own (`albedo
+/// constant_color`): what shows is its glow and its overlay, never its flat
+/// albedo colour. Sandbox's Forge grids (`sandbox_grid`, `sandbox_grid_dim`:
+/// albedo 0.75 grey, plasma glow, an `overlay_map` of grid lines tiled 62
+/// times) drew as a solid white sheet over the floor when that grey was
+/// added. An overlay that adds (`additive`, `additive_detail`), tinted by
+/// `overlay_tint`, becomes the colour map (the grid lines); otherwise the
+/// colour is black, leaving the self-illumination alone (shaders.md 8.7).
+/// A `multiply` overlay (Blackout's aurora, drawn by the sky) only tints
+/// the glow and is left to the sky shader.
+fn halogram_glow(s: &mut Shader) {
+    let overlay = matches!(s.option("overlay"), Some("additive" | "additive_detail"));
+    s.base = if overlay { s.map("overlay_map").and_then(slot) } else { None };
+    s.albedo_color = match &s.base {
+        Some(_) => s.param("overlay_tint").map(|t| [t[0], t[1], t[2], 1.0]),
+        None => Some([0.0, 0.0, 0.0, 1.0]),
+    };
+}
+
 /// Fills in the derived fields (shaders.md section 7).
 fn classify(s: &mut Shader) {
     let class = s.class.clone();
@@ -474,6 +493,9 @@ fn classify(s: &mut Shader) {
                 if let Some(c) = s.param("self_illum_color") {
                     s.albedo_color = Some(c);
                 }
+            }
+            if class == "rmhg" && s.base.is_none() && s.blend == Blend::Additive {
+                halogram_glow(s);
             }
             if s.alpha_test {
                 let alpha = find(s, "alpha_test_map");

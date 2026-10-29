@@ -323,7 +323,7 @@ fn halo_to_skate(k: f32) -> Mat4 {
         * Mat4::from_cols(Vec4::X, Vec4::NEG_Z, Vec4::Y, Vec4::W)
 }
 
-fn sampler(repeat: bool) -> ImageSampler {
+pub(crate) fn sampler(repeat: bool) -> ImageSampler {
     let mode = if repeat { ImageAddressMode::Repeat } else { ImageAddressMode::ClampToEdge };
     ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: mode,
@@ -336,7 +336,7 @@ fn sampler(repeat: bool) -> ImageSampler {
 }
 
 /// A Halo colour map as an sRGB RGBA8 image with its mip chain.
-fn halo_image(t: &Texture) -> Option<Image> {
+pub fn halo_image(t: &Texture) -> Option<Image> {
     let levels = t.mips.len() as u32;
     let mut data = Vec::new();
     for l in 0..levels {
@@ -743,7 +743,7 @@ fn pose_rider(
         return;
     };
     let show = pose.active && !pose.bones.is_empty();
-    let shown = (show, show && !pose.bike);
+    let shown = (show && !pose.first_person, show && !pose.bike && !pose.foot);
     if shown != rider.shown {
         rider.shown = shown;
         let rider = &*rider;
@@ -779,6 +779,23 @@ fn pose_rider(
     }
 }
 
+/// What an unlit object's colour is multiplied by at a Halo point: the
+/// baked lighting of the nearest lit surface (of the shown BSPs) for an
+/// up-weighted spread of normals, times the viewer's exposure.
+pub fn object_light(lights: Option<&SceneLights>, at: Vec3, shown: u32) -> Vec3 {
+    let light = match lights {
+        // The shown BSPs' surfaces only: overlapping versions of a space
+        // (120_halo's 010 and 070) light differently.
+        Some(l) if !l.0.is_empty() => l.0.near_in(at, shown),
+        _ => default_light(),
+    };
+    let side: Vec3 = [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y]
+        .iter()
+        .map(|n| light.irradiance(*n).max(Vec3::ZERO))
+        .sum();
+    (light.irradiance(Vec3::Z).max(Vec3::ZERO) * 0.4 + side * 0.15) * exposure()
+}
+
 /// Lights the rider the way the world lights objects: Halo's baked
 /// lighting at the nearest lit surface under the board, evaluated for an
 /// up-weighted spread of normals, times the viewer's exposure. Resampled
@@ -804,17 +821,7 @@ fn light_rider(
         return;
     }
     rider.lit_at = Some(at);
-    let light = match lights.as_deref() {
-        // The shown BSPs' surfaces only: overlapping versions of a space
-        // (120_halo's 010 and 070) light differently.
-        Some(l) if !l.0.is_empty() => l.0.near_in(at, loaded.as_deref().map_or(0, |b| b.shown)),
-        _ => default_light(),
-    };
-    let side: Vec3 = [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y]
-        .iter()
-        .map(|n| light.irradiance(*n).max(Vec3::ZERO))
-        .sum();
-    let e = (light.irradiance(Vec3::Z).max(Vec3::ZERO) * 0.4 + side * 0.15) * exposure();
+    let e = object_light(lights.as_deref(), at, loaded.as_deref().map_or(0, |b| b.shown));
     for (handle, colour) in &rider.materials {
         if let Some(mut m) = materials.get_mut(handle) {
             m.base_color = LinearRgba::rgb(colour.red * e.x, colour.green * e.y, colour.blue * e.z).into();

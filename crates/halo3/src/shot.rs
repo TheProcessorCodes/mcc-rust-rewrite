@@ -138,12 +138,14 @@ pub struct ShotPlan {
     pub bench: u32,
     /// Ride the dirt bike before the pictures (`--bike`).
     pub bike: bool,
+    /// Stand (or walk) on foot before the pictures (`--foot`).
+    pub foot: bool,
 }
 
 impl ShotPlan {
     /// Whether a rider is dropped in before the pictures.
     pub fn rides(&self) -> bool {
-        self.skate || self.bike
+        self.skate || self.bike || self.foot
     }
 }
 

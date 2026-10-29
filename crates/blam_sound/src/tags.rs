@@ -394,6 +394,105 @@ impl<'a> SoundTags<'a> {
     }
 }
 
-/// Size of an object attachment element; only the first (16-byte tag
-/// reference) field is read, so this matters only past the first.
-const ATTACHMENT_SIZE: usize = 24;
+/// Size of an object attachment element (`weapon-sounds.md` 6: tag
+/// reference, marker, two function names).
+pub(crate) const ATTACHMENT_SIZE: usize = 32;
+
+/// A sound class (`sncl`, one tag per map; a `snd!`'s class byte indexes
+/// its block): the defaults a sound falls back to and how many copies may
+/// play (`weapon-sounds.md` 7).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SoundClass {
+    /// Copies of one sound tag playing at once.
+    pub max_per_tag: i16,
+    /// Copies of one sound tag one object may play at once.
+    pub max_per_object: i16,
+    /// The four default distances, world units (see [`Playback::distances`]).
+    pub distances: [f32; 4],
+}
+
+impl Playback {
+    /// The four distances in effect: the sound's own where its flags use
+    /// them, else its class's defaults. In order: silent within, fully in
+    /// at, full volume within, silent beyond (`weapon-sounds.md` 7; the
+    /// meaning of the first two is inferred from the far-away sounds).
+    pub fn distances_with(&self, class: Option<&SoundClass>) -> [f32; 4] {
+        let mut d = self.distances;
+        for (n, v) in d.iter_mut().enumerate() {
+            if self.flags & (1 << n) != 0 {
+                *v = class.map_or(0.0, |c| c.distances[n]);
+            }
+        }
+        d
+    }
+}
+
+/// Gain 0..1 at `distance` for the four distances of
+/// [`Playback::distances_with`]: silent inside the first, fading in up to
+/// the second, full up to the third, then falling as the square of the
+/// remaining fraction to silence at the fourth. All zero: always full.
+pub fn distance_gain(distance: f32, [quiet, fade_in, full, far]: [f32; 4]) -> f32 {
+    if far <= 0.0 {
+        return 1.0;
+    }
+    if quiet > 0.0 && distance < quiet {
+        return 0.0;
+    }
+    if fade_in > quiet && distance < fade_in {
+        return (distance - quiet) / (fade_in - quiet);
+    }
+    if distance <= full {
+        1.0
+    } else if distance >= far || far <= full {
+        0.0
+    } else {
+        let t = (far - distance) / (far - full);
+        t * t
+    }
+}
+
+/// Size of a sound class element.
+const CLASS_SIZE: usize = 0x98;
+
+impl SoundTags<'_> {
+    /// The map's sound classes, by index (empty without an `sncl` tag).
+    pub fn classes(&self) -> Result<Vec<SoundClass>> {
+        let c = self.cache;
+        let Some(t) = c.tags.of_class("sncl").next() else {
+            return Ok(Vec::new());
+        };
+        let o = c.tag_offset(t)?;
+        let mut out = Vec::new();
+        for e in c.reader_at(o).block()?.elements(CLASS_SIZE) {
+            let mut r = c.reader_at(e);
+            let max_per_tag = r.i16()?;
+            let max_per_object = r.i16()?;
+            out.push(SoundClass {
+                max_per_tag,
+                max_per_object,
+                distances: c.reader_at(e + 0x34).f32x4()?,
+            });
+        }
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::distance_gain;
+
+    #[test]
+    fn near_and_far_layers() {
+        // Weapon fire (class 4) and its far-away layer (class 15).
+        let near = [0.0, 0.0, 3.0, 55.0];
+        let far = [3.0, 20.0, 35.0, 70.0];
+        assert_eq!(distance_gain(0.0, near), 1.0);
+        assert_eq!(distance_gain(0.0, far), 0.0);
+        assert!((distance_gain(11.5, far) - 0.5).abs() < 1e-6);
+        assert_eq!(distance_gain(30.0, far), 1.0);
+        assert!(distance_gain(60.0, far) > 0.0);
+        assert_eq!(distance_gain(60.0, near), 0.0);
+        // No distances at all: always heard.
+        assert_eq!(distance_gain(500.0, [0.0; 4]), 1.0);
+    }
+}

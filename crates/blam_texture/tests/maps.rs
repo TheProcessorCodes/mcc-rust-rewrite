@@ -251,3 +251,137 @@ fn guardian_shaders() {
         }
     }
 }
+
+/// Narrows' plasma: the corridor light strips (`cit_beam`, borrowed from
+/// The Covenant) keep their mask in the colour of an A8R8G8B8 bitmap whose
+/// alpha is flat white, unlike Guardian's; the energy walls have very thin
+/// sharp bands at a high intensity. Every render method in the map resolves.
+#[test]
+fn narrows_shaders() {
+    let Some(path) = map("chill") else { return };
+    let cache = CacheFile::open(path).unwrap();
+    let resources = cache.resources().unwrap();
+
+    let beam = shader::resolve(&cache, 10756).unwrap();
+    assert!(beam.name.ends_with(r"chill\shaders\cit_beam"), "{}", beam.name);
+    assert_eq!(beam.option("self_illumination"), Some("plasma"));
+    assert_eq!(beam.blend, Blend::Additive);
+    let mask = beam.map("alpha_mask_map").and_then(|m| m.bitmap).expect("plasma mask");
+    assert_eq!(mask, 10760);
+    let t = bitmap::decode(&cache, &resources, mask, 0).unwrap();
+    assert_eq!(t.format, Format::A8R8G8B8);
+    assert_eq!((t.width, t.height), (64, 256));
+    let px = rgba::decode_level(t.format, t.width, t.height, t.level(0, 0).unwrap()).unwrap();
+    let mean = rgba::channel_means(&px);
+    assert!(mean[3] > 0.999, "{mean:?}");
+    assert!((mean[0] - 0.284).abs() < 0.01, "{mean:?}");
+
+    let wall = shader::resolve(&cache, 10774).unwrap();
+    assert!(wall.name.ends_with(r"chill\shaders\plasma_wall_b"), "{}", wall.name);
+    assert_eq!(wall.option("self_illumination"), Some("plasma"));
+    assert_eq!(wall.param("thinness_sharp").map(|v| v[0]), Some(256.0));
+    assert_eq!(wall.param("self_illum_intensity").map(|v| v[0]), Some(150.0));
+
+    for t in cache.tags.iter() {
+        let class = cache.tags.class_of(t).code.as_str();
+        if matches!(class, "rmsh" | "rmtr" | "rmfl" | "rmw " | "rmd " | "rmhg") {
+            shader::resolve(&cache, t.index).unwrap_or_else(|e| panic!("{}: {e}", t.name()));
+        }
+    }
+}
+
+/// Sandbox's Forge grids (`docs/format/shaders.md` 8.7): additive
+/// halograms with a flat grey albedo and no colour map. They take their
+/// overlay (the grid lines, tiled 62 times) as the colour map, tinted blue,
+/// instead of adding the grey as a white sheet over the floor.
+#[test]
+fn sandbox_grid_shaders() {
+    let Some(path) = map("sandbox") else { return };
+    let cache = CacheFile::open(path).unwrap();
+    let resources = cache.resources().unwrap();
+
+    for (tag, name, offset) in [(238u32, "sandbox_grid_dim", 0.5f32), (244, "sandbox_grid", 0.0)] {
+        let s = shader::resolve(&cache, tag).unwrap();
+        assert!(s.name.ends_with(name), "{}", s.name);
+        assert_eq!(s.class, "rmhg");
+        assert_eq!(s.option("albedo"), Some("constant_color"));
+        assert_eq!(s.option("self_illumination"), Some("plasma"));
+        assert_eq!(s.blend, Blend::Additive);
+        let base = s.base.as_ref().expect("the overlay becomes the colour map");
+        assert!(base.name.ends_with("grid_illum"), "{}", base.name);
+        assert_eq!(base.usage, "overlay_map");
+        assert_eq!(base.xform.scale, [62.0, 62.0]);
+        assert_eq!(base.xform.offset, [offset, offset]);
+        let tint = s.param("overlay_tint").unwrap();
+        assert_eq!(s.albedo_color, Some([tint[0], tint[1], tint[2], 1.0]));
+        assert!(tint[2] > 0.99 && tint[0] < 0.2, "{tint:?}");
+
+        // The grid tile: black with a light border, alpha flat white (so a
+        // plasma mask has to be read from its colour).
+        let t = bitmap::decode(&cache, &resources, base.bitmap, 0).unwrap();
+        assert_eq!((t.width, t.height), (128, 128));
+        let px = rgba::decode_level(t.format, t.width, t.height, t.level(0, 0).unwrap()).unwrap();
+        let mean = rgba::channel_means(&px);
+        assert!((mean[0] - 0.054).abs() < 0.01 && mean[3] > 0.99, "{mean:?}");
+    }
+
+    // An additive halogram with neither a colour map nor an overlay adds
+    // only its glow: black albedo (`damage_sphere_plasma_fade`).
+    let fade = cache
+        .tags
+        .iter()
+        .find(|t| t.name().ends_with(r"shaders\damage_sphere_plasma_fade"))
+        .expect("damage_sphere_plasma_fade");
+    let s = shader::resolve(&cache, fade.index).unwrap();
+    assert!(s.base.is_none());
+    assert_eq!(s.albedo_color, Some([0.0, 0.0, 0.0, 1.0]));
+
+    for t in cache.tags.iter() {
+        let class = cache.tags.class_of(t).code.as_str();
+        if matches!(class, "rmsh" | "rmtr" | "rmfl" | "rmw " | "rmd " | "rmhg") {
+            shader::resolve(&cache, t.index).unwrap_or_else(|e| panic!("{}: {e}", t.name()));
+        }
+    }
+}
+
+/// Isolation's energy walls (the glowing slits in the outer wall): three
+/// additive plasma shaders pulsing their `self_illum_intensity` 0 -> 55.
+/// `plasma_wall_a` stores 55, `plasma_wall_b` and `_c` store 0, so the
+/// viewer takes the top of the pulse for those (`textures.rs`
+/// `illum_intensity`). The Flood growths use `material_model organism`.
+/// Every render method in the map resolves.
+#[test]
+fn isolation_shaders() {
+    let Some(path) = map("isolation") else { return };
+    let cache = CacheFile::open(path).unwrap();
+
+    for (tag, name, stored, period) in [
+        (10960, "plasma_wall_a", 55.0, 5.0),
+        (10963, "plasma_wall_b", 0.0, 8.0),
+        (10964, "plasma_wall_c", 0.0, 10.0),
+    ] {
+        let wall = shader::resolve(&cache, tag).unwrap();
+        assert!(wall.name.ends_with(name), "{}", wall.name);
+        assert_eq!(wall.option("self_illumination"), Some("plasma"));
+        assert_eq!(wall.blend, Blend::Additive);
+        assert_eq!(wall.param("self_illum_intensity").map(|v| v[0]), Some(stored));
+        let pulse = wall
+            .animation("self_illum_intensity", shader::AnimationKind::Value)
+            .expect("the intensity pulses");
+        assert!((pulse.from, pulse.to) == (0.0, 55.0) && (pulse.period - period).abs() < 1e-3, "{pulse:?}");
+        assert_eq!(wall.param("thinness_sharp").map(|v| v[0]), Some(512.0));
+    }
+
+    let sack = shader::resolve(&cache, 208).unwrap();
+    assert!(sack.name.ends_with(r"060_floodship\shaders\flood_sack"), "{}", sack.name);
+    assert_eq!(sack.option("material_model"), Some("organism"));
+    assert_eq!(sack.blend, Blend::Opaque);
+    assert!(sack.base.is_some());
+
+    for t in cache.tags.iter() {
+        let class = cache.tags.class_of(t).code.as_str();
+        if matches!(class, "rmsh" | "rmtr" | "rmfl" | "rmw " | "rmd " | "rmhg") {
+            shader::resolve(&cache, t.index).unwrap_or_else(|e| panic!("{}: {e}", t.name()));
+        }
+    }
+}

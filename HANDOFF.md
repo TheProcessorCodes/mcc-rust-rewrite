@@ -16,7 +16,7 @@ so the user can **skate (Skate 3 physics) on real Halo 3 maps**.
 | 2 | noclip: fly around the maps | done and playtested (keyboard, mouse after Tab, gamepad, Shift for speed) |
 | 3 | skate on multiplayer maps | done and playtested on Valhalla: the Skate 3 crates are linked and Master Chief rides. Guardian, Last Resort, High Ground and Blackout are built and pass tests but are not playtested |
 | 4 | skate on campaign maps | narrowed to the final mission, `120_halo`: zone sets, streaming, culling and skating across zone sets are built, awaiting a playtest. Other missions not checked |
-| later | dirt bike game (MX vs ATV Reflex) in the mix | started: B rides a dirt bike; the user's other sessions are tuning it towards stock Reflex |
+| later | dirt bike game (MX vs ATV Reflex) in the mix | started: B rides a dirt bike on MX vs ATV Unleashed's Pro 250 model (`docs/bike-unleashed.md`); the user called it the best base so far (2026-10-29) |
 
 ## The decision (made 2026-10-27)
 
@@ -60,7 +60,14 @@ What the game does now:
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
 - **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great".
-- **Dirt bike.** B rides it, with Master Chief on it (`bike/`). The user's other sessions are tuning it to stock Reflex (branches `bike-tune`, `bike-gas-backwards`, `bike-air-wheel`).
+- **Dirt bike.** B rides it, with Master Chief on it (`bike/`). Its physics are MX vs ATV Unleashed's (see "Dirt bike" below); the Reflex model and its tuning menu were replaced and live on in history and `backup/bike-physics-*`.
+- **On foot.** F walks the Spartan (`foot/`): the map's own movement numbers (`blam movement`,
+  `docs/format/movement.md`), a capsule on the collision, a made-up gait on the skate skeleton,
+  shoulder and eye cameras. He carries the map's weapons (`weapons/`, `blam weapons`,
+  `docs/format/weapons.md`): placed where the scenario puts them, picked up, fired with the tags'
+  rates, magazines, bursts, charge and zoom, projectiles traced against the collision. The user
+  has walked, jumped, fired and reloaded in it. Open: the tag's jump looks high (4.5 m); no damage,
+  no Halo animations, no first-person arms.
 - **Campaign, 120_halo.** Its 8 zone sets switch by PageUp / PageDown, `--zone`, or the scenario's own switch volumes as you move. You start at the player starting location (`docs/format/zone-sets.md`).
 - **Culling and streaming.**
   - The world is chunked into 64 wu cells.
@@ -86,6 +93,7 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Last Resort | `zanzibar` | built, tests pass, not playtested |
 | High Ground | `deadlock` | built, tests pass, not playtested; seam where the cove's water meets the sky's sea |
 | Blackout | `lockout` | built, tests pass, not playtested |
+| Sandbox | `sandbox` | written and pinned in tests, not built yet; Forge pieces have no collision |
 | Halo (final mission) | `120_halo` | built with streaming, not playtested |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
 
@@ -124,8 +132,9 @@ cargo build
 
 **Not started (the big pieces):**
 
-- An on-foot Spartan: walking, jumping, Halo's movement rules and biped collision.
-- Weapons, vehicles (the Warthog), and objects that move (machines, doors).
+- Halo's own biped animations (`jmad`) for the on-foot Spartan, first-person arms, grenades,
+  melee, damage and something to shoot at.
+- Vehicles (the Warthog), and objects that move (machines, doors).
 - HaloScript and AI, so campaign missions play rather than just load.
 - Reflex's real physics data read from the game files. The bike now uses numbers from the
   `D:\reflex-tools\physics` docs.
@@ -142,6 +151,14 @@ Halo) or the look fixes above.
 - The `bike-*` and `pause-menu` worktrees, and any locked agent worktree, belong to the user's
   other sessions; leave them alone.
 - `.gitattributes` forces LF.
+
+## Dirt bike (2026-10-28)
+
+The bike now rides on MX vs ATV Unleashed's stock Pro 250 model (`docs/bike-unleashed.md`,
+`crates/halo3_bike/src/unleashed.rs`), read from a decompile of the fan client's `mxacore.dll` and
+the user's own Unleashed `.phy` files. The earlier physics are on `backup/bike-physics-master-2026-10-28`
+and `backup/bike-physics-reflex-2026-10-28`. Awaiting the user's playtest; the doc lists what is
+not ported (clutch boost, surfaces, tricks, Unleashed's wreck rules).
 
 ## Open questions and known gaps
 

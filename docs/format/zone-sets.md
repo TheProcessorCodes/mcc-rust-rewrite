@@ -145,6 +145,18 @@ against the game's own containment test.
 (`rails::outside_kill_volumes`) cuts rails inside them: on the Warthog run zone sets that drops
 31,500 rails to 6,600 (most were ledges of the structure far under the track).
 
+**Kill and safe lists (multiplayer, found 2026-10-28 on Narrows).** Two scenario blocks name
+trigger volumes by index: `scnr + 0x484`, 2-byte elements (i16 trigger volume index), the kill
+volumes; `scnr + 0x490`, 4-byte elements (i16 index, then 2 bytes), the safe volumes. Narrows
+(`chill`): kill `[0, 3, 4, 5]` = `kill_drop`, `kill_zone1..3`, safe `[1]` = `safe_zone`.
+Guardian, Blackout, Valhalla, High Ground, The Pit and Rat's Nest each list one kill volume
+(index 0, the one named `kill*`) and one `safe_zone`; Last Resort lists two safe entries (`3`
+and `1528`, so the element layout is not fully pinned). The lists agree with our name rule
+(`TriggerVolume::kills`, `kill*` / `*_kill*`), which is what the code uses. Every map's
+`safe_zone` is a box round its play space that overlaps the top of the kill volume a little
+(Narrows: x -28.6..27.5, y -33.5..40.4, z 34.3..76.8, against `kill_drop` reaching z 48.7);
+what the game does with it is not known, and the viewer ignores it.
+
 **Zone-set switch trigger volume, 8 bytes** (four i16):
 
 | offset | meaning |

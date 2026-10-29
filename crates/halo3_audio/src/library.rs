@@ -7,7 +7,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use blam_cache::CacheFile;
-use blam_sound::tags::{Looping, MapSounds, SoundTags};
+use blam_sound::tags::{Looping, MapSounds, Sound, SoundClass, SoundTags};
+use blam_sound::weapons::{WeaponSoundReader, WeaponSounds};
 use blam_sound::{Library, Pcm};
 
 use super::mixer::{Clip, RATE};
@@ -19,6 +20,29 @@ pub struct SoundInfo {
     /// (full-volume distance, silent distance), world units.
     pub bounds: (f32, f32),
     pub gain_db: f32,
+    /// The four distances in effect (the sound's own, else its class's):
+    /// `blam_sound::tags::distance_gain`.
+    pub distances: [f32; 4],
+    /// Copies one object may play at once (its class's limit), at least 1.
+    pub per_object: usize,
+}
+
+impl SoundInfo {
+    fn new(snd: &Sound, classes: &[SoundClass], library: &Library) -> SoundInfo {
+        let class = classes.get(snd.class as usize);
+        SoundInfo {
+            permutations: snd
+                .permutations
+                .iter()
+                .map(|p| p.fmod_id)
+                .filter(|id| library.sample(*id).is_some())
+                .collect(),
+            bounds: snd.playback.bounds(),
+            gain_db: snd.playback.gain_db,
+            distances: snd.playback.distances_with(class),
+            per_object: class.map_or(1, |c| c.max_per_object.max(1) as usize),
+        }
+    }
 }
 
 /// The gameplay one-shots and loops the viewer picks from the bank by
@@ -28,6 +52,8 @@ pub struct Gameplay {
     pub roll: Vec<u32>,
     pub grind: Vec<u32>,
     pub land: Vec<u32>,
+    /// Played under `land`: the wheels hitting the ground.
+    pub land_wheels: Vec<u32>,
 }
 
 /// The map's sounds, resolved from its tags.
@@ -37,6 +63,8 @@ pub struct SoundData {
     pub sounds: HashMap<u32, SoundInfo>,
     pub loops: HashMap<u32, Looping>,
     pub gameplay: Gameplay,
+    /// Every `weap` tag's sounds, by tag index.
+    pub weapons: HashMap<u32, WeaponSounds>,
 }
 
 impl SoundData {
@@ -153,6 +181,11 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
     let library = Library::open_beside(maps)?;
     let tags = SoundTags::new(cache)?;
     let map = tags.map_sounds()?;
+    let classes = tags.classes().unwrap_or_default();
+    let weapons = WeaponSoundReader::new(cache).all().unwrap_or_else(|e| {
+        bevy::log::warn!("sound: weapons not read ({e})");
+        HashMap::new()
+    });
 
     let mut loops = HashMap::new();
     let mut wanted: Vec<u32> = map.scenery.iter().filter_map(|s| s.looping).collect();
@@ -165,6 +198,7 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         );
     }
     wanted.extend(map.music.iter().map(|(t, _)| *t));
+    wanted.extend(weapons.values().flat_map(|w| w.all_loops()));
     let mut seen = HashSet::new();
     let mut sounds = HashMap::new();
     for l in wanted {
@@ -195,22 +229,17 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
                 continue;
             }
             if let Ok(snd) = tags.sound(s) {
-                sounds.insert(
-                    s,
-                    SoundInfo {
-                        permutations: snd
-                            .permutations
-                            .iter()
-                            .map(|p| p.fmod_id)
-                            .filter(|id| library.sample(*id).is_some())
-                            .collect(),
-                        bounds: snd.playback.bounds(),
-                        gain_db: snd.playback.gain_db,
-                    },
-                );
+                sounds.insert(s, SoundInfo::new(&snd, &classes, &library));
             }
         }
         loops.insert(l, looping);
+    }
+    for s in weapons.values().flat_map(|w| w.all_sounds()) {
+        if !sounds.contains_key(&s)
+            && let Ok(snd) = tags.sound(s)
+        {
+            sounds.insert(s, SoundInfo::new(&snd, &classes, &library));
+        }
     }
 
     let under = |folder: &str| -> Vec<u32> {
@@ -223,9 +252,12 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
             .collect()
     };
     let gameplay = Gameplay {
-        roll: under(r"data\sound\vehicles\brute_chopper\wheels_hard\track1\loop\"),
+        roll: under(
+            r"data\sound\materials\havok\tire\tire_looping_hard_surface\tire_looping_hard_surface\loop\",
+        ),
         grind: under(r"data\sound\vehicles\damage_effects\vehicle_scrape_low\"),
-        land: under(r"data\sound\characters\footsteps\chief\concrete_h3\land_hard\"),
+        land: under(r"data\sound\materials\havok\wooden_palette_hits\"),
+        land_wheels: under(r"data\sound\materials\havok\tire\tire_hits\"),
     };
 
     let (req_tx, req_rx) = channel::<u32>();
@@ -246,11 +278,12 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
             }
         })?;
     bevy::log::info!(
-        "sound: {} sound scenery, {} looping sounds, {} sounds, {} music tracks; bank and tags read in {:.2} s",
+        "sound: {} sound scenery, {} looping sounds, {} sounds, {} music tracks, {} weapons; bank and tags read in {:.2} s",
         map.scenery.len(),
         loops.len(),
         sounds.len(),
         map.music.len(),
+        weapons.len(),
         started.elapsed().as_secs_f32()
     );
     Ok(Loaded {
@@ -259,6 +292,7 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
             sounds,
             loops,
             gameplay,
+            weapons,
         }),
         clips,
     })

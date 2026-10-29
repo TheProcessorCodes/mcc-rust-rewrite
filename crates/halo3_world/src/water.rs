@@ -18,7 +18,7 @@
 //! replaces the material of the water and flow batches, keeping the
 //! lightmap. The CPU work happens in [`load`] before the window opens.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::core_pipeline::prepass::DepthPrepass;
@@ -32,7 +32,7 @@ use bevy::render::render_resource::{
 use bevy::shader::ShaderRef;
 
 use blam_cache::CacheFile;
-use blam_geometry::Scene;
+use blam_geometry::{Kind, Scene};
 use blam_geometry::atmosphere::{Atmosphere, AtmosphereSetting};
 use blam_texture::shader::{self, AnimationKind, Shader};
 use blam_texture::{Blend, Format, Texture, Xform, bitmap};
@@ -196,7 +196,19 @@ pub fn load(cache: &CacheFile, scene: &Scene) -> WaterData {
             return out;
         }
     };
+    // Sky placements are drawn by the sky material (`sky.rs`), never by
+    // this one: Rat's Nest's scrolling smoke columns (`smoke_a`,
+    // `smoke_thin`) are flowing two_detail shaders that only the sky uses.
+    let world_materials: HashSet<u32> = scene
+        .placements
+        .iter()
+        .filter(|p| p.kind != Kind::Sky)
+        .flat_map(|p| scene.meshes[p.mesh as usize].parts.iter().map(|part| part.material))
+        .collect();
     for (i, m) in scene.materials.iter().enumerate() {
+        if !world_materials.contains(&(i as u32)) {
+            continue;
+        }
         let Some(tag) = m.shader_tag else { continue };
         let Ok(s) = shader::resolve(cache, tag) else { continue };
         let Some(look) = look_of(&s) else { continue };

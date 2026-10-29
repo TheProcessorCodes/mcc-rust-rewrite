@@ -22,24 +22,31 @@
 //!                        start a music track (`audio/`; M plays the map's
 //!                        showpiece, e.g. the Warthog run on 120_halo)
 //!
+//! `--foot` starts on foot at the start spawn (`foot/mod.rs`; F toggles).
+//!
 //! In a map, J switches between flying and skating (see `skate.rs`), B
 //! between flying and the dirt bike (`bike/mod.rs`), PageDown / PageUp step
 //! through the zone sets, Home loads every BSP. Escape or Start pauses and
 //! lists the controls (`pause.rs`).
 //! ```
 //!
-//! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install.
+//! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install; Halo 2
+//! maps (`coagulation`, or `h2:NAME`) in `%HALO2_MAPS%` or MCC's
+//! `halo2\h2_maps_win64_dx11` (`halo2.rs`).
 
+mod halo2;
 mod pause;
 mod shot;
 
 use halo3_audio as audio;
 use halo3_bike as bike;
 use halo3_core::{falls, fly_camera};
+use halo3_foot as foot;
 use halo3_rider as rider;
 use halo3_skate as skate;
 use halo3_swim as swim;
 use halo3_textures as textures;
+use halo3_weapons as weapons;
 use halo3_world as world;
 
 use std::path::PathBuf;
@@ -49,28 +56,43 @@ use bevy::window::PresentMode;
 
 use halo3_core::DEFAULT_MAPS;
 
+/// MCC's Halo 2 (classic) maps, tried when a bare name is not a Halo 3 map.
+pub(crate) const DEFAULT_H2_MAPS: &str =
+    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11";
+
+/// A path, or a bare name: a Halo 3 map in `%HALO3_MAPS%` (or the MCC
+/// install), else a Halo 2 map in `%HALO2_MAPS%` (or the MCC install).
+/// `h2:NAME` picks the Halo 2 map when both games have one by that name
+/// (`lockout`, `zanzibar`).
 fn resolve_map(arg: &str) -> PathBuf {
     let p = PathBuf::from(arg);
     if p.exists() {
         return p;
     }
-    let dir = std::env::var_os("HALO3_MAPS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_MAPS));
-    let mut name = arg.to_string();
+    let (h2_only, bare) = match arg.strip_prefix("h2:") {
+        Some(rest) => (true, rest),
+        None => (false, arg),
+    };
+    let mut name = bare.to_string();
     if !name.ends_with(".map") {
         name.push_str(".map");
     }
-    dir.join(name)
+    let dir = |var: &str, default: &str| std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default));
+    let h3 = dir("HALO3_MAPS", DEFAULT_MAPS).join(&name);
+    let h2 = dir("HALO2_MAPS", DEFAULT_H2_MAPS).join(&name);
+    if h2_only || (!h3.exists() && h2.exists()) { h2 } else { h3 }
 }
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut foot_tuning = None;
+    let mut arsenal = None;
     let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
-  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike] [--bench N]
+  halo3 <map> [--foot]
+  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
   halo3 --test-scene");
             std::process::exit(2);
         }
@@ -82,6 +104,24 @@ fn main() -> anyhow::Result<()> {
             world::water::WaterData::default(),
             None,
         ),
+        Some(map) if blam_h2::is_halo2(&resolve_map(map)) => {
+            // Halo 2: everything decoded up front, no Halo 3 cache file
+            // behind it (`halo2.rs`).
+            let (scene, textures) = halo2::load(&resolve_map(map))?;
+            // The rider is Halo 3's Spartan, borrowed from Valhalla when
+            // Halo 3 is installed (Halo 2's Master Chief is not decoded).
+            let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
+                .ok()
+                .and_then(|c| rider::load_chief(&c));
+            (
+                scene,
+                textures,
+                chief,
+                world::sky::SkyData::default(),
+                world::water::WaterData::default(),
+                None,
+            )
+        }
         Some(map) => {
             let path = resolve_map(map);
             let started = std::time::Instant::now();
@@ -131,6 +171,20 @@ fn main() -> anyhow::Result<()> {
                 Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
             }
             let chief = rider::load_chief(cache);
+            arsenal = weapons::assets::load(cache);
+            match blam_geometry::movement::read(cache) {
+                Ok(m) => {
+                    eprintln!(
+                        "on foot: {} runs {:.2} wu/s, jumps {:.2} wu/s ({:.2} wu high)",
+                        m.biped,
+                        m.run_forward,
+                        m.jump_velocity,
+                        m.jump_height()
+                    );
+                    foot_tuning = Some(foot::physics::Tuning::from_movement(&m));
+                }
+                Err(e) => eprintln!("on foot: no player numbers ({e}); using Valhalla's"),
+            }
             let sky = world::sky::load(cache, &scene);
             let water = world::water::load(cache, &scene);
             (scene, textures, chief, sky, water, Some(cache))
@@ -211,6 +265,9 @@ fn main() -> anyhow::Result<()> {
                 Some((position, yaw)) if plan.bike => {
                     app.insert_resource(bike::AutoStart::at(position, yaw));
                 }
+                Some((position, yaw)) if plan.foot => {
+                    app.insert_resource(foot::AutoStart::at(position, yaw));
+                }
                 Some((position, yaw)) => {
                     app.insert_resource(skate::AutoStart::at(position, yaw));
                 }
@@ -229,13 +286,32 @@ fn main() -> anyhow::Result<()> {
         .add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
         if !collision.triangles.is_empty() {
             app.insert_resource(bike::BikeInput(collision))
-                .add_plugins(bike::BikePlugin);
+                .add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin));
+            if let Some(t) = foot_tuning {
+                app.insert_resource(foot::FootTuning(t));
+            }
+            // `--foot`: start on foot at the start spawn.
+            if !shot_mode
+                && args.iter().any(|a| a == "--foot")
+                && let Some((position, yaw)) = scene
+                    .spawns
+                    .first()
+                    .map(|s| (s.position, s.yaw))
+                    .or_else(|| scene.starts.first().map(|s| (s.position, s.yaw)))
+            {
+                app.insert_resource(foot::AutoStart::at(position, yaw));
+            }
         }
         // Kill volumes and the bottom of the world (`falls.rs`), water
         // surfaces and the ground under them, for sinking, falling and
         // respawning (`swim.rs`).
         let kill = falls::KillZones::new(&scene.trigger_volumes, &scene.collision);
-        eprintln!("kill volumes: {}; out of the world below z {:.1} wu", kill.volumes.len(), kill.floor);
+        eprintln!(
+            "kill volumes: {}; Guardian watch volumes: {}; out of the world below z {:.1} wu",
+            kill.volumes.len(),
+            kill.guard_count(),
+            kill.floor
+        );
         app.insert_resource(kill);
         let mut water_materials: Vec<u32> = water
             .looks
@@ -253,13 +329,18 @@ fn main() -> anyhow::Result<()> {
             app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
         }
     }
+    app.insert_resource(weapons::PendingArsenal(arsenal));
     app.insert_resource(zones)
         .insert_resource(world::stream::ZoneTriggers::new(shot_mode))
         .insert_resource(loaded)
         .insert_resource(world::PendingScene(Some(scene), Some(textures), map_file))
         .insert_resource(world::sky::PendingSky(Some(sky)))
         .insert_resource(world::water::PendingWater(Some(water)))
-        .add_plugins((pause::PausePlugin, fly_camera::FlyCameraPlugin, world::WorldPlugin))
+        .add_plugins((
+            pause::PausePlugin,
+            fly_camera::FlyCameraPlugin,
+            world::WorldPlugin,
+        ))
         .run();
     Ok(())
 }
@@ -297,6 +378,7 @@ fn shot_plan(args: &[String], scene: &blam_geometry::Scene) -> anyhow::Result<Op
         size,
         skate: args.iter().any(|a| a == "--skate"),
         bike: args.iter().any(|a| a == "--bike"),
+        foot: args.iter().any(|a| a == "--foot"),
         bench: value("--bench").map(|n| n.parse()).transpose()?.unwrap_or(0),
     }))
 }

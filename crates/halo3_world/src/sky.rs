@@ -285,7 +285,8 @@ pub struct SkyShading {
     pub albedo_colour: Vec4,
     #[uniform(100)]
     pub illum_colour: Vec4,
-    /// x: albedo mode, y: additive, z: lit, w: exposure.
+    /// x: albedo mode, y: blend (0 other, 1 additive, 2 pre-multiplied
+    /// alpha), z: lit, w: exposure.
     #[uniform(100)]
     pub mode: Vec4,
     #[uniform(100)]
@@ -484,7 +485,12 @@ fn swap_sky_materials(
             centre_tint: look.edge_fade.map_or(Vec4::ONE, |(_, c, p)| v3(c, p)),
             mode: Vec4::new(
                 look.albedo as u32 as f32,
-                (look.blend == Blend::Additive) as u32 as f32,
+                match look.blend {
+                    Blend::Additive => 1.0,
+                    // The shader multiplies its colour by its alpha.
+                    Blend::PreMultiplied => 2.0,
+                    _ => 0.0,
+                },
                 look.lit as u32 as f32,
                 exposure,
             ),
@@ -560,11 +566,21 @@ fn update_sky_air(
 
 /// Gives the camera its haze once the world is up.
 fn add_haze(mut commands: Commands, cameras: Query<Entity, (With<Camera3d>, Without<DistanceFog>)>, haze: Res<WorldHaze>) {
-    if haze.setting.is_none() {
-        return;
-    }
     for camera in &cameras {
-        commands.entity(camera).insert(DistanceFog::default());
+        let fog = if haze.setting.is_some() {
+            DistanceFog::default()
+        } else {
+            // No atmosphere tag (Halo 2 maps, the test scene): still a fog
+            // for the world shaders' fog binding (`lightmap.wesl`), but one
+            // that never thickens.
+            DistanceFog {
+                color: Color::NONE,
+                directional_light_color: Color::NONE,
+                falloff: FogFalloff::Exponential { density: 0.0 },
+                ..default()
+            }
+        };
+        commands.entity(camera).insert(fog);
     }
 }
 

@@ -22,17 +22,20 @@ the format descriptions the code is written from.
 |---|---|
 | `crates/blam_cache` | opens a `.map`: header, sections, tag index, tag names, string ids, a cursor for tag data, resource pages |
 | `crates/blam_geometry` | decodes structure BSPs (clusters and instances) into plain meshes with materials |
+| `crates/blam_h2` | MCC Halo 2 maps: inflated in memory, tags, `shared.map` and `textures.dat` read, BSP, collision, objects, spawns, shaders and bitmaps decoded into the same `Scene` (`docs/format/halo2.md`) |
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
-| `crates/halo3` | the `halo3` binary: wires the crates below into an app, `--shot` screenshots, the pause menu (`docs/viewer.md`) |
-| `crates/halo3_core` | what the runtime crates share: coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones. Every `halo3_*` crate depends on it, so keep it small |
+| `crates/halo3` | the `halo3` binary: wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
+| `crates/halo3_core` | what the runtime crates share: coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
 | `crates/halo3_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
 | `crates/halo3_world` | the world on the GPU: BSP streaming, culling, lightmaps, sky, water, zone keys |
-| `crates/halo3_audio` | the map's sounds, music and the board sounds |
+| `crates/halo3_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
 | `crates/halo3_skate` | skating through the Skate 3 engine (`skate-host`) |
 | `crates/halo3_rider` | the Spartan on the board |
-| `crates/halo3_bike` | the dirt bike |
+| `crates/halo3_bike` | the dirt bike (MX vs ATV Unleashed's Pro 250) |
+| `crates/halo3_foot` | the Spartan on foot |
+| `crates/halo3_weapons` | the map's weapons, carried and fired on foot |
 | `crates/halo3_swim` | water, sinking and splashes |
 | `docs/format` | the file format, field by field |
 | `docs/` | notes on IW4L and the skate interface |
@@ -57,7 +60,10 @@ A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
 `sidewinder` Avalanche, `guardian` Guardian,
-`lockout` Blackout.
+`lockout` Blackout, `chill` Narrows, `armory` Rat's Nest, `shrine` Sandtrap,
+`sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
+`halo2\h2_maps_win64_dx11` (`coagulation`; `h2:NAME` when Halo 3 has a map of
+that name, see `docs/viewer.md` "Halo 2 maps").
 
 ## Status
 
@@ -86,6 +92,16 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       alpha-tested `water_edge_breakup` cards drawn whole round the cove,
       multiply decals (`medical_decals`) lit and exposed. Still off: a hard
       seam where the cove's water ends and the sky's far sea begins.
+- [x] Isolation (`isolation`, 2026-10-29; not built yet, awaiting a build
+      and a playtest): every HaloExport count matches (47 cluster meshes,
+      391 instances, 380,662 triangles with objects, the Flood door where
+      HaloExport put it), 49 of 49 colour bitmaps decode, 91 spawns all on
+      the ground and clear of walls, no collision holes under the render
+      floors, no kill volume (the walls keep everyone in), about 3,900
+      rails; pinned by `cargo test` (`docs/format/reference-numbers.md`
+      11). Fixed on the way: two of the three energy-wall glows store an
+      intensity of 0 and pulse up to 55, and drew nothing; they now glow at
+      the top of the pulse. The Flood's `organism` shader is drawn diffuse.
 - [x] Milestone 1c: scenery, crates, machines, controls and the sky placed
       from the scenario, again matching HaloExport's triangle counts exactly.
 - [x] Textures (built, awaiting a playtest): every material draws its real
@@ -114,6 +130,11 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 - [x] Spawn points (107 on Valhalla); the viewer starts on one.
 - [x] Spartan skeleton and skin weights decode (`blam nodes`); bone mapping
       to the skater in `docs/rider.md`.
+- [x] On foot (built, awaiting a playtest): F walks the Spartan with Halo 3's
+      own movement numbers (run, crouch, jump, slopes, capsule), a made-up
+      gait for the skeleton, an over-shoulder or eye camera; he carries the
+      map's weapons and fires them with their tags' rates, magazines and
+      projectile speeds (`docs/viewer.md` "On foot").
 - [x] Dirt bike (built, awaiting a playtest): B rides a stick-model motocross
       bike with dual-stick physics (left stick bars, right stick rider, RT gas,
       LT brake), the Spartan standing on it (`docs/viewer.md` "Dirt bike").
@@ -140,6 +161,70 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       floes, with the moon, its halo and the aurora (`plasma`) drawn.
       Dropping off the rig (`kill_volume_bottom`, z -18.3) puts the skater
       or the bike back. Pinned by `cargo test` (our own counts).
+- [x] Narrows (`chill`; written 2026-10-28, not yet built or playtested):
+      29 cluster meshes, 201 instances, 287 k triangles with objects, 109
+      materials all resolving and every bitmap decoding, 79 spawns (all on
+      a floor, on the bases and the bridge), 25,770 world and 64,620
+      instanced collision triangles, 4,204 rails of which about 3,115 are
+      kept above the chasm. Falling off the bridge into `kill_drop` (up to
+      z 48.7) puts the skater or the bike back. Fixed on the way, not yet
+      built: plasma glows weighted by how much of each thin band shows
+      (the energy walls blew out to white, the corridor light strips were
+      solid slabs, their mask read from red where its alpha is flat), and
+      a bike panic on a zero-length first frame (NaN into `clamp`). Pinned
+      by `cargo test` (our own counts, no HaloExport reference).
+- [x] Rat's Nest (`armory`, DLC; checked by headless shots, test written
+      but not yet built): 38 clusters, 1,906 instances, 894 k triangles,
+      97 spawns (all on a floor, clear of walls), 19,044 world and 319,704
+      instanced collision triangles, no holes under the play space's
+      floors, about 6,990 rails (47 dropped in `kill_vol_cliff`, the
+      canyon under the west overlook). Interiors, the overlook, the sky's
+      smoke columns, skating and the bike come out right with no
+      map-specific code; the sky's scrolling smoke shaders are no longer
+      mistaken for waterfalls. Not yet: crates and props have no collision
+      (object `coll` models are not decoded on any map), so the hangar's
+      giant crates can be ridden through. Our own counts
+      (`crates/blam_geometry/tests/maps.rs`).
+- [x] Sandtrap (`shrine`; checked by headless shots before the changes
+      below, which are written but not yet built): 42 clusters, 327
+      instances, 313 k triangles, 103 spawns, 11,496 world and 50,684
+      instanced collision triangles, no holes under the render floors. The
+      sand blend, the Forerunner wall and obelisks, the crashed Phantom, the
+      frigate in the sky, haze and exposure come out with no map-specific
+      code. New: the map's own vehicles are placed (`Kind::Vehicle`, tags
+      under `objects\levels\`): the two Elephants (the team bases) and the
+      six Guardian defenders on the obelisks. The map has no kill volumes;
+      leaving the safe zone where a Guardian watches (`tv_turret_*`) now
+      counts as a fall (`blam_geometry::scene::guarded`), so the bike can
+      no longer ride out over the dunes, and rails there are cut (about
+      2,940 found, 2,124 kept). Not yet: the Elephants have no collision,
+      so the six spawns on their decks drop through to the sand. Our own
+      counts (`crates/blam_geometry/tests/maps.rs`, `docs/viewer.md`
+      "Falling out of the map").
+- [x] Sandbox (`sandbox`, DLC; written, not built yet): 7 clusters,
+      46 instances, 266 k triangles with its Forge pieces, 80 spawns (50 on
+      the collision, 28 on Forge pieces that have no collision yet),
+      12,889 world and 7,644 instanced collision triangles, about 1,095
+      rails, one `kill` slab under the sky level. Fixed on the way: the
+      Forge floor grid (an additive halogram with a flat grey albedo) drew
+      a white sheet over the middle of the map; it now draws its overlay's
+      grid lines (`docs/format/shaders.md` 8.7, and it needs the Narrows
+      plasma-mask commit for its glow). Pre-multiplied sky clouds are
+      multiplied by their alpha: the horizon band and cloud cards had hard
+      edges (`docs/format/sky-and-atmosphere.md` 8). Pinned by `cargo test`
+      (our own counts).
+- [x] Halo 2: Coagulation (`coagulation`, MCC Halo 2 classic; built,
+      awaiting a playtest): the zlib-chunked map inflated in memory, its
+      shared tags read from `shared.map` and its pixels from `textures.dat`
+      by our own `blam_h2` crate (`docs/format/halo2.md`). Every HaloExportH2
+      count matches (48 clusters with 12,797 triangles, 63 instances 5,591,
+      scenery 2,324, crates 2); the collision BSP gives 8,586 world and
+      4,502 instanced triangles (no broken loops); 123 spawns, all on a
+      floor; base and detail textures, the ground's detail blend, foliage,
+      glows drawn. Not yet: Halo 2's lightmaps (default sun and sky) and
+      its sky (a plain blue clear colour). Skating (610 rails), the bike
+      and the Spartan rider (borrowed from Valhalla) run on it. Pinned by `cargo test`
+      (`crates/blam_h2/tests/coagulation.rs`).
 - [x] Milestone 3b: collision and rails fed to the skate world (playtested
       on Valhalla).
 - [x] Milestone 4: Skate 3 crates plugged in (path dependency on

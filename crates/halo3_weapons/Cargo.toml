@@ -1,0 +1,18 @@
+[package]
+name = "halo3_weapons"
+description = "The map's weapons: placed, picked up, carried and fired on foot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+blam_cache = { workspace = true }
+blam_geometry = { workspace = true }
+halo3_bike = { workspace = true }
+halo3_core = { workspace = true }
+halo3_foot = { workspace = true }
+halo3_rider = { workspace = true }
+halo3_textures = { workspace = true }
+halo3_world = { workspace = true }

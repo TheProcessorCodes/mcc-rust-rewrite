@@ -39,6 +39,10 @@ pub struct RiderPose {
     pub drawn: bool,
     /// The dirt bike holds the rider (`bike`): no board, no skating.
     pub bike: bool,
+    /// The Spartan is on foot (`foot`): no board, no skating.
+    pub foot: bool,
+    /// The camera is in his eyes: his body is not drawn.
+    pub first_person: bool,
 }
 
 impl Default for RiderPose {
@@ -53,6 +57,8 @@ impl Default for RiderPose {
             skated: 0.0,
             drawn: false,
             bike: false,
+            foot: false,
+            first_person: false,
         }
     }
 }

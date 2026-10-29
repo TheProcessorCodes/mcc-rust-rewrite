@@ -638,6 +638,36 @@ analytical_specular_contribution (10), area_specular_contribution (0), env_tint_
 | `levels\multi\riverworld\shaders\vahalla_waterfall` (rmsh, tag 11645) | albedo two_detail, blend_mode alpha_blend | base_map `vahalla_waterfall_mask` (1,1), detail_map `vahalla_waterfall_color` (1,3), detail_map2 same (1,2), bump_map (1,3.5) |
 | `levels\multi\riverworld\shaders\riverworld_ground_snow` (rmtr, tag 11583) | material_0 **off** | usages start at `base_map_m_1`; layers 1..3 have `detail_bump_m_N` too; blend map red channel is unused |
 
+### 8.7 Additive halograms without a colour map (Sandbox's Forge grid, 2026-10-29)
+
+Sandbox (`sandbox.map`, DLC) lays Forge grids over its floor (`grid` scenery, 30 triangles
+at z -22.67, 0.09 wu over the sand, 32 x 56 wu), round the sky level (a 60 wu disc at z 37.5)
+and in the room under the floor (z -70). Their shaders, `objects\levels\dlc\sandbox\shaders\
+sandbox_grid_dim` (tag 238) and `sandbox_grid` (tag 244), are `rmhg` halograms:
+
+| option | value |
+|---|---|
+| albedo | constant_color (`albedo_color` 0.753 grey) |
+| self_illumination | plasma (`color_medium`, `color_sharp`, `self_illum_intensity` 25 and 20) |
+| blend_mode | additive |
+| overlay | additive: `overlay_map` `grid_illum` at scale 62 (offset 0.5 on the dim one), `overlay_tint` blue, `overlay_intensity` 4 and 3 |
+
+`grid_illum` is a 128 x 128 A8R8G8B8 tile, black with a one-texel light border (mean red
+0.054, alpha 1.0 everywhere): tiled 62 times over the grid's UVs (0.57 x 1.0 on the floor
+grid) it gives a cell of about 0.9 wu, the Forge grid. The plasma's `alpha_mask_map` is the
+same bitmap at scale 1, so its alpha is flat white and only its colour (the border) marks
+anything; `noise_map_a` is the grid too and `noise_map_b` a scrolling cloud.
+
+Drawn with the flat `albedo_color` as an additive colour, lit and exposed, the floor grid was
+a solid white sheet over the middle of the map, its edge wherever the sand rises above it
+(what looked like a white sand area at the spawns). An additive halogram without a colour map
+is now given its overlay map as the colour map, tinted by `overlay_tint`, when the overlay adds
+(`additive`, `additive_detail`), and otherwise a black colour, so only its glow adds light
+(`blam_texture::shader` `halogram_glow`). A `multiply` overlay (Blackout's aurora, a sky piece)
+only tints the glow and keeps no colour map. The
+plasma mask needs reading from its colour where its alpha is flat (the Narrows branch, section
+11.6) or the plasma glow is a sheet too.
+
 ---
 
 ## 9. Survey results (riverworld, all 988 render-method tags)
@@ -743,13 +773,30 @@ contribution 0.2-1.0; Last Resort cliffs (terrain) coefficient 1, power 5-10, ti
 
 | option | viewer |
 |---|---|
-| `simple`, `simple_with_alpha_mask`, `plasma` (approximated), others with a map | `self_illum_map * self_illum_color * self_illum_intensity` |
+| `simple`, `simple_with_alpha_mask`, others with a map | `self_illum_map * self_illum_color * self_illum_intensity` |
+| `plasma` | the mask times the bands' average glow (11.6) |
 | `illum_detail` | the same times `self_illum_detail_map * 2^2.2` |
 | `from_diffuse` | albedo * colour |
 | `self_illum_times_diffuse` | map * albedo * colour |
 | `3_channel_self_illum` | `map.r * channel_a + map.g * channel_b + map.b * channel_c` |
 
 The emissive light goes through the same exposure as the lit surface.
+
+**Animated intensity.** `self_illum_intensity` is often driven by a function of time
+(`water.md` 3; `blam shader` lists them under `animations`). The value stored with the shader is
+usually one end of the function's range: Last Resort's `military_equipment_2` stores 18 and runs
+18 -> 30, Narrows' man cannons store 0.5 and run 1.5 -> 0.5, Isolation's `plasma_wall_a` stores 55
+and runs 0 -> 55. Its `plasma_wall_b` and `plasma_wall_c` store **0** and run 0 -> 55 (8 s and
+10 s), so drawn at the stored value two of Isolation's three kinds of energy-wall slit stayed dark.
+The viewer does not animate the value; it keeps the stored one, except that an animated value
+stored as 0 takes the top of its range (`textures.rs` `illum_intensity`). Among the level
+`rmsh` shaders of Valhalla, The Pit, Guardian, Last Resort, High Ground, Narrows, Blackout and
+Isolation, only Isolation's two walls and `020_base`'s `computer_screen_small` (0 -> 1, in
+Isolation's tags but not placed) store 0 while animated.
+
+`material_model organism` (Isolation's Flood balls, `060_floodship\shaders\flood_sack`) adds
+`subsurface_map`, `transparence_map`, `occlusion_parameter_map`, `height_map` and a
+`flat_environment_map`; the viewer draws it as diffuse only.
 
 ### 11.5 What the viewer does with it (`world/shaders/lightmap.wesl`)
 
@@ -772,3 +819,37 @@ Only per-pixel lightmapped surfaces (the BSP) get bump and specular; objects lit
 their vertex irradiance and flat normals, and get `0.5 * E_vertex * env_tint * env_contribution *
 specular_coefficient * mask` as their reflection. `per_pixel` cube maps are not sampled; the SH towards
 the reflection stands in for both kinds of environment map.
+
+### 11.6 Plasma (`self_illumination plasma`, 2026-10-28)
+
+Parameters: `alpha_mask_map`, `noise_map_a`, `noise_map_b` (both usually scrolling),
+`color_medium`, `color_wide`, `color_sharp`, `thinness_medium` (16 on every map seen),
+`thinness_wide` (4), `thinness_sharp` (32 usually; Narrows' energy walls 100 and 256),
+`self_illum_intensity`. Our understanding of the look: the glow lights up where the two noise
+maps nearly agree, in three bands of decreasing width; with `d` = 1 - |noise_a - noise_b|, the
+sharp band is `d^sharp`, the medium band `d^medium - d^sharp`, the wide band `d^wide -
+d^medium`, each tinted by its colour, all times the mask and the intensity. That gives thin
+crawling lines rather than a sheet.
+
+The viewer does not sample the noise. It draws each band's average instead: for two independent
+noises spread evenly over 0..1, `d` has density `2d`, so `d^n` averages `2 / (n + 2)` (1/3, 1/9
+and 1/17 for 4, 16 and 32). So
+
+```
+glow = mask * intensity * (color_wide * (2/(wide+2) - 2/(medium+2))
+                         + color_medium * (2/(medium+2) - 2/(sharp+2))
+                         + color_sharp * 2/(sharp+2))
+```
+
+(`textures.rs` `plasma_band_weights`). Before Narrows the viewer used the plain mean of the
+three colours, which blew Narrows' energy walls out to white (`plasma_wall_b`: intensity 150,
+sharp thinness 256, now about 1.16 times its colour instead of 50) and drew the corridor light
+strips as solid orange-white slabs.
+
+**The mask.** Guardian's masks keep the pattern in the alpha (colour black). Narrows' light
+strips (`cit_beam`, `cit_beamb`) use The Covenant's `levels\solo\100_citadel\bitmaps\plasma_mask`,
+an A8R8G8B8 64x256 bitmap whose alpha is 255 everywhere and whose streaks are in the colour
+(mean 0.284). Read through the alpha it is a flat sheet; when a mask's alpha averages over 0.99
+(and its red does not), the viewer reads red instead, uploaded linear (`illum.y = 1` in
+`lightmap.wesl`). The sky's plasma (Blackout's aurora, `world/sky.rs`) still uses the plain
+mean; it was matched by eye.

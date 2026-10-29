@@ -14,12 +14,16 @@ path = "src/main.rs"
 bevy = { workspace = true, features = ["bevy_audio"] }
 blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
+blam_texture = { workspace = true }
+blam_h2 = { workspace = true }
 anyhow = { workspace = true }
 halo3_audio = { workspace = true }
 halo3_bike = { workspace = true }
 halo3_core = { workspace = true }
+halo3_foot = { workspace = true }
 halo3_rider = { workspace = true }
 halo3_skate = { workspace = true }
 halo3_swim = { workspace = true }
 halo3_textures = { workspace = true }
+halo3_weapons = { workspace = true }
 halo3_world = { workspace = true }

@@ -1650,6 +1650,7 @@ dependencies = [
  "anyhow",
  "blam_cache",
  "blam_geometry",
+ "blam_h2",
  "blam_sound",
  "blam_texture",
  "glam",
@@ -1662,6 +1663,18 @@ version = "0.1.0"
 dependencies = [
  "blam_cache",
  "glam",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "blam_h2"
+version = "0.1.0"
+dependencies = [
+ "blam_geometry",
+ "blam_texture",
+ "flate2",
+ "glam",
+ "memmap2",
  "thiserror 2.0.21",
 ]
 
@@ -2508,13 +2521,17 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "blam_h2",
+ "blam_texture",
  "halo3_audio",
  "halo3_bike",
  "halo3_core",
+ "halo3_foot",
  "halo3_rider",
  "halo3_skate",
  "halo3_swim",
  "halo3_textures",
+ "halo3_weapons",
  "halo3_world",
 ]
 
@@ -2547,6 +2564,17 @@ dependencies = [
  "anyhow",
  "bevy",
  "blam_geometry",
+]
+
+[[package]]
+name = "halo3_foot"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_geometry",
+ "halo3_bike",
+ "halo3_core",
+ "halo3_swim",
 ]
 
 [[package]]
@@ -2591,6 +2619,21 @@ dependencies = [
  "blam_cache",
  "blam_geometry",
  "blam_texture",
+]
+
+[[package]]
+name = "halo3_weapons"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_cache",
+ "blam_geometry",
+ "halo3_bike",
+ "halo3_core",
+ "halo3_foot",
+ "halo3_rider",
+ "halo3_textures",
+ "halo3_world",
 ]
 
 [[package]]
