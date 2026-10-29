@@ -271,6 +271,15 @@ impl Spartan {
         let change = (target - flat).clamp_length_max(accel * dt);
         // In the air, letting go of the stick keeps his momentum.
         let change = if self.grounded || wish != Vec2::ZERO { change } else { Vec3::ZERO };
+        // Faster than he runs (off a board or a bike): the stick steers the
+        // momentum but only brakes it when pulled against it.
+        let speed = flat.length();
+        let change = if !self.grounded && speed > t.forward && target.dot(flat) >= 0.0 {
+            let new = flat + change;
+            new.normalize_or(flat / speed) * new.length().max(speed) - flat
+        } else {
+            change
+        };
         self.velocity.x += change.x;
         self.velocity.z += change.z;
 
@@ -576,6 +585,31 @@ mod tests {
         run(&w, &mut s, Controls::default(), 0.5);
         assert!(s.crouch > 0.99);
         assert!(s.position.y.abs() < 1e-3);
+    }
+
+    #[test]
+    fn keeps_a_rides_momentum_in_the_air() {
+        let w = floor();
+        // Off a bike at 20 m/s along +Z, 10 m up, pushing the stick forward.
+        let mut s = Spartan::new(Vec3::new(0.0, 10.0, 0.0), 0.0);
+        s.velocity = Vec3::new(0.0, 0.0, 20.0);
+        let c = Controls {
+            wish: Vec2::Y,
+            ..default()
+        };
+        run(&w, &mut s, c, 0.5);
+        assert!(!s.grounded);
+        assert!(s.speed() >= 20.0 - 1e-3, "{}", s.speed());
+        // Pulling back brakes it.
+        let c = Controls {
+            wish: -Vec2::Y,
+            ..default()
+        };
+        run(&w, &mut s, c, 0.5);
+        assert!(s.speed() < 19.0, "{}", s.speed());
+        // On the ground he slows to a run.
+        run(&w, &mut s, Controls::default(), 3.0);
+        assert!(s.grounded && s.speed() < 0.1, "{}", s.speed());
     }
 
     #[test]
