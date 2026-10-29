@@ -170,6 +170,12 @@ fn trigger(pad: &Gamepad, button: B, axis: GamepadAxis, rested: &mut bool) -> f3
     pulled.max(travel).clamp(0.0, 1.0)
 }
 
+/// The trigger-to-throttle curve. Held throttle settles the bike at a speed,
+/// and a quarter throttle already rides at half the top speed, so a straight
+/// line puts nearly all the control in the first bit of the pull. Squared,
+/// half trigger is a quarter throttle and the travel spreads over the speeds.
+const THROTTLE_CURVE: f32 = 2.0;
+
 fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mut [bool; 2]) -> Controls {
     let key = |k: KeyCode| keys.pressed(k) as i32 as f32;
     let mut c = Controls {
@@ -187,7 +193,7 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         let r = dead(pad.right_stick(), 0.15);
         c.steer = (c.steer + l.x).clamp(-1.0, 1.0);
         c.lean = (c.lean + r).clamp_length_max(1.0);
-        c.throttle = c.throttle.max(trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]));
+        c.throttle = c.throttle.max(trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]).powf(THROTTLE_CURVE));
         c.brake = c.brake.max(trigger(pad, B::LeftTrigger2, GamepadAxis::LeftZ, &mut rested[0]));
         c.reverse |= pad.pressed(B::South);
     }
