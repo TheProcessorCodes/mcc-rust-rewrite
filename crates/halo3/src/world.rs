@@ -605,8 +605,11 @@ pub(super) fn apply_surface(
     if mode == 0.0 {
         return;
     }
+    // A plasma mask read from its red channel is data, not colour.
+    let red_mask = s.illum == Illum::Plasma && s.illum_mask_in_colour;
     if mode != 3.0 {
-        let Some((h, x, _)) = get(s.illum_map, Upload::Colour) else {
+        let how = if red_mask { Upload::Linear } else { Upload::Colour };
+        let Some((h, x, _)) = get(s.illum_map, how) else {
             return;
         };
         e.illum_map = Some(h);
@@ -624,6 +627,7 @@ pub(super) fn apply_surface(
         }
     }
     e.illum.x = mode;
+    e.illum.y = if red_mask { 1.0 } else { 0.0 };
     let gain = illum_gain();
     [e.illum_a, e.illum_b, e.illum_c] = s.illum_colour.map(|c| (Vec3::from(c) * gain).extend(0.0));
 }

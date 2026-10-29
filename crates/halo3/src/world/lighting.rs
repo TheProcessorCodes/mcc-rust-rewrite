@@ -314,7 +314,8 @@ pub struct HaloLightmap {
     #[uniform(100)]
     pub env: Vec4,
     /// x: self-illumination mode (0 off, 1 map, 2 map x detail, 3 from
-    /// diffuse, 4 map x diffuse, 5 three channels, 6 the map's alpha: plasma).
+    /// diffuse, 4 map x diffuse, 5 three channels, 6 the map's alpha: plasma);
+    /// y: plasma only, 1 when the mask is read from red instead of alpha.
     #[uniform(100)]
     pub illum: Vec4,
     #[uniform(100)]

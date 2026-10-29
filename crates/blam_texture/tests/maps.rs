@@ -251,3 +251,41 @@ fn guardian_shaders() {
         }
     }
 }
+
+/// Narrows' plasma: the corridor light strips (`cit_beam`, borrowed from
+/// The Covenant) keep their mask in the colour of an A8R8G8B8 bitmap whose
+/// alpha is flat white, unlike Guardian's; the energy walls have very thin
+/// sharp bands at a high intensity. Every render method in the map resolves.
+#[test]
+fn narrows_shaders() {
+    let Some(path) = map("chill") else { return };
+    let cache = CacheFile::open(path).unwrap();
+    let resources = cache.resources().unwrap();
+
+    let beam = shader::resolve(&cache, 10756).unwrap();
+    assert!(beam.name.ends_with(r"chill\shaders\cit_beam"), "{}", beam.name);
+    assert_eq!(beam.option("self_illumination"), Some("plasma"));
+    assert_eq!(beam.blend, Blend::Additive);
+    let mask = beam.map("alpha_mask_map").and_then(|m| m.bitmap).expect("plasma mask");
+    assert_eq!(mask, 10760);
+    let t = bitmap::decode(&cache, &resources, mask, 0).unwrap();
+    assert_eq!(t.format, Format::A8R8G8B8);
+    assert_eq!((t.width, t.height), (64, 256));
+    let px = rgba::decode_level(t.format, t.width, t.height, t.level(0, 0).unwrap()).unwrap();
+    let mean = rgba::channel_means(&px);
+    assert!(mean[3] > 0.999, "{mean:?}");
+    assert!((mean[0] - 0.284).abs() < 0.01, "{mean:?}");
+
+    let wall = shader::resolve(&cache, 10774).unwrap();
+    assert!(wall.name.ends_with(r"chill\shaders\plasma_wall_b"), "{}", wall.name);
+    assert_eq!(wall.option("self_illumination"), Some("plasma"));
+    assert_eq!(wall.param("thinness_sharp").map(|v| v[0]), Some(256.0));
+    assert_eq!(wall.param("self_illum_intensity").map(|v| v[0]), Some(150.0));
+
+    for t in cache.tags.iter() {
+        let class = cache.tags.class_of(t).code.as_str();
+        if matches!(class, "rmsh" | "rmtr" | "rmfl" | "rmw " | "rmd " | "rmhg") {
+            shader::resolve(&cache, t.index).unwrap_or_else(|e| panic!("{}: {e}", t.name()));
+        }
+    }
+}

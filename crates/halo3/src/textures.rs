@@ -80,11 +80,14 @@ pub enum Illum {
     TimesDiffuse,
     /// `3_channel_self_illum`: the map's red, green and blue each tint a colour.
     ThreeChannel,
-    /// `plasma` (Guardian's jump pads and minilift, Sandtrap's shields): the
-    /// glow lives where `alpha_mask_map`'s alpha is; it is tinted by the mean
-    /// of the three band colours (`color_medium`, `color_wide`,
-    /// `color_sharp`) times the intensity. The scrolling noise that makes the
-    /// bands crawl is not drawn.
+    /// `plasma` (Guardian's jump pads and minilift, Narrows' light strips
+    /// and energy walls, Sandtrap's shields): the glow lives where
+    /// `alpha_mask_map`'s alpha is (its red when the alpha is flat,
+    /// `SurfaceLook::illum_mask_in_colour`); it is tinted by the three band
+    /// colours (`color_medium`, `color_wide`, `color_sharp`), each weighted
+    /// by how much of its band shows on average (`plasma_band_weights`),
+    /// times the intensity. The scrolling noise that makes the bands crawl
+    /// is not drawn.
     Plasma,
 }
 
@@ -121,6 +124,9 @@ pub struct SurfaceLook {
     pub env_tint: [f32; 3],
     pub illum: Illum,
     pub illum_map: Option<MapRef>,
+    /// Plasma only: the mask's pattern is in its red channel (its alpha is
+    /// flat white), so the shader reads red, and the map is uploaded linear.
+    pub illum_mask_in_colour: bool,
     pub illum_detail: Option<MapRef>,
     /// `self_illum_color * self_illum_intensity`; three colours for
     /// `3_channel_self_illum` (`channel_a/b/c`).
@@ -244,6 +250,42 @@ fn power_of_roughness(r: f32) -> f32 {
     (2.0 / (r * r) - 2.0).clamp(1.0, 2000.0)
 }
 
+/// How much of each plasma band (medium, wide, sharp) shows on average.
+///
+/// A plasma glow is lit where two scrolling noise maps nearly agree: with
+/// `d` one minus their difference, a band of thinness `n` is `d^n`; the
+/// wide band is what `d^wide` leaves outside the medium one, the medium
+/// band what `d^medium` leaves outside the sharp one, and the sharp band is
+/// `d^sharp` (`docs/format/shaders.md` 11.6). The viewer does not draw the
+/// crawling bands, only their mean: for two independent noises spread evenly
+/// over 0..1, `d` has density `2d`, so `d^n` averages `2 / (n + 2)`. Thin
+/// bands (large `n`) come out faint: Narrows' energy walls (sharp thinness
+/// 100 and 256, intensity 40 and 150) glow softly instead of blowing out.
+fn plasma_band_weights(thinness: [f32; 3]) -> [f32; 3] {
+    let mean = |n: f32| 2.0 / (n.max(0.0) + 2.0);
+    let [medium, wide, sharp] = thinness.map(mean);
+    [(medium - sharp).max(0.0), (wide - medium).max(0.0), sharp]
+}
+
+/// Whether a plasma `alpha_mask_map` keeps its pattern in the colour rather
+/// than in the alpha. Guardian's masks are A8 (alpha only); Narrows'
+/// `plasma_mask` (borrowed from The Covenant) is A8R8G8B8 with every alpha
+/// 255 and its streaks in the colour, which read as a solid sheet through
+/// the alpha. A mask whose alpha is flat white is read from its red channel.
+fn mask_in_colour(cache: &CacheFile, resources: &blam_cache::Resources, bitmap: u32) -> bool {
+    let Ok(tex) = bitmap::decode(cache, resources, bitmap, 0) else {
+        return false;
+    };
+    let Some(level) = tex.level(0, 0) else {
+        return false;
+    };
+    let Ok(px) = rgba::decode_level(tex.format, tex.width, tex.height, level) else {
+        return false;
+    };
+    let means = rgba::channel_means(&px);
+    means[3] > 0.99 && means[0] < 0.99
+}
+
 /// Reads the material model, maps and parameters of an ordinary (`rmsh`
 /// and kin) shader (`docs/format/shaders.md` section 11). Terrain and
 /// water get the default (nothing extra).
@@ -349,9 +391,15 @@ fn surface_look(s: &Shader, fetch: &mut dyn FnMut(&TextureSlot) -> Option<u32>) 
         "self_illum_times_diffuse" => Illum::TimesDiffuse,
         "illum_detail" => Illum::MapDetail,
         "plasma" => {
-            let bands = ["color_medium", "color_wide", "color_sharp"].map(|n| rgb(n, [0.0; 3]));
-            let mean = [0, 1, 2].map(|c| bands.iter().map(|b| b[c]).sum::<f32>() / 3.0 * intensity);
-            out.illum_colour = [mean; 3];
+            let colours = ["color_medium", "color_wide", "color_sharp"].map(|n| rgb(n, [0.0; 3]));
+            let thinness = [
+                p1("thinness_medium", 16.0),
+                p1("thinness_wide", 4.0),
+                p1("thinness_sharp", 32.0),
+            ];
+            let weights = plasma_band_weights(thinness);
+            let glow = [0, 1, 2].map(|c| (0..3).map(|b| colours[b][c] * weights[b]).sum::<f32>() * intensity);
+            out.illum_colour = [glow; 3];
             Illum::Plasma
         }
         "3_channel_self_illum" => {
@@ -486,6 +534,12 @@ pub fn load_with(cache: &CacheFile, scene: &Scene, decode: bool) -> MaterialText
                 layers,
             })
         });
+        let mut surface = surface_look(&s, &mut fetch);
+        if surface.illum == Illum::Plasma
+            && let Some((mask, _)) = surface.illum_map
+        {
+            surface.illum_mask_in_colour = mask_in_colour(cache, &resources, mask);
+        }
         out.looks.push(Some(Look {
             texture,
             xform: slot.as_ref().map_or(Xform::IDENTITY, |s| s.xform),
@@ -498,7 +552,7 @@ pub fn load_with(cache: &CacheFile, scene: &Scene, decode: bool) -> MaterialText
             hidden: s.special || (s.alpha_test && s.base.is_none()) || is_game_type_marker(&s.name),
             water,
             terrain,
-            surface: surface_look(&s, &mut fetch),
+            surface,
         }));
     }
     for lm in &scene.lightmaps {
@@ -593,4 +647,25 @@ pub fn decode_bitmaps(
     }
     resources.clear_page_cache();
     (out, maps)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plasma_band_weights;
+
+    #[test]
+    fn plasma_bands_average_their_coverage() {
+        // The usual thinness (medium 16, wide 4, sharp 32): d^n averages
+        // 2 / (n + 2), so 1/9, 1/3 and 1/17.
+        let [medium, wide, sharp] = plasma_band_weights([16.0, 4.0, 32.0]);
+        assert!((medium - (1.0 / 9.0 - 1.0 / 17.0)).abs() < 1e-6);
+        assert!((wide - (1.0 / 3.0 - 1.0 / 9.0)).abs() < 1e-6);
+        assert!((sharp - 1.0 / 17.0).abs() < 1e-6);
+        // Narrows' energy wall (`plasma_wall_b`): a sharp band of thinness
+        // 256 at intensity 150 adds about 1.16 times its colour, not 50.
+        let [_, _, sharp] = plasma_band_weights([16.0, 4.0, 256.0]);
+        assert!((sharp * 150.0 - 1.163).abs() < 0.01);
+        // Never negative, whatever order the thinnesses come in.
+        assert!(plasma_band_weights([4.0, 16.0, 2.0]).iter().all(|w| *w >= 0.0));
+    }
 }
