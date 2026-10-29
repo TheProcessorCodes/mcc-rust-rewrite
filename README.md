@@ -120,6 +120,11 @@ that name, see `docs/viewer.md` "Halo 2 maps").
 - [x] Spawn points (107 on Valhalla); the viewer starts on one.
 - [x] Spartan skeleton and skin weights decode (`blam nodes`); bone mapping
       to the skater in `docs/rider.md`.
+- [x] On foot (built, awaiting a playtest): F walks the Spartan with Halo 3's
+      own movement numbers (run, crouch, jump, slopes, capsule), a made-up
+      gait for the skeleton, an over-shoulder or eye camera; he carries the
+      map's weapons and fires them with their tags' rates, magazines and
+      projectile speeds (`docs/viewer.md` "On foot").
 - [x] Dirt bike (built, awaiting a playtest): B rides a stick-model motocross
       bike with dual-stick physics (left stick bars, right stick rider, RT gas,
       LT brake), the Spartan standing on it (`docs/viewer.md` "Dirt bike").

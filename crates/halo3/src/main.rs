@@ -87,6 +87,7 @@ fn resolve_map(arg: &str) -> PathBuf {
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut foot_tuning = None;
+    let mut arsenal = None;
     let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
@@ -171,6 +172,7 @@ fn main() -> anyhow::Result<()> {
                 Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
             }
             let chief = rider::load_chief(cache);
+            arsenal = weapons::assets::load(cache);
             match blam_geometry::movement::read(cache) {
                 Ok(m) => {
                     eprintln!(
@@ -285,7 +287,7 @@ fn main() -> anyhow::Result<()> {
         .add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
         if !collision.triangles.is_empty() {
             app.insert_resource(bike::BikeInput(collision))
-                .add_plugins((bike::BikePlugin, foot::FootPlugin));
+                .add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin));
             if let Some(t) = foot_tuning {
                 app.insert_resource(foot::FootTuning(t));
             }
@@ -328,6 +330,7 @@ fn main() -> anyhow::Result<()> {
             app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
         }
     }
+    app.insert_resource(weapons::PendingArsenal(arsenal));
     app.insert_resource(zones)
         .insert_resource(world::stream::ZoneTriggers::new(shot_mode))
         .insert_resource(loaded)
@@ -338,7 +341,6 @@ fn main() -> anyhow::Result<()> {
             pause::PausePlugin,
             fly_camera::FlyCameraPlugin,
             world::WorldPlugin,
-            weapons::WeaponsPlugin,
         ))
         .run();
     Ok(())

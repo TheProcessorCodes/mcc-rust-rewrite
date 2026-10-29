@@ -34,6 +34,7 @@ middle.
 | Escape | give the cursor back; click the window to take it again |
 | P | print the camera's position in Halo units to the console |
 | V | show or hide the game's real collision: green shell for surfaces, red for invisible walls |
+| F, or gamepad d-pad up | on foot / fly (see "On foot" below) |
 | J | skate / fly (`crates/halo3/src/skate.rs`) |
 | B, or gamepad View / Back | dirt bike / fly (see "Dirt bike" below) |
 | PageDown / PageUp | next / previous zone set (campaign maps) |
@@ -518,6 +519,69 @@ height onto the lake under-hazes it; the sun-angle dependence of the haze colour
 to the world; `desaturation` (used by The Pit, 0.2) is ignored; Halo's real sky lighting and
 exposure curve is not decoded (the `cfxs` exposure is, see "Lighting"); no sun glare or bloom; the sky does not move with the camera
 (it is at true size, about 7,500 wu out, which is what the haze distances need).
+
+## On foot
+
+F (or the controller's d-pad up) drops the Spartan on the ground under the
+camera; F again flies. `--foot` starts on foot at the start spawn. Code:
+`crates/halo3/src/foot/` (`physics.rs` the body, `pose.rs` the skeleton,
+`mod.rs` controls and camera) and `crates/halo3/src/weapons/`.
+
+| controller | keyboard and mouse | effect |
+|---|---|---|
+| left stick | W A S D | run (forward, back, strafe) |
+| right stick | mouse | aim; he faces where he aims |
+| A | Space | jump |
+| left stick click (hold) | Ctrl or C (hold) | crouch |
+| d-pad down | T | camera: over the right shoulder / his eyes |
+| RT | left button | fire |
+| right stick click | right button | zoom through the scope's levels |
+| X or RB | R | reload |
+| X or RB by a weapon | E | swap the weapon in hand for it |
+| Y | Tab, wheel, 1 / 2 | switch weapons |
+
+**Movement** uses the map's own player numbers (`docs/format/movement.md`,
+`blam movement <map>`): run 2.25 wu/s forward, 2.0 back and sideways, 9.6
+wu/s² on the ground and 1.05 in the air; crouched 0.9 wu/s; body 0.725 wu tall
+(0.5 crouched), 0.175 wu radius; eyes at 0.62 wu (0.45); ground up to 50°
+holds him. The jump is the tag's 3.08 wu/s under 9.78 m/s² gravity, a 1.48 wu
+(4.5 m) jump: high, and unchecked against the real game; `HALO3_JUMP=<metres>`
+sets the jump height instead. The step he walks up without jumping (0.45 m)
+is ours: Halo has no such number.
+
+The body is three spheres stacked from a step's height to the top of the
+head, against the same collision as the bike; rays under the feet hold him on
+the ground. Kill volumes, the bottom of the world, and water over his head
+put him back where he last stood.
+
+**The skeleton** is made up, not Halo's animations: a gait cycle (each foot
+half planted, half swinging) with two-bone IK for the legs, the hips bobbing
+and twisting, a lean into the run, tucked legs in the air, bent knees on a
+hard landing. The weapon points where he aims; the right hand takes its grip
+(`right_hand` marker) and the left hand reaches for its `left_hand` marker.
+`rider.rs` draws the Spartan from it as it does on the board. In his eyes his
+body is hidden and the weapon sits low and right in front of the camera; the
+over-shoulder camera also switches to his eyes when a wall pushes it into his
+helmet.
+
+**Weapons.** The map's weapons lie where the scenario places them (42 on
+Valhalla, nine kinds); taken ones come back after the placement's respawn
+time. He starts with the assault rifle. Walking over a weapon he lacks takes it
+into a free hand; over one he carries, takes its ammo; E swaps. Magazines,
+spare rounds, rounds per second, bursts (battle rifle), single shots,
+charging (plasma pistol, Spartan laser), spread, zoom levels, projectile
+speeds and ranges are the tags' (`docs/format/weapons.md`, `blam weapons`).
+Rounds fly at their speed and are traced against the collision; they leave
+tracers, sparks, scorch marks, explosions for the brute shot and missile pod.
+Not from the tags: reload times (2.1 s; 2.6 sniper, 3 missile pod, 0.6 per
+shotgun shell), the shotgun's 15 pellets, the battery use, charge times,
+grenades falling under gravity. Nothing takes damage yet. The HUD shows the
+crosshair (red when empty), both weapons' ammo, and prompts.
+
+Headless check: `halo3 riverworld --shot DIR --foot --view spawn12` stands him
+at spawn 12 for `HALO3_SKATE_FOR` seconds, then takes the rider pictures;
+`HALO3_FOOT_WALK=x,y` holds the stick (X right, Y forward) and
+`HALO3_FOOT_FIRE=1` holds the trigger (the log counts rounds and hits).
 
 ## Dirt bike
 

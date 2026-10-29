@@ -89,9 +89,22 @@ pub struct OnFoot {
     eye_lift: Option<f32>,
     /// Third-person camera distance, eased back out after a wall.
     boom: f32,
+    /// Set by `weapons`: the weapon in his hands, its `left_hand` marker
+    /// in grip space (`pose::Hold`). `None`: empty hands.
+    pub holding: Option<Vec3>,
+    /// The weapon's grip space to the renderer frame this frame, while he
+    /// holds one.
+    pub weapon_world: Option<Mat4>,
+    /// Zoomed in through a scope: the view from his eyes, narrower.
+    pub zoom: Option<f32>,
 }
 
 impl OnFoot {
+    /// The collision he walks on, once built.
+    pub fn world(&self) -> Option<&World> {
+        self.world.as_ref()
+    }
+
     /// Where the camera looks.
     pub fn aim_rotation(&self) -> Quat {
         Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0)
@@ -125,7 +138,7 @@ fn cursor_grabbed(windows: &Query<&CursorOptions, With<PrimaryWindow>>) -> bool 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn walk(
+pub(crate) fn walk(
     mut commands: Commands,
     mut foot: ResMut<OnFoot>,
     mut auto: ResMut<AutoStart>,
@@ -221,13 +234,13 @@ fn walk(
     let dt = time.delta_secs().min(0.1);
     let mut turn = Vec2::ZERO;
     if cursor_grabbed(&windows) {
-        turn -= motion.delta * fly.mouse_sensitivity;
+        turn -= motion.delta * fly.mouse_sensitivity / foot.zoom.unwrap_or(1.0).max(1.0);
     }
     let mut controls = Controls::default();
     if let Some(pad) = pad {
         let r = dead(pad.right_stick(), 0.15);
         // Halo's stick: gentle near the middle, fast at the edge.
-        turn += Vec2::new(-r.x, r.y) * r.length() * 3.2 * dt;
+        turn += Vec2::new(-r.x, r.y) * r.length() * 3.2 * dt / foot.zoom.unwrap_or(1.0).max(1.0);
         controls.wish = dead(pad.left_stick(), 0.15);
         controls.jump = pad.just_pressed(B::South);
         controls.crouch = pad.pressed(B::LeftThumb);
@@ -301,7 +314,10 @@ fn walk(
     let (impact, since) = spartan.landing;
     g.land = if since < 0.3 { (impact / 9.0).min(1.0) * (1.0 - since / 0.3) } else { 0.0 };
     g.pitch = foot.pitch;
-    g.hold = Some(pose::RIFLE_HOLD);
+    g.hold = foot.holding.map(|left_hand| pose::Hold {
+        left_hand,
+        scale: blam_geometry::WORLD_UNIT_METRES * k,
+    });
     g.ground = [0.0; 2];
     if spartan.grounded {
         for (i, side) in [(0, 1.0f32), (1, -1.0)] {
@@ -315,7 +331,9 @@ fn walk(
     // The Spartan, as skate bones (skate metres, world).
     if let Some(rig) = foot.rig.as_ref() {
         let place = Mat4::from_translation(spartan.position * k) * Mat4::from_quat(Quat::from_rotation_y(spartan.heading));
-        rider.bones = rig.foot_pose(&foot.gait).into_iter().map(|m| place * m).collect();
+        let (bones, weapon) = rig.foot_pose(&foot.gait);
+        rider.bones = bones.into_iter().map(|m| place * m).collect();
+        foot.weapon_world = weapon.map(|w| Mat4::from_scale(Vec3::splat(1.0 / k)) * place * w);
         if rider.names.len() != rig.names.len() {
             rider.names = rig.names.clone();
         }
@@ -337,19 +355,22 @@ fn walk(
     foot.eye_lift = Some(smooth);
     let eye = Vec3::new(spartan.position.x, smooth, spartan.position.z);
     let rotation = foot.aim_rotation();
-    let (view, fov) = if foot.first_person {
+    let (view, fov) = if let Some(zoom) = foot.zoom {
+        let narrow = 2.0 * ((FIRST_FOV.to_radians() * 0.5).tan() / zoom.max(1.0)).atan();
+        (Transform::from_translation(eye).with_rotation(rotation), narrow.to_degrees())
+    } else if foot.first_person {
         (Transform::from_translation(eye).with_rotation(rotation), FIRST_FOV)
     } else {
         // Out to the right shoulder, then back from there, stopping short
         // of walls both ways.
         let head = eye + Vec3::Y * 0.15;
-        let out = rotation * Vec3::new(0.7, 0.3, 0.0);
+        let out = rotation * Vec3::new(0.6, 0.55, 0.0);
         let reach = world
             .raycast_far(head, out.normalize(), out.length() + 0.25)
             .map_or(1.0, |hit| ((hit.distance - 0.25) / out.length()).max(0.0));
         let shoulder = head + out * reach;
         let dir = rotation * Vec3::Z;
-        let mut boom = 3.2f32;
+        let mut boom = 3.0f32;
         if let Some(hit) = world.raycast_far(shoulder, dir, boom + 0.3) {
             boom = (hit.distance - 0.3).max(0.0);
         }
@@ -362,7 +383,7 @@ fn walk(
         (Transform::from_translation(shoulder + dir * foot.boom).with_rotation(rotation), THIRD_FOV)
     };
     // A camera pressed into his helmet sees from his eyes instead.
-    rider.first_person = foot.first_person || view.translation.distance(eye) < 0.8;
+    rider.first_person = foot.first_person || foot.zoom.is_some() || view.translation.distance(eye) < 0.8;
     rider.camera = Some((view, fov.to_radians()));
     if rider.drive_camera {
         *transform = view;
@@ -393,7 +414,14 @@ fn show_status(
         if *logged >= 1.0 {
             *logged = 0.0;
             let p = to_halo(s.position);
-            eprintln!("foot: {status}; halo [{:.2}, {:.2}, {:.2}]", p.x, p.y, p.z);
+            let f = crate::world::to_halo_dir(s.forward());
+            eprintln!(
+                "foot: {status}; halo [{:.2}, {:.2}, {:.2}] facing {:.0} degrees",
+                p.x,
+                p.y,
+                p.z,
+                f.y.atan2(f.x).to_degrees()
+            );
         }
     }
     let Ok(mut window) = windows.single_mut() else {

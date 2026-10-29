@@ -60,6 +60,13 @@ What the game does now:
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
 - **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great".
+- **On foot.** F walks the Spartan (`foot/`): the map's own movement numbers (`blam movement`,
+  `docs/format/movement.md`), a capsule on the collision, a made-up gait on the skate skeleton,
+  shoulder and eye cameras. He carries the map's weapons (`weapons/`, `blam weapons`,
+  `docs/format/weapons.md`): placed where the scenario puts them, picked up, fired with the tags'
+  rates, magazines, bursts, charge and zoom, projectiles traced against the collision. Built,
+  not playtested. Open: the tag's jump looks high (4.5 m); no damage, no Halo animations, no
+  first-person arms.
 - **Dirt bike.** B rides it, with Master Chief on it (`bike/`). The user's other sessions are tuning it to stock Reflex (branches `bike-tune`, `bike-gas-backwards`, `bike-air-wheel`).
 - **Campaign, 120_halo.** Its 8 zone sets switch by PageUp / PageDown, `--zone`, or the scenario's own switch volumes as you move. You start at the player starting location (`docs/format/zone-sets.md`).
 - **Culling and streaming.**
@@ -125,8 +132,9 @@ cargo build
 
 **Not started (the big pieces):**
 
-- An on-foot Spartan: walking, jumping, Halo's movement rules and biped collision.
-- Weapons, vehicles (the Warthog), and objects that move (machines, doors).
+- Halo's own biped animations (`jmad`) for the on-foot Spartan, first-person arms, grenades,
+  melee, damage and something to shoot at.
+- Vehicles (the Warthog), and objects that move (machines, doors).
 - HaloScript and AI, so campaign missions play rather than just load.
 - Reflex's real physics data read from the game files. The bike now uses numbers from the
   `D:\reflex-tools\physics` docs.

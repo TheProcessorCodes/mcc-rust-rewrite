@@ -12,7 +12,7 @@
 //! into the run; the arms either swing against the legs or hold a weapon
 //! up towards where he aims.
 
-use bevy::math::{Mat4, Quat, Vec2, Vec3};
+use bevy::math::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 use crate::bike::pose::{Rig, arc};
 
@@ -36,17 +36,38 @@ pub struct Gait {
     pub land: f32,
     /// Aim above level (+) or below, radians.
     pub pitch: f32,
-    /// Where the hands go when holding a weapon: right (trigger) and left
-    /// (fore grip), in the chest's frame before the aim pitch, rig metres.
-    /// `None`: arms swing free.
-    pub hold: Option<[Vec3; 2]>,
+    /// The weapon in his hands; `None`: arms swing free.
+    pub hold: Option<Hold>,
     /// Ground height under the left and right foot, relative to the soles.
     pub ground: [f32; 2],
 }
 
-/// The rifle held at the ready: the right hand at the trigger in front of
-/// the right hip, the left hand under the barrel further out.
-pub const RIFLE_HOLD: [Vec3; 2] = [Vec3::new(-0.13, -0.17, 0.30), Vec3::new(0.0, -0.10, 0.40)];
+/// A weapon held at the ready, pointing where he aims.
+///
+/// "Grip space" is the weapon's model space (Halo world units, X along the
+/// barrel, Y left, Z up) moved so its `right_hand` marker is the origin.
+#[derive(Clone, Copy, Debug)]
+pub struct Hold {
+    /// The weapon's `left_hand` marker in grip space.
+    pub left_hand: Vec3,
+    /// Rig metres per world unit.
+    pub scale: f32,
+}
+
+/// Where the grip sits, in the chest's frame turned to the aim: right of
+/// the middle, a little below the chest, close in so the off hand reaches
+/// the fore grip (the skater's arms are short for a Spartan's rifle).
+const GRIP: Vec3 = Vec3::new(-0.07, -0.13, 0.08);
+
+/// The wrist sits behind the hand's grip marker along the barrel: the
+/// Spartan's `right_hand` marker is 0.0465 wu out from `r_hand`.
+const WRIST_BEHIND: f32 = 0.0465;
+
+/// Grip space to his rig frame: barrel (+X) forward (+Z), left (+Y) to
+/// his left (+X), up (+Z) up (+Y).
+fn grip_axes(scale: f32) -> Mat4 {
+    Mat4::from_cols(Vec4::Z * scale, Vec4::X * scale, Vec4::Y * scale, Vec4::W)
+}
 
 /// Where the aim pitch turns the chest and arms: about the upper chest.
 const CHEST: Vec3 = Vec3::new(0.0, 1.35, 0.0);
@@ -86,8 +107,9 @@ impl Gait {
 }
 
 impl Rig {
-    /// Every rig bone posed for `gait`, rig metres, his own frame.
-    pub fn foot_pose(&self, g: &Gait) -> Vec<Mat4> {
+    /// Every rig bone posed for `gait`, rig metres, his own frame; and,
+    /// holding a weapon, grip space to that frame.
+    pub fn foot_pose(&self, g: &Gait) -> (Vec<Mat4>, Option<Mat4>) {
         use std::f32::consts::PI;
         let mut out = self.bind_pose();
         let speed = g.speed;
@@ -163,15 +185,16 @@ impl Rig {
         let chest = upper.transform_point3(CHEST);
         // The weapon points where he aims whatever the lean.
         let aim = Mat4::from_translation(chest) * Mat4::from_quat(Quat::from_rotation_x(-pitch));
+        let weapon = g.hold.map(|h| aim * Mat4::from_translation(GRIP) * grip_axes(h.scale));
         for (side, prefix, offset) in [(1.0f32, "LEFT", 0.0), (-1.0, "RIGHT", PI)] {
             let name = |part: &str| format!("{prefix}{part}");
             let shoulder = upper.transform_point3(self.at(&name("ARM")));
-            let (wrist, pole) = match g.hold {
-                Some(hold) => {
-                    let h = if side > 0.0 { hold[1] } else { hold[0] };
-                    (aim.transform_point3(h), Vec3::new(side * 0.8, -0.6, -0.3))
+            let (wrist, pole) = match (g.hold, weapon) {
+                (Some(hold), Some(w)) => {
+                    let marker = if side > 0.0 { hold.left_hand } else { Vec3::ZERO };
+                    (w.transform_point3(marker - Vec3::X * WRIST_BEHIND), Vec3::new(side * 0.8, -0.6, -0.3))
                 }
-                None => {
+                _ => {
                     // Hanging, swinging against the leg on the same side.
                     let swing = -(g.phase + offset).cos() * (0.10 + 0.25 * run) * moving * forwardness.signum();
                     let hand = shoulder + Vec3::new(side * (0.10 + 0.04 * run), -0.56 + 0.12 * run, 0.06 + swing);
@@ -191,13 +214,6 @@ impl Rig {
         self.set(&mut out, "SKATEBOARD_ROOT", Mat4::from_translation(Vec3::new(0.0, 0.09, 0.0)));
         self.set(&mut out, "TRUCK_BACK", Mat4::from_translation(Vec3::new(0.0, 0.06, -0.26)));
         self.set(&mut out, "TRUCK_FRONT", Mat4::from_translation(Vec3::new(0.0, 0.06, 0.26)));
-        out
-    }
-
-    /// The right hand's posed frame (rig metres, his frame), for putting a
-    /// weapon in it.
-    pub fn bone_in(&self, pose: &[Mat4], name: &str) -> Option<Mat4> {
-        let i = self.names.iter().position(|n| n == name)?;
-        pose.get(i).copied()
+        (out, weapon)
     }
 }
