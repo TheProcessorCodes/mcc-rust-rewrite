@@ -85,7 +85,10 @@ fn convert(l: &blam_h2::Look, material: u32, bitmaps: &mut std::collections::Has
         blend: l.blend,
         alpha_test: l.alpha_test,
         two_sided: l.two_sided || l.blend != Blend::Opaque,
-        hidden: l.hidden,
+        // The sky's layers need Halo 2's sky blending (stars, glows and
+        // cloud masks over a gradient); drawn as plain translucent meshes
+        // they wall the canyon in flat blue, so the clear colour stands in.
+        hidden: l.hidden || l.sky,
         water: l.water,
         terrain,
         surface: SurfaceLook {

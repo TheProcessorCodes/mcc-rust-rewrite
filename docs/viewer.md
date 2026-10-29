@@ -564,6 +564,8 @@ fog binding).
 
 Drawn: each material's base map with its tiling and its detail map, the ground's two detail
 maps blended by the base map's alpha (through the terrain path), alpha-tested foliage and
-banners, additive glows and light bands, the sky model's pieces. Not yet: Halo 2's lightmaps
-(the world is lit by the default sun and sky), bump and environment maps, water as water (a
-plain see-through surface), the sky's atmosphere and fog, sound.
+banners, additive glows and light bands. The rider is Halo 3's Spartan, borrowed from
+`riverworld.map` when Halo 3 is installed. Not yet: the sky (its model decodes, but its layers
+need Halo 2's sky blending; drawn as plain translucent meshes they walled the canyon in flat
+blue, so the clear colour stands in), Halo 2's lightmaps (the world is lit by the default sun
+and sky), bump and environment maps, water as water (a plain see-through surface), fog, sound.

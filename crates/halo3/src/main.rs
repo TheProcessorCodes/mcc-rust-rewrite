@@ -102,10 +102,15 @@ fn main() -> anyhow::Result<()> {
             // Halo 2: everything decoded up front, no Halo 3 cache file
             // behind it (`halo2.rs`).
             let (scene, textures) = halo2::load(&resolve_map(map))?;
+            // The rider is Halo 3's Spartan, borrowed from Valhalla when
+            // Halo 3 is installed (Halo 2's Master Chief is not decoded).
+            let chief = blam_cache::CacheFile::open(&resolve_map("riverworld"))
+                .ok()
+                .and_then(|c| rider::load_chief(&c));
             (
                 scene,
                 textures,
-                None,
+                chief,
                 world::sky::SkyData::default(),
                 world::water::WaterData::default(),
                 None,

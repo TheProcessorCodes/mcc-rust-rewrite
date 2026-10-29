@@ -143,8 +143,9 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       scenery 2,324, crates 2); the collision BSP gives 8,586 world and
       4,502 instanced triangles (no broken loops); 123 spawns, all on a
       floor; base and detail textures, the ground's detail blend, foliage,
-      glows and the sky drawn. No Halo 2 lightmaps yet (default sun and
-      sky). Skating, rails and the bike run on it. Pinned by `cargo test`
+      glows drawn. Not yet: Halo 2's lightmaps (default sun and sky) and
+      its sky (a plain blue clear colour). Skating (610 rails), the bike
+      and the Spartan rider (borrowed from Valhalla) run on it. Pinned by `cargo test`
       (`crates/blam_h2/tests/coagulation.rs`).
 - [ ] Milestone 3b: feed collision and rails to the skate world.
 - [ ] Milestone 4: Skate 3 crates plugged in.

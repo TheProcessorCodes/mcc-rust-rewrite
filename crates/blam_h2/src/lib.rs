@@ -131,6 +131,10 @@ impl Materials {
     }
 }
 
+/// How much the sky model is grown: Coagulation's is about 150 wu in
+/// radius; times 50 puts it about 7,500 wu out, where Halo 3's skies are.
+pub const SKY_SCALE: f32 = 50.0;
+
 /// The yaw, pitch, roll Blam composes (`blam_geometry::scenario::rotation`).
 fn object_transform(position: Vec3, angles: Vec3, scale: f32) -> Mat4 {
     let q = blam_geometry::scenario::rotation(angles.x, angles.y, angles.z);
@@ -463,12 +467,23 @@ fn decode_objects(map: &Map, scnr: Reader<'_>, scene: &mut Scene, materials: &mu
                 continue;
             }
         };
+        // The game draws the sky (about 150 wu across) round the camera at
+        // infinity; a still viewer puts it round the middle of the level,
+        // grown to Halo 3's sky distance (`SKY_SCALE`).
+        let transform = match scene.bounds {
+            Some((lo, hi)) => Mat4::from_scale_rotation_translation(
+                Vec3::splat(SKY_SCALE),
+                glam::Quat::IDENTITY,
+                Vec3::new((lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5, lo.z),
+            ),
+            None => Mat4::from_scale(Vec3::splat(SKY_SCALE)),
+        };
         for m in meshes {
             scene.placements.push(Placement {
                 name: format!("sky {si}"),
                 kind: Kind::Sky,
                 mesh: m,
-                transform: Mat4::IDENTITY,
+                transform,
                 mirrored: false,
                 lighting: Lighting::None,
                 bsps: 0,
