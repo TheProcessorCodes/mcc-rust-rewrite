@@ -79,14 +79,16 @@ impl Plugin for BikePlugin {
 /// gilrs and before any filtering, with the time since the one before.
 fn log_trigger_samples(
     mut raw: bevy::ecs::message::MessageReader<bevy::input::gamepad::RawGamepadButtonChangedEvent>,
-    time: Res<Time>,
-    mut last: Local<f64>,
+    mut last: Local<Option<std::time::Instant>>,
 ) {
+    // Wall-clock time: bevy's `Time` stands still within a frame, and the
+    // pad is polled several times a frame.
     for e in raw.read() {
         if matches!(e.button, B::RightTrigger2 | B::LeftTrigger2) {
-            let now = time.elapsed_secs_f64();
-            info!("pad sample: {:?} {:.4} (+{:.0} ms)", e.button, e.value, (now - *last) * 1000.0);
-            *last = now;
+            let now = std::time::Instant::now();
+            let since = last.map_or(0.0, |t| now.duration_since(t).as_secs_f64() * 1000.0);
+            info!("pad sample: {:?} {:.4} (+{since:.0} ms)", e.button, e.value);
+            *last = Some(now);
         }
     }
 }

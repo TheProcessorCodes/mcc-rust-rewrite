@@ -575,12 +575,16 @@ impl Bike {
     /// torque it puts on the rear wheel, N·m.
     fn drive(&mut self, s: &Setup, speed: f32, dt: f32) -> f32 {
         let gas = self.held.gas;
-        // Automatic gears, from the road speed.
+        // Automatic gears, from the road speed: light gas shifts up early
+        // and lugs a taller gear, full gas holds each gear to the top. The
+        // bands keep their hysteresis across the gear steps (1.22 at most).
         let e = &mut self.engine;
         let road_rpm = speed / s.rear.radius * s.ratio(e.gear) * RPM;
-        if road_rpm > s.upshift_rpm && e.gear + 1 < s.gears.len() {
+        let up = lerp_clamp(gas, 0.0, 6500.0, 1.0, s.upshift_rpm);
+        let down = lerp_clamp(gas, 0.0, 5300.0, 1.0, s.downshift_rpm);
+        if road_rpm > up && e.gear + 1 < s.gears.len() {
             e.gear += 1;
-        } else if road_rpm < s.downshift_rpm && e.gear > 0 {
+        } else if road_rpm < down && e.gear > 0 {
             e.gear -= 1;
         }
         let ratio = s.ratio(e.gear);
@@ -597,7 +601,14 @@ impl Bike {
         }
         let mut through = engine;
         if !e.locked {
-            through = grip * s.clutch_kinetic * if e.rpm < wheel_rpm { -1.0 } else { 1.0 };
+            // Slipping, it passes what it can hold, but no more than the
+            // engine makes: idling, it cannot kick the bike off the line.
+            through = grip
+                * if e.rpm < wheel_rpm {
+                    -s.clutch_kinetic
+                } else {
+                    s.clutch_kinetic.min(engine.max(0.0))
+                };
             // The wheel's rpm crossing the engine's: they lock together.
             let crossed = (e.wheel_rpm < e.rpm && e.rpm < wheel_rpm) || (e.wheel_rpm > e.rpm && e.rpm > wheel_rpm);
             if grip > 0.0 && crossed {
@@ -804,9 +815,14 @@ impl Bike {
         } else if wheelie {
             let target = (2.0 * held.back - 1.0) * s.max_pitch;
             let e = s.pitch_gain * (pitch - target) + nose_up_rate;
-            self.pitch_integral += e * dt * 500.0 * lbf_ft;
-            // As strong as the gas held: a crack of throttle barely holds it.
+            // As strong as the gas held: a crack of throttle barely holds
+            // it, and does not wind the hold up for when more gas comes.
             let fade = (1.0 - speed / s.wheelie_top_speed).clamp(0.0, 1.0) * held.gas;
+            if fade < 0.05 {
+                self.pitch_integral = 0.0;
+            } else {
+                self.pitch_integral += e * dt * 500.0 * lbf_ft;
+            }
             torque += side * (self.pitch_integral + e * s.pitch_rate_gain * lbf_ft) * fade;
         } else {
             self.pitch_integral = 0.0;
@@ -850,13 +866,9 @@ impl Bike {
                     t.y -= spin.y * d;
                 }
             }
-            // The rear brake drops the nose, the gas lifts it, as much as
-            // it is held.
-            if held.brake > 0.0 {
-                t.x += s.brake_gyro;
-            } else if held.gas > 0.0 {
-                t.x -= s.gas_gyro * held.gas;
-            }
+            // The rear brake drops the nose, the gas lifts it, each as much
+            // as it is held.
+            t.x += s.brake_gyro * held.brake - s.gas_gyro * held.gas;
             torque += r * t;
             // And a little sideways push with the stick.
             if ft(self.velocity.length()) > 10.0 {
@@ -1055,6 +1067,23 @@ mod tests {
         assert!(quarter < 0.5 * full, "quarter gas {quarter} m/s against full {full}");
         // A crack of gas does not hold the speed up.
         assert!(gain(0.05) < 0.0, "5 % gas gains {} m/s", gain(0.05));
+    }
+
+    /// A crack of throttle from a standstill does not kick the bike the
+    /// way full throttle does: the slipping clutch passes only what the
+    /// engine makes.
+    #[test]
+    fn partial_throttle_launches_softly() {
+        let w = floor();
+        let launch = |throttle: f32| {
+            let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -350.0), 0.0);
+            ride(&w, &mut bike, Controls::default(), 1.0);
+            ride(&w, &mut bike, gas(throttle), 0.25);
+            bike.speed()
+        };
+        let (crack, full) = (launch(0.05), launch(1.0));
+        assert!(crack < 0.3, "5 % gas: {crack} m/s after a quarter second");
+        assert!(full > 1.0, "full gas: {full} m/s after a quarter second");
     }
 
     #[test]
