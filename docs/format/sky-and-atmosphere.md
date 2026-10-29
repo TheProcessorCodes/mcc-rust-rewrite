@@ -274,3 +274,23 @@ overrides): a dark navy sky, a black sea under white floes, the moon and its hal
 drawn like the world's plasma (the mask's alpha times the band colours' mean), times the
 overlay's colour: blue-green curtains; the crawling noise bands and the warp are not drawn, so
 the curtains' card edges show in places.
+
+## 8. Sandbox (sandbox)
+
+A desert at dusk under open space, pieced together from other maps' sky art:
+
+| pieces | shader (blend) | what |
+|---|---|---|
+| far dunes | `distant_sand` (opaque, Fortress's `dunes_color`) | the desert past the wall |
+| horizon band | `fortress_clouds_horizon` (pre_multiplied_alpha, from_diffuse x0.65 peach), `horizon_mountains` (alpha_blend) | cloud bank and mountains round the horizon |
+| cloud cards | `clouds_sunbathed` (pre_multiplied_alpha, from_diffuse), `clouds_backlit`, `clouds_backlit_bright` (additive, from_diffuse), `clouds_horizon_sun` (pre_multiplied_alpha, illum x6.5), `clouds_patchy` (alpha_blend two_detail, scrolling, from_diffuse x2) | sunset clouds |
+| dome | `skydome` (gray_50, opaque), `space` (black, stars), `spacecamp_milkyway` (additive) | the night side of the sky |
+| | `sandbox_planet` (`ringed_planet`, alpha 0.4), `sundisk`, `make_a_wish*` | the ringed planet, the sun, shooting stars |
+
+The pre-multiplied cards' colour maps are not pre-multiplied: `salvation_clouds_horizon_dif`
+(2048 x 256 BC3) has a mean colour 0.29 under a mean alpha 0.12, `clouds_sunbathed` is white
+where its alpha is 0. Blended `src + dst * (1 - a)` as they stand, the horizon band showed as a
+whole cylinder with a hard top edge across the sky and the cloud cards as pale polygons. The sky
+shader multiplies a pre-multiplied surface's colour, haze included, by its alpha (`sky.wesl`,
+`mode.y` 2). The `from_diffuse` glows (section 4, after Blackout) are what light these clouds
+peach and orange; with the multiply they glow only where the cloud is.

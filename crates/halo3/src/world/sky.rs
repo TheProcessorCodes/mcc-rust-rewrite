@@ -285,7 +285,8 @@ pub struct SkyShading {
     pub albedo_colour: Vec4,
     #[uniform(100)]
     pub illum_colour: Vec4,
-    /// x: albedo mode, y: additive, z: lit, w: exposure.
+    /// x: albedo mode, y: blend (0 other, 1 additive, 2 pre-multiplied
+    /// alpha), z: lit, w: exposure.
     #[uniform(100)]
     pub mode: Vec4,
     #[uniform(100)]
@@ -484,7 +485,12 @@ fn swap_sky_materials(
             centre_tint: look.edge_fade.map_or(Vec4::ONE, |(_, c, p)| v3(c, p)),
             mode: Vec4::new(
                 look.albedo as u32 as f32,
-                (look.blend == Blend::Additive) as u32 as f32,
+                match look.blend {
+                    Blend::Additive => 1.0,
+                    // The shader multiplies its colour by its alpha.
+                    Blend::PreMultiplied => 2.0,
+                    _ => 0.0,
+                },
                 look.lit as u32 as f32,
                 exposure,
             ),

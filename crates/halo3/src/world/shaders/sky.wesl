@@ -28,8 +28,9 @@ struct SkyParams {
     // illum map, 2 from the albedo (`from_diffuse`), 3 plasma (the illum
     // slot holds the alpha mask), 4 plasma times the overlay in detail3.
     illum_colour: vec4<f32>,
-    // x: albedo mode, y: 1 for additive blending (no inscatter),
-    // z: 1 when lit (diffuse), w: exposure.
+    // x: albedo mode, y: 1 for additive blending (no inscatter), 2 for
+    // pre-multiplied alpha (colour times alpha here), z: 1 when lit
+    // (diffuse), w: exposure.
     mode: vec4<f32>,
     // Diffuse light for lit sky surfaces (already exposed).
     light: vec4<f32>,
@@ -215,9 +216,16 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let s = scatter(to_halo(view.world_position), to_halo(in.world_position.xyz));
         rgb = rgb * s.extinction;
         // Added light would pile up under every additive layer.
-        if sky.mode.y < 0.5 {
+        if abs(sky.mode.y - 1.0) > 0.5 {
             rgb = rgb + s.inscatter * exposure;
         }
+    }
+    if sky.mode.y > 1.5 {
+        // Pre-multiplied alpha blends `src + dst * (1 - a)`, but the cloud
+        // cards' colour maps are not pre-multiplied (white or grey where the
+        // alpha is 0): Sandbox's horizon clouds and sunlit cloud cards drew
+        // as whole bands and polygons with hard edges. Multiply here.
+        rgb = rgb * a.a;
     }
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr_input, vec4(rgb, a.a));
