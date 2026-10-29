@@ -140,8 +140,10 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       floes, with the moon, its halo and the aurora (`plasma`) drawn.
       Dropping off the rig (`kill_volume_bottom`, z -18.3) puts the skater
       or the bike back. Pinned by `cargo test` (our own counts).
-- [ ] Milestone 3b: feed collision and rails to the skate world.
-- [ ] Milestone 4: Skate 3 crates plugged in.
+- [x] Milestone 3b: collision and rails fed to the skate world (playtested
+      on Valhalla).
+- [x] Milestone 4: Skate 3 crates plugged in (path dependency on
+      `mw2-skate-3-src`), Master Chief as the rider (`docs/rider.md`).
 - [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets
       (PageUp / PageDown, `--zone`, and the scenario's switch volumes), the
       player starting location, sky and haze per cluster, skating on the

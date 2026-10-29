@@ -23,6 +23,11 @@ impl Plugin for FlyCameraPlugin {
     }
 }
 
+/// A menu is up that wants the pointer: the cursor stays free. Set by the
+/// bike's tuning menu (`halo3_bike`'s `tune.rs`).
+#[derive(Resource, Default)]
+pub struct PointerWanted(pub bool);
+
 #[derive(Component)]
 pub struct FlyCamera {
     pub yaw: f32,
@@ -73,6 +78,8 @@ fn grab_cursor(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    // A menu (the bike's tuning menu) wants the pointer while it is up.
+    pointer: Option<Res<PointerWanted>>,
     // Whether Escape has handed the cursor back; a click takes it again.
     mut released: Local<bool>,
     mut was_focused: Local<bool>,
@@ -91,7 +98,8 @@ fn grab_cursor(
     if mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right) {
         *released = false;
     }
-    let want = window.focused && !*released;
+    let menu = pointer.is_some_and(|p| p.0);
+    let want = window.focused && !*released && !menu;
     let mode = if want {
         CursorGrabMode::Locked
     } else {

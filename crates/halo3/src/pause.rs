@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
-use halo3_core::pause::Paused;
+use halo3_core::pause::{PauseKeys, Paused};
 
 pub struct PausePlugin;
 
@@ -30,13 +30,14 @@ impl Plugin for PausePlugin {
                 PreUpdate,
                 (toggle, quit, switch_tab)
                     .chain()
+                    .in_set(PauseKeys)
                     .after(InputSystems),
             );
     }
 }
 
 #[derive(Component)]
-struct PauseMenu;
+pub struct PauseMenu;
 
 /// Which tab is up, an index into `TABS`.
 #[derive(Resource, Default)]
@@ -77,6 +78,7 @@ const BIKE: &[[&str; 2]] = &[
     ["left trigger", "brake"],
     ["A (hold)", "back up"],
     ["Y", "stand the bike back up"],
+    ["0 (keyboard)", "physics tuning: sliders for grip, power, lean ..."],
     ["View / Back", "get off the bike"],
     ["Start", "pause"],
 ];
