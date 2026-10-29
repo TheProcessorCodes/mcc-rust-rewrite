@@ -1,6 +1,7 @@
 //! Halo 3's own sound in the viewer: the map's ambience (each cluster's
 //! background sound with its random details, sound scenery placed in the
-//! world), its music by hand, and board sounds while skating.
+//! world), its music by hand, board sounds while skating, and weapon sounds
+//! (`weapons.rs`).
 //! `docs/format/sound.md` has the data, `docs/viewer.md` "Sound" the rules.
 //!
 //! Keys: M music on / off, Shift+M next track, N alternate loop, K mute,
@@ -10,6 +11,7 @@
 
 mod library;
 mod mixer;
+mod weapons;
 
 use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
@@ -74,6 +76,11 @@ impl Plugin for HaloAudioPlugin {
             .init_resource::<Listener>()
             .init_resource::<Ambience>()
             .init_resource::<BoardSounds>()
+            .init_resource::<weapons::WeaponVoices>()
+            // Registered by `WeaponsPlugin` too; harmless twice, and the
+            // sound still builds without it.
+            .add_message::<crate::weapons::WeaponEvent>()
+            .add_message::<crate::weapons::WeaponImpact>()
             .add_systems(
                 Update,
                 (
@@ -84,6 +91,7 @@ impl Plugin for HaloAudioPlugin {
                     scenery,
                     music,
                     board,
+                    weapons::weapon_sounds,
                     volume_keys,
                     trace,
                 )
