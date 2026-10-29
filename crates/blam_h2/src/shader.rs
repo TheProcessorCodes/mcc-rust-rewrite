@@ -234,10 +234,8 @@ pub fn resolve(map: &Map, shader: u32) -> Result<Option<Look>> {
     }
     // Detail tiling is relative to the base map's.
     if let Some((_, b)) = look.base {
-        for d in [&mut look.detail, &mut look.secondary_detail] {
-            if let Some((_, x)) = d {
-                x.scale = [x.scale[0] * b.scale[0], x.scale[1] * b.scale[1]];
-            }
+        for (_, x) in [&mut look.detail, &mut look.secondary_detail].into_iter().flatten() {
+            x.scale = [x.scale[0] * b.scale[0], x.scale[1] * b.scale[1]];
         }
     }
     // Templates whose passes are not in the table: the runtime properties'

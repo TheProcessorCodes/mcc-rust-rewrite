@@ -104,7 +104,7 @@ fn main() -> anyhow::Result<()> {
             let (scene, textures) = halo2::load(&resolve_map(map))?;
             // The rider is Halo 3's Spartan, borrowed from Valhalla when
             // Halo 3 is installed (Halo 2's Master Chief is not decoded).
-            let chief = blam_cache::CacheFile::open(&resolve_map("riverworld"))
+            let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
                 .ok()
                 .and_then(|c| rider::load_chief(&c));
             (

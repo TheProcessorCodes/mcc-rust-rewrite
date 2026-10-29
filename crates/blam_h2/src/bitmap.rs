@@ -68,6 +68,9 @@ pub fn images(map: &Map, bitmap: u32) -> Result<Vec<Image>> {
         .collect()
 }
 
+/// Turns one stored pixel into `B G R A` bytes.
+type Widen = fn(&[u8]) -> [u8; 4];
+
 /// Decodes image `index` of a bitmap tag: the whole mip chain of a 2D
 /// image. 16-bit and luminance-alpha formats the Halo 3 path does not
 /// know are widened to `A8R8G8B8`.
@@ -82,7 +85,7 @@ pub fn decode(map: &Map, bitmap: u32, index: usize) -> Result<Texture> {
     if im.width == 0 || im.height == 0 || im.width > 8192 || im.height > 8192 {
         return Err(Error::Invalid(format!("{name}: {}x{}", im.width, im.height)));
     }
-    let (stored, widen): (Format, Option<fn(&[u8]) -> [u8; 4]>) = match im.format {
+    let (stored, widen): (Format, Option<Widen>) = match im.format {
         0 => (Format::A8, None),
         1 => (Format::Y8, None),
         9 => (Format::A4R4G4B4, None),
