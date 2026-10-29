@@ -60,10 +60,10 @@ A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
 `sidewinder` Avalanche, `guardian` Guardian,
-`lockout` Blackout, `chill` Narrows, `armory` Rat's Nest, `shrine` Sandtrap,
+`blackout` Blackout (its file is `lockout.map`), `chill` Narrows, `armory` Rat's Nest, `shrine` Sandtrap,
 `sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
-`halo2\h2_maps_win64_dx11` (`coagulation`; `h2:NAME` when Halo 3 has a map of
-that name, see `docs/viewer.md` "Halo 2 maps").
+`halo2\h2_maps_win64_dx11` (`coagulation`, `lockout` Lockout; `h2:NAME` / `h3:NAME` when
+both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
 
 ## Status
 
@@ -153,7 +153,7 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       hand (M; the Warthog run on 120_halo); board roll, grind and landing
       sounds while skating. K mutes, `-` / `=` volume, `HALO3_AUDIO=0` off
       (`docs/format/sound.md`, `docs/viewer.md` "Sound").
-- [x] Blackout (`lockout`, DLC; built, awaiting a playtest): 21 clusters,
+- [x] Blackout (`blackout`, file `lockout.map`, DLC; built, awaiting a playtest): 21 clusters,
       447 instances, 442 k triangles, 80 spawns (all on a floor), 19,326
       world and 166,536 instanced collision triangles, about 4,150 rails.
       A night sky: the sky's lit pieces get a tenth of the daylight
@@ -225,6 +225,13 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       its sky (a plain blue clear colour). Skating (610 rails), the bike
       and the Spartan rider (borrowed from Valhalla) run on it. Pinned by `cargo test`
       (`crates/blam_h2/tests/coagulation.rs`).
+- [x] Halo 2: Lockout (`lockout`; Halo 3's Blackout, also `lockout.map`,
+      is now `blackout`; built, awaiting a playtest): 16 clusters with
+      7,049 triangles, 75 instances 7,414, 15 crates, 5 scenery; 5,570
+      world and 7,312 instanced collision triangles, 66 spawns, 675 rails,
+      all 33 bitmaps decoded. No HaloExportH2 export to check against; our
+      own counts are pinned (`crates/blam_h2/tests/lockout.rs`). Same gaps
+      as Coagulation, plus a few small black panels on the boxes.
 - [x] Milestone 3b: collision and rails fed to the skate world (playtested
       on Valhalla).
 - [x] Milestone 4: Skate 3 crates plugged in (path dependency on

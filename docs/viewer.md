@@ -691,8 +691,9 @@ target\debug\halo3.exe coagulation --shot .scratch\shots\coagulation --view spaw
 ```
 
 A bare name is tried as a Halo 3 map first, then in `%HALO2_MAPS%` (default: the MCC folder
-above); `h2:NAME` asks for the Halo 2 one when both games have a map of that name (`h2:lockout`,
-`h2:zanzibar`). The header tells the two games apart (`blam_h2::is_halo2`). Only Coagulation
+above); `h2:NAME` / `h3:NAME` ask for one game when both have a map of that file name
+(`h2:zanzibar`). Lockout is the exception: a bare `lockout` is Halo 2's Lockout, and Halo 3's
+Blackout (also `lockout.map`) goes by `blackout`. The header tells the two games apart (`blam_h2::is_halo2`). Only Coagulation
 has been checked. `blam info|tags|strings|geometry|rails|shader|bitmap|textures` work on Halo 2
 maps too.
 
