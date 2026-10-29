@@ -9,6 +9,7 @@ pub mod collision;
 pub mod lightmap;
 pub mod materials;
 pub mod movement;
+pub mod objects;
 pub mod rails;
 pub mod render_geometry;
 pub mod render_model;
@@ -25,7 +26,7 @@ pub use movement::Movement;
 pub use rails::RailCensus;
 pub use scene::{
     Bone, BspInfo, ClusterInfo, ClusterLocator, Collision, CollisionMaterial, CollisionSource, CollisionTriangle, Kind, Lighting,
-    Lightmap, Material, Mesh, Part, Placement, Scene, Shading, Skin, Spawn, SpawnKind, StartingLocation,
+    Lightmap, Material, Mesh, Part, Placement, Scene, SceneObject, Shading, Skin, Spawn, SpawnKind, StartingLocation,
     Portal, TriggerVolume, ZoneSet, ZoneSwitch, WORLD_UNIT_METRES,
 };
 

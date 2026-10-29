@@ -10,7 +10,7 @@ use blam_cache::{Block, CacheFile, Resources, TagEntry};
 
 use crate::materials::MaterialTable;
 use crate::render_model::{self, ModelParts};
-use crate::scene::{Kind, Placement, Scene, Spawn, SpawnKind};
+use crate::scene::{Kind, Placement, Scene, SceneObject, Spawn, SpawnKind};
 use crate::{Error, Result};
 
 /// Which placement block and palette a kind of object lives in.
@@ -158,6 +158,9 @@ pub fn decode(
             let mut r = cache.reader_at(o);
             let palette_index = r.i16()?;
             let name_index = r.i16()?;
+            let flags = r.at(o + 0x04).u32()?;
+            // The editor folder (`halo-script.md` 6), -1 for none.
+            let folder = u16::try_from(r.at(o + 0x42).i16()?).ok();
             let position = Vec3::from(r.at(o + 0x08).f32x3()?);
             let [yaw, pitch, roll] = r.at(o + 0x14).f32x3()?;
             let scale = r.at(o + 0x20).f32()?;
@@ -208,6 +211,7 @@ pub fn decode(
                         object.name().rsplit('\\').next().unwrap_or("object")
                     )
                 });
+            let first = scene.placements.len() as u32;
             for piece in &parts.pieces {
                 scene.placements.push(Placement {
                     name: name.clone(),
@@ -222,6 +226,24 @@ pub fn decode(
                     fade_pixels: [0; 2],
                 });
             }
+            scene.objects.push(SceneObject {
+                kind: k.kind,
+                name_index: u16::try_from(name_index).ok().filter(|n| (*n as usize) < names.len()),
+                name: usize::try_from(name_index)
+                    .ok()
+                    .and_then(|n| names.get(n))
+                    .filter(|n| !n.is_empty())
+                    .cloned(),
+                placement: i as u32,
+                tag: object.index,
+                tag_path: object.name().to_string(),
+                transform: world,
+                bsps,
+                folder,
+                flags,
+                placements: first..scene.placements.len() as u32,
+                dynamic: false,
+            });
             *stats.placed.entry(k.kind).or_default() += 1;
         }
     }

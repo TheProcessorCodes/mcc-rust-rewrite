@@ -156,6 +156,10 @@ pub enum CollisionSource {
     Bsp(u32),
     /// An instanced geometry definition placed in that BSP.
     Instance(u32),
+    /// A placed object's own collision model (`objects::add_collision`):
+    /// its index in [`Scene::objects`] and the BSPs it belongs to (zero:
+    /// every BSP).
+    Object { object: u32, bsps: u32 },
 }
 
 /// One triangle the game collides with, in world space, wound
@@ -223,9 +227,28 @@ pub struct Collision {
 
 impl CollisionSource {
     /// The structure BSP the triangle belongs to.
+    /// For objects, the lowest BSP of their mask, or 32 for objects that
+    /// belong to every BSP.
     pub fn bsp(self) -> u32 {
         match self {
             CollisionSource::Bsp(b) | CollisionSource::Instance(b) => b,
+            CollisionSource::Object { bsps, .. } => bsps.trailing_zeros(),
+        }
+    }
+
+    /// Whether the triangle is there when the BSPs in `mask` are loaded.
+    pub fn in_mask(self, mask: u32) -> bool {
+        match self {
+            CollisionSource::Object { bsps, .. } => bsps == 0 || bsps & mask != 0,
+            _ => self.bsp() < 32 && mask & (1 << self.bsp()) != 0,
+        }
+    }
+
+    /// The scene object the triangle belongs to, if any.
+    pub fn object(self) -> Option<u32> {
+        match self {
+            CollisionSource::Object { object, .. } => Some(object),
+            _ => None,
         }
     }
 }
@@ -237,7 +260,7 @@ impl Collision {
             triangles: self
                 .triangles
                 .iter()
-                .filter(|t| t.source.bsp() < 32 && mask & (1 << t.source.bsp()) != 0)
+                .filter(|t| t.source.in_mask(mask))
                 .copied()
                 .collect(),
             materials: self.materials.clone(),
@@ -273,6 +296,44 @@ pub struct Scene {
     pub trigger_volumes: Vec<TriggerVolume>,
     /// Trigger volumes that begin or commit a zone-set switch.
     pub zone_switches: Vec<ZoneSwitch>,
+    /// Every object the scenario places (scenery, machines, controls,
+    /// crates, the map's own vehicles), in placement order; their pieces
+    /// are in `placements`.
+    pub objects: Vec<SceneObject>,
+}
+
+/// One object the scenario places.
+#[derive(Clone, Debug)]
+pub struct SceneObject {
+    pub kind: Kind,
+    /// Its index in the scenario's object names, when it has a name.
+    pub name_index: Option<u16>,
+    pub name: Option<String>,
+    /// Index into its kind's placement block.
+    pub placement: u32,
+    /// The object tag (`scen`, `mach`, `ctrl`, `bloc`, `vehi`).
+    pub tag: u32,
+    pub tag_path: String,
+    /// Local frame to world frame, scale included.
+    pub transform: Mat4,
+    /// Its origin BSP as a mask; zero for none (shown whatever is loaded).
+    pub bsps: u32,
+    /// The editor folder scripts create it with (`object_create_folder`).
+    pub folder: Option<u16>,
+    /// Placement flags (`+0x04`); bit 0: not created when the map starts.
+    pub flags: u32,
+    /// Its pieces in [`Scene::placements`].
+    pub placements: std::ops::Range<u32>,
+    /// Drawn on its own so scripts can move and hide it (the game sets
+    /// this; the world builder reads it).
+    pub dynamic: bool,
+}
+
+impl SceneObject {
+    /// Placement flag bit 0: the object waits for a script to create it.
+    pub fn starts_absent(&self) -> bool {
+        self.flags & 1 != 0
+    }
 }
 
 /// A structure BSP that decoded.
