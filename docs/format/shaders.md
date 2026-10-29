@@ -743,7 +743,8 @@ contribution 0.2-1.0; Last Resort cliffs (terrain) coefficient 1, power 5-10, ti
 
 | option | viewer |
 |---|---|
-| `simple`, `simple_with_alpha_mask`, `plasma` (approximated), others with a map | `self_illum_map * self_illum_color * self_illum_intensity` |
+| `simple`, `simple_with_alpha_mask`, others with a map | `self_illum_map * self_illum_color * self_illum_intensity` |
+| `plasma` | the mask times the bands' average glow (11.6) |
 | `illum_detail` | the same times `self_illum_detail_map * 2^2.2` |
 | `from_diffuse` | albedo * colour |
 | `self_illum_times_diffuse` | map * albedo * colour |
@@ -772,3 +773,37 @@ Only per-pixel lightmapped surfaces (the BSP) get bump and specular; objects lit
 their vertex irradiance and flat normals, and get `0.5 * E_vertex * env_tint * env_contribution *
 specular_coefficient * mask` as their reflection. `per_pixel` cube maps are not sampled; the SH towards
 the reflection stands in for both kinds of environment map.
+
+### 11.6 Plasma (`self_illumination plasma`, 2026-10-28)
+
+Parameters: `alpha_mask_map`, `noise_map_a`, `noise_map_b` (both usually scrolling),
+`color_medium`, `color_wide`, `color_sharp`, `thinness_medium` (16 on every map seen),
+`thinness_wide` (4), `thinness_sharp` (32 usually; Narrows' energy walls 100 and 256),
+`self_illum_intensity`. Our understanding of the look: the glow lights up where the two noise
+maps nearly agree, in three bands of decreasing width; with `d` = 1 - |noise_a - noise_b|, the
+sharp band is `d^sharp`, the medium band `d^medium - d^sharp`, the wide band `d^wide -
+d^medium`, each tinted by its colour, all times the mask and the intensity. That gives thin
+crawling lines rather than a sheet.
+
+The viewer does not sample the noise. It draws each band's average instead: for two independent
+noises spread evenly over 0..1, `d` has density `2d`, so `d^n` averages `2 / (n + 2)` (1/3, 1/9
+and 1/17 for 4, 16 and 32). So
+
+```
+glow = mask * intensity * (color_wide * (2/(wide+2) - 2/(medium+2))
+                         + color_medium * (2/(medium+2) - 2/(sharp+2))
+                         + color_sharp * 2/(sharp+2))
+```
+
+(`textures.rs` `plasma_band_weights`). Before Narrows the viewer used the plain mean of the
+three colours, which blew Narrows' energy walls out to white (`plasma_wall_b`: intensity 150,
+sharp thinness 256, now about 1.16 times its colour instead of 50) and drew the corridor light
+strips as solid orange-white slabs.
+
+**The mask.** Guardian's masks keep the pattern in the alpha (colour black). Narrows' light
+strips (`cit_beam`, `cit_beamb`) use The Covenant's `levels\solo\100_citadel\bitmaps\plasma_mask`,
+an A8R8G8B8 64x256 bitmap whose alpha is 255 everywhere and whose streaks are in the colour
+(mean 0.284). Read through the alpha it is a flat sheet; when a mask's alpha averages over 0.99
+(and its red does not), the viewer reads red instead, uploaded linear (`illum.y = 1` in
+`lightmap.wesl`). The sky's plasma (Blackout's aurora, `world/sky.rs`) still uses the plain
+mean; it was matched by eye.

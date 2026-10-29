@@ -94,7 +94,8 @@ struct HaloLightmapParams {
     // Reflection colour (tint times contribution).
     env: vec4<f32>,
     // x: self-illumination mode (0 off, 1 map, 2 map x detail,
-    // 3 from diffuse, 4 map x diffuse, 5 three channels, 6 plasma: map alpha).
+    // 3 from diffuse, 4 map x diffuse, 5 three channels, 6 plasma: map alpha);
+    // y: plasma only, 1 when the mask is read from red instead of alpha.
     illum: vec4<f32>,
     illum_a: vec4<f32>,
     illum_b: vec4<f32>,
@@ -411,8 +412,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         } else if mode == 5.0 {
             illum = im.r * halo.illum_a.rgb + im.g * halo.illum_b.rgb + im.b * halo.illum_c.rgb;
         } else if mode == 6.0 {
-            // Plasma: the mask is in the alpha channel.
-            illum = im.a * halo.illum_a.rgb;
+            // Plasma: the mask is in the alpha channel, or in red when its
+            // alpha is flat white (illum.y = 1: Narrows' plasma_mask).
+            let plasma = select(im.a, im.r, halo.illum.y == 1.0);
+            illum = plasma * halo.illum_a.rgb;
         }
     }
 @if(VERTEX_TANGENTS) {

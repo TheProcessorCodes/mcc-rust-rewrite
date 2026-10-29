@@ -190,7 +190,7 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 | spawn markers: placements of `respawn_point`, `*_initial_spawn_point`, `*_respawn_zone` objects, and the `objects\multi\shaders\spawn_point*` and `shaders\invalid` shaders | not drawn: Forge shows them, a game never does (they were the black discs and white plasma columns on every map) |
 | constant-colour shaders (no base map) | flat `albedo_color` |
 | additive glows without a base map | `self_illum_map` tinted by `self_illum_color`, added |
-| `self_illumination plasma` (Guardian's jump pads and minilift) | `alpha_mask_map`'s **alpha** (its colour channels are black) times the mean of `color_medium`, `color_wide` and `color_sharp` times `self_illum_intensity`, added; the crawling noise bands are not drawn. Before, these had no `self_illum_map` and drew nothing |
+| `self_illumination plasma` (Guardian's jump pads and minilift, Narrows' light strips and energy walls) | `alpha_mask_map`'s **alpha** (its red when the alpha is flat white, as on Narrows' `plasma_mask`) times the three band colours, each weighted by how much of its band shows on average (`2/(n+2)` for thinness `n`, `docs/format/shaders.md` 11.6), times `self_illum_intensity`, added; the crawling noise bands are not drawn. Until Narrows the weights were a plain mean, which blew its energy walls out to white and drew its corridor strips as solid slabs |
 | "special" shaders (path segment `invisible`, `portal`, `sky_portal`, `z_only`, `black`; effect classes) and alpha-tested shaders without a colour map (light quads) | not drawn |
 | anything that fails to resolve or decode | the old steady hashed colour, with a message on the console |
 
@@ -337,6 +337,20 @@ Blackout (`lockout`) has one too, `kill_volume_bottom`, from z -18.3 down past t
 anyone who drops off the rig falls about six world units past the lowest deck (-12.6) and is
 put back. The rig's legs and cross beams at z -13 to -18 are above it, so a fall can land on
 them; their grind rails (about 660) are kept.
+Narrows (`chill`) has four: `kill_drop` fills the chasm from z -60 up to 48.7, about ten world
+units under the bridge and the bases (walkways and spawns at z 58.7 to 63.3), and three tilted
+boxes `kill_zone1..3` sit under the bases and the middle of the bridge. The ledges and support
+tops under the bridge (z 44 to 48.7) are inside `kill_drop`, so their rails are dropped (about
+1,090 of 4,204). Headless check:
+
+```
+$env:HALO3_SWIM_TEST="20,0,55"; $env:HALO3_SKATE_FOR="8"
+& "target\debug\halo3.exe" chill --shot .scratch\shots\chill\fall --skate --view spawn
+```
+
+throws the skater off the side of the bridge; it logs `fall: into kill_drop at halo [20.03,
+0.20, 48.61]` and is back at the spawn. Narrows' scenario also lists the kill volumes and a
+`safe_zone` in blocks of their own (`docs/format/zone-sets.md` 5); the viewer goes by name.
 
 High Ground's cove (`deadlock_water_awesome`, a flat sheet at z 4.41 over x -37.0..15.1,
 y -67.8..-25.5) ends in a straight hard edge out at sea, where the sky model's far sea (`lake`,
