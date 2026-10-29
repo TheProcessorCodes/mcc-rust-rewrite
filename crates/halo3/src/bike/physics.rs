@@ -758,6 +758,14 @@ impl Bike {
     /// Advances by `dt` seconds in fixed sub-steps.
     pub fn step(&mut self, world: &World, controls: Controls, dt: f32) {
         const SUB: f32 = 1.0 / 240.0;
+        // A frame with no time in it (the first frame can be one) would
+        // divide by zero: with the rear wheel off the ground its spin-up
+        // torque is (change in spin) / dt = 0 / 0, and the NaN reaches the
+        // tyre solve's grip limits, where `clamp` panics. Seen on Narrows
+        // (`chill --bike --view spawn33`, also spawns 10, 31, 32, 34).
+        if dt <= 0.0 || !dt.is_finite() {
+            return;
+        }
         let mut controls = controls;
         if let Some(t) = self.crashed.as_mut() {
             *t -= dt;
@@ -1575,6 +1583,24 @@ mod tests {
             4.0,
         );
         assert!(bike.position.z < 10.0, "through the wall: z {}", bike.position.z);
+    }
+
+    /// A frame with no time in it, with the wheels off the ground and the
+    /// gas on (the headless `--bike` start on Narrows), leaves the bike as
+    /// it was instead of filling it with NaN.
+    #[test]
+    fn zero_time_step_is_harmless() {
+        let w = floor();
+        let mut bike = Bike::new(Vec3::new(0.0, 3.0, 0.0), 0.0);
+        let c = Controls {
+            throttle: 0.4,
+            ..default()
+        };
+        bike.step(&w, c, 0.0);
+        assert!(bike.position.is_finite() && bike.velocity.is_finite() && bike.spin.is_finite());
+        ride(&w, &mut bike, c, 2.0);
+        assert!(bike.position.is_finite() && bike.velocity.is_finite());
+        assert!(bike.position.y < 3.0, "never fell: y {}", bike.position.y);
     }
 
     fn default() -> Controls {
