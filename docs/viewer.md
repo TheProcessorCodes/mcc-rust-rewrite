@@ -533,7 +533,7 @@ camera; F again flies. `--foot` starts on foot at the start spawn. Code:
 | right stick | mouse | aim; he faces where he aims |
 | A | Space | jump |
 | left stick click (hold) | Ctrl or C (hold) | crouch |
-| d-pad down | T | camera: over the right shoulder / his eyes |
+| d-pad down | T | camera: his eyes (the start) / over the right shoulder |
 | RT | left button | fire |
 | right stick click | right button | zoom through the scope's levels |
 | X or RB | R | reload |

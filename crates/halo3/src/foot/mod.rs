@@ -186,6 +186,8 @@ pub(crate) fn walk(
             foot.gait = Gait::default();
             foot.eye_lift = None;
             foot.boom = 0.0;
+            // Halo's view: from his eyes (T for the shoulder).
+            foot.first_person = true;
             rider.skated = 0.0;
             rider.foot = true;
         }};
@@ -197,7 +199,9 @@ pub(crate) fn walk(
         foot.held = std::env::var("HALO3_FOOT_WALK").ok().map(|s| {
             let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
             Vec2::new(v.first().copied().unwrap_or(0.0), v.get(1).copied().unwrap_or(0.0))
-        }).or(Some(Vec2::ZERO));
+        });
+        // Screenshot walks are shot over the shoulder, to see the body.
+        foot.first_person = foot.held.is_none();
         commands.entity(camera).insert(Skating);
     } else if toggle {
         if foot.spartan.take().is_some() {
