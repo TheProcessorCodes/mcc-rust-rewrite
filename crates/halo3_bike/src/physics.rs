@@ -805,7 +805,8 @@ impl Bike {
             let target = (2.0 * held.back - 1.0) * s.max_pitch;
             let e = s.pitch_gain * (pitch - target) + nose_up_rate;
             self.pitch_integral += e * dt * 500.0 * lbf_ft;
-            let fade = (1.0 - speed / s.wheelie_top_speed).clamp(0.0, 1.0);
+            // As strong as the gas held: a crack of throttle barely holds it.
+            let fade = (1.0 - speed / s.wheelie_top_speed).clamp(0.0, 1.0) * held.gas;
             torque += side * (self.pitch_integral + e * s.pitch_rate_gain * lbf_ft) * fade;
         } else {
             self.pitch_integral = 0.0;
@@ -849,11 +850,12 @@ impl Bike {
                     t.y -= spin.y * d;
                 }
             }
-            // The rear brake drops the nose, the gas lifts it.
+            // The rear brake drops the nose, the gas lifts it, as much as
+            // it is held.
             if held.brake > 0.0 {
                 t.x += s.brake_gyro;
             } else if held.gas > 0.0 {
-                t.x -= s.gas_gyro;
+                t.x -= s.gas_gyro * held.gas;
             }
             torque += r * t;
             // And a little sideways push with the stick.
@@ -1031,6 +1033,28 @@ mod tests {
         assert!(bike.crashed.is_none());
         assert!(bike.up().y > 0.95);
         assert!(bike.wheels[1].contact.is_some(), "front up on plain gas");
+    }
+
+    /// Partial gas pulls less than full gas and the bike settles slower: the
+    /// throttle is not on/off.
+    #[test]
+    fn partial_throttle_pulls_less() {
+        let w = floor();
+        let gain = |throttle: f32| {
+            let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -350.0), 0.0);
+            ride(&w, &mut bike, Controls::default(), 1.0);
+            while bike.speed() < 14.0 {
+                bike.step(&w, gas(1.0), 1.0 / 60.0);
+            }
+            let start = bike.speed();
+            ride(&w, &mut bike, gas(throttle), 3.0);
+            bike.speed() - start
+        };
+        let [quarter, half, full] = [gain(0.25), gain(0.5), gain(1.0)];
+        assert!(quarter < half && half < full, "gains {quarter} {half} {full} m/s");
+        assert!(quarter < 0.5 * full, "quarter gas {quarter} m/s against full {full}");
+        // A crack of gas does not hold the speed up.
+        assert!(gain(0.05) < 0.0, "5 % gas gains {} m/s", gain(0.05));
     }
 
     #[test]
