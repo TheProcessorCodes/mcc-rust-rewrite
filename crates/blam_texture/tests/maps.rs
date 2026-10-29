@@ -251,3 +251,45 @@ fn guardian_shaders() {
         }
     }
 }
+
+/// Isolation's energy walls (the glowing slits in the outer wall): three
+/// additive plasma shaders pulsing their `self_illum_intensity` 0 -> 55.
+/// `plasma_wall_a` stores 55, `plasma_wall_b` and `_c` store 0, so the
+/// viewer takes the top of the pulse for those (`textures.rs`
+/// `illum_intensity`). The Flood growths use `material_model organism`.
+/// Every render method in the map resolves.
+#[test]
+fn isolation_shaders() {
+    let Some(path) = map("isolation") else { return };
+    let cache = CacheFile::open(path).unwrap();
+
+    for (tag, name, stored, period) in [
+        (10960, "plasma_wall_a", 55.0, 5.0),
+        (10963, "plasma_wall_b", 0.0, 8.0),
+        (10964, "plasma_wall_c", 0.0, 10.0),
+    ] {
+        let wall = shader::resolve(&cache, tag).unwrap();
+        assert!(wall.name.ends_with(name), "{}", wall.name);
+        assert_eq!(wall.option("self_illumination"), Some("plasma"));
+        assert_eq!(wall.blend, Blend::Additive);
+        assert_eq!(wall.param("self_illum_intensity").map(|v| v[0]), Some(stored));
+        let pulse = wall
+            .animation("self_illum_intensity", shader::AnimationKind::Value)
+            .expect("the intensity pulses");
+        assert!((pulse.from, pulse.to) == (0.0, 55.0) && (pulse.period - period).abs() < 1e-3, "{pulse:?}");
+        assert_eq!(wall.param("thinness_sharp").map(|v| v[0]), Some(512.0));
+    }
+
+    let sack = shader::resolve(&cache, 208).unwrap();
+    assert!(sack.name.ends_with(r"060_floodship\shaders\flood_sack"), "{}", sack.name);
+    assert_eq!(sack.option("material_model"), Some("organism"));
+    assert_eq!(sack.blend, Blend::Opaque);
+    assert!(sack.base.is_some());
+
+    for t in cache.tags.iter() {
+        let class = cache.tags.class_of(t).code.as_str();
+        if matches!(class, "rmsh" | "rmtr" | "rmfl" | "rmw " | "rmd " | "rmhg") {
+            shader::resolve(&cache, t.index).unwrap_or_else(|e| panic!("{}: {e}", t.name()));
+        }
+    }
+}
