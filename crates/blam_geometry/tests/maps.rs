@@ -944,7 +944,10 @@ fn sandbox_counts() {
     assert_eq!(c.crate_triangles, 87946);
     assert_eq!(c.machine_triangles, 0);
     assert_eq!(c.sky_triangles, 4023);
-    assert_eq!(scene.materials.len(), 68);
+    // 68 from the level and its objects, plus one from the Guardian
+    // defenders placed as level vehicles.
+    assert_eq!(scene.materials.len(), 69);
+    assert!(c.vehicle_triangles > 0);
 
     // The floor grid (`grid` scenery, `sandbox_grid_dim`): 30 triangles
     // flat at z -22.67, just over the sand (-22.76), over x -17.9..14.1,
@@ -1034,10 +1037,15 @@ fn sandbox_counts() {
     // the outer wall (x -127, z -8.8).
     let (rails, census) = blam_geometry::rails::find_rails(col);
     assert!((1088..=1102).contains(&census.rails), "{} rails", census.rails);
-    let found = rails.len();
+    // None is in the kill slab, but Sandbox has Sandtrap's Guardian towers
+    // (`tv_turret_*` outside `safe_zone`, `scene::guarded`): the rails out
+    // there, round the outer wall, are cut, about 1,095 down to about 760.
+    // No spawn stands where the Guardians shoot.
+    assert!(!scene.spawns.iter().any(|s| blam_geometry::scene::guarded(&scene.trigger_volumes, s.position).is_some()));
     let rails = blam_geometry::rails::outside_kill_volumes(rails, &scene.trigger_volumes);
-    assert_eq!(rails.len(), found);
+    assert!((740..=780).contains(&rails.len()), "{} rails kept", rails.len());
     for p in rails.iter().flatten() {
+        assert!(blam_geometry::scene::guarded(&scene.trigger_volumes, *p).is_none(), "rail point {p} guarded");
         assert!(p.x.abs() < 140.0 && p.y > -141.0 && p.y < 122.0 && p.z > -142.0 && p.z < 54.0, "rail point {p}");
     }
 }
