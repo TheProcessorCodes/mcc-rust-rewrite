@@ -50,7 +50,7 @@ A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
 `sidewinder` Avalanche, `guardian` Guardian,
-`lockout` Blackout. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
+`lockout` Blackout, `shrine` Sandtrap. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
 `halo2\h2_maps_win64_dx11` (`coagulation`; `h2:NAME` when Halo 3 has a map of
 that name, see `docs/viewer.md` "Halo 2 maps").
 
@@ -135,6 +135,22 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       floes, with the moon, its halo and the aurora (`plasma`) drawn.
       Dropping off the rig (`kill_volume_bottom`, z -18.3) puts the skater
       or the bike back. Pinned by `cargo test` (our own counts).
+- [x] Sandtrap (`shrine`; checked by headless shots before the changes
+      below, which are written but not yet built): 42 clusters, 327
+      instances, 313 k triangles, 103 spawns, 11,496 world and 50,684
+      instanced collision triangles, no holes under the render floors. The
+      sand blend, the Forerunner wall and obelisks, the crashed Phantom, the
+      frigate in the sky, haze and exposure come out with no map-specific
+      code. New: the map's own vehicles are placed (`Kind::Vehicle`, tags
+      under `objects\levels\`): the two Elephants (the team bases) and the
+      six Guardian defenders on the obelisks. The map has no kill volumes;
+      leaving the safe zone where a Guardian watches (`tv_turret_*`) now
+      counts as a fall (`blam_geometry::scene::guarded`), so the bike can
+      no longer ride out over the dunes, and rails there are cut (about
+      2,940 found, 2,124 kept). Not yet: the Elephants have no collision,
+      so the six spawns on their decks drop through to the sand. Our own
+      counts (`crates/blam_geometry/tests/maps.rs`, `docs/viewer.md`
+      "Falling out of the map").
 - [x] Halo 2: Coagulation (`coagulation`, MCC Halo 2 classic; built,
       awaiting a playtest): the zlib-chunked map inflated in memory, its
       shared tags read from `shared.map` and its pixels from `textures.dat`
