@@ -638,6 +638,36 @@ analytical_specular_contribution (10), area_specular_contribution (0), env_tint_
 | `levels\multi\riverworld\shaders\vahalla_waterfall` (rmsh, tag 11645) | albedo two_detail, blend_mode alpha_blend | base_map `vahalla_waterfall_mask` (1,1), detail_map `vahalla_waterfall_color` (1,3), detail_map2 same (1,2), bump_map (1,3.5) |
 | `levels\multi\riverworld\shaders\riverworld_ground_snow` (rmtr, tag 11583) | material_0 **off** | usages start at `base_map_m_1`; layers 1..3 have `detail_bump_m_N` too; blend map red channel is unused |
 
+### 8.7 Additive halograms without a colour map (Sandbox's Forge grid, 2026-10-29)
+
+Sandbox (`sandbox.map`, DLC) lays Forge grids over its floor (`grid` scenery, 30 triangles
+at z -22.67, 0.09 wu over the sand, 32 x 56 wu), round the sky level (a 60 wu disc at z 37.5)
+and in the room under the floor (z -70). Their shaders, `objects\levels\dlc\sandbox\shaders\
+sandbox_grid_dim` (tag 238) and `sandbox_grid` (tag 244), are `rmhg` halograms:
+
+| option | value |
+|---|---|
+| albedo | constant_color (`albedo_color` 0.753 grey) |
+| self_illumination | plasma (`color_medium`, `color_sharp`, `self_illum_intensity` 25 and 20) |
+| blend_mode | additive |
+| overlay | additive: `overlay_map` `grid_illum` at scale 62 (offset 0.5 on the dim one), `overlay_tint` blue, `overlay_intensity` 4 and 3 |
+
+`grid_illum` is a 128 x 128 A8R8G8B8 tile, black with a one-texel light border (mean red
+0.054, alpha 1.0 everywhere): tiled 62 times over the grid's UVs (0.57 x 1.0 on the floor
+grid) it gives a cell of about 0.9 wu, the Forge grid. The plasma's `alpha_mask_map` is the
+same bitmap at scale 1, so its alpha is flat white and only its colour (the border) marks
+anything; `noise_map_a` is the grid too and `noise_map_b` a scrolling cloud.
+
+Drawn with the flat `albedo_color` as an additive colour, lit and exposed, the floor grid was
+a solid white sheet over the middle of the map, its edge wherever the sand rises above it
+(what looked like a white sand area at the spawns). An additive halogram without a colour map
+is now given its overlay map as the colour map, tinted by `overlay_tint`, when the overlay adds
+(`additive`, `additive_detail`), and otherwise a black colour, so only its glow adds light
+(`blam_texture::shader` `halogram_glow`). A `multiply` overlay (Blackout's aurora, a sky piece)
+only tints the glow and keeps no colour map. The
+plasma mask needs reading from its colour where its alpha is flat (the Narrows branch, section
+11.6) or the plasma glow is a sheet too.
+
 ---
 
 ## 9. Survey results (riverworld, all 988 render-method tags)

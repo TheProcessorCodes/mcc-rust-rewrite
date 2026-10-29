@@ -289,3 +289,57 @@ fn narrows_shaders() {
         }
     }
 }
+
+/// Sandbox's Forge grids (`docs/format/shaders.md` 8.7): additive
+/// halograms with a flat grey albedo and no colour map. They take their
+/// overlay (the grid lines, tiled 62 times) as the colour map, tinted blue,
+/// instead of adding the grey as a white sheet over the floor.
+#[test]
+fn sandbox_grid_shaders() {
+    let Some(path) = map("sandbox") else { return };
+    let cache = CacheFile::open(path).unwrap();
+    let resources = cache.resources().unwrap();
+
+    for (tag, name, offset) in [(238u32, "sandbox_grid_dim", 0.5f32), (244, "sandbox_grid", 0.0)] {
+        let s = shader::resolve(&cache, tag).unwrap();
+        assert!(s.name.ends_with(name), "{}", s.name);
+        assert_eq!(s.class, "rmhg");
+        assert_eq!(s.option("albedo"), Some("constant_color"));
+        assert_eq!(s.option("self_illumination"), Some("plasma"));
+        assert_eq!(s.blend, Blend::Additive);
+        let base = s.base.as_ref().expect("the overlay becomes the colour map");
+        assert!(base.name.ends_with("grid_illum"), "{}", base.name);
+        assert_eq!(base.usage, "overlay_map");
+        assert_eq!(base.xform.scale, [62.0, 62.0]);
+        assert_eq!(base.xform.offset, [offset, offset]);
+        let tint = s.param("overlay_tint").unwrap();
+        assert_eq!(s.albedo_color, Some([tint[0], tint[1], tint[2], 1.0]));
+        assert!(tint[2] > 0.99 && tint[0] < 0.2, "{tint:?}");
+
+        // The grid tile: black with a light border, alpha flat white (so a
+        // plasma mask has to be read from its colour).
+        let t = bitmap::decode(&cache, &resources, base.bitmap, 0).unwrap();
+        assert_eq!((t.width, t.height), (128, 128));
+        let px = rgba::decode_level(t.format, t.width, t.height, t.level(0, 0).unwrap()).unwrap();
+        let mean = rgba::channel_means(&px);
+        assert!((mean[0] - 0.054).abs() < 0.01 && mean[3] > 0.99, "{mean:?}");
+    }
+
+    // An additive halogram with neither a colour map nor an overlay adds
+    // only its glow: black albedo (`damage_sphere_plasma_fade`).
+    let fade = cache
+        .tags
+        .iter()
+        .find(|t| t.name().ends_with(r"shaders\damage_sphere_plasma_fade"))
+        .expect("damage_sphere_plasma_fade");
+    let s = shader::resolve(&cache, fade.index).unwrap();
+    assert!(s.base.is_none());
+    assert_eq!(s.albedo_color, Some([0.0, 0.0, 0.0, 1.0]));
+
+    for t in cache.tags.iter() {
+        let class = cache.tags.class_of(t).code.as_str();
+        if matches!(class, "rmsh" | "rmtr" | "rmfl" | "rmw " | "rmd " | "rmhg") {
+            shader::resolve(&cache, t.index).unwrap_or_else(|e| panic!("{}: {e}", t.name()));
+        }
+    }
+}

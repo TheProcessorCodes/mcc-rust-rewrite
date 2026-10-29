@@ -176,6 +176,18 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       so the six spawns on their decks drop through to the sand. Our own
       counts (`crates/blam_geometry/tests/maps.rs`, `docs/viewer.md`
       "Falling out of the map").
+- [x] Sandbox (`sandbox`, DLC; written, not built yet): 7 clusters,
+      46 instances, 266 k triangles with its Forge pieces, 80 spawns (50 on
+      the collision, 28 on Forge pieces that have no collision yet),
+      12,889 world and 7,644 instanced collision triangles, about 1,095
+      rails, one `kill` slab under the sky level. Fixed on the way: the
+      Forge floor grid (an additive halogram with a flat grey albedo) drew
+      a white sheet over the middle of the map; it now draws its overlay's
+      grid lines (`docs/format/shaders.md` 8.7, and it needs the Narrows
+      plasma-mask commit for its glow). Pre-multiplied sky clouds are
+      multiplied by their alpha: the horizon band and cloud cards had hard
+      edges (`docs/format/sky-and-atmosphere.md` 8). Pinned by `cargo test`
+      (our own counts).
 - [x] Halo 2: Coagulation (`coagulation`, MCC Halo 2 classic; built,
       awaiting a playtest): the zlib-chunked map inflated in memory, its
       shared tags read from `shared.map` and its pixels from `textures.dat`

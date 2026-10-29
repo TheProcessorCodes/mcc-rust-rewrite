@@ -926,3 +926,118 @@ fn sandtrap_counts() {
         assert!(p.z > -28.0 && p.z < 0.0, "rail point {p}");
     }
 }
+
+/// Sandbox (`sandbox`, DLC: tags under `levels\dlc\sandbox`) has no
+/// HaloExport reference: our own counts, checked by looking. A desert in a
+/// ring of Forerunner wall, its middle built from Forge pieces (crates and
+/// scenery), a Forge grid on the floor and a sky level above.
+#[test]
+fn sandbox_counts() {
+    let Some(path) = map("sandbox") else { return };
+    let scene = blam_geometry::load_map(&path).expect("sandbox decodes");
+    let c = count(&scene);
+    assert_eq!(c.clusters_placed, 7);
+    assert_eq!(c.instances_placed, 46);
+    assert_eq!(c.cluster_triangles, 13457);
+    assert_eq!(c.instance_triangles, 31124);
+    assert_eq!(c.scenery_triangles, 129076);
+    assert_eq!(c.crate_triangles, 87946);
+    assert_eq!(c.machine_triangles, 0);
+    assert_eq!(c.sky_triangles, 4023);
+    assert_eq!(scene.materials.len(), 68);
+
+    // The floor grid (`grid` scenery, `sandbox_grid_dim`): 30 triangles
+    // flat at z -22.67, just over the sand (-22.76), over x -17.9..14.1,
+    // y -37.5..18.5 (shaders.md 8.7).
+    let grid = scene
+        .placements
+        .iter()
+        .find(|p| p.name.starts_with("grid"))
+        .expect("the Forge grid");
+    let dim = scene
+        .materials
+        .iter()
+        .position(|m| m.tag_path.ends_with("sandbox_grid_dim"))
+        .expect("sandbox_grid_dim") as u32;
+    assert!(scene.meshes[grid.mesh as usize].parts.iter().any(|p| p.material == dim));
+
+    // 80 spawn points. The real collision is the BSP's and its instances';
+    // the Forge pieces (crates and scenery) have none. 50 stand on that
+    // collision, 2 invisible ones a little over a slope (0.3 and 0.5 wu),
+    // and 28 on top of Forge pieces, 1.7 to 2.0 wu over the floor under them.
+    assert_eq!(scene.spawns.len(), 80);
+    let col = &scene.collision;
+    let (mut on, mut near, mut on_pieces) = (0, 0, 0);
+    for sp in &scene.spawns {
+        let p = sp.position;
+        // As `crossing_height`, with a little slack on the triangle's
+        // edges (spawns stand on seams between floor triangles).
+        let floor = col
+            .triangles
+            .iter()
+            .filter_map(|t| {
+                let [a, b, c] = t.points;
+                let d = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+                if d.abs() < 1e-9 {
+                    return None;
+                }
+                let u = ((p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y)) / d;
+                let v = ((b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)) / d;
+                (u >= -1e-4 && v >= -1e-4 && u + v <= 1.0001).then_some(a.z + u * (b.z - a.z) + v * (c.z - a.z))
+            })
+            .filter(|z| *z <= p.z + 0.3)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let gap = p.z - floor;
+        if gap.abs() < 0.06 {
+            on += 1;
+        } else if (0.06..0.55).contains(&gap) {
+            near += 1;
+        } else if (1.7..2.05).contains(&gap) {
+            on_pieces += 1;
+        } else {
+            panic!("spawn {sp:?} is {gap:.2} wu over its floor");
+        }
+        assert!(p.x.abs() < 25.0 && p.y > -40.0 && p.y < 20.0, "{sp:?}");
+    }
+    assert_eq!((on, near, on_pieces), (50, 2, 28));
+
+    // The real collision: 12,889 world and 7,644 instanced triangles (20 of
+    // the 46 instances collide), 10 collision materials, 456 of them
+    // invisible walls.
+    let bsp = col
+        .triangles
+        .iter()
+        .filter(|t| matches!(t.source, blam_geometry::CollisionSource::Bsp(_)))
+        .count();
+    assert_eq!(bsp, 12889);
+    assert_eq!(col.triangles.len() - bsp, 7644);
+    assert_eq!(col.materials.len(), 10);
+
+    // One kill volume, `kill`: a 2 wu slab under the sky level's grid
+    // (z 35.07..37.07), so a fall from the sky level ends there. The
+    // Guardian volumes (`tv_turret_*`) and `safe_zone` are not kill
+    // volumes; `garbage` neither.
+    assert_eq!(scene.trigger_volumes.len(), 9);
+    let kills: Vec<_> = scene.trigger_volumes.iter().filter(|v| v.kills()).collect();
+    assert_eq!(kills.len(), 1);
+    assert_eq!(kills[0].name, "kill");
+    assert!(kills[0].contains(glam::Vec3::new(0.0, -10.0, 36.0)));
+    assert!(!kills[0].contains(glam::Vec3::new(0.0, -10.0, 34.5)));
+    assert!(!kills[0].contains(glam::Vec3::new(0.0, -10.0, 37.5)));
+    assert!(!scene.spawns.iter().any(|s| kills[0].contains(s.position)));
+    for name in ["tv_turret_north0", "tv_turret_south1", "safe_zone", "garbage"] {
+        assert!(scene.trigger_volumes.iter().any(|v| v.name == name), "{name}");
+    }
+
+    // Grind rails: about 1,095 found (the finder's count moves by one from
+    // run to run), none in the kill slab. The longest runs round the top of
+    // the outer wall (x -127, z -8.8).
+    let (rails, census) = blam_geometry::rails::find_rails(col);
+    assert!((1088..=1102).contains(&census.rails), "{} rails", census.rails);
+    let found = rails.len();
+    let rails = blam_geometry::rails::outside_kill_volumes(rails, &scene.trigger_volumes);
+    assert_eq!(rails.len(), found);
+    for p in rails.iter().flatten() {
+        assert!(p.x.abs() < 140.0 && p.y > -141.0 && p.y < 122.0 && p.z > -142.0 && p.z < 54.0, "rail point {p}");
+    }
+}

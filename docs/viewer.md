@@ -191,6 +191,8 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 | constant-colour shaders (no base map) | flat `albedo_color` |
 | additive glows without a base map | `self_illum_map` tinted by `self_illum_color`, added |
 | `self_illumination plasma` (Guardian's jump pads and minilift, Narrows' light strips and energy walls) | `alpha_mask_map`'s **alpha** (its red when the alpha is flat white, as on Narrows' `plasma_mask`) times the three band colours, each weighted by how much of its band shows on average (`2/(n+2)` for thinness `n`, `docs/format/shaders.md` 11.6), times `self_illum_intensity`, added; the crawling noise bands are not drawn. Until Narrows the weights were a plain mean, which blew its energy walls out to white and drew its corridor strips as solid slabs |
+| additive halograms (`rmhg`) without a base map (Sandbox's Forge grids `sandbox_grid`, `sandbox_grid_dim`) | the `overlay_map` (grid lines, tiled 62 times) tinted by `overlay_tint`, added; with no overlay, black, so only the glow adds. Their flat `albedo_color` grey, lit and added, drew a white sheet over Sandbox's floor (`docs/format/shaders.md` 8.7). The plasma glow on them still needs its mask read from red (the Narrows plasma commit), or it too is a sheet |
+| `self_illumination plasma` (Guardian's jump pads and minilift) | `alpha_mask_map`'s **alpha** (its colour channels are black) times the mean of `color_medium`, `color_wide` and `color_sharp` times `self_illum_intensity`, added; the crawling noise bands are not drawn. Before, these had no `self_illum_map` and drew nothing |
 | "special" shaders (path segment `invisible`, `portal`, `sky_portal`, `z_only`, `black`; effect classes) and alpha-tested shaders without a colour map (light quads) | not drawn |
 | anything that fails to resolve or decode | the old steady hashed colour, with a message on the console |
 
@@ -383,6 +385,15 @@ not decoded, as for scenery and crates): the six spawn points on their decks, 1.
 sand, drop a skater or the bike through the deck onto the sand under it. The viewer starts on
 spawn 0, the first of them.
 
+Sandbox (`sandbox`, DLC) has one `kill` volume, a 2 wu slab at z 35.07..37.07 under the sky
+level's grid disc (z 37.5): a fall from the sky level ends there. Its `tv_turret_*` volumes and
+`safe_zone` are the Guardian towers' edge rule (the Sandtrap branch's `scene::guarded`); the
+ring wall round the desert keeps everyone in otherwise. Most of the middle is Forge pieces
+(crates and scenery) with no collision yet (known for every map): 28 of the 80 spawns, the start
+spawn among them, stand on such pieces 1.7 to 2 wu up, so the skater and the bike drop to the
+floor (z -22.76) at the start. About 1,095 grind rails, the longest round the top of the outer
+wall.
+
 High Ground's cove (`deadlock_water_awesome`, a flat sheet at z 4.41 over x -37.0..15.1,
 y -67.8..-25.5) ends in a straight hard edge out at sea, where the sky model's far sea (`lake`,
 an opaque `rmsh` at z about 2.9-3.7, lit like the rest of the sky) takes over about 1 wu lower and
@@ -459,6 +470,10 @@ The log says how each placement was lit, e.g. Valhalla:
   surface is seen edge-on to `edge_fade_center_tint` face-on, by `|n.v|^edge_fade_power`. Last
   Resort's foam rings round the distant islands (`island_water_edges`, additive, x2.75) drew as
   solid white slabs on the sea without these two.
+- Pre-multiplied-alpha sky shaders multiply their colour (haze included) by their alpha in the sky
+  shader: their colour maps are not pre-multiplied (white or grey where the alpha is 0). Sandbox's
+  horizon cloud band (`fortress_clouds_horizon`) and sunlit cloud cards (`clouds_sunbathed`) drew
+  as a whole band with a hard top edge across the sky and as pale polygons.
 - Alpha-tested sky shaders are cut by the albedo's alpha in the sky shader, and keep their base map
   on the StandardMaterial so bevy's depth prepass cuts them too. High Ground's `water_edge_breakup`
   cards (alpha mean 0.14) round the cove drew as pale slabs along the edge of the sea.
