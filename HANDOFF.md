@@ -16,7 +16,7 @@ so the user can **skate (Skate 3 physics) on real Halo 3 maps**.
 | 2 | noclip: fly around the maps | done and playtested (keyboard, mouse after Tab, gamepad, Shift for speed) |
 | 3 | skate on multiplayer maps | done and playtested on Valhalla: the Skate 3 crates are linked and Master Chief rides. Guardian, Last Resort, High Ground and Blackout are built and pass tests but are not playtested |
 | 4 | skate on campaign maps | narrowed to the final mission, `120_halo`: zone sets, streaming, culling and skating across zone sets are built, awaiting a playtest. Other missions not checked |
-| later | dirt bike game (MX vs ATV Reflex) in the mix | started: B rides a dirt bike; the user's other sessions are tuning it towards stock Reflex |
+| later | dirt bike game (MX vs ATV Reflex) in the mix | started: B rides a dirt bike on MX vs ATV Unleashed's Pro 250 model (`docs/bike-unleashed.md`); the user called it the best base so far (2026-10-29) |
 
 ## The decision (made 2026-10-27)
 
@@ -60,7 +60,7 @@ What the game does now:
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
 - **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great".
-- **Dirt bike.** B rides it, with Master Chief on it (`bike/`). The user's other sessions are tuning it to stock Reflex (branches `bike-tune`, `bike-gas-backwards`, `bike-air-wheel`).
+- **Dirt bike.** B rides it, with Master Chief on it (`bike/`). Its physics are MX vs ATV Unleashed's (see "Dirt bike" below); the Reflex model and its tuning menu were replaced and live on in history and `backup/bike-physics-*`.
 - **Campaign, 120_halo.** Its 8 zone sets switch by PageUp / PageDown, `--zone`, or the scenario's own switch volumes as you move. You start at the player starting location (`docs/format/zone-sets.md`).
 - **Culling and streaming.**
   - The world is chunked into 64 wu cells.
@@ -143,6 +143,14 @@ Halo) or the look fixes above.
 - The `bike-*` and `pause-menu` worktrees, and any locked agent worktree, belong to the user's
   other sessions; leave them alone.
 - `.gitattributes` forces LF.
+
+## Dirt bike (2026-10-28)
+
+The bike now rides on MX vs ATV Unleashed's stock Pro 250 model (`docs/bike-unleashed.md`,
+`crates/halo3/src/bike/unleashed.rs`), read from a decompile of the fan client's `mxacore.dll` and
+the user's own Unleashed `.phy` files. The earlier physics are on `backup/bike-physics-master-2026-10-28`
+and `backup/bike-physics-reflex-2026-10-28`. Awaiting the user's playtest; the doc lists what is
+not ported (clutch boost, surfaces, tricks, Unleashed's wreck rules).
 
 ## Open questions and known gaps
 

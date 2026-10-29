@@ -523,16 +523,17 @@ exposure curve is not decoded (the `cfxs` exposure is, see "Lighting"); no sun g
 
 B (or the controller's View / Back button) drops a dirt bike under the camera
 with the Spartan standing on it; B again flies. Code: `crates/halo3/src/bike/`
-(`physics.rs` the bike, `pose.rs` the rider, `mod.rs` controls, camera and the
-stick model). Dual-stick riding in the style of MX vs ATV Reflex:
+(`physics.rs` the bike, `unleashed.rs` its numbers, `pose.rs` the rider,
+`mod.rs` controls, camera and the stick model). The handling is MX vs ATV
+Unleashed's stock Pro 250 (`docs/bike-unleashed.md`):
 
 | controller | keyboard | effect |
 |---|---|---|
-| left stick X | A / D | handlebars (less lock at speed); the bike leans into the turn itself |
-| right stick | arrow keys | rider: forward / back moves his weight (front down, wheelies); left / right tightens the turn; in the air it pitches, leans and whips the bike |
-| RT | W | throttle: one long gear, 7 m/s² linear acceleration to 90 km/h |
-| LT | S | brake (65 % front) |
-| A (hold) | Space (hold) | back up, up to 3 m/s |
+| left stick X | A / D | handlebars (30°, less at speed); the bike leans with them, up to 45° at 35 mph |
+| right stick | arrow keys | rider: back moves the weight back, and back with gas holds a wheelie (more stick, higher); full forward on the brake holds a stoppie; in the air it pitches the bike, X turns and banks it |
+| RT | W | throttle: five-speed engine with automatic shifts, about 80 mph flat out |
+| LT | S | brakes (both wheels); in the air it drops the nose, the gas lifts it |
+| A (hold) | Space (hold) | back up, up to 10 mph |
 | Y | R | stand the bike back up |
 
 Hitting the bars or the rider's head, or landing upside down, is a crash: two
