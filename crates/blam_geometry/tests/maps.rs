@@ -299,6 +299,85 @@ fn blackout_counts() {
     }
 }
 
+/// Narrows (`chill`) has no HaloExport reference: our own counts, measured
+/// with `blam geometry chill` and `blam rails chill`. Two bases joined by a
+/// bridge over a deep icy chasm; the whole play space is a small box (spawns
+/// at |x| < 9, |y| < 28, z 58.7 to 63.3) and `kill_drop` fills the chasm
+/// from z -60 up to 48.7.
+#[test]
+fn narrows_counts() {
+    let Some(path) = map("chill") else { return };
+    let scene = blam_geometry::load_map(&path).expect("chill decodes");
+    let c = count(&scene);
+    // 35 clusters with 29 meshes; 201 instances, all placed.
+    assert_eq!(c.clusters_placed, 29);
+    assert_eq!(c.instances_placed, 201);
+    assert_eq!(c.cluster_triangles, 26956);
+    assert_eq!(c.instance_triangles, 82374);
+    assert_eq!(c.scenery_triangles, 129074);
+    assert_eq!(c.crate_triangles, 40577);
+    assert_eq!(c.machine_triangles, 0);
+    assert_eq!(c.sky_triangles, 8373);
+    assert_eq!(scene.materials.len(), 109);
+    let (lo, hi) = scene.bounds.expect("world bounds");
+    assert!((lo.x - -71.962).abs() < 2e-3 && (hi.x - 94.068).abs() < 2e-3, "{lo} {hi}");
+    assert!((lo.y - -74.933).abs() < 2e-3 && (hi.y - 103.422).abs() < 2e-3, "{lo} {hi}");
+    assert!((lo.z - -53.971).abs() < 2e-3 && (hi.z - 100.0).abs() < 2e-3, "{lo} {hi}");
+
+    // The collision: 25,770 world and 64,620 instanced triangles.
+    let col = &scene.collision;
+    let bsp = col
+        .triangles
+        .iter()
+        .filter(|t| matches!(t.source, blam_geometry::CollisionSource::Bsp(_)))
+        .count();
+    assert_eq!(bsp, 25770);
+    assert_eq!(col.triangles.len() - bsp, 64620);
+    assert_eq!(col.materials.len(), 61);
+
+    // 79 respawn points, on the bases and the bridge, each on the ground
+    // with nothing through the body.
+    assert_eq!(scene.spawns.len(), 79);
+    for sp in &scene.spawns {
+        let p = sp.position;
+        assert!(p.x.abs() < 9.0 && p.y.abs() < 28.0 && p.z > 58.6 && p.z < 63.4, "{sp:?}");
+    }
+    check_spawns(&scene);
+
+    // Four kill volumes: `kill_drop`, the chasm (x -108..122, y -103..111,
+    // z -60.0..48.72), and three tilted boxes `kill_zone1..3` under the
+    // bases and the bridge. `safe_zone` and `garbage` do not kill.
+    let mut kills: Vec<&str> = scene
+        .trigger_volumes
+        .iter()
+        .filter(|v| v.kills())
+        .map(|v| v.name.as_str())
+        .collect();
+    kills.sort_unstable();
+    assert_eq!(kills, ["kill_drop", "kill_zone1", "kill_zone2", "kill_zone3"]);
+    let drop = scene.trigger_volumes.iter().find(|v| v.name == "kill_drop").unwrap();
+    // Off the bridge: dead 12 wu under the walkways, where the headless
+    // skate test (`HALO3_SWIM_TEST=20,0,55`) was caught at z 48.6.
+    assert!(drop.contains(glam::Vec3::new(20.0, 0.0, 48.6)));
+    assert!(drop.contains(glam::Vec3::new(0.0, 0.0, 40.0)));
+    assert!(drop.contains(glam::Vec3::new(0.0, 0.0, -53.0)));
+    assert!(!drop.contains(glam::Vec3::new(0.0, 0.0, 49.0)));
+    for v in scene.trigger_volumes.iter().filter(|v| v.kills()) {
+        assert!(!scene.spawns.iter().any(|s| v.contains(s.position)), "a spawn in {}", v.name);
+    }
+
+    // Grind rails: about 4,204 found; the kill volumes cut them to about
+    // 3,115, all above the chasm's kill line.
+    let (rails, census) = blam_geometry::rails::find_rails(col);
+    assert!((4190..=4220).contains(&census.rails), "{} rails", census.rails);
+    let found = rails.len();
+    let rails = blam_geometry::rails::outside_kill_volumes(rails, &scene.trigger_volumes);
+    assert!((3100..=3130).contains(&rails.len()), "{} rails kept of {found}", rails.len());
+    for p in rails.iter().flatten() {
+        assert!(p.z > 48.7 && p.z < 100.01, "rail point {p}");
+    }
+}
+
 #[test]
 fn campaign_map_selects_one_bsp() {
     let Some(path) = map("120_halo") else { return };

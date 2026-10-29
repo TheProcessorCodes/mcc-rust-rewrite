@@ -50,7 +50,7 @@ A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
 `sidewinder` Avalanche, `guardian` Guardian,
-`lockout` Blackout. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
+`lockout` Blackout, `chill` Narrows. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
 `halo2\h2_maps_win64_dx11` (`coagulation`; `h2:NAME` when Halo 3 has a map of
 that name, see `docs/viewer.md` "Halo 2 maps").
 
@@ -135,6 +135,18 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       floes, with the moon, its halo and the aurora (`plasma`) drawn.
       Dropping off the rig (`kill_volume_bottom`, z -18.3) puts the skater
       or the bike back. Pinned by `cargo test` (our own counts).
+- [x] Narrows (`chill`; written 2026-10-28, not yet built or playtested):
+      29 cluster meshes, 201 instances, 287 k triangles with objects, 109
+      materials all resolving and every bitmap decoding, 79 spawns (all on
+      a floor, on the bases and the bridge), 25,770 world and 64,620
+      instanced collision triangles, 4,204 rails of which about 3,115 are
+      kept above the chasm. Falling off the bridge into `kill_drop` (up to
+      z 48.7) puts the skater or the bike back. Fixed on the way, not yet
+      built: plasma glows weighted by how much of each thin band shows
+      (the energy walls blew out to white, the corridor light strips were
+      solid slabs, their mask read from red where its alpha is flat), and
+      a bike panic on a zero-length first frame (NaN into `clamp`). Pinned
+      by `cargo test` (our own counts, no HaloExport reference).
 - [x] Halo 2: Coagulation (`coagulation`, MCC Halo 2 classic; built,
       awaiting a playtest): the zlib-chunked map inflated in memory, its
       shared tags read from `shared.map` and its pixels from `textures.dat`
