@@ -50,7 +50,8 @@ A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
 `sidewinder` Avalanche, `guardian` Guardian,
-`lockout` Blackout, `chill` Narrows. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
+`lockout` Blackout, `chill` Narrows, `armory` Rat's Nest, `shrine` Sandtrap,
+`sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
 `halo2\h2_maps_win64_dx11` (`coagulation`; `h2:NAME` when Halo 3 has a map of
 that name, see `docs/viewer.md` "Halo 2 maps").
 
@@ -147,6 +148,18 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       solid slabs, their mask read from red where its alpha is flat), and
       a bike panic on a zero-length first frame (NaN into `clamp`). Pinned
       by `cargo test` (our own counts, no HaloExport reference).
+- [x] Rat's Nest (`armory`, DLC; checked by headless shots, test written
+      but not yet built): 38 clusters, 1,906 instances, 894 k triangles,
+      97 spawns (all on a floor, clear of walls), 19,044 world and 319,704
+      instanced collision triangles, no holes under the play space's
+      floors, about 6,990 rails (47 dropped in `kill_vol_cliff`, the
+      canyon under the west overlook). Interiors, the overlook, the sky's
+      smoke columns, skating and the bike come out right with no
+      map-specific code; the sky's scrolling smoke shaders are no longer
+      mistaken for waterfalls. Not yet: crates and props have no collision
+      (object `coll` models are not decoded on any map), so the hangar's
+      giant crates can be ridden through. Our own counts
+      (`crates/blam_geometry/tests/maps.rs`).
 - [x] Halo 2: Coagulation (`coagulation`, MCC Halo 2 classic; built,
       awaiting a playtest): the zlib-chunked map inflated in memory, its
       shared tags read from `shared.map` and its pixels from `textures.dat`

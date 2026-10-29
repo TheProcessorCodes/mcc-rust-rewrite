@@ -351,6 +351,16 @@ $env:HALO3_SWIM_TEST="20,0,55"; $env:HALO3_SKATE_FOR="8"
 throws the skater off the side of the bridge; it logs `fall: into kill_drop at halo [20.03,
 0.20, 48.61]` and is back at the spawn. Narrows' scenario also lists the kill volumes and a
 `safe_zone` in blocks of their own (`docs/format/zone-sets.md` 5); the viewer goes by name.
+Rat's Nest (`armory`) has `kill_vol_cliff` over the canyon west of the overlook (x under -8.75,
+z -46.5 to -16.4; the overlook's floor is at -10): a rider who goes over the edge lands on the
+cliff's ledges or falls into it and is put back. Its 47 rails are dropped. Under the volume, on
+the canyon floor at z -52, the scenario stacks a pile of Forge blocks (`box_*`, `wall_*`, two of
+each size); nobody reaches them and they are not seen from the play space.
+
+Rat's Nest's crates and props (`crate_packing_giant_mp` in the hangar, jersey barriers, barrels)
+have no collision yet: the collision is the structure BSP and its instances only, and scenery and
+crates' own collision models (`coll`) are not decoded, on any map. The skater and the bike ride
+through them.
 
 High Ground's cove (`deadlock_water_awesome`, a flat sheet at z 4.41 over x -37.0..15.1,
 y -67.8..-25.5) ends in a straight hard edge out at sea, where the sky model's far sea (`lake`,
