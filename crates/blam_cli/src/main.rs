@@ -15,6 +15,7 @@
 //! blam textures <map> [--png-dir DIR] [--list]  decode every colour texture the map draws
 //! blam lightmap <map> [--bsp N] [--samples N]   a BSP's lightmap tag, texcoord links and decoded texels
 //! blam movement <map>                           the player's on-foot movement numbers, wu and metres
+//! blam weapons  <map> [--all] [--meshes] [--markers]  weapon tags, numbers, markers and placements
 //! ```
 //!
 //! `<map>` is a path, or a bare name such as `riverworld` looked up in
@@ -26,6 +27,7 @@ mod sound;
 mod lightmap;
 mod movement;
 mod texture;
+mod weapons;
 
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -125,7 +127,7 @@ impl Args {
 
 pub(crate) fn usage() -> ! {
     eprintln!(
-        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n\n<map> is a path or a bare name looked up in $HALO3_MAPS (default: the MCC install)."
+        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS (default: the MCC install)."
     );
     std::process::exit(2)
 }
@@ -160,6 +162,7 @@ fn main() -> Result<()> {
         "movement" => movement::run(&cache),
         "rails" => rails(&cache, &args),
         "nodes" => nodes(&cache, &args),
+        "weapons" => weapons::run(&cache, &args),
         "bitmap" => {
             let Some(what) = args.positional.get(1) else {
                 usage()
