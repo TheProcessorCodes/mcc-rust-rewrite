@@ -21,3 +21,11 @@ far, the paths on disk and the open decision.
   thread's worktree has been merged, start a fresh worktree for the next piece of work
   instead of reusing the merged one. If you are unsure whether something needs its own
   worktree, ask the user.
+- **At most two builds at once.** Run every `cargo build`/`run`/`test`/`check` through
+  the gate, from any worktree, using the main checkout's copy:
+  `& 'D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\.dev\build-gate.ps1' cargo build --release`
+  (from Bash: `powershell -NoProfile -File '<same path>' cargo ...`). If two builds are
+  running it prints its place in the queue and waits, then runs. Give the tool call a long
+  timeout or run it in the background. Notices also go to `.dev\build-gate.log`.
+  `.dev\` is dev-only and not in git (listed in `.git/info/exclude`); if the script is
+  missing, build normally.
