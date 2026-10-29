@@ -117,7 +117,10 @@ fn coagulation_collision_spawns_and_rails() {
             })
             .filter(|z| *z <= p.z + 0.3)
             .fold(f32::NEG_INFINITY, f32::max);
-        assert!((p.z - floor).abs() < 0.3, "{sp:?} is {:.2} wu over its floor", p.z - floor);
+        // Starting location 62 hangs 0.51 wu over the creek bank (the game
+        // drops the player); the rest stand within 0.3 wu of a floor.
+        let limit = if sp.name.ends_with(" 62") { 0.6 } else { 0.3 };
+        assert!((p.z - floor).abs() < limit, "{sp:?} is {:.2} wu over its floor", p.z - floor);
     }
     // No kill volumes on Coagulation: falling off is caught by the floor
     // under the collision (`falls.rs`).
@@ -128,9 +131,9 @@ fn coagulation_collision_spawns_and_rails() {
     assert!((RAILS_LOW..=RAILS_HIGH).contains(&rails.len()), "{} rails", rails.len());
 }
 
-/// The rail finder's count can move by a few with float order.
-const RAILS_LOW: usize = 0;
-const RAILS_HIGH: usize = usize::MAX;
+/// 610 rails found on 2026-10-28; the finder's count can move by a few.
+const RAILS_LOW: usize = 600;
+const RAILS_HIGH: usize = 620;
 
 #[test]
 fn coagulation_textures() {
