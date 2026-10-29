@@ -6,6 +6,7 @@
 pub mod coords;
 pub mod falls;
 pub mod fly_camera;
+pub mod objects;
 pub mod pause;
 pub mod skate;
 pub mod weapons;

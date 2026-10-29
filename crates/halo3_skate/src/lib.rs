@@ -115,6 +115,9 @@ struct Host {
     world: Option<u32>,
     /// A new zone set's collision is being built to swap in.
     swapping: bool,
+    /// The removed-objects generation the skate world was built with
+    /// (`halo3_core::objects`).
+    removed: u64,
 }
 
 impl Default for Host {
@@ -133,6 +136,7 @@ impl Default for Host {
             status: String::new(),
             world: None,
             swapping: false,
+            removed: 0,
         }
     }
 }
@@ -170,7 +174,12 @@ fn skate_world(
     mask: u32,
     k: f32,
 ) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>) {
-    let loaded = collision.of_bsps(mask);
+    let mut loaded = collision.of_bsps(mask);
+    // Objects a script destroyed or dropped (`halo3_core::objects`).
+    let removed = halo3_core::objects::removed_objects();
+    if !removed.is_empty() {
+        loaded.triangles.retain(|t| t.source.object().is_none_or(|o| !removed.contains(&o)));
+    }
     let triangles = skate_triangles(&loaded, k);
     let (found, _) = rails::find_rails(&loaded);
     let found = rails::outside_kill_volumes(found, volumes);
@@ -450,7 +459,20 @@ fn update(
     };
     // Another zone set: rebuild the skate world from its collision.
     let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
-    let new_world = host.world != Some(mask);
+    let mut new_world = host.world != Some(mask);
+    // Floor plates a script dropped: rebuild without them once the
+    // changes settle for a second (the build runs beside the ride).
+    let (removed, changed) = halo3_core::objects::removed_generation();
+    if removed != host.removed
+        && host.ready
+        && !host.swapping
+        && changed.is_none_or(|t| t.elapsed().as_secs_f32() > 1.0)
+    {
+        host.removed = removed;
+        if host.world.is_some() {
+            new_world = true;
+        }
+    }
     let aspect = windows
         .single()
         .map_or(16.0 / 9.0, |w| w.width() / w.height().max(1.0));
@@ -529,7 +551,7 @@ fn update(
         // swapped in; the ride goes on meanwhile.
         host.world = Some(mask);
         host.swapping = true;
-        host.status = "skate: building the new zone set's collision".into();
+        host.status = "skate: building the new collision".into();
         let _ = send.send(Job::World(mask));
     } else if new_world {
         host.world = Some(mask);

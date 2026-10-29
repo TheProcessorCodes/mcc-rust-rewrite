@@ -233,7 +233,14 @@ fn apply_culling(
     show: Res<ShowCollision>,
     view: Res<PortalView>,
     cameras: Query<(&GlobalTransform, &Projection), With<FlyCamera>>,
-    mut chunks: Query<(&BspMember, Option<&Cull>, Option<&Aabb>, &mut Visibility, Has<CollisionOverlay>)>,
+    mut chunks: Query<(
+        &BspMember,
+        Option<&Cull>,
+        Option<&Aabb>,
+        &mut Visibility,
+        Has<CollisionOverlay>,
+        Has<halo3_core::objects::ScriptHidden>,
+    )>,
 ) {
     let camera = cameras.single().ok();
     let eye = camera.map(|(t, _)| t.translation());
@@ -243,8 +250,8 @@ fn apply_culling(
         _ => 469.0,
     };
     let min_px = min_pixels();
-    for (member, cull, aabb, mut visibility, overlay) in &mut chunks {
-        let mut shown = loaded.shows(member) && (!overlay || show.0);
+    for (member, cull, aabb, mut visibility, overlay, hidden) in &mut chunks {
+        let mut shown = loaded.shows(member) && (!overlay || show.0) && !hidden;
         if shown && let Some(cull) = cull {
             if let Some(b) = cull.bsp
                 && !view.sees(b, &cull.clusters)

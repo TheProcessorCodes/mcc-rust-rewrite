@@ -176,21 +176,35 @@ pub struct World {
     cell: f32,
     triangles: Vec<Triangle>,
     grid: HashMap<(i32, i32), Vec<u32>>,
+    /// Per triangle, the scene object it belongs to (`u32::MAX`: the
+    /// structure BSP's own); empty when none does. Objects whose collision
+    /// a script took away (`halo3_core::objects`) are skipped.
+    owners: Vec<u32>,
 }
 
 impl World {
     /// Triangles in the renderer frame, wound counter-clockwise seen from the
     /// side you stand on, with their two-sided flag.
     pub fn new(triangles: impl IntoIterator<Item = ([Vec3; 3], bool)>) -> World {
+        let mut world = World::with_owners(triangles.into_iter().map(|(p, two)| (p, two, u32::MAX)));
+        world.owners.clear();
+        world
+    }
+
+    /// The same, with the scene object each triangle belongs to
+    /// (`u32::MAX` for none).
+    pub fn with_owners(triangles: impl IntoIterator<Item = ([Vec3; 3], bool, u32)>) -> World {
         let cell = 4.0;
         let mut out = Vec::new();
+        let mut owners = Vec::new();
         let mut grid: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
-        for ([a, b, c], two_sided) in triangles {
+        for ([a, b, c], two_sided, owner) in triangles {
             let normal = (b - a).cross(c - a);
             if !normal.is_finite() || normal.length_squared() < 1e-10 {
                 continue;
             }
             let i = out.len() as u32;
+            owners.push(owner);
             out.push(Triangle {
                 a,
                 b,
@@ -206,10 +220,14 @@ impl World {
                 }
             }
         }
+        if owners.iter().all(|o| *o == u32::MAX) {
+            owners.clear();
+        }
         World {
             cell,
             triangles: out,
             grid,
+            owners,
         }
     }
 
@@ -231,6 +249,9 @@ impl World {
         }
         out.sort_unstable();
         out.dedup();
+        if !self.owners.is_empty() {
+            halo3_core::objects::retain_present(out, |i| self.owners[i as usize]);
+        }
     }
 
     /// The nearest front face along a ray (`dir` unit length) among `candidates`.

@@ -124,10 +124,11 @@ fn setup(
 pub fn build_world(collision: &Collision, mask: u32) -> World {
     let started = std::time::Instant::now();
     let loaded = collision.of_bsps(mask);
-    let world = World::new(loaded.triangles.iter().map(|t| {
+    let world = World::with_owners(loaded.triangles.iter().map(|t| {
         (
             t.points.map(to_render),
             t.flags & surface_flags::TWO_SIDED != 0,
+            t.source.object().unwrap_or(u32::MAX),
         )
     }));
     eprintln!(
