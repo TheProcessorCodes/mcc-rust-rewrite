@@ -52,7 +52,7 @@ use halo3_world as world;
 use std::path::PathBuf;
 
 use bevy::prelude::*;
-use bevy::window::PresentMode;
+use bevy::window::{MonitorSelection, PresentMode, WindowMode};
 
 use halo3_core::DEFAULT_MAPS;
 
@@ -227,6 +227,8 @@ fn main() -> anyhow::Result<()> {
                 primary_window: Some(Window {
                     title,
                     present_mode: PresentMode::AutoVsync,
+                    // Borderless fullscreen on the monitor the window opens on.
+                    mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
                     ..default()
                 }),
                 ..default()
