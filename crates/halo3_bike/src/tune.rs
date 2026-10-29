@@ -9,6 +9,11 @@
 //! on a pad), to put it back to stock; Delete (Y on a pad) puts them all
 //! back. Closing the menu saves the values to `bike-tuning.json` next to the
 //! exe, and the next start loads them.
+//!
+//! Below the sliders are five setup slots, kept in `bike-setups.json` next to
+//! the exe. Pick the "Save to slot" or "Load slot" row, choose a slot with
+//! A / D and press Enter (A on a pad), or click a slot. Shift or Ctrl with
+//! 1 to 5 saves to a slot; 1 to 5 alone loads one.
 
 use std::path::PathBuf;
 
@@ -31,6 +36,7 @@ impl Plugin for TunePlugin {
         app.init_resource::<TuneMenu>()
             .init_resource::<Overlay>()
             .insert_resource(BikeTuning(load()))
+            .insert_resource(load_setups())
             .add_systems(Startup, (spawn_menu, apply))
             .add_systems(PreUpdate, toggle.after(InputSystems).in_set(OverlayInput))
             .add_systems(Update, (adjust, show, apply.run_if(resource_changed::<BikeTuning>)).chain());
@@ -45,9 +51,25 @@ pub struct BikeTuning(pub Tuning);
 #[derive(Resource, Default)]
 pub struct TuneMenu {
     pub open: bool,
+    /// A slider, or `SAVE_ROW` / `LOAD_ROW`.
     selected: usize,
     dragging: Option<usize>,
+    /// The slot the save and load rows point at.
+    slot: usize,
+    /// What the last save or load did, shown under the sliders.
+    note: String,
 }
+
+/// How many setups can be saved.
+pub const SLOTS: usize = 5;
+/// The menu rows after the sliders.
+const SAVE_ROW: usize = KNOBS.len();
+const LOAD_ROW: usize = KNOBS.len() + 1;
+const ROWS: usize = KNOBS.len() + 2;
+
+/// The saved setups, slot by slot.
+#[derive(Resource, Default)]
+pub struct Setups(pub [Option<Tuning>; SLOTS]);
 
 /// A run condition: the menu is closed.
 pub fn closed(menu: Res<TuneMenu>) -> bool {
@@ -59,21 +81,35 @@ fn apply(tuning: Res<BikeTuning>) {
     physics::set_tuning(&tuning.0);
 }
 
-/// Where the tuning is kept between runs: next to the exe.
-fn save_path() -> Option<PathBuf> {
-    Some(std::env::current_exe().ok()?.parent()?.join("bike-tuning.json"))
+/// A file kept next to the exe.
+fn beside_exe(name: &str) -> Option<PathBuf> {
+    Some(std::env::current_exe().ok()?.parent()?.join(name))
 }
 
-/// The saved tuning, or stock. Unknown or missing values fall back to stock.
-fn load() -> Tuning {
+/// Reads a JSON file next to the exe, if it is there.
+fn read_json(name: &str) -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(beside_exe(name)?).ok()?;
+    let value = serde_json::from_str(&text);
+    if value.is_err() {
+        warn!("bike: {name} is not valid JSON; ignoring it");
+    }
+    value.ok()
+}
+
+fn write_json(name: &str, value: &serde_json::Value) {
+    let Some(path) = beside_exe(name) else {
+        return;
+    };
+    let text = serde_json::to_string_pretty(value).unwrap_or_default();
+    if let Err(e) = std::fs::write(&path, text) {
+        warn!("bike: could not save {}: {e}", path.display());
+    }
+}
+
+/// A tuning from its saved values. Unknown or missing values fall back to
+/// stock.
+fn from_json(saved: &serde_json::Map<String, serde_json::Value>) -> Tuning {
     let mut t = Tuning::default();
-    let Some(text) = save_path().and_then(|p| std::fs::read_to_string(p).ok()) else {
-        return t;
-    };
-    let Ok(serde_json::Value::Object(saved)) = serde_json::from_str::<serde_json::Value>(&text) else {
-        warn!("bike: bike-tuning.json is not a JSON object; riding stock");
-        return t;
-    };
     for k in &KNOBS {
         if let Some(v) = saved.get(k.key).and_then(|v| v.as_f64()) {
             (k.set)(&mut t, (v as f32).clamp(k.range.0, k.range.1));
@@ -82,15 +118,62 @@ fn load() -> Tuning {
     t
 }
 
-fn save(t: &Tuning) {
-    let Some(path) = save_path() else {
-        return;
-    };
+fn to_json(t: &Tuning) -> serde_json::Value {
     let map: serde_json::Map<String, serde_json::Value> =
         KNOBS.iter().map(|k| (k.key.to_string(), serde_json::json!((k.get)(t)))).collect();
-    let text = serde_json::to_string_pretty(&map).unwrap_or_default();
-    if let Err(e) = std::fs::write(&path, text) {
-        warn!("bike: could not save {}: {e}", path.display());
+    serde_json::Value::Object(map)
+}
+
+/// The tuning ridden last time, or stock.
+fn load() -> Tuning {
+    match read_json("bike-tuning.json") {
+        Some(serde_json::Value::Object(saved)) => from_json(&saved),
+        Some(_) => {
+            warn!("bike: bike-tuning.json is not a JSON object; riding stock");
+            Tuning::default()
+        }
+        None => Tuning::default(),
+    }
+}
+
+fn save(t: &Tuning) {
+    write_json("bike-tuning.json", &to_json(t));
+}
+
+/// The saved setups: `{"slots": [null or a tuning, ...]}`.
+fn load_setups() -> Setups {
+    let mut setups = Setups::default();
+    let Some(value) = read_json("bike-setups.json") else {
+        return setups;
+    };
+    let Some(slots) = value.get("slots").and_then(|s| s.as_array()) else {
+        warn!("bike: bike-setups.json has no slots list; ignoring it");
+        return setups;
+    };
+    for (slot, saved) in setups.0.iter_mut().zip(slots) {
+        *slot = saved.as_object().map(from_json);
+    }
+    setups
+}
+
+fn save_setups(setups: &Setups) {
+    let slots: Vec<_> = setups.0.iter().map(|s| s.as_ref().map_or(serde_json::Value::Null, to_json)).collect();
+    write_json("bike-setups.json", &serde_json::json!({ "slots": slots }));
+}
+
+/// Whether a slider is off its stock value.
+fn differs(k: &Knob, t: &Tuning, stock: &Tuning) -> bool {
+    ((k.get)(t) - (k.get)(stock)).abs() > k.step * 0.25
+}
+
+/// A saved setup in a few words: its base model and how far it is from stock.
+fn describe(t: &Tuning) -> String {
+    let model = if t.model >= 0.5 { "Reflex v1" } else { "Unleashed" };
+    // The model slider itself is not a change from that model's stock.
+    let stock = Tuning::default();
+    match KNOBS[1..].iter().filter(|k| differs(k, t, &stock)).count() {
+        0 => format!("{model}, stock"),
+        n => format!("{model}, {n} changed"),
     }
 }
 
@@ -488,6 +571,17 @@ struct Readout(usize);
 #[derive(Component)]
 struct Summary;
 
+/// A slot's button on the save row or the load row.
+#[derive(Component)]
+struct SlotCell {
+    row: usize,
+    slot: usize,
+}
+
+/// A slot's description on the load row.
+#[derive(Component)]
+struct SlotText(usize);
+
 fn text(s: impl Into<String>, size: f32, colour: Color) -> impl Bundle {
     (Text::new(s), TextFont::from_font_size(size), TextColor(colour))
 }
@@ -533,7 +627,8 @@ fn spawn_menu(mut commands: Commands) {
                 panel.spawn(text("BIKE PHYSICS", 28.0, Color::WHITE));
                 panel.spawn(text(
                     "Drag a slider, or W / S to pick and A / D to move (d-pad on a pad).  \
-                     Right-click or Backspace: back to stock.  Delete: all to stock.  0 or Esc: ride.",
+                     Right-click or Backspace: back to stock.  Delete: all to stock.  0 or Esc: ride.\n\
+                     Shift+1 to 5 saves the setup to a slot, 1 to 5 loads one (or pick a slot below and press Enter).",
                     14.0,
                     DIM,
                 ));
@@ -620,6 +715,45 @@ fn spawn_menu(mut commands: Commands) {
                         });
                 }
                 panel.spawn((
+                    Node {
+                        margin: UiRect::top(Val::Px(6.0)),
+                        ..default()
+                    },
+                    text("Saved setups", 15.0, DIM),
+                ));
+                for (row, name, width) in [(SAVE_ROW, "Save to slot", 60.0), (LOAD_ROW, "Load slot", 170.0)] {
+                    panel
+                        .spawn((
+                            Row(row),
+                            Node {
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(6.0),
+                                padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::NONE),
+                        ))
+                        .with_children(|r| {
+                            r.spawn(cell(180.0)).with_child(text(name, 16.0, Color::WHITE));
+                            for slot in 0..SLOTS {
+                                let mut button = r.spawn((
+                                    SlotCell { row, slot },
+                                    Node {
+                                        width: Val::Px(width),
+                                        padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(TRACK),
+                                ));
+                                if row == LOAD_ROW {
+                                    button.with_child((SlotText(slot), text("", 13.0, DIM)));
+                                } else {
+                                    button.with_child(text(format!("{}", slot + 1), 14.0, Color::WHITE));
+                                }
+                            }
+                        });
+                }
+                panel.spawn((
                     Summary,
                     Node {
                         margin: UiRect::top(Val::Px(8.0)),
@@ -663,6 +797,7 @@ fn toggle(
     }
     menu.open = open;
     menu.dragging = None;
+    menu.note.clear();
     overlay.0 = open;
     for mut v in &mut menus {
         *v = if open { Visibility::Visible } else { Visibility::Hidden };
@@ -699,30 +834,68 @@ fn put(tuning: &mut ResMut<BikeTuning>, k: &Knob, v: f32) {
     }
 }
 
+/// Saves the tuning to a slot (`SAVE_ROW`) or loads a slot (`LOAD_ROW`).
+fn use_slot(
+    row: usize,
+    slot: usize,
+    menu: &mut TuneMenu,
+    tuning: &mut ResMut<BikeTuning>,
+    setups: &mut ResMut<Setups>,
+) {
+    let n = slot + 1;
+    if row == SAVE_ROW {
+        setups.0[slot] = Some(tuning.0);
+        save_setups(setups);
+        menu.note = format!("Saved to slot {n}.");
+    } else if let Some(t) = setups.0[slot] {
+        if t != tuning.0 {
+            tuning.0 = t;
+        }
+        menu.note = format!("Loaded slot {n}.");
+    } else {
+        menu.note = format!("Slot {n} is empty.");
+    }
+}
+
+/// The slot button under the cursor.
+fn slot_under_cursor(
+    cursor: Option<Vec2>,
+    cells: &Query<(&SlotCell, &ComputedNode, &UiGlobalTransform)>,
+) -> Option<(usize, usize)> {
+    let at = cursor?;
+    cells.iter().find_map(|(cell, node, transform)| {
+        let local = transform.try_inverse()?.transform_point2(at);
+        let half = node.size() * 0.5;
+        (local.x.abs() <= half.x && local.y.abs() <= half.y).then_some((cell.row, cell.slot))
+    })
+}
+
+const DIGITS: [KeyCode; SLOTS] = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5];
+
 #[allow(clippy::too_many_arguments)]
 fn adjust(
     mut menu: ResMut<TuneMenu>,
     mut tuning: ResMut<BikeTuning>,
+    mut setups: ResMut<Setups>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     gamepads: Query<&Gamepad>,
     windows: Query<&Window, With<PrimaryWindow>>,
     tracks: Query<(&Track, &ComputedNode, &UiGlobalTransform)>,
+    cells: Query<(&SlotCell, &ComputedNode, &UiGlobalTransform)>,
 ) {
     if !menu.open {
         return;
     }
     let key = |a: KeyCode, b: KeyCode| keys.just_pressed(a) || keys.just_pressed(b);
     let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
-    let n = KNOBS.len();
     if key(KeyCode::KeyS, KeyCode::ArrowDown) || pad(GamepadButton::DPadDown) {
-        menu.selected = (menu.selected + 1) % n;
+        menu.selected = (menu.selected + 1) % ROWS;
     }
     if key(KeyCode::KeyW, KeyCode::ArrowUp) || pad(GamepadButton::DPadUp) {
-        menu.selected = (menu.selected + n - 1) % n;
+        menu.selected = (menu.selected + ROWS - 1) % ROWS;
     }
     let stock = Tuning::default();
-    let k = &KNOBS[menu.selected];
     let mut nudge = 0.0;
     if key(KeyCode::KeyD, KeyCode::ArrowRight) || pad(GamepadButton::DPadRight) {
         nudge += 1.0;
@@ -730,21 +903,43 @@ fn adjust(
     if key(KeyCode::KeyA, KeyCode::ArrowLeft) || pad(GamepadButton::DPadLeft) {
         nudge -= 1.0;
     }
-    if nudge != 0.0 {
-        let v = ((k.get)(&tuning.0) + nudge * k.step).clamp(k.range.0, k.range.1);
-        put(&mut tuning, k, v);
-    }
-    if keys.just_pressed(KeyCode::Backspace) || pad(GamepadButton::West) {
-        put(&mut tuning, k, (k.get)(&stock));
+    if let Some(k) = KNOBS.get(menu.selected) {
+        if nudge != 0.0 {
+            let v = ((k.get)(&tuning.0) + nudge * k.step).clamp(k.range.0, k.range.1);
+            put(&mut tuning, k, v);
+        }
+        if keys.just_pressed(KeyCode::Backspace) || pad(GamepadButton::West) {
+            put(&mut tuning, k, (k.get)(&stock));
+        }
+    } else {
+        // The save and load rows: A / D pick a slot, Enter uses it.
+        menu.slot = (menu.slot as f32 + nudge).rem_euclid(SLOTS as f32) as usize;
+        if key(KeyCode::Enter, KeyCode::NumpadEnter) || keys.just_pressed(KeyCode::Space) || pad(GamepadButton::South) {
+            let (row, slot) = (menu.selected, menu.slot);
+            use_slot(row, slot, &mut menu, &mut tuning, &mut setups);
+        }
     }
     if (keys.just_pressed(KeyCode::Delete) || pad(GamepadButton::North)) && tuning.0 != stock {
         tuning.0 = stock;
     }
+    // 1 to 5 load a slot; with Shift or Ctrl they save to it.
+    let held = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
+    let saving = held(KeyCode::ShiftLeft, KeyCode::ShiftRight) || held(KeyCode::ControlLeft, KeyCode::ControlRight);
+    if let Some(slot) = DIGITS.iter().position(|&d| keys.just_pressed(d)) {
+        let row = if saving { SAVE_ROW } else { LOAD_ROW };
+        use_slot(row, slot, &mut menu, &mut tuning, &mut setups);
+    }
 
-    // The mouse: press on a slider to grab it, drag to move it.
+    // The mouse: press on a slider to grab it, drag to move it; click a
+    // slot to save or load it.
     let cursor = windows.single().ok().and_then(Window::physical_cursor_position);
     if mouse.just_pressed(MouseButton::Left) {
         menu.dragging = under_cursor(cursor, &tracks, None).map(|(i, _)| i);
+        if let Some((row, slot)) = slot_under_cursor(cursor, &cells) {
+            menu.selected = row;
+            menu.slot = slot;
+            use_slot(row, slot, &mut menu, &mut tuning, &mut setups);
+        }
     }
     if !mouse.pressed(MouseButton::Left) {
         menu.dragging = None;
@@ -773,9 +968,12 @@ fn show(
     menu: Res<TuneMenu>,
     tuning: Res<BikeTuning>,
     mut fills: Query<(&Fill, &mut Node), Without<Stock>>,
-    mut rows: Query<(&Row, &mut BackgroundColor)>,
+    mut rows: Query<(&Row, &mut BackgroundColor), Without<SlotCell>>,
     mut readouts: Query<(&Readout, &mut Text, &mut TextColor), Without<Summary>>,
     mut summary: Query<&mut Text, With<Summary>>,
+    setups: Res<Setups>,
+    mut cells: Query<(&SlotCell, &mut BackgroundColor), Without<Row>>,
+    mut slot_texts: Query<(&SlotText, &mut Text, &mut TextColor), (Without<Readout>, Without<Summary>)>,
 ) {
     if !menu.open {
         return;
@@ -805,9 +1003,9 @@ fn show(
     for (r, mut text, mut colour) in &mut readouts {
         let k = &KNOBS[r.0];
         let (v, s) = ((k.get)(t), (k.get)(&stock));
-        let differs = (v - s).abs() > k.step * 0.25;
-        changed += differs as usize;
-        let line = if differs {
+        let off = differs(k, t, &stock);
+        changed += off as usize;
+        let line = if off {
             format!("{}  (stock: {})", (k.show)(&tuned, v), (k.show)(&base, s))
         } else {
             (k.show)(&tuned, v)
@@ -817,7 +1015,7 @@ fn show(
         }
         let want = if r.0 == menu.selected {
             LIT
-        } else if differs {
+        } else if off {
             CHANGED
         } else {
             DIM
@@ -826,12 +1024,42 @@ fn show(
             colour.0 = want;
         }
     }
+    for (cell, mut bg) in &mut cells {
+        let want = if menu.selected == cell.row && menu.slot == cell.slot {
+            Color::srgba(1.0, 0.82, 0.35, 0.45)
+        } else if cell.row == LOAD_ROW && setups.0[cell.slot].is_some() {
+            Color::srgb(0.18, 0.32, 0.42)
+        } else {
+            TRACK
+        };
+        if bg.0 != want {
+            bg.0 = want;
+        }
+    }
+    for (st, mut text, mut colour) in &mut slot_texts {
+        let saved = setups.0[st.0].as_ref();
+        let line = match saved {
+            Some(s) => format!("{}  {}", st.0 + 1, describe(s)),
+            None => format!("{}  empty", st.0 + 1),
+        };
+        if text.0 != line {
+            text.0 = line;
+        }
+        // The slot that matches what is being ridden stands out.
+        let want = if saved == Some(t) { Color::WHITE } else { DIM };
+        if colour.0 != want {
+            colour.0 = want;
+        }
+    }
     if let Ok(mut s) = summary.single_mut() {
-        let line = match changed {
+        let mut line = match changed {
             0 => "All stock (Reflex v1).".to_string(),
             1 => "1 slider differs from stock.".to_string(),
             n => format!("{n} sliders differ from stock."),
         };
+        if !menu.note.is_empty() {
+            line = format!("{line}  {}", menu.note);
+        }
         if s.0 != line {
             s.0 = line;
         }
@@ -859,5 +1087,18 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), KNOBS.len());
+        // `describe` skips the first knob as the model choice.
+        assert_eq!(KNOBS[0].key, "model");
+    }
+
+    #[test]
+    fn setups_survive_a_round_trip() {
+        let stock = Tuning::default();
+        let tuned = Tuning { power: 1.5, model: 0.0, ..stock };
+        let back = from_json(to_json(&tuned).as_object().unwrap());
+        assert_eq!(back, tuned);
+        assert_eq!(describe(&stock), "Reflex v1, stock");
+        assert_eq!(describe(&Tuning { model: 0.0, ..stock }), "Unleashed, stock");
+        assert_eq!(describe(&tuned), "Unleashed, 1 changed");
     }
 }
