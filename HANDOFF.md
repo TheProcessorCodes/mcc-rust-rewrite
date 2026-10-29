@@ -98,6 +98,14 @@ target\debug\blam.exe geometry riverworld --obj out\riverworld.obj
    run; the other campaign maps (010_jungle's BSP 11 still fails with "segment has no page"); a
    real look at the sky from far above the play space (now the trench haze colour, no black).
 
+## Dirt bike (2026-10-28)
+
+The bike now rides on MX vs ATV Unleashed's stock Pro 250 model (`docs/bike-unleashed.md`,
+`crates/halo3/src/bike/unleashed.rs`), read from a decompile of the fan client's `mxacore.dll` and
+the user's own Unleashed `.phy` files. The earlier physics are on `backup/bike-physics-master-2026-10-28`
+and `backup/bike-physics-reflex-2026-10-28`. Awaiting the user's playtest; the doc lists what is
+not ported (clutch boost, surfaces, tricks, Unleashed's wreck rules).
+
 ## Open questions and known gaps
 
 - **Object rotation order.** Yaw/pitch/roll are composed as Blam's intrinsic yaw, then pitch,

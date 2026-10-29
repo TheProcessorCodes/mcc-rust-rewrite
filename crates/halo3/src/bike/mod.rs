@@ -11,7 +11,7 @@
 //! | right stick | arrow keys | rider: forward, back, left, right |
 //! | RT | W | throttle |
 //! | LT | S | brake |
-//! | A (hold) | Space (hold) | back up, to 3 m/s |
+//! | A (hold) | Space (hold) | back up, to 10 mph |
 //! | Y | R | stand the bike back up |
 //!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
@@ -23,6 +23,7 @@
 
 pub mod physics;
 pub mod pose;
+pub mod unleashed;
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
