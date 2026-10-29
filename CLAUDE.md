@@ -30,6 +30,11 @@ far, the paths on disk and the open decision.
   thread's worktree has been merged, start a fresh worktree for the next piece of work
   instead of reusing the merged one. If you are unsure whether something needs its own
   worktree, ask the user.
+- **Remove a worktree once it is merged to master.** After merging, check that it has no
+  uncommitted changes (`git -C <path> status --porcelain`), then `git worktree remove
+  <path>` and `git branch -d <branch>`. Never remove a worktree whose branch has commits
+  master doesn't (`git merge-base --is-ancestor <branch> master` fails), or one with
+  uncommitted work, without asking the user.
 - **At most two builds at once.** Run every `cargo build`/`run`/`test`/`check` through
   the gate, from any worktree, using the main checkout's copy:
   `& 'D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\.dev\build-gate.ps1' cargo build --release`
