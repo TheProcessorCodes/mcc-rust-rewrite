@@ -804,8 +804,10 @@ struct BoardSounds {
 }
 
 /// Rolling, grinding and landing while skating, from Halo's own samples
-/// (Skate 3's data has no audio): the Brute chopper's hard wheels for the
-/// roll, a vehicle scrape for grinds, the Chief's hard landing on concrete.
+/// (Skate 3's audio is in the user's dump, `data\audio\*.big`, but nothing
+/// reads it yet): a physics tire rolling on hard ground for the roll, a
+/// vehicle scrape for grinds, a wooden pallet hit plus a tire bounce for
+/// landings.
 fn board(
     time: Res<Time>,
     sounds: Option<Res<Sounds>>,
@@ -852,7 +854,9 @@ fn board(
         }
         Some(id) => {
             mixer.set_gain(id, [roll_gain; 2]);
-            mixer.set_rate(id, 0.7 + speed / 12.0);
+            // Smaller, harder wheels than the tire that was recorded, so a
+            // little higher, rising with speed.
+            mixer.set_rate(id, (0.9 + speed / 14.0).min(1.7));
         }
         None => {}
     }
@@ -880,17 +884,26 @@ fn board(
     if air {
         b.air += time.delta_secs();
     } else {
-        if b.air > 0.25 && (rolling || grind) && !g.land.is_empty() {
-            b.rng = b.rng.wrapping_mul(1_103_515_245).wrapping_add(12_345);
-            let pick = g.land[(b.rng >> 16) as usize % g.land.len()];
-            if let Some(clip) = sounds.clips.get(pick) {
-                let gain = (0.35 + b.air * 0.3).min(0.9);
-                mixer.play(Play {
-                    queue: vec![clip],
-                    looping: Vec::new(),
-                    gain: [gain; 2],
-                    rate: 1.0,
-                });
+        if b.air > 0.25 && (rolling || grind) {
+            // The deck slap, then the wheels under it, each a random
+            // permutation at a slightly random pitch; both sources are
+            // bigger than a skateboard, so they play a little high.
+            let gain = (0.3 + b.air * 0.25).min(0.75);
+            for (set, level, pitch) in [(&g.land, 1.0, 1.2), (&g.land_wheels, 0.6, 1.35)] {
+                if set.is_empty() {
+                    continue;
+                }
+                b.rng = b.rng.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                let pick = set[(b.rng >> 16) as usize % set.len()];
+                let jitter = ((b.rng >> 8) & 0xff) as f32 / 255.0 * 0.15 - 0.075;
+                if let Some(clip) = sounds.clips.get(pick) {
+                    mixer.play(Play {
+                        queue: vec![clip],
+                        looping: Vec::new(),
+                        gain: [gain * level; 2],
+                        rate: pitch + jitter,
+                    });
+                }
             }
         }
         b.air = 0.0;
@@ -898,6 +911,7 @@ fn board(
     // Ask early so the first roll and landing are ready.
     if motion.riding && b.last_state.is_empty() {
         let _ = sounds.clips.all(&g.land);
+        let _ = sounds.clips.all(&g.land_wheels);
         let _ = sounds.clips.all(&g.roll);
         let _ = sounds.clips.all(&g.grind);
     }

@@ -513,10 +513,15 @@ this repo. `HALO3_AUDIO=0` turns sound off; `--shot` never opens the sound devic
   start (`--music 120_music_15` or an index into the list the log prints). N moves to the
   alternate loop through its transition at the end of the current loop, and back. M again
   plays the outro (or fades out over the track's fade time).
-- **Board sounds while skating** (Skate 3's data has no audio): Halo's own samples, picked
-  from the bank by folder: the Brute chopper's hard-wheel loop for rolling (gain and pitch
-  with speed), a vehicle scrape while grinding, the Chief's hard concrete landing after
-  more than 0.25 s in the air (louder the longer the air). The skate engine's state names
+- **Board sounds while skating**: Halo's own samples, picked from the bank by folder: the
+  physics tire's hard-surface roll loop for rolling (`materials\havok\tire`, gain and pitch
+  with speed, pitched up for small wheels), a vehicle scrape while grinding, and after more
+  than 0.25 s in the air a wooden pallet hit (`materials\havok\wooden_palette_hits`, the
+  deck) over a tire bounce (`tire_hits`, the wheels), louder the longer the air, each at a
+  slightly random pitch. Until 2026-10-28 these were the Brute chopper's spiked wheels and
+  the Chief's armoured landing, which sounded wrong. Skate 3's own audio is in the user's
+  360 dump (`data\audio\wheels.big`, `grains.big`, `audiofiles.big`, EA "EB" v3 archives)
+  but nothing reads it yet. The skate engine's state names
   (`PhysicsGround`, `PhysicsAir`, `GrindFiftyFifty`, ...) come through `skate::SkateMotion`.
 - **Volume**: `HALO3_VOLUME` (default 0.8) sets the start level, `-` / `=` change it, K mutes.
 

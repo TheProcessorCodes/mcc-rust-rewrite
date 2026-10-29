@@ -28,6 +28,8 @@ pub struct Gameplay {
     pub roll: Vec<u32>,
     pub grind: Vec<u32>,
     pub land: Vec<u32>,
+    /// Played under `land`: the wheels hitting the ground.
+    pub land_wheels: Vec<u32>,
 }
 
 /// The map's sounds, resolved from its tags.
@@ -223,9 +225,12 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
             .collect()
     };
     let gameplay = Gameplay {
-        roll: under(r"data\sound\vehicles\brute_chopper\wheels_hard\track1\loop\"),
+        roll: under(
+            r"data\sound\materials\havok\tire\tire_looping_hard_surface\tire_looping_hard_surface\loop\",
+        ),
         grind: under(r"data\sound\vehicles\damage_effects\vehicle_scrape_low\"),
-        land: under(r"data\sound\characters\footsteps\chief\concrete_h3\land_hard\"),
+        land: under(r"data\sound\materials\havok\wooden_palette_hits\"),
+        land_wheels: under(r"data\sound\materials\havok\tire\tire_hits\"),
     };
 
     let (req_tx, req_rx) = channel::<u32>();
