@@ -229,6 +229,26 @@ These are **not** the Xbox 360 retail offsets (retail: 20, 48, 176, 188, 200, 32
 Reclaimer reads nothing else from `scnr`: **no player starting locations, no zone sets, no
 vehicles/weapons/equipment/bipeds, no trigger volumes, no cluster/BSP policy.** See section 6.
 
+**Vehicles, equipment, weapons (our own probe, 2026-10-29).** Scanning the block headers between
+the scenery palette and the machines on `shrine.map` (Sandtrap) with
+`scripts/probe_scnr_blocks.py`, then listing them with `scripts/probe_scnr_objects.py`:
+
+| block | offset hex | element size | palette offset | palette tags on `shrine` |
+|---|---|---|---|---|
+| Vehicles | 0xE4 | 168 | 0xF0 (16 each) | 11 `vehi`: `objects\levels\multi\shrine\behemoth\behemoth` (the Elephant), mongoose, warthog, scorpion, machinegun turret, banshee, wraith, chopper, `objects\levels\multi\shrine\shrine_defender\shrine_defender`, mauler, hornet |
+| Equipment | 0xFC | 140 | 0x108 (16 each) | 10 `eqip` (grenades, power-ups, deployables) |
+| Weapons | 0x114 | 168 | 0x120 (16 each) | 14 `weap` |
+
+The placement header (palette index, name index, position at +0x08, yaw/pitch/roll at +0x14,
+scale at +0x20) is the same as for scenery: Sandtrap's two Elephants decode at
+(-0.27, -58.56, -22.26) and (8.56, 33.12, -21.77), on the sand under the three spawn points on
+each Elephant's deck (1.65 wu up), and the six defenders at z 52 on top of the six obelisks
+round the desert, named `turret_north0` ... `turret_side1`. The i16 at +0x3C (the origin BSP for
+scenery, `zone-sets.md` 2) is -1 for every vehicle there, and the i16 at +0x3E reads `0x0101`
+(scenery `0x0106`): the object type in the high byte's place (1 vehicle, 6 scenery), as in the
+object names' type field below. Vehicles under `objects\levels\` are the map's own set pieces;
+the other vehicles there are the game type's.
+
 ### 2.2 Element layouts
 
 All from `Config\ScenarioTag.config.cs`; the U13 definition is named in each row.
@@ -519,7 +539,9 @@ formula from `EulerAngles.cs` in order to measure it; no Reclaimer code is copie
   bytes at placement +4 and the 48 bytes at +36..+83 almost certainly include the
   per-placement BSP policy/flags, but no offset is verified here.
 * **Vehicles, weapons, equipment, bipeds, sound scenery, effect scenery, trigger volumes,
-  scripts**: not read.
+  scripts**: not read by Reclaimer. Our reader places the vehicles under `objects\levels\`
+  (block offsets in 2.1, found by our own probe) and reads the trigger volumes
+  (`zone-sets.md` 1); the rest are still not read.
 * **Collision**: the `hlmt +16` `coll` reference is read but never used by Reclaimer; the real
   BSP collision is in the sbsp resources (known gap, see `HANDOFF.md`).
 

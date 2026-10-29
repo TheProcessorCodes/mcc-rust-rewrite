@@ -115,6 +115,11 @@ pub enum Kind {
     Machine,
     Control,
     Sky,
+    /// Vehicles that are the map's own set pieces (tags under
+    /// `objects\levels\`: Sandtrap's Elephants and Guardian defenders),
+    /// parked where the scenario puts them. The game type's Warthogs and
+    /// Mongooses are not placed.
+    Vehicle,
 }
 
 #[derive(Clone, Debug)]
@@ -411,6 +416,42 @@ impl TriggerVolume {
         let n = self.name.to_ascii_lowercase();
         n.starts_with("kill") || n.contains("_kill")
     }
+
+    /// Whether `p` is inside the box seen from above: its height is not
+    /// looked at. For upright boxes (`up` along +Z).
+    pub fn covers(&self, p: Vec3) -> bool {
+        let d = p - self.position;
+        let left = self.up.cross(self.forward);
+        let (along, across) = (d.dot(self.forward), d.dot(left));
+        (0.0..=self.extents.x).contains(&along) && (0.0..=self.extents.y).contains(&across)
+    }
+
+    /// A Guardian's watch volume (`tv_turret_north0` ... on Sandtrap and
+    /// Sandbox): the defender on the obelisk over it shoots anyone in it who
+    /// has left the safe zone. See [`guarded`].
+    pub fn guards(&self) -> bool {
+        self.name.to_ascii_lowercase().starts_with("tv_turret")
+    }
+
+    /// The scenario's `safe_zone`: on Sandtrap and Sandbox, the play space
+    /// the Guardians leave alone.
+    pub fn is_safe_zone(&self) -> bool {
+        self.name.to_ascii_lowercase().starts_with("safe_zone")
+    }
+}
+
+/// The Guardian volume whose defender shoots a player at `p`, if any.
+/// Sandtrap (`shrine`) has no kill volumes: its edge is kept by six
+/// Guardian defenders on the obelisks round the desert, each watching one
+/// `tv_turret_*` volume, which reaches from the defender in towards the
+/// middle; the play space is the `safe_zone`. A point is guarded when it is
+/// inside a watch volume and outside every safe zone, both seen from above:
+/// the dunes in the west rise over the watch volumes' tops, and a jump
+/// inside the play space can rise over the safe zone's. Maps without
+/// `tv_turret` volumes are never guarded.
+pub fn guarded(volumes: &[TriggerVolume], p: Vec3) -> Option<&TriggerVolume> {
+    let guard = volumes.iter().find(|v| v.guards() && v.covers(p))?;
+    (!volumes.iter().any(|v| v.is_safe_zone() && v.covers(p))).then_some(guard)
 }
 
 /// Entering `volume` begins loading zone set `begin` (prepare) or commits

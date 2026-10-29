@@ -1,5 +1,5 @@
 //! Objects the scenario places in the world: scenery, crates, machines,
-//! device controls and the sky. Follows
+//! device controls, the map's own vehicles and the sky. Follows
 //! `docs/format/scenario-and-tag-reading.md` sections 2 and 3.
 
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ struct ObjectKind {
     stride: usize,
 }
 
-const KINDS: [ObjectKind; 4] = [
+const KINDS: [ObjectKind; 5] = [
     ObjectKind {
         kind: Kind::Scenery,
         placements: 0xB4,
@@ -46,7 +46,23 @@ const KINDS: [ObjectKind; 4] = [
         palette: 0x5C8,
         stride: 176,
     },
+    // Vehicles (scenario-and-tag-reading.md 2.1); only the map's own set
+    // pieces are kept (`is_level_vehicle`).
+    ObjectKind {
+        kind: Kind::Vehicle,
+        placements: 0xE4,
+        palette: 0xF0,
+        stride: 168,
+    },
 ];
+
+/// Whether a vehicle tag is one of the map's own set pieces rather than a
+/// game-type vehicle: Sandtrap's Elephants (`behemoth`) and Guardian
+/// defenders, The Pit's security cameras, Snowbound's and Sandbox's
+/// defenders all live under `objects\levels\`.
+pub fn is_level_vehicle(tag_path: &str) -> bool {
+    tag_path.to_ascii_lowercase().starts_with(r"objects\levels\")
+}
 
 /// Blam's yaw, pitch, roll (radians, about Z, then Y nose-up, then X) as a
 /// rotation.
@@ -158,6 +174,9 @@ pub fn decode(
                 stats.skipped += 1;
                 continue;
             };
+            if k.kind == Kind::Vehicle && !is_level_vehicle(object.name()) {
+                continue;
+            }
             let Some(parts) = model_for(cache, scene, materials, object, &mut stats) else {
                 stats.skipped += 1;
                 continue;

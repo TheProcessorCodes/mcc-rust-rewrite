@@ -338,6 +338,27 @@ anyone who drops off the rig falls about six world units past the lowest deck (-
 put back. The rig's legs and cross beams at z -13 to -18 are above it, so a fall can land on
 them; their grind rails (about 660) are kept.
 
+Sandtrap (`shrine`) has no kill volumes and no invisible walls round its desert: in the game, six
+Guardians on the obelisks round the edge (`shrine_defender` vehicles at z 52) shoot anyone who
+wanders off. Each watches one `tv_turret_*` trigger volume, a slab about 95 wu deep reaching from
+its obelisk in towards the middle, and the play space is the scenario's `safe_zone` (x -94.4 to
+88.9, y -100.1 to 81.4). So a point inside a watch volume and outside the safe zone, both seen
+from above, counts as a fall (`blam_geometry::scene::guarded`, `falls.rs`): riding onto the
+Forerunner wall's walkway in the east, over the dunes in the west, or out past the bases. Heights
+are left out on purpose: the west dunes rise to z 22, over the tops of the watch volumes (z -7 to
+-24), and a jump in the middle of the desert can rise over the safe zone's top. The start prints
+`Guardian watch volumes: 6`. Without this the bike could ride out over the dunes to the edge of the
+collision, 250 to 330 wu out, before dropping out of the world. Grind rails where the Guardians
+shoot are cut too: of about 2,940 found, about 2,124 are left, all inside the play space (the
+wall's long rims, 320 and 406 m, are gone). Sandbox has the same Guardians and volumes and gets
+the same rule.
+
+The Elephants (Sandtrap's two team bases, `behemoth` vehicles) are drawn parked where the
+scenario puts them, with the Guardians, but have no collision yet (object collision models are
+not decoded, as for scenery and crates): the six spawn points on their decks, 1.65 wu over the
+sand, drop a skater or the bike through the deck onto the sand under it. The viewer starts on
+spawn 0, the first of them.
+
 High Ground's cove (`deadlock_water_awesome`, a flat sheet at z 4.41 over x -37.0..15.1,
 y -67.8..-25.5) ends in a straight hard edge out at sea, where the sky model's far sea (`lake`,
 an opaque `rmsh` at z about 2.9-3.7, lit like the rest of the sky) takes over about 1 wu lower and
