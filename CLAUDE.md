@@ -15,3 +15,9 @@ far, the paths on disk and the open decision.
   helps into this project; do not change them without asking.
 - **Licenses**: Gravemind2401's Reclaimer is GPL-3.0. Porting its code line by line makes
   that code GPL-3.0. IW4L is Apache-2.0. Raise this with the user before porting Reclaimer.
+- **New work goes in a new worktree.** At the start of a thread, before editing
+  anything, create a worktree on a new branch from master (under `.claude/worktrees/`)
+  and do the work there, not on master. Long threads may need more than one: once a
+  thread's worktree has been merged, start a fresh worktree for the next piece of work
+  instead of reusing the merged one. If you are unsure whether something needs its own
+  worktree, ask the user.
