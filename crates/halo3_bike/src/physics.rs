@@ -26,10 +26,11 @@
 //!   it levels and lines up with where it is going.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, RwLock};
 
 use bevy::math::{Mat3, Quat, Vec2, Vec3};
 
+use super::reflex::Tuning;
 use super::unleashed::{RPM, Setup, Tyre, ft, lerp_clamp};
 
 pub const GRAVITY: f32 = 9.81;
@@ -42,10 +43,21 @@ fn frame(axle: Vec3) -> Vec3 {
     axle - Vec3::Y * FRAME_LIFT
 }
 
-/// The stock bike, built once.
-pub fn setup() -> &'static Setup {
-    static SETUP: OnceLock<Setup> = OnceLock::new();
-    SETUP.get_or_init(Setup::pro_250)
+static SETUP: RwLock<Option<Arc<Setup>>> = RwLock::new(None);
+
+/// The bike every rider rides: Reflex v1 until the tuning menu says otherwise.
+pub fn setup() -> Arc<Setup> {
+    if let Some(s) = SETUP.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        return s.clone();
+    }
+    let s = Arc::new(Tuning::default().setup());
+    *SETUP.write().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
+    s
+}
+
+/// Rides on `tuning` from the next step on.
+pub fn set_tuning(tuning: &Tuning) {
+    *SETUP.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(tuning.setup()));
 }
 
 /// Seconds lying in the dirt before the bike comes back.
@@ -657,13 +669,19 @@ impl Bike {
         let mut com = self.position + r * self.cog;
         let speed = self.velocity.dot(fwd);
 
-        // The bars: set from the stick, less lock the faster it goes.
-        let scale = lerp_clamp(speed.abs(), s.steer_speed[0], s.steer_scale[0], s.steer_speed[1], s.steer_scale[1]);
-        self.steer = -held.steer * s.max_steer * scale;
+        // The bars: set from the stick (and the rider's sideways lean),
+        // less lock the faster it goes, lagging if the model says so.
+        let stick = (held.steer + s.rider_steer * self.lean.x).clamp(-1.0, 1.0);
+        let bars = -stick.signum() * stick.abs().powf(s.steer_power) * s.steer_lock(speed);
+        self.steer = if s.steer_lag > 0.0 {
+            self.steer + (bars - self.steer) * (dt / s.steer_lag).min(1.0)
+        } else {
+            bars
+        };
 
         let mut force = Vec3::NEG_Y * GRAVITY * s.gravity_scale * s.mass;
         let mut torque = Vec3::ZERO;
-        let drive = self.drive(s, speed, dt);
+        let drive = self.drive(&s, speed, dt);
 
         // Wheels: spring along the ground's normal, grip near the middle.
         let mut normals = Vec3::ZERO;
@@ -765,7 +783,12 @@ impl Bike {
             } else {
                 &tyre.side
             };
-            let f_lat = curve.grip(slip) * load;
+            // Past the cap the tyre slides and keeps a share of it.
+            let mut grip = curve.grip(slip * tyre.slip_scale);
+            if grip.abs() > tyre.side_cap {
+                grip = grip.signum() * tyre.side_cap * tyre.slide_keep;
+            }
+            let f_lat = grip * load;
             let f_tyre = long * f_long + lat * f_lat;
             force += f_tyre;
             torque += (r * tyre.force_position).cross(f_tyre);
@@ -930,14 +953,15 @@ impl Bike {
         let com = com + self.velocity * dt;
         self.rotation = (Quat::from_scaled_axis(self.spin * dt) * self.rotation).normalize();
         if grounded > 0 {
-            self.lean_on_ground(held.steer, speed, normals.normalize_or(Vec3::Y), dt);
+            let lean = held.steer + s.rider_lean * self.lean.x;
+            self.lean_on_ground(lean, speed, normals.normalize_or(Vec3::Y), dt);
         }
         self.position = com - self.rotation * self.cog;
     }
 
-    /// Sets the lean from the bars and the speed: towards `steer` times a
-    /// lean that grows with speed, measured from the vertical when slow and
-    /// from the ground when fast.
+    /// Sets the lean from the bars and the speed: towards `steer` (the
+    /// stick, plus the rider's lean) times a lean that grows with speed,
+    /// measured from the vertical when slow and from the ground when fast.
     fn lean_on_ground(&mut self, steer: f32, speed: f32, ground: Vec3, dt: f32) {
         let s = setup();
         let upright = speed.signum() * lerp_clamp(speed.abs(), s.stand_upright[0], 0.0, s.stand_upright[1], 1.0);
@@ -948,7 +972,7 @@ impl Bike {
         };
         let up = self.up();
         let now = f.dot(across.cross(up)).atan2(across.dot(up));
-        let wanted = steer * lerp_clamp(speed, 0.0, 0.0, s.max_roll_speed, s.max_roll);
+        let wanted = steer * s.lean_for(speed);
         let lean = now + (wanted - now) * (s.roll_gain * dt).min(1.0);
         let up = Quat::from_axis_angle(f, lean) * across;
         self.rotation = Quat::from_mat3(&Mat3::from_cols(up.cross(f), up, f)).normalize();
@@ -1035,12 +1059,14 @@ mod tests {
         let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -350.0), 0.0);
         ride(&w, &mut bike, Controls::default(), 1.0);
         ride(&w, &mut bike, gas(1.0), 2.0);
-        // Somewhere near a second-and-a-bit 0-30 mph.
+        // Reflex v1: the rear tyre (1.3 x load) holds the launch back to
+        // about 0.6 g, so 25 mph or so in two seconds.
         let two = bike.speed();
-        assert!(two > 12.0 && two < 22.0, "2 s: {two} m/s");
+        assert!(two > 9.0 && two < 16.0, "2 s: {two} m/s");
         ride(&w, &mut bike, gas(1.0), 8.0);
+        // Reflex's mx450f tops out near 32 m/s (72 mph).
         let ten = bike.speed();
-        assert!(ten > 60.0 * MPH && ten < 95.0 * MPH, "10 s: {} mph", ten / MPH);
+        assert!(ten > 60.0 * MPH && ten < 80.0 * MPH, "10 s: {} mph", ten / MPH);
         assert!(bike.engine.gear >= 3, "gear {}", bike.engine.gear + 1);
         assert!(bike.crashed.is_none());
         assert!(bike.up().y > 0.95);

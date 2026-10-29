@@ -87,6 +87,36 @@ the gas lifts it (175). X also gives a 125 lbf sideways push.
 
 **Backing up** (`moto_reverse_force`): a push of 30 lbf per ft/s towards -10 mph.
 
+## Reflex v1 and the tuning menu (2026-10-29)
+
+The bike now rides on **Reflex v1** by default (`crates/halo3_bike/src/reflex.rs`): the model
+above, unchanged in how it simulates, with stock MX vs ATV Reflex's mx450f numbers and four of
+Reflex's rules (from `D:\reflex-tools\physics`, as the earlier Reflex-style bike used):
+
+- Reflex's mass (177 kg), inertia, springs (forks 20.2 kN/m, shock 13.9 kN/m), bump / rebound
+  dampers, travel (0.40 / 0.37 m), brakes (339 / 475 N·m), torque curve (55 N·m, 11,500 rpm
+  limiter, 1,500 idle), five overall ratios (scaled for our bigger tyre) and ground drag. Gravity 1 g.
+- The bars follow Reflex's steering-for-speed curve (30° standing, 9.5° at 50 mph), the stick
+  squared and lagged 0.15 s; the rider leaning sideways adds 20 % to the bars.
+- The lean follows Reflex's lean-for-speed curve (5.6° standing to 34° at 80 mph), lagged
+  0.3 s; the rider leaning into the turn adds 55 %.
+- Sideways grip is capped at 1.3 × load (Unleashed climbs to about 5) and the curve is 2.5 ×
+  stiffer, so it reaches the cap at small slip; past the cap the tyre slides at 0.9 of it.
+  Drive grip is 1.3 × load (1.2 spinning).
+
+Result on flat ground: about 25 mph in 2 s (wheelspin holds the launch to about 0.6 g), top
+speed near 32 m/s (72 mph), as Reflex's model gives.
+
+**0** while riding opens the tuning menu (`tune.rs`): the first slider switches the base between
+Unleashed's Pro 250 as it was and Reflex v1; the rest scale engine power, gearing, engine braking,
+brakes, grip, side stiffness, slide grip, steering lock and lag, lean depth and speed, rider-lean
+influence, weight shift, wheelie hold, spring, damping, air rotation, air damping and gravity.
+Each row reads out what the value means on the tuned bike. Closing the menu saves the values to
+`bike-tuning.json` next to the exe; the next start loads them (Delete puts all back to stock).
+Under the sliders are five setup slots, kept in `bike-setups.json` next to the exe: Shift+1 to 5
+(or Ctrl) saves the current setup to a slot and 1 to 5 loads one, or pick the "Save to slot" /
+"Load slot" row, choose a slot with A / D and press Enter (A on a pad), or click a slot.
+
 ## Not done yet
 
 - Surfaces: only friction zone 1. Halo's collision materials could map to the 16 zones (pavement

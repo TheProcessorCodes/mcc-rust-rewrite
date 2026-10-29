@@ -30,7 +30,8 @@ impl Plugin for PausePlugin {
                 PreUpdate,
                 (toggle, quit, switch_tab)
                     .chain()
-                    .after(InputSystems),
+                    .after(InputSystems)
+                    .after(halo3_core::pause::OverlayInput),
             );
     }
 }
@@ -89,7 +90,10 @@ const BIKE: &[[&str; 2]] = &[
     ["left trigger", "brake"],
     ["A (hold)", "back up"],
     ["Y", "stand the bike back up"],
+    ["LB + d-pad down", "set the session marker"],
+    ["LB + d-pad up (hold)", "back to the session marker"],
     ["View / Back", "get off the bike"],
+    ["0 (keyboard)", "physics tuning menu"],
     ["Start", "pause"],
 ];
 
@@ -104,6 +108,8 @@ const SKATE: &[[&str; 2]] = &[
     ["RB (hold)", "grab a ledge or coping (hand plants)"],
     ["Y", "step off the board / back on"],
     ["A or X", "get up after a bail"],
+    ["LB + d-pad down", "set the session marker"],
+    ["LB + d-pad up (hold)", "back to the session marker"],
     ["off the board: X", "jump"],
     ["off the board: LT / RT", "drop / throw the board"],
     ["click both sticks", "back to flying"],
