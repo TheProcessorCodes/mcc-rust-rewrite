@@ -6,6 +6,7 @@ members = [
     "crates/blam_cache",
     "crates/blam_cli",
     "crates/blam_geometry",
+    "crates/blam_script",
     "crates/blam_h2",
     "crates/blam_sound",
     "crates/blam_texture",
@@ -15,6 +16,7 @@ members = [
     "crates/halo3_core",
     "crates/halo3_foot",
     "crates/halo3_rider",
+    "crates/halo3_script",
     "crates/halo3_skate",
     "crates/halo3_swim",
     "crates/halo3_textures",
@@ -37,6 +39,7 @@ glam = "0.33"
 bytemuck = { version = "1", features = ["derive"] }
 blam_cache = { path = "crates/blam_cache" }
 blam_geometry = { path = "crates/blam_geometry" }
+blam_script = { path = "crates/blam_script" }
 blam_texture = { path = "crates/blam_texture" }
 blam_sound = { path = "crates/blam_sound" }
 blam_h2 = { path = "crates/blam_h2" }
@@ -45,6 +48,7 @@ halo3_bike = { path = "crates/halo3_bike" }
 halo3_core = { path = "crates/halo3_core" }
 halo3_foot = { path = "crates/halo3_foot" }
 halo3_rider = { path = "crates/halo3_rider" }
+halo3_script = { path = "crates/halo3_script" }
 halo3_skate = { path = "crates/halo3_skate" }
 halo3_swim = { path = "crates/halo3_swim" }
 halo3_textures = { path = "crates/halo3_textures" }
