@@ -30,7 +30,8 @@ impl Plugin for PausePlugin {
                 PreUpdate,
                 (toggle, quit, switch_tab)
                     .chain()
-                    .after(InputSystems),
+                    .after(InputSystems)
+                    .after(halo3_core::pause::OverlayInput),
             );
     }
 }
@@ -90,6 +91,7 @@ const BIKE: &[[&str; 2]] = &[
     ["A (hold)", "back up"],
     ["Y", "stand the bike back up"],
     ["View / Back", "get off the bike"],
+    ["0 (keyboard)", "physics tuning menu"],
     ["Start", "pause"],
 ];
 

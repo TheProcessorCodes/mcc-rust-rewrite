@@ -60,7 +60,7 @@ What the game does now:
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
 - **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great".
-- **Dirt bike.** B rides it, with Master Chief on it (`bike/`). Its physics are MX vs ATV Unleashed's (see "Dirt bike" below); the Reflex model and its tuning menu were replaced and live on in history and `backup/bike-physics-*`.
+- **Dirt bike.** B rides it, with Master Chief on it (`halo3_bike`). Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`); 0 while riding opens the physics tuning menu (`tune.rs`), which also switches back to plain Unleashed (see "Dirt bike" below).
 - **On foot.** F walks the Spartan (`foot/`): the map's own movement numbers (`blam movement`,
   `docs/format/movement.md`), a capsule on the collision, a made-up gait on the skate skeleton,
   shoulder and eye cameras. He carries the map's weapons (`weapons/`, `blam weapons`,
@@ -159,6 +159,12 @@ The bike now rides on MX vs ATV Unleashed's stock Pro 250 model (`docs/bike-unle
 the user's own Unleashed `.phy` files. The earlier physics are on `backup/bike-physics-master-2026-10-28`
 and `backup/bike-physics-reflex-2026-10-28`. Awaiting the user's playtest; the doc lists what is
 not ported (clutch boost, surfaces, tricks, Unleashed's wreck rules).
+
+2026-10-29: the user called the Unleashed bike the best base so far and asked to tweak it back
+towards Reflex. "Reflex v1" (`crates/halo3_bike/src/reflex.rs`) keeps Unleashed's simulation with
+Reflex's numbers and steering, lean and grip rules, and is the default; the tuning menu (0) is
+back, with Unleashed as a switch. Awaiting the user's playtest; the doc's "Reflex v1" section has
+the details.
 
 ## Open questions and known gaps
 
