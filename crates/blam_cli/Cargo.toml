@@ -17,4 +17,5 @@ glam = { workspace = true }
 anyhow = { workspace = true }
 blam_texture = { workspace = true }
 blam_sound = { workspace = true }
+blam_h2 = { workspace = true }
 png = "0.18"

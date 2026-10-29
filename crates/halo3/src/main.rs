@@ -28,12 +28,15 @@
 //! lists the controls (`pause.rs`).
 //! ```
 //!
-//! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install.
+//! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install; Halo 2
+//! maps (`coagulation`, or `h2:NAME`) in `%HALO2_MAPS%` or MCC's
+//! `halo2\h2_maps_win64_dx11` (`halo2.rs`).
 
 mod audio;
 mod bike;
 mod falls;
 mod fly_camera;
+mod halo2;
 mod pause;
 mod rider;
 mod shot;
@@ -50,19 +53,31 @@ use bevy::window::PresentMode;
 pub(crate) const DEFAULT_MAPS: &str =
     r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps";
 
+/// MCC's Halo 2 (classic) maps, tried when a bare name is not a Halo 3 map.
+pub(crate) const DEFAULT_H2_MAPS: &str =
+    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11";
+
+/// A path, or a bare name: a Halo 3 map in `%HALO3_MAPS%` (or the MCC
+/// install), else a Halo 2 map in `%HALO2_MAPS%` (or the MCC install).
+/// `h2:NAME` picks the Halo 2 map when both games have one by that name
+/// (`lockout`, `zanzibar`).
 fn resolve_map(arg: &str) -> PathBuf {
     let p = PathBuf::from(arg);
     if p.exists() {
         return p;
     }
-    let dir = std::env::var_os("HALO3_MAPS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_MAPS));
-    let mut name = arg.to_string();
+    let (h2_only, bare) = match arg.strip_prefix("h2:") {
+        Some(rest) => (true, rest),
+        None => (false, arg),
+    };
+    let mut name = bare.to_string();
     if !name.ends_with(".map") {
         name.push_str(".map");
     }
-    dir.join(name)
+    let dir = |var: &str, default: &str| std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default));
+    let h3 = dir("HALO3_MAPS", DEFAULT_MAPS).join(&name);
+    let h2 = dir("HALO2_MAPS", DEFAULT_H2_MAPS).join(&name);
+    if h2_only || (!h3.exists() && h2.exists()) { h2 } else { h3 }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -83,6 +98,24 @@ fn main() -> anyhow::Result<()> {
             world::water::WaterData::default(),
             None,
         ),
+        Some(map) if blam_h2::is_halo2(&resolve_map(map)) => {
+            // Halo 2: everything decoded up front, no Halo 3 cache file
+            // behind it (`halo2.rs`).
+            let (scene, textures) = halo2::load(&resolve_map(map))?;
+            // The rider is Halo 3's Spartan, borrowed from Valhalla when
+            // Halo 3 is installed (Halo 2's Master Chief is not decoded).
+            let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
+                .ok()
+                .and_then(|c| rider::load_chief(&c));
+            (
+                scene,
+                textures,
+                chief,
+                world::sky::SkyData::default(),
+                world::water::WaterData::default(),
+                None,
+            )
+        }
         Some(map) => {
             let path = resolve_map(map);
             let started = std::time::Instant::now();

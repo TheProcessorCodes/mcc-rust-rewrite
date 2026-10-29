@@ -1650,6 +1650,7 @@ dependencies = [
  "anyhow",
  "blam_cache",
  "blam_geometry",
+ "blam_h2",
  "blam_sound",
  "blam_texture",
  "glam",
@@ -1662,6 +1663,18 @@ version = "0.1.0"
 dependencies = [
  "blam_cache",
  "glam",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "blam_h2"
+version = "0.1.0"
+dependencies = [
+ "blam_geometry",
+ "blam_texture",
+ "flate2",
+ "glam",
+ "memmap2",
  "thiserror 2.0.21",
 ]
 
@@ -2508,6 +2521,7 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "blam_h2",
  "blam_sound",
  "blam_texture",
  "glam",

@@ -20,6 +20,7 @@
 //! `$HALO3_MAPS` or the default MCC install.
 
 mod geometry;
+mod halo2;
 mod sound;
 mod lightmap;
 mod texture;
@@ -41,16 +42,33 @@ pub(crate) fn maps_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_MAPS))
 }
 
+/// MCC's Halo 2 (classic) maps, tried when a bare name is not a Halo 3 map.
+const DEFAULT_H2_MAPS: &str =
+    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11";
+
+/// A path, or a bare name: a Halo 3 map in `$HALO3_MAPS` (or the MCC
+/// install), else a Halo 2 map in `$HALO2_MAPS` (or the MCC install).
+/// `h2:NAME` asks for the Halo 2 map when both games have one by that name
+/// (`lockout`, `zanzibar`).
 fn resolve_map(arg: &str) -> PathBuf {
     let p = PathBuf::from(arg);
     if p.exists() {
         return p;
     }
-    let mut name = arg.to_string();
+    let (h2_only, bare) = match arg.strip_prefix("h2:") {
+        Some(rest) => (true, rest),
+        None => (false, arg),
+    };
+    let mut name = bare.to_string();
     if !name.ends_with(".map") {
         name.push_str(".map");
     }
-    maps_dir().join(name)
+    let h3 = maps_dir().join(&name);
+    let h2 = std::env::var_os("HALO2_MAPS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_H2_MAPS))
+        .join(&name);
+    if h2_only || (!h3.exists() && h2.exists()) { h2 } else { h3 }
 }
 
 pub(crate) struct Args {
@@ -116,6 +134,9 @@ fn main() -> Result<()> {
         usage()
     };
     let path = resolve_map(map);
+    if blam_h2::is_halo2(&path) {
+        return halo2::run(&path, &args);
+    }
     let cache = CacheFile::open(&path).with_context(|| format!("opening {}", path.display()))?;
     match args.command.as_str() {
         "info" => info(&cache),
@@ -188,6 +209,12 @@ fn rails(cache: &CacheFile, args: &Args) -> Result<()> {
         ..Default::default()
     };
     blam_geometry::decode_into(cache, &options, &mut scene)?;
+    rails_report(&scene, started, args.flag("obj").map(Path::new))
+}
+
+/// The rails of a decoded scene: census, longest, optional OBJ (also used
+/// for Halo 2 maps, `halo2.rs`).
+pub(crate) fn rails_report(scene: &Scene, started: std::time::Instant, obj: Option<&Path>) -> Result<()> {
     let decoded = started.elapsed().as_secs_f32();
     let (rails, census) = blam_geometry::rails::find_rails(&scene.collision);
     let found = rails.len();
@@ -241,7 +268,7 @@ fn rails(cache: &CacheFile, args: &Args) -> Result<()> {
         );
     }
 
-    if let Some(path) = args.flag("obj").map(Path::new) {
+    if let Some(path) = obj {
         write_rails_obj(&scene.name, &rails, path)
             .with_context(|| format!("writing {}", path.display()))?;
         println!("wrote {}", path.display());

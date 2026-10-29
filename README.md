@@ -22,6 +22,7 @@ the format descriptions the code is written from.
 |---|---|
 | `crates/blam_cache` | opens a `.map`: header, sections, tag index, tag names, string ids, a cursor for tag data, resource pages |
 | `crates/blam_geometry` | decodes structure BSPs (clusters and instances) into plain meshes with materials |
+| `crates/blam_h2` | MCC Halo 2 maps: inflated in memory, tags, `shared.map` and `textures.dat` read, BSP, collision, objects, spawns, shaders and bitmaps decoded into the same `Scene` (`docs/format/halo2.md`) |
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
@@ -49,7 +50,9 @@ A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
 `sidewinder` Avalanche, `guardian` Guardian,
-`lockout` Blackout.
+`lockout` Blackout. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
+`halo2\h2_maps_win64_dx11` (`coagulation`; `h2:NAME` when Halo 3 has a map of
+that name, see `docs/viewer.md` "Halo 2 maps").
 
 ## Status
 
@@ -132,6 +135,18 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       floes, with the moon, its halo and the aurora (`plasma`) drawn.
       Dropping off the rig (`kill_volume_bottom`, z -18.3) puts the skater
       or the bike back. Pinned by `cargo test` (our own counts).
+- [x] Halo 2: Coagulation (`coagulation`, MCC Halo 2 classic; built,
+      awaiting a playtest): the zlib-chunked map inflated in memory, its
+      shared tags read from `shared.map` and its pixels from `textures.dat`
+      by our own `blam_h2` crate (`docs/format/halo2.md`). Every HaloExportH2
+      count matches (48 clusters with 12,797 triangles, 63 instances 5,591,
+      scenery 2,324, crates 2); the collision BSP gives 8,586 world and
+      4,502 instanced triangles (no broken loops); 123 spawns, all on a
+      floor; base and detail textures, the ground's detail blend, foliage,
+      glows drawn. Not yet: Halo 2's lightmaps (default sun and sky) and
+      its sky (a plain blue clear colour). Skating (610 rails), the bike
+      and the Spartan rider (borrowed from Valhalla) run on it. Pinned by `cargo test`
+      (`crates/blam_h2/tests/coagulation.rs`).
 - [x] Milestone 3b: collision and rails fed to the skate world (playtested
       on Valhalla).
 - [x] Milestone 4: Skate 3 crates plugged in (path dependency on

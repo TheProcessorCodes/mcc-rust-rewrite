@@ -560,11 +560,21 @@ fn update_sky_air(
 
 /// Gives the camera its haze once the world is up.
 fn add_haze(mut commands: Commands, cameras: Query<Entity, (With<Camera3d>, Without<DistanceFog>)>, haze: Res<WorldHaze>) {
-    if haze.setting.is_none() {
-        return;
-    }
     for camera in &cameras {
-        commands.entity(camera).insert(DistanceFog::default());
+        let fog = if haze.setting.is_some() {
+            DistanceFog::default()
+        } else {
+            // No atmosphere tag (Halo 2 maps, the test scene): still a fog
+            // for the world shaders' fog binding (`lightmap.wesl`), but one
+            // that never thickens.
+            DistanceFog {
+                color: Color::NONE,
+                directional_light_color: Color::NONE,
+                falloff: FogFalloff::Exponential { density: 0.0 },
+                ..default()
+            }
+        };
+        commands.entity(camera).insert(fog);
     }
 }
 

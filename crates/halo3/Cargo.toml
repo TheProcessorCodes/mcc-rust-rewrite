@@ -16,6 +16,7 @@ blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
 blam_texture = { workspace = true }
 blam_sound = { workspace = true }
+blam_h2 = { workspace = true }
 glam = { workspace = true }
 anyhow = { workspace = true }
 # The Skate 3 board and rig files IW4L derives from skater.glb (read at run time).

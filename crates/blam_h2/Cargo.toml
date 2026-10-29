@@ -1,0 +1,15 @@
+[package]
+name = "blam_h2"
+description = "Reads MCC Halo 2 (classic) .map files into the same Scene the Halo 3 readers produce"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_geometry = { workspace = true }
+blam_texture = { workspace = true }
+flate2 = { workspace = true }
+glam = { workspace = true }
+memmap2 = { workspace = true }
+thiserror = { workspace = true }

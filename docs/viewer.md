@@ -537,3 +537,35 @@ first; dialogue (the per-language banks); weapon, vehicle, footstep and impact s
 game world; HaloScript-driven music cues (music is by hand); the dirt bike's engine
 (the Mongoose engine loops are in the bank). Halo's real distance curve and the meaning of
 the playback parameters' first two distances are not checked against the game.
+
+## Halo 2 maps
+
+Halo 2 multiplayer maps from MCC (classic graphics, `halo2\h2_maps_win64_dx11`) open the same
+way:
+
+```
+& "target\debug\halo3.exe" coagulation
+& "target\debug\halo3.exe" "C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11\coagulation.map"
+target\debug\halo3.exe coagulation --shot .scratch\shots\coagulation --view spawn --view overview
+```
+
+A bare name is tried as a Halo 3 map first, then in `%HALO2_MAPS%` (default: the MCC folder
+above); `h2:NAME` asks for the Halo 2 one when both games have a map of that name (`h2:lockout`,
+`h2:zanzibar`). The header tells the two games apart (`blam_h2::is_halo2`). Only Coagulation
+has been checked. `blam info|tags|strings|geometry|rails|shader|bitmap|textures` work on Halo 2
+maps too.
+
+`crates/blam_h2` (`docs/format/halo2.md`) decodes the whole map up front into the same `Scene`
+(clusters, instances, scenery, crates, sky, the collision BSP, the 123 player starting
+locations as spawns) and the viewer's material looks (`crates/halo3/src/halo2.rs`), so flying,
+skating (J), the dirt bike (B), rails and the fall-out-of-the-world respawn work unchanged.
+With no atmosphere tag the camera gets a fog that never thickens (the world shaders need the
+fog binding).
+
+Drawn: each material's base map with its tiling and its detail map, the ground's two detail
+maps blended by the base map's alpha (through the terrain path), alpha-tested foliage and
+banners, additive glows and light bands. The rider is Halo 3's Spartan, borrowed from
+`riverworld.map` when Halo 3 is installed. Not yet: the sky (its model decodes, but its layers
+need Halo 2's sky blending; drawn as plain translucent meshes they walled the canyon in flat
+blue, so the clear colour stands in), Halo 2's lightmaps (the world is lit by the default sun
+and sky), bump and environment maps, water as water (a plain see-through surface), fog, sound.
