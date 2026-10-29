@@ -13,6 +13,8 @@
 //! | LT | S | brake |
 //! | A (hold) | Space (hold) | back up, to 10 mph |
 //! | Y | R | stand the bike back up |
+//! | LB + d-pad down | | set the session marker (`marker.rs`) |
+//! | LB + d-pad up (hold) | | back to the session marker |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
@@ -22,6 +24,7 @@
 //! couple of seconds, then takes the rider pictures; `HALO3_BIKE_THROTTLE`
 //! sets the throttle it holds meanwhile (default 0.4).
 
+pub mod marker;
 pub mod physics;
 pub mod pose;
 pub mod reflex;
@@ -90,6 +93,8 @@ struct Riding {
     /// Chase camera: where it is and the way it looks along the ground.
     eye: Option<Vec3>,
     look: Vec3,
+    /// Kept while off the bike, as the skate's is.
+    marker: marker::SessionMarker,
 }
 
 /// The skate scale `k` the rider is drawn at (`skate.rs`).
@@ -255,6 +260,7 @@ fn ride(
         riding.eye = None;
         rider.skated = 0.0;
         rider.bike = true;
+        riding.marker.suspend();
         commands.entity(camera).insert(Skating);
     }
     let Some(bike) = riding.bike.as_mut() else {
@@ -273,6 +279,32 @@ fn ride(
         None => read_controls(pad, &keys),
     };
     let dt = time.delta_secs().min(0.1);
+
+    // The session marker: LB + d-pad, as on the board.
+    let buttons = pad.map_or_else(marker::MarkerButtons::default, |p| marker::MarkerButtons {
+        modifier: p.pressed(B::LeftTrigger),
+        set: p.just_pressed(B::DPadDown),
+        back: p.pressed(B::DPadUp),
+    });
+    let upright = bike.crashed.is_none() && bike.grounded() == 2 && bike.up().y > 0.71;
+    let state = marker::BikeState {
+        position: bike.position,
+        heading: bike.heading(),
+        can_place: upright,
+        can_return: bike.crashed.is_none(),
+    };
+    match riding.marker.update(buttons, state, dt) {
+        marker::Action::Placed => info!("bike: session marker placed"),
+        marker::Action::Refused => info!("bike: session marker refused (not upright on both wheels)"),
+        marker::Action::Return(m) => {
+            *bike = Bike::dropped(world, m.position, m.heading);
+            riding.eye = None;
+            riding.look = Vec3::ZERO;
+            info!("bike: back to the session marker");
+        }
+        marker::Action::None => {}
+    }
+
     bike.step(world, controls, dt);
     if let Some(kill) = kill.as_deref()
         && let Some(volume) = kill.deadly(to_halo(bike.position))
@@ -570,6 +602,7 @@ fn show_status(
             if b.grounded() == 1 { "" } else { "s" },
         if b.crashed.is_some() { ", CRASHED" } else { "" },
     );
+    let status = if riding.marker.marker.is_some() { format!("{status}, marker set") } else { status };
     // A line a second in screenshot mode, so a headless ride can be read.
     if riding.neutral.is_some() {
         *logged += time.delta_secs();
