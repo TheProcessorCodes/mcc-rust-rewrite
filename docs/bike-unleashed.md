@@ -91,7 +91,7 @@ the gas lifts it (175). X also gives a 125 lbf sideways push.
 
 The bike now rides on **Reflex v1** by default (`crates/halo3_bike/src/reflex.rs`): the model
 above, unchanged in how it simulates, with stock MX vs ATV Reflex's mx450f numbers and four of
-Reflex's rules (from `D:eflex-tools\physics`, as the earlier Reflex-style bike used):
+Reflex's rules (from `D:\reflex-tools\physics`, as the earlier Reflex-style bike used):
 
 - Reflex's mass (177 kg), inertia, springs (forks 20.2 kN/m, shock 13.9 kN/m), bump / rebound
   dampers, travel (0.40 / 0.37 m), brakes (339 / 475 N·m), torque curve (55 N·m, 11,500 rpm
