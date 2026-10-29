@@ -64,12 +64,24 @@ impl Rig {
         Ok(rig)
     }
 
-    fn bind(&self, name: &str) -> Mat4 {
+    pub(crate) fn bind(&self, name: &str) -> Mat4 {
         self.index.get(name).map_or(Mat4::IDENTITY, |&i| self.bind[i])
     }
 
-    fn at(&self, name: &str) -> Vec3 {
+    pub(crate) fn at(&self, name: &str) -> Vec3 {
         self.bind(name).w_axis.truncate()
+    }
+
+    /// Every bone at its bind pose, for a pose to start from.
+    pub(crate) fn bind_pose(&self) -> Vec<Mat4> {
+        self.bind.clone()
+    }
+
+    /// Sets bone `name` in a pose made from `bind_pose`.
+    pub(crate) fn set(&self, pose: &mut [Mat4], name: &str, m: Mat4) {
+        if let Some(&i) = self.index.get(name) {
+            pose[i] = m;
+        }
     }
 
     /// Every rig bone posed, skate metres, bike frame (`k` is the skate scale).
@@ -147,7 +159,7 @@ impl Rig {
 
     /// Two-bone IK from `root` towards `target`, bending towards `pole`:
     /// the middle joint and where the end lands.
-    fn limb(&self, a: &str, b: &str, c: &str, root: Vec3, target: Vec3, pole: Vec3) -> (Vec3, Vec3) {
+    pub(crate) fn limb(&self, a: &str, b: &str, c: &str, root: Vec3, target: Vec3, pole: Vec3) -> (Vec3, Vec3) {
         let l1 = self.at(a).distance(self.at(b));
         let l2 = self.at(b).distance(self.at(c));
         let d = target - root;
@@ -161,14 +173,14 @@ impl Rig {
     }
 
     /// Bone `a` at `from`, turned so its segment to `b` points at `to`.
-    fn aim(&self, a: &str, b: &str, from: Vec3, to: Vec3) -> Mat4 {
+    pub(crate) fn aim(&self, a: &str, b: &str, from: Vec3, to: Vec3) -> Mat4 {
         let (_, rotation, _) = self.bind(a).to_scale_rotation_translation();
         let turn = arc(self.at(b) - self.at(a), to - from);
         Mat4::from_rotation_translation(turn * rotation, from)
     }
 }
 
-fn arc(from: Vec3, to: Vec3) -> Quat {
+pub(crate) fn arc(from: Vec3, to: Vec3) -> Quat {
     match (from.try_normalize(), to.try_normalize()) {
         (Some(a), Some(b)) => Quat::from_rotation_arc(a, b),
         _ => Quat::IDENTITY,

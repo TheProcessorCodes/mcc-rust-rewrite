@@ -94,6 +94,10 @@ pub struct RiderPose {
     pub drawn: bool,
     /// The dirt bike holds the rider (`bike`): no board, no skating.
     pub bike: bool,
+    /// The Spartan is on foot (`foot`): no board, no skating.
+    pub foot: bool,
+    /// The camera is in his eyes: his body is not drawn.
+    pub first_person: bool,
 }
 
 impl Default for RiderPose {
@@ -108,6 +112,8 @@ impl Default for RiderPose {
             skated: 0.0,
             drawn: false,
             bike: false,
+            foot: false,
+            first_person: false,
         }
     }
 }
@@ -645,7 +651,7 @@ fn update(
         let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
         return;
     }
-    if toggle && host.ready && !rider.bike {
+    if toggle && host.ready && !rider.bike && !rider.foot {
         host.epoch = host.epoch.wrapping_add(1);
         if host.active {
             host.active = false;
@@ -749,7 +755,7 @@ fn show_status(
     rider: Res<RiderPose>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if rider.bike {
+    if rider.bike || rider.foot {
         return;
     }
     let Ok(mut window) = windows.single_mut() else {

@@ -22,6 +22,8 @@
 //!                        start a music track (`audio/`; M plays the map's
 //!                        showpiece, e.g. the Warthog run on 120_halo)
 //!
+//! `--foot` starts on foot at the start spawn (`foot/mod.rs`; F toggles).
+//!
 //! In a map, J switches between flying and skating (see `skate.rs`), B
 //! between flying and the dirt bike (`bike/mod.rs`), PageDown / PageUp step
 //! through the zone sets, Home loads every BSP. Escape or Start pauses and
@@ -35,6 +37,7 @@
 mod audio;
 mod bike;
 mod falls;
+mod foot;
 mod fly_camera;
 mod halo2;
 mod pause;
@@ -86,7 +89,8 @@ fn main() -> anyhow::Result<()> {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
-  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike] [--bench N]
+  halo3 <map> [--foot]
+  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
   halo3 --test-scene");
             std::process::exit(2);
         }
@@ -245,6 +249,9 @@ fn main() -> anyhow::Result<()> {
                 Some((position, yaw)) if plan.bike => {
                     app.insert_resource(bike::AutoStart::at(position, yaw));
                 }
+                Some((position, yaw)) if plan.foot => {
+                    app.insert_resource(foot::AutoStart::at(position, yaw));
+                }
                 Some((position, yaw)) => {
                     app.insert_resource(skate::AutoStart::at(position, yaw));
                 }
@@ -263,7 +270,18 @@ fn main() -> anyhow::Result<()> {
         .add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
         if !collision.triangles.is_empty() {
             app.insert_resource(bike::BikeInput(collision))
-                .add_plugins(bike::BikePlugin);
+                .add_plugins((bike::BikePlugin, foot::FootPlugin));
+            // `--foot`: start on foot at the start spawn.
+            if !shot_mode
+                && args.iter().any(|a| a == "--foot")
+                && let Some((position, yaw)) = scene
+                    .spawns
+                    .first()
+                    .map(|s| (s.position, s.yaw))
+                    .or_else(|| scene.starts.first().map(|s| (s.position, s.yaw)))
+            {
+                app.insert_resource(foot::AutoStart::at(position, yaw));
+            }
         }
         // Kill volumes and the bottom of the world (`falls.rs`), water
         // surfaces and the ground under them, for sinking, falling and
@@ -336,6 +354,7 @@ fn shot_plan(args: &[String], scene: &blam_geometry::Scene) -> anyhow::Result<Op
         size,
         skate: args.iter().any(|a| a == "--skate"),
         bike: args.iter().any(|a| a == "--bike"),
+        foot: args.iter().any(|a| a == "--foot"),
         bench: value("--bench").map(|n| n.parse()).transpose()?.unwrap_or(0),
     }))
 }

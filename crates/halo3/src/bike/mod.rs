@@ -124,7 +124,7 @@ fn setup(
 }
 
 /// The collision of the loaded BSPs, renderer frame.
-fn build_world(collision: &Collision, mask: u32) -> World {
+pub(crate) fn build_world(collision: &Collision, mask: u32) -> World {
     let started = std::time::Instant::now();
     let loaded = collision.of_bsps(mask);
     let world = World::new(loaded.triangles.iter().map(|t| {
@@ -249,7 +249,7 @@ fn ride(
             return;
         }
         if rider.active {
-            warn!("bike: stop skating first (J)");
+            warn!("bike: stop skating or walking first (J / F)");
             return;
         }
         let f = transform.forward().as_vec3();

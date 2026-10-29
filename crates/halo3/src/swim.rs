@@ -258,7 +258,7 @@ fn water_rules(
     let (Some(world), Some(pose)) = (world, pose) else {
         return;
     };
-    if !pose.active || pose.bones.is_empty() || pose.bike {
+    if !pose.active || pose.bones.is_empty() || pose.bike || pose.foot {
         state.in_water = false;
         state.under = 0.0;
         return;

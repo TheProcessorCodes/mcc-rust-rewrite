@@ -1,5 +1,5 @@
 //! The pause menu: Escape, or Start on a pad, stops the game and lists the
-//! controls on three tabs: free roam (keyboard and controller), the dirt bike
+//! controls on four tabs: free roam and on foot (keyboard and controller), the dirt bike
 //! and skating (controller only). Click a tab, or change tab with LB / RB,
 //! the d-pad, A / D or the arrow keys. The same button carries on; Q, or View (Back) on a pad, quits the
 //! game.
@@ -56,7 +56,7 @@ struct TabPage(usize);
 #[derive(Component)]
 struct TabLabel(usize);
 
-const TABS: [&str; 3] = ["Free roam", "Dirt bike", "Skate"];
+const TABS: [&str; 4] = ["Free roam", "On foot", "Dirt bike", "Skate"];
 
 /// Free-roam controls: keyboard, controller, what it does.
 const FREE_ROAM: &[[&str; 3]] = &[
@@ -67,12 +67,24 @@ const FREE_ROAM: &[[&str; 3]] = &[
     ["C / Q", "left trigger", "down"],
     ["Shift (hold)", "A (hold)", "fast"],
     ["Alt (hold)", "", "slow"],
+    ["F", "d-pad up", "get out and walk (on foot)"],
     ["J", "click both sticks", "enter / exit skate mode"],
     ["B", "View / Back", "get on / off the dirt bike"],
     ["V", "", "show / hide collision"],
     ["Page Down / Page Up", "", "next / previous zone set"],
     ["Home", "", "load every BSP"],
     ["P", "", "print the camera position to the console"],
+];
+
+/// On-foot controls (`foot/mod.rs`): keyboard, controller, what it does.
+const FOOT: &[[&str; 3]] = &[
+    ["F", "d-pad up", "get on foot / back to flying"],
+    ["W A S D", "left stick", "move"],
+    ["mouse", "right stick", "aim"],
+    ["Space", "A", "jump"],
+    ["Ctrl / C (hold)", "left stick click", "crouch"],
+    ["T", "d-pad down", "first / third person"],
+    ["Esc", "Start", "pause"],
 ];
 
 /// Dirt bike controls (`bike/mod.rs`): controller, what it does.
@@ -210,8 +222,15 @@ fn spawn_menu(mut commands: Commands) {
                     [260.0, 200.0, 320.0],
                     FREE_ROAM,
                 );
-                page(panel, 1, ["Controller", ""], [260.0, 520.0], BIKE);
-                page(panel, 2, ["Controller", ""], [260.0, 520.0], SKATE);
+                page(
+                    panel,
+                    1,
+                    ["Keyboard", "Controller", ""],
+                    [260.0, 200.0, 320.0],
+                    FOOT,
+                );
+                page(panel, 2, ["Controller", ""], [260.0, 520.0], BIKE);
+                page(panel, 3, ["Controller", ""], [260.0, 520.0], SKATE);
             });
         });
 }

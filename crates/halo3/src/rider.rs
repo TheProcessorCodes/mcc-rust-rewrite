@@ -743,7 +743,7 @@ fn pose_rider(
         return;
     };
     let show = pose.active && !pose.bones.is_empty();
-    let shown = (show, show && !pose.bike);
+    let shown = (show && !pose.first_person, show && !pose.bike && !pose.foot);
     if shown != rider.shown {
         rider.shown = shown;
         let rider = &*rider;
