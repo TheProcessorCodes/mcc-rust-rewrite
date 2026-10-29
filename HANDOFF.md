@@ -41,7 +41,8 @@ A Cargo workspace (`cargo build`, `cargo test`, all green). Crates:
 | `blam_geometry` | structure BSPs, render models, scenario objects, sky, the real collision BSP, lightmaps, atmosphere, camera fx (exposure), zone sets, trigger volumes and cluster portals, into one plain `Scene` |
 | `blam_texture` | bitmap tags to mip chains (BC kept compressed, own CPU decoders) and the shader resolver |
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
-| `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound |
+| `blam_anim` | animation graphs (`jmad`) and their codec data; poses sampled and blended for skinning |
+| `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound, animations |
 | `halo3` | the game: bevy 0.20, flying, skating, the dirt bike, sound, the pause menu, headless screenshots |
 
 What the game does now:
@@ -132,8 +133,8 @@ cargo build
 
 **Not started (the big pieces):**
 
-- Halo's own biped animations (`jmad`) for the on-foot Spartan, first-person arms, grenades,
-  melee, damage and something to shoot at.
+- Halo's own biped animations on the on-foot Spartan (the reader and player exist now, see
+  "Animation" below), first-person arms, grenades, melee, damage and something to shoot at.
 - Vehicles (the Warthog), and objects that move (machines, doors).
 - HaloScript and AI, so campaign missions play rather than just load.
 - Reflex's real physics data read from the game files. The bike now uses numbers from the
@@ -165,6 +166,57 @@ towards Reflex. "Reflex v1" (`crates/halo3_bike/src/reflex.rs`) keeps Unleashed'
 Reflex's numbers and steering, lean and grip rules, and is the default; the tuning menu (0) is
 back, with Unleashed as a switch. Awaiting the user's playtest; the doc's "Reflex v1" section has
 the details.
+
+## Animation (2026-10-29, branch `biped-anim`)
+
+Halo 3's own animations read from the maps: `blam_anim` (reader), `halo3_anim` (playback),
+`blam anim` (CLI), `docs/format/animation.md` (layout, byte checks), probe
+`docs/format/scripts/probe_animation.py`. Every codec found in the installed maps decodes
+(static, every-frame with i16 or f32 rotations, byte and word keyframes); 120_halo decodes 5881
+animations, the other 115 have no data shipped in that map. Checked by `cargo test -p blam_anim`
+and by headless shots (`--anim-test`): the flood combat form walking and swinging, the flood
+elite, Master Chief running with a rifle and a sentinel aiming all hold together. Not playtested;
+nothing in the game uses it yet except `--anim-test`.
+
+The API for the enemies, script and on-foot code (`crates/halo3_anim/src/lib.rs`):
+
+```rust
+// Once per object type, from the map (bipd, mach, vehi, hlmt or jmad tag):
+let model: Arc<AnimModel> = AnimModel::load(cache, tag)?;          // or load_path(cache, path)
+// The skinned mesh: joints in render model node order, inverse binds from the model.
+let joints = halo3_anim::spawn_joints(&mut commands, &model);      // AnimJoints
+let binds = model.inverse_bindposes();                             // SkinnedMeshInverseBindposes
+// The actor entity (Transform = where it stands, renderer frame) gets:
+let mut a = Animator::new(model.clone()).with_seed(n);
+a.set_stance("combat", "rifle", "ar");     // Halo's mode / weapon class / weapon type
+a.play("move_front");                      // loops, cross-fades 0.2 s, falls back to any/any
+a.play_once("melee"); a.finished();        // one-shots
+a.overlay("fire_1", false);                // overlays on top
+a.aim(yaw, pitch, moving);                 // aim grid, radians, left / up positive
+a.take_root_motion();                      // dx, dy, dz (wu, own frame), dyaw since last call
+a.set_position(0.0..=1.0);                 // device machines: device:position
+a.play_named("fall", false);               // any animation by full name
+commands.entity(actor).insert((a, joints));
+app.add_plugins(halo3_anim::AnimPlugin);   // advances and poses joints in PostUpdate
+```
+
+Without bevy, `Animator::model_matrices()` gives one model-space matrix per node (Halo model
+frame; multiply by `halo3_anim::halo_to_render()` and the actor's transform). 120_halo's
+machines with graphs all use `device:position` (doors, the `plates\island_test` and
+`plates\pillar_fall` pieces, terminals, the monitor); the island plates also carry `fall`,
+`tilt`, `tilt_up`, `other_fall`, `other_tilt` and `device:power`.
+
+Master Chief instead of the made-up gait (not done): `halo3_foot` builds a skate-skeleton pose
+that `halo3_rider` retargets. The jmad route would skip both: load
+`objects\characters\masterchief\masterchief` (campaign maps; on Valhalla `mp_masterchief` uses
+the same graph, 952 animations, and all 51 nodes match), draw him skinned the way `crates/halo3/src/anim_test.rs` does,
+and drive an `Animator` from the foot state: stance `combat:rifle:<weapon type>` (or
+`crouch:...`), `play("move_front" | "move_back" | "move_left" | "move_right" | "idle" |
+"turn_left" | "airborne" | "land_soft")`, `aim(0, pitch, moving)`, `overlay("fire_1")`. Its
+run is 2.3 wu/s of root motion, so `set_speed(ground speed / 2.3)` keeps the feet from sliding.
+
+Open: overlay rotation order and the aim grid's up/down are inferred, not proven; frame events
+(footstep sounds), IK and transitions are not read; Halo's full fallback rules are approximated.
 
 ## Open questions and known gaps
 
