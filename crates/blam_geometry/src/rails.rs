@@ -105,14 +105,18 @@ pub fn find_rails(collision: &Collision) -> (Vec<Vec<Vec3>>, RailCensus) {
 
 /// Cuts rails (Halo units) where they run through the scenario's kill
 /// volumes: the ledges under 120_halo's Warthog run are real lips, but the
-/// player dies before reaching them. A rail is split at every segment whose
-/// ends or middle lie in a kill volume; pieces of one point are dropped.
+/// player dies before reaching them. Where the Guardians shoot
+/// ([`crate::scene::guarded`]: Sandtrap's outer wall and dunes) counts too.
+/// A rail is split at every segment whose ends or middle lie in a kill
+/// volume; pieces of one point are dropped.
 pub fn outside_kill_volumes(rails: Vec<Vec<Vec3>>, volumes: &[TriggerVolume]) -> Vec<Vec<Vec3>> {
     let kill: Vec<&TriggerVolume> = volumes.iter().filter(|v| v.kills()).collect();
-    if kill.is_empty() {
+    let guards = volumes.iter().any(TriggerVolume::guards);
+    if kill.is_empty() && !guards {
         return rails;
     }
-    cut_where(rails, |p| kill.iter().any(|v| v.contains(p)))
+    let shot = |p: Vec3| guards && crate::scene::guarded(volumes, p).is_some();
+    cut_where(rails, |p| kill.iter().any(|v| v.contains(p)) || shot(p))
 }
 
 /// Cuts rails (Halo units) where they run more than `depth` under a water

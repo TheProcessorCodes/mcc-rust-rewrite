@@ -160,6 +160,22 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       (object `coll` models are not decoded on any map), so the hangar's
       giant crates can be ridden through. Our own counts
       (`crates/blam_geometry/tests/maps.rs`).
+- [x] Sandtrap (`shrine`; checked by headless shots before the changes
+      below, which are written but not yet built): 42 clusters, 327
+      instances, 313 k triangles, 103 spawns, 11,496 world and 50,684
+      instanced collision triangles, no holes under the render floors. The
+      sand blend, the Forerunner wall and obelisks, the crashed Phantom, the
+      frigate in the sky, haze and exposure come out with no map-specific
+      code. New: the map's own vehicles are placed (`Kind::Vehicle`, tags
+      under `objects\levels\`): the two Elephants (the team bases) and the
+      six Guardian defenders on the obelisks. The map has no kill volumes;
+      leaving the safe zone where a Guardian watches (`tv_turret_*`) now
+      counts as a fall (`blam_geometry::scene::guarded`), so the bike can
+      no longer ride out over the dunes, and rails there are cut (about
+      2,940 found, 2,124 kept). Not yet: the Elephants have no collision,
+      so the six spawns on their decks drop through to the sand. Our own
+      counts (`crates/blam_geometry/tests/maps.rs`, `docs/viewer.md`
+      "Falling out of the map").
 - [x] Halo 2: Coagulation (`coagulation`, MCC Halo 2 classic; built,
       awaiting a playtest): the zlib-chunked map inflated in memory, its
       shared tags read from `shared.map` and its pixels from `textures.dat`

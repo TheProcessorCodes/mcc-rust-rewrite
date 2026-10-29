@@ -30,6 +30,7 @@ struct Counts {
     crate_triangles: usize,
     machine_triangles: usize,
     sky_triangles: usize,
+    vehicle_triangles: usize,
 }
 
 fn count(scene: &Scene) -> Counts {
@@ -49,6 +50,7 @@ fn count(scene: &Scene) -> Counts {
             Kind::Crate => c.crate_triangles += t,
             Kind::Machine => c.machine_triangles += t,
             Kind::Sky => c.sky_triangles += t,
+            Kind::Vehicle => c.vehicle_triangles += t,
             Kind::Control => {}
         }
     }
@@ -762,4 +764,165 @@ fn high_ground_matches_haloexport() {
 
     assert_eq!(scene.spawns.len(), 85);
     check_spawns(&scene);
+}
+
+/// Sandtrap (`shrine`): no HaloExport reference, so these are our own
+/// counts from the prebuilt `blam geometry` / `blam rails` and the probes in
+/// `docs/format/scripts`. A round desert with a Forerunner wall on its east
+/// half, two Elephants (vehicles) as the team bases, and no kill volumes:
+/// six Guardians on the obelisks round the edge shoot anyone who leaves
+/// the safe zone.
+#[test]
+fn sandtrap_counts() {
+    use blam_geometry::scene::guarded;
+    use glam::Vec3;
+
+    let Some(path) = map("shrine") else { return };
+    let scene = blam_geometry::load_map(&path).expect("shrine decodes");
+    let c = count(&scene);
+    // 44 clusters (42 with a mesh), 330 instances (327 placed).
+    assert_eq!(c.clusters_placed, 42);
+    assert_eq!(c.instances_placed, 327);
+    assert_eq!(c.cluster_triangles, 12315);
+    assert_eq!(c.instance_triangles, 52716);
+    assert_eq!(c.scenery_triangles, 191875);
+    assert_eq!(c.crate_triangles, 54119);
+    assert_eq!(c.machine_triangles, 0);
+    // The sky: dome, sun disk, the low cloud ring and the sandstorm.
+    assert_eq!(c.sky_triangles, 1778);
+    // 95 materials before the Elephants and the Guardians were placed.
+    assert!(scene.materials.len() > 95, "{} materials", scene.materials.len());
+    let (lo, hi) = scene.bounds.expect("world bounds");
+    assert!((lo.x - -188.893).abs() < 1e-2 && (hi.x - 259.108).abs() < 1e-2);
+    assert!((lo.y - -291.162).abs() < 1e-2 && (hi.y - 184.381).abs() < 1e-2);
+    assert!((lo.z - -38.225).abs() < 1e-2 && (hi.z - 123.729).abs() < 1e-2);
+
+    // The map's own vehicles: the two Elephants and six Guardians. Each
+    // one's box over all its pieces, world space.
+    assert!(c.vehicle_triangles > 0, "the Elephants and Guardians are placed");
+    let vehicle_box = |name: &str| {
+        let mut lo = Vec3::splat(f32::INFINITY);
+        let mut hi = Vec3::splat(f32::NEG_INFINITY);
+        for p in scene.placements.iter().filter(|p| p.kind == Kind::Vehicle && p.name == name) {
+            for v in &scene.meshes[p.mesh as usize].positions {
+                let w = p.transform.transform_point3(*v);
+                lo = lo.min(w);
+                hi = hi.max(w);
+            }
+        }
+        assert!(lo.x.is_finite(), "no vehicle named {name}");
+        (lo, hi)
+    };
+    let mut names: Vec<&str> = scene
+        .placements
+        .iter()
+        .filter(|p| p.kind == Kind::Vehicle)
+        .map(|p| p.name.as_str())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(
+        names,
+        [
+            "behemoth",
+            "behemoth_defense",
+            "turret_north0",
+            "turret_north1",
+            "turret_side0",
+            "turret_side1",
+            "turret_south0",
+            "turret_south1"
+        ]
+    );
+    // The Guardians sit on the obelisk tops, their origins at z 52.
+    for (name, at) in [
+        ("turret_north0", Vec3::new(-57.66, 90.07, 52.22)),
+        ("turret_north1", Vec3::new(60.37, 88.22, 52.09)),
+        ("turret_side0", Vec3::new(117.34, -14.27, 52.19)),
+        ("turret_side1", Vec3::new(-117.49, -11.39, 52.31)),
+        ("turret_south0", Vec3::new(57.41, -115.48, 52.20)),
+        ("turret_south1", Vec3::new(-60.33, -114.16, 52.62)),
+    ] {
+        let (lo, hi) = vehicle_box(name);
+        let mid = (lo + hi) * 0.5;
+        assert!(lo.z > 25.0 && hi.z > 45.0, "{name} {lo} {hi}");
+        assert!(mid.truncate().distance(at.truncate()) < 8.0, "{name} {lo} {hi}");
+    }
+
+    // 103 respawn points, all inside the safe zone. 97 stand on the
+    // collision floor; the other six stand on the two Elephants' decks,
+    // 1.6 wu over the sand, and the Elephants have no collision yet (object
+    // collision models are not decoded).
+    assert_eq!(scene.spawns.len(), 103);
+    let col = &scene.collision;
+    let elephants = [vehicle_box("behemoth"), vehicle_box("behemoth_defense")];
+    let on_elephant = |p: Vec3| elephants.iter().any(|(lo, hi)| p.cmpge(*lo).all() && p.cmple(*hi).all());
+    let mut on_deck = 0;
+    for sp in &scene.spawns {
+        let p = sp.position;
+        assert!(guarded(&scene.trigger_volumes, p).is_none(), "{sp:?}");
+        assert!(p.z > -24.0 && p.z < -18.0, "{sp:?}");
+        let floor = col
+            .triangles
+            .iter()
+            .filter_map(|t| {
+                let [a, b, c] = t.points;
+                let d = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+                if d.abs() < 1e-9 {
+                    return None;
+                }
+                let u = ((p.x - a.x) * (c.y - a.y) - (c.x - a.x) * (p.y - a.y)) / d;
+                let v = ((b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)) / d;
+                (u >= -1e-4 && v >= -1e-4 && u + v <= 1.0001).then_some(a.z + u * (b.z - a.z) + v * (c.z - a.z))
+            })
+            .filter(|z| *z <= p.z + 0.1)
+            .fold(f32::NEG_INFINITY, f32::max);
+        if p.z - floor > 0.05 {
+            assert!(on_elephant(p), "spawn {sp:?} is {:.2} wu over its floor", p.z - floor);
+            assert!((1.55..1.75).contains(&(p.z - floor)), "spawn {sp:?}");
+            on_deck += 1;
+        }
+    }
+    assert_eq!(on_deck, 6);
+
+    // The real collision: 11,496 world and 50,684 instanced triangles.
+    let bsp = col
+        .triangles
+        .iter()
+        .filter(|t| matches!(t.source, blam_geometry::CollisionSource::Bsp(_)))
+        .count();
+    assert_eq!(bsp, 11496);
+    assert_eq!(col.triangles.len() - bsp, 50684);
+    assert_eq!(col.materials.len(), 30);
+
+    // The edge: no kill volumes; six Guardian watch volumes and one safe
+    // zone (x -94.4..88.9, y -100.1..81.4).
+    let vols = &scene.trigger_volumes;
+    assert_eq!(vols.len(), 7);
+    assert!(!vols.iter().any(|v| v.kills()));
+    assert_eq!(vols.iter().filter(|v| v.guards()).count(), 6);
+    assert_eq!(vols.iter().filter(|v| v.is_safe_zone()).count(), 1);
+    // The middle of the desert, and high over it, are spared.
+    assert!(guarded(vols, Vec3::new(0.0, -10.0, -20.0)).is_none());
+    assert!(guarded(vols, Vec3::new(0.0, -10.0, 30.0)).is_none());
+    assert!(guarded(vols, Vec3::new(60.0, 60.0, -10.0)).is_none());
+    // The walkway on the east wall, the west dunes (above the watch
+    // volumes' tops) and the north and south edges are shot.
+    assert!(guarded(vols, Vec3::new(100.0, -12.78, -20.32)).is_some());
+    assert!(guarded(vols, Vec3::new(-110.0, -12.0, 0.0)).is_some());
+    assert!(guarded(vols, Vec3::new(0.0, 100.0, -15.0)).is_some());
+    assert!(guarded(vols, Vec3::new(0.0, -120.0, -15.0)).is_some());
+
+    // Grind rails: about 2,940 found; cut where the Guardians shoot (the
+    // wall's long rims, the dune crests) about 2,124 are left, all in the
+    // play space.
+    let (rails, census) = blam_geometry::rails::find_rails(col);
+    assert!((2930..=2950).contains(&census.rails), "{} rails", census.rails);
+    let rails = blam_geometry::rails::outside_kill_volumes(rails, vols);
+    assert!((2110..=2140).contains(&rails.len()), "{} rails left", rails.len());
+    for p in rails.iter().flatten() {
+        assert!(guarded(vols, *p).is_none(), "rail point {p}");
+        assert!(p.x > -95.0 && p.x < 90.0 && p.y > -101.0 && p.y < 106.0, "rail point {p}");
+        assert!(p.z > -28.0 && p.z < 0.0, "rail point {p}");
+    }
 }

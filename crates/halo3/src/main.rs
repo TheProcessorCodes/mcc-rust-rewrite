@@ -269,7 +269,12 @@ fn main() -> anyhow::Result<()> {
         // surfaces and the ground under them, for sinking, falling and
         // respawning (`swim.rs`).
         let kill = falls::KillZones::new(&scene.trigger_volumes, &scene.collision);
-        eprintln!("kill volumes: {}; out of the world below z {:.1} wu", kill.volumes.len(), kill.floor);
+        eprintln!(
+            "kill volumes: {}; Guardian watch volumes: {}; out of the world below z {:.1} wu",
+            kill.volumes.len(),
+            kill.guard_count(),
+            kill.floor
+        );
         app.insert_resource(kill);
         let mut water_materials: Vec<u32> = water
             .looks
