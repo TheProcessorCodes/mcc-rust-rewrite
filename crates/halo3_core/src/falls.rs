@@ -19,6 +19,27 @@ use bevy::prelude::*;
 use blam_geometry::{Collision, TriggerVolume};
 use blam_geometry::scene::guarded;
 
+/// Kill volumes a map's scripts switched off (`kill_volume_disable`, by
+/// name): 120_halo turns the Warthog run's off when its zone set loads and
+/// back on behind the player; its start flag lies inside `kill_100_01`.
+static SCRIPT_OFF: std::sync::LazyLock<std::sync::RwLock<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Switches a kill volume on or off, as a script does.
+pub fn set_kill_volume_enabled(name: &str, enabled: bool) {
+    let mut off = SCRIPT_OFF.write().unwrap();
+    if enabled {
+        off.remove(name);
+    } else {
+        off.insert(name.to_string());
+    }
+}
+
+/// Whether a script switched this kill volume off.
+pub fn kill_volume_disabled(name: &str) -> bool {
+    SCRIPT_OFF.read().unwrap().contains(name)
+}
+
 /// How far under the lowest collision surface counts as out of the world.
 pub const BELOW_WORLD_WU: f32 = 20.0;
 
@@ -65,7 +86,7 @@ impl KillZones {
         }
         self.volumes
             .iter()
-            .find(|v| v.contains(p))
+            .find(|v| v.contains(p) && !kill_volume_disabled(&v.name))
             .or_else(|| guarded(&self.guards, p))
             .map(|v| v.name.as_str())
     }

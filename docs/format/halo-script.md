@@ -312,8 +312,17 @@ scenery's `coll`, and "blow up" and "fall away" are damage sections of the plate
   fly camera, or the skater through `Respawn`), `switch_zone_set`, `current_zone_set`,
   `device_set_position`/`_immediate`/`device_animate_position`/`device_set_position_track`/
   overlay tracks/`device_get_position` (a 0..1 position animated over time), `effect_new*` at
-  flags, points and objects (drawn as a stand-in flash), `kill_volume_enable`/`_disable`
-  (recorded, not yet acted on).
+  flags, points and objects (drawn as a stand-in flash), `kill_volume_enable`/`_disable` (below).
+* **Deliberate difference:** `object_destroy_folder` only removes objects that start absent.
+  `object_management` drops the run's plate folders purely to save memory and
+  `plate_management` brings them back as you drive in; keeping them means the floor is there
+  wherever you start riding or walking (a bike dropped ahead of the plate triggers used to
+  fall through).
+* **Kill volumes** follow the scripts: `kill_volume_disable` / `_enable` switch the volume off
+  and on for the bike, the Spartan and the skater (`halo3_core::falls`). The run's start flag
+  lies inside `kill_100_01`, which is on until `object_management` turns it off; the insertion
+  is run for 15 ticks before the first frame so that has happened before anyone can press B, J
+  or F. A script teleport also becomes the fallback spot for a fall.
 * **Stubbed:** anything not listed logs once (`script: X is not implemented; does nothing`) and
   returns its type's default (0, false, no object). Cinematics, sound, HUD, fades, saves.
 * **Objects drawn on their own.** Every scene object a script constant names, every object in a

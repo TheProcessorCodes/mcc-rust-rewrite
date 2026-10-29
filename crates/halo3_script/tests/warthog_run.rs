@@ -96,10 +96,10 @@ fn warthog_run_plates_fall() {
     };
     let plate = data.object_index("100_001f").unwrap();
     let e = rt.objects.by_name[plate].unwrap() as usize;
-    // `object_management` dropped the run's plate folders once the zone
-    // set was in; driving into the run brings the first ones back
-    // (`plate_management`).
-    assert!(!rt.objects.state[e].exists, "100_001f before the plate trigger");
+    // `object_management` drops the run's plate folders once the zone set
+    // is in (to save the console's memory); the runtime keeps placed
+    // objects, so the floor is there before the plate trigger too.
+    assert!(rt.objects.state[e].exists && rt.objects.state[e].solid, "100_001f before the plate trigger");
     world.player = centre("trench_run_plate_100_trig");
     for _ in 0..30 {
         rt.step(&mut world, &mut ai, None);

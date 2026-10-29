@@ -194,6 +194,17 @@ once. Without `--insertion` / `--scripts` nothing changes from before except obj
 Tested headless (`halo3_script/tests/warthog_run.rs` drives the player through the run's
 volumes and checks plates drop); awaiting the user's playtest.
 
+First playtest (2026-10-29): B, J and F started back at the crash site and walking was stuck.
+Cause: the run's start flag lies inside the kill volume `kill_100_01`, which the game's scripts
+switch off when the zone set loads, but our kill volumes were always on, so every rider "fell"
+at once and went back to the map's old start (outside the loaded collision: a fall loop).
+Fixed: kill volumes follow `kill_volume_enable` / `_disable` (`halo3_core::falls`), the
+insertion runs 15 ticks before the first frame, a script teleport becomes the fallback spot,
+and the run's plate folders are no longer dropped for memory (`object_destroy_folder` only
+removes script-created objects), so the floor is there wherever you start. Checked headless
+with `HALO3_SCRIPT_TRACE=1` (player position once a second) for the bike, on foot
+(`HALO3_FOOT_WALK=0,1`) and skating, at the start flag and dropped straight onto the plates.
+
 ## Open questions and known gaps
 
 - **Object rotation order.** Yaw/pitch/roll are composed as Blam's intrinsic yaw, then pitch,

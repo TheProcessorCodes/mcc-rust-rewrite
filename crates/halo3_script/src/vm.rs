@@ -931,7 +931,16 @@ impl Runtime {
                 let members = arg(0).index().and_then(|f| self.folders.get(f)).cloned().unwrap_or_default();
                 for e in members {
                     if name == "object_destroy_folder" {
-                        self.objects.destroy(e as usize);
+                        // Folders of objects placed at the start are only
+                        // dropped to save the console's memory (120_halo's
+                        // `object_management` drops the Warthog run's plates
+                        // when its zone set loads, and `plate_management`
+                        // brings them back as the player drives in). Kept
+                        // here, so the floor is there wherever the player
+                        // starts riding or walking.
+                        if self.objects.info[e as usize].starts_absent {
+                            self.objects.destroy(e as usize);
+                        }
                     } else {
                         self.objects.create(e as usize, name.ends_with("anew"));
                     }

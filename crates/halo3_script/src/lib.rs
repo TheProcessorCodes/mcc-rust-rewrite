@@ -19,6 +19,7 @@ pub mod vm;
 use bevy::prelude::*;
 
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
+use halo3_core::falls::{FallbackSpot, set_kill_volume_enabled};
 use halo3_core::fly_camera::FlyCamera;
 use halo3_core::objects::{ObjectChunk, ScriptHidden, set_collision_removed};
 use halo3_core::skate::{Respawn, RiderPose};
@@ -66,6 +67,46 @@ pub struct Scripts {
     /// Per scene object: whether its collision is in (last told to
     /// `halo3_core::objects`).
     solid: Vec<bool>,
+    /// A teleport waiting for the camera to exist.
+    teleport: Option<(Vec3, f32)>,
+    /// The last tick traced (`HALO3_SCRIPT_TRACE`).
+    traced: u64,
+}
+
+/// Ticks run before the first frame, so an insertion's zone switch,
+/// teleport and kill-volume changes are in place before anyone can press
+/// B, J or F (120_halo's run start lies inside `kill_100_01`, which
+/// `object_management` switches off once the zone set is in).
+const STARTUP_TICKS: usize = 15;
+
+/// Applies what the scripts asked for during some ticks: kill volumes, a
+/// zone switch, a new fallback spot; returns the teleport.
+fn apply_requests(
+    commands: &mut Commands,
+    scripts: &mut Scripts,
+    bridge: &mut Bridge,
+    loaded: &mut LoadedBsps,
+    zones: Option<&Zones>,
+    fallback: Option<&mut FallbackSpot>,
+) -> Option<(Vec3, f32)> {
+    for (v, on) in std::mem::take(&mut scripts.runtime.kill_volumes) {
+        if let Some(volume) = scripts.runtime.volumes.get(v) {
+            set_kill_volume_enabled(&volume.name, on);
+        }
+    }
+    if let (Some(z), Some(zones)) = (bridge.switch.take(), zones)
+        && loaded.zone_set != Some(z)
+    {
+        load_zone_set(loaded, zones, z);
+    }
+    let (p, yaw) = bridge.teleport.take()?;
+    // A fall before the rider ever stood anywhere safe comes back here,
+    // not to the map's old start.
+    match fallback {
+        Some(f) => *f = FallbackSpot(p, yaw),
+        None => commands.insert_resource(FallbackSpot(p, yaw)),
+    }
+    Some((p, yaw))
 }
 
 /// The AI behind `ai_*` / `cs_*` / `vs_*` calls; [`NoAi`] until the
@@ -106,19 +147,44 @@ impl Plugin for ScriptPlugin {
     }
 }
 
-fn start(mut commands: Commands, pending: Option<ResMut<PendingScripts>>) {
+#[allow(clippy::too_many_arguments)]
+fn start(
+    mut commands: Commands,
+    pending: Option<ResMut<PendingScripts>>,
+    mut ai: ResMut<ScriptAi>,
+    animation: Res<ScriptAnimation>,
+    zones: Option<Res<Zones>>,
+    mut loaded: ResMut<LoadedBsps>,
+    mut fallback: Option<ResMut<FallbackSpot>>,
+) {
     let Some(mut pending) = pending else { return };
     let Some(mut runtime) = pending.0.take() else { return };
     if let Some(script) = pending.1.take() {
         runtime.console(&script);
     }
     let n = runtime.objects.info.iter().filter(|o| o.scene.is_some()).count();
-    commands.insert_resource(Scripts {
+    let mut scripts = Scripts {
         runtime,
         accumulator: 0.0,
         applied: 0,
         solid: vec![true; n],
-    });
+        teleport: None,
+        traced: 0,
+    };
+    let mut bridge = Bridge {
+        player: None,
+        zone_set: loaded.zone_set,
+        teleport: None,
+        switch: None,
+        effects: Vec::new(),
+    };
+    for _ in 0..STARTUP_TICKS {
+        scripts.runtime.step(&mut bridge, ai.0.as_mut(), animation.0.as_deref());
+        bridge.zone_set = bridge.switch.or(bridge.zone_set);
+    }
+    let t = apply_requests(&mut commands, &mut scripts, &mut bridge, &mut loaded, zones.as_deref(), fallback.as_deref_mut());
+    scripts.teleport = t.or(scripts.teleport);
+    commands.insert_resource(scripts);
 }
 
 /// What the scripts asked of the world during the ticks of one frame.
@@ -160,6 +226,7 @@ fn tick(
     time: Res<Time>,
     rider: Option<Res<RiderPose>>,
     mut respawn: Option<ResMut<Respawn>>,
+    mut fallback: Option<ResMut<FallbackSpot>>,
     zones: Option<Res<Zones>>,
     mut loaded: ResMut<LoadedBsps>,
     mut cameras: Query<(&mut Transform, &mut FlyCamera)>,
@@ -185,6 +252,23 @@ fn tick(
         switch: None,
         effects: Vec::new(),
     };
+    // `HALO3_SCRIPT_TRACE=1`: where the player is, once a second.
+    static TRACE: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("HALO3_SCRIPT_TRACE").is_ok_and(|v| v == "1"));
+    if *TRACE && scripts.runtime.tick >= scripts.traced + 30 {
+        scripts.traced = scripts.runtime.tick;
+        let p = to_halo(at);
+        let mode = match rider.as_deref() {
+            Some(r) if r.active && r.bike => "bike",
+            Some(r) if r.active && r.foot => "foot",
+            Some(r) if r.active => "skate",
+            _ => "camera",
+        };
+        info!(
+            "script trace: tick {} {mode} at halo [{:.2}, {:.2}, {:.2}], zone set {:?}",
+            scripts.runtime.tick, p.x, p.y, p.z, loaded.zone_set
+        );
+    }
     scripts.accumulator = (scripts.accumulator + time.delta_secs_f64()).min(0.25);
     let dt = 1.0 / vm::TICKS_PER_SECOND;
     let poser = animation.0.as_deref();
@@ -193,12 +277,10 @@ fn tick(
         scripts.runtime.step(&mut bridge, ai.0.as_mut(), poser);
     }
 
-    if let (Some(z), Some(zones)) = (bridge.switch, zones.as_deref())
-        && loaded.zone_set != Some(z)
-    {
-        load_zone_set(&mut loaded, zones, z);
+    if let Some(t) = apply_requests(&mut commands, &mut *scripts, &mut bridge, &mut loaded, zones.as_deref(), fallback.as_deref_mut()) {
+        scripts.teleport = Some(t);
     }
-    if let Some((p, yaw)) = bridge.teleport {
+    if let Some((p, yaw)) = scripts.teleport.take() {
         let skating = rider.as_deref().is_some_and(|r| r.active && !r.bike && !r.foot);
         if skating && let Some(respawn) = respawn.as_deref_mut() {
             respawn.0 = Some((p, yaw));
