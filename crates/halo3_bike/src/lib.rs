@@ -208,6 +208,7 @@ fn ride(
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut cameras: Query<(Entity, &mut Transform, &mut FlyCamera, &mut Projection)>,
+    mut logged_throttle: Local<f32>,
 ) {
     let Some(input) = input else {
         return;
@@ -289,6 +290,20 @@ fn ride(
     };
     let dt = time.delta_secs().min(0.1);
     bike.step(world, controls, dt);
+    // Diagnostic for the throttle: what the pad sends and what the bike does.
+    if (controls.throttle - *logged_throttle).abs() >= 0.05 {
+        *logged_throttle = controls.throttle;
+        info!(
+            "bike input: RT button {:?}, RZ axis {:?}, throttle {:.2}, {:.0} km/h, gear {}, {:.0} rpm ({} pads)",
+            pad.and_then(|p| p.get(B::RightTrigger2)),
+            pad.and_then(|p| p.get(GamepadAxis::RightZ)),
+            controls.throttle,
+            bike.speed() * 3.6,
+            bike.engine.gear + 1,
+            bike.engine.rpm,
+            gamepads.iter().count(),
+        );
+    }
     if let Some(kill) = kill.as_deref()
         && let Some(volume) = kill.deadly(to_halo(bike.position))
     {
