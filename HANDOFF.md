@@ -86,6 +86,7 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Last Resort | `zanzibar` | built, tests pass, not playtested |
 | High Ground | `deadlock` | built, tests pass, not playtested; seam where the cove's water meets the sky's sea |
 | Blackout | `lockout` | built, tests pass, not playtested |
+| Sandbox | `sandbox` | written and pinned in tests, not built yet; Forge pieces have no collision |
 | Halo (final mission) | `120_halo` | built with streaming, not playtested |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
 
