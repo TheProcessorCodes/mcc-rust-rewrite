@@ -36,6 +36,20 @@ pub fn lerp_clamp(x: f32, x0: f32, y0: f32, x1: f32, y1: f32) -> f32 {
     y0 + (y1 - y0) * t
 }
 
+/// Piecewise linear through `table` (x ascending), held flat past both ends.
+pub fn lerp_table(table: &[(f32, f32)], x: f32) -> f32 {
+    let (first, last) = (table[0], table[table.len() - 1]);
+    if x <= first.0 {
+        return first.1;
+    }
+    for w in table.windows(2) {
+        if x <= w[1].0 {
+            return lerp_clamp(x, w[0].0, w[0].1, w[1].0, w[1].1);
+        }
+    }
+    last.1
+}
+
 /// One of the tyre's sideways grip curves: grip (force over load) against
 /// sideways slip speed in ft/s. It rises about linearly, peaks and falls
 /// away slowly once the tyre is really sliding.
@@ -85,6 +99,13 @@ pub struct Tyre {
     /// Brake at full pedal and rolling friction, N·m.
     pub max_braking_torque: f32,
     pub wheel_friction: f32,
+    /// Multiplies the slip speed fed to the side curves: above 1 the tyre
+    /// grips harder for the same slip (a stiffer carcass).
+    pub slip_scale: f32,
+    /// The most sideways grip, as a multiple of load; past it the tyre
+    /// slides and keeps `slide_keep` of it (Unleashed has no cap).
+    pub side_cap: f32,
+    pub slide_keep: f32,
 }
 
 impl Tyre {
@@ -99,6 +120,8 @@ impl Tyre {
 /// The whole bike (SI unless noted).
 #[derive(Clone, Debug)]
 pub struct Setup {
+    /// What the menu and the window title call it.
+    pub name: &'static str,
     /// Bike and rider together, kg, and gravity's multiplier.
     pub mass: f32,
     pub gravity_scale: f32,
@@ -114,10 +137,17 @@ pub struct Setup {
     pub rear_axle: Vec3,
     pub front: Tyre,
     pub rear: Tyre,
-    /// Bar lock, rad, and its share of that at two speeds (m/s).
-    pub max_steer: f32,
-    pub steer_speed: [f32; 2],
-    pub steer_scale: [f32; 2],
+    /// Bar angle at full stick by forward speed: (m/s, rad).
+    pub steer_curve: Vec<(f32, f32)>,
+    /// The stick is raised to this power before it turns the bars (1 is
+    /// straight; Reflex squares it, so small moves turn gently).
+    pub steer_power: f32,
+    /// Seconds the bars lag behind the stick (0: they follow at once).
+    pub steer_lag: f32,
+    /// What the rider leaning sideways (right stick X) adds, as a share of
+    /// full stick: to the bars, and to the lean.
+    pub rider_steer: f32,
+    pub rider_lean: f32,
     /// Engine: (rpm, torque N·m) points, gears and final drive.
     pub torque_curve: Vec<(f32, f32)>,
     pub gears: Vec<f32>,
@@ -136,11 +166,10 @@ pub struct Setup {
     /// Backing up: target speed (negative, m/s) and gain (N per m/s).
     pub reverse_speed: f32,
     pub reverse_gain: f32,
-    /// Lean: most lean (rad), reached at `max_roll_speed` (m/s), and how fast
-    /// the bike follows (1/s). Below `stand_upright[0]` the bike leans from
-    /// the vertical, above `stand_upright[1]` from the ground's normal.
-    pub max_roll: f32,
-    pub max_roll_speed: f32,
+    /// Lean at full stick by forward speed: (m/s, rad), and how fast the
+    /// bike follows (1/s). Below `stand_upright[0]` the bike leans from the
+    /// vertical, above `stand_upright[1]` from the ground's normal.
+    pub lean_curve: Vec<(f32, f32)>,
     pub roll_gain: f32,
     pub stand_upright: [f32; 2],
     /// Wheelie hold: most pitch (rad), gains, and the speed it fades out at.
@@ -209,6 +238,9 @@ impl Setup {
             braking,
             max_braking_torque: 200.0 * LBF_FT,
             wheel_friction: 10.0 * LBF_FT,
+            slip_scale: 1.0,
+            side_cap: f32::INFINITY,
+            slide_keep: 1.0,
         };
         // HP at rpm; torque = HP · 5252 / rpm (lbf·ft).
         let hp = [
@@ -224,6 +256,7 @@ impl Setup {
             (9500.0, 39.0),
         ];
         Setup {
+            name: "Unleashed",
             mass,
             gravity_scale: 1.03,
             inertia: Vec3::new(22.4, 18.4, 10.9) * LBF_FT,
@@ -234,9 +267,12 @@ impl Setup {
             rear_axle: axle(-2.6256, 1.3030),
             front: common(1.65, 0.3, 0.75, side(4.0, 1.6, 37.0, 0.0035)),
             rear: common(2.55, 0.4, -0.75, side(4.0, 1.6, 37.0, 0.0035)),
-            max_steer: 30.0 * DEG,
-            steer_speed: [0.0, 75.0 * MPH],
-            steer_scale: [0.9, 0.3],
+            // 30° × 0.9 at a standstill to 30° × 0.3 at 75 mph.
+            steer_curve: vec![(0.0, 27.0 * DEG), (75.0 * MPH, 9.0 * DEG)],
+            steer_power: 1.0,
+            steer_lag: 0.0,
+            rider_steer: 0.0,
+            rider_lean: 0.0,
             torque_curve: hp.iter().map(|&(rpm, hp)| (rpm, hp * 5252.0 / rpm * LBF_FT)).collect(),
             gears: vec![1.8, 1.47, 1.21, 1.0, 0.869],
             final_ratio: 10.538,
@@ -251,8 +287,7 @@ impl Setup {
             reverse_speed: -10.0 * MPH,
             // 30 lbf per ft/s.
             reverse_gain: 30.0 * LBF / FT,
-            max_roll: 45.0 * DEG,
-            max_roll_speed: 35.0 * MPH,
+            lean_curve: vec![(0.0, 0.0), (35.0 * MPH, 45.0 * DEG)],
             roll_gain: 5.0,
             stand_upright: [10.0 * MPH, 30.0 * MPH],
             max_pitch: 40.0 * DEG,
@@ -292,16 +327,17 @@ impl Setup {
 
     /// Engine torque from the curve at `rpm`, N·m.
     pub fn curve_torque(&self, rpm: f32) -> f32 {
-        let c = &self.torque_curve;
-        if rpm <= c[0].0 {
-            return c[0].1;
-        }
-        for w in c.windows(2) {
-            if rpm <= w[1].0 {
-                return lerp_clamp(rpm, w[0].0, w[0].1, w[1].0, w[1].1);
-            }
-        }
-        c[c.len() - 1].1
+        lerp_table(&self.torque_curve, rpm)
+    }
+
+    /// The bar angle at full stick for a forward speed (m/s), rad.
+    pub fn steer_lock(&self, speed: f32) -> f32 {
+        lerp_table(&self.steer_curve, speed.abs())
+    }
+
+    /// The lean at full stick for a forward speed (m/s), rad.
+    pub fn lean_for(&self, speed: f32) -> f32 {
+        lerp_table(&self.lean_curve, speed)
     }
 
     pub fn max_rpm(&self) -> f32 {

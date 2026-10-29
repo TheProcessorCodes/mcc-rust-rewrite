@@ -13,6 +13,7 @@
 //! | LT | S | brake |
 //! | A (hold) | Space (hold) | back up, to 10 mph |
 //! | Y | R | stand the bike back up |
+//! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
 //! abyss) puts the bike back where it last rode well, as a crash does.
@@ -23,6 +24,8 @@
 
 pub mod physics;
 pub mod pose;
+pub mod reflex;
+pub mod tune;
 pub mod unleashed;
 
 use bevy::input::gamepad::GamepadButton as B;
@@ -61,11 +64,12 @@ impl Plugin for BikePlugin {
         app.init_resource::<Riding>()
             .init_resource::<AutoStart>()
             .init_resource::<StickPool>()
+            .add_plugins(tune::TunePlugin)
             .add_systems(Startup, setup)
             .add_systems(
                 Update,
                 (
-                    ride.run_if(halo3_core::pause::running),
+                    ride.run_if(halo3_core::pause::running).run_if(tune::closed),
                     draw_bike,
                     show_status,
                 )
@@ -557,7 +561,8 @@ fn show_status(
         return;
     };
     let status = format!(
-            "bike {:.0} km/h, gear {}, {:.0} rpm, {} wheel{} down{}",
+            "bike ({}) {:.0} km/h, gear {}, {:.0} rpm, {} wheel{} down{}",
+            physics::setup().name,
             b.speed() * 3.6,
             b.engine.gear + 1,
             b.engine.rpm,

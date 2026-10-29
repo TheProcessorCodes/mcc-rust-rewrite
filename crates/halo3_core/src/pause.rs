@@ -11,3 +11,13 @@ pub fn running(paused: Res<Paused>) -> bool {
     !paused.0
 }
 
+
+/// A menu drawn over the game without pausing it (the dirt bike's tuning
+/// menu) is up: it has the mouse, and Escape closes it, not the game.
+#[derive(Resource, Default)]
+pub struct Overlay(pub bool);
+
+/// The systems that open and close overlay menus. The pause menu reads
+/// Escape after them, so an Escape that closed an overlay is gone by then.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OverlayInput;

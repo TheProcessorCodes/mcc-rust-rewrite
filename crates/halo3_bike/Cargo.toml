@@ -1,6 +1,6 @@
 [package]
 name = "halo3_bike"
-description = "The dirt bike: MX vs ATV Unleashed Pro 250 physics on Halo 3 collision"
+description = "The dirt bike: MX vs ATV Unleashed physics pulled towards Reflex, on Halo 3 collision"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

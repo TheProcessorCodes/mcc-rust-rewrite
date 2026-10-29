@@ -73,6 +73,8 @@ fn grab_cursor(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    // An overlay menu (the bike's tuning menu) wants the pointer.
+    overlay: Option<Res<crate::pause::Overlay>>,
     // Whether Escape has handed the cursor back; a click takes it again.
     mut released: Local<bool>,
     mut was_focused: Local<bool>,
@@ -91,7 +93,7 @@ fn grab_cursor(
     if mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right) {
         *released = false;
     }
-    let want = window.focused && !*released;
+    let want = window.focused && !*released && !overlay.is_some_and(|o| o.0);
     let mode = if want {
         CursorGrabMode::Locked
     } else {
