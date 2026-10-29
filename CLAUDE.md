@@ -10,6 +10,15 @@ far, the paths on disk and the open decision.
   MW2 folder or the Skate 3 dump. Caches and outputs go inside this project.
 - **No game files in this repo.** The user brings their own copies; the code reads them at
   runtime, the way IW4L does.
+- **Build for a public release.** Assume a stranger downloads this and has only their own
+  MCC install and their own Skate 3 copy. Nothing may depend on this PC's paths, the
+  `mw2 skate 3` folder or game data in the repo or the release. A one-time first-run setup
+  finds or asks for MCC and Skate 3, checks them, converts what it needs into a cache next to
+  the exe, saves the paths, and never asks again (the IW4L `launcher/src/first_run.rs` model).
+  New code reads game paths only from that saved setup, never a hard-coded `C:\`/`D:\` path;
+  env vars stay as dev overrides. Everything Halo needs is read from MCC at run time;
+  everything Skate 3 needs comes out of the user's Skate 3 copy. Don't commit files
+  extracted from either game (textures, models, audio, dumps of tag data).
 - **Code elsewhere on disk is reference, not ours to edit.** `mw2-skate-3-src`,
   `D:\reflex-tools` and the Reclaimer clone belong to other work. Read them and copy what
   helps into this project; do not change them without asking.
