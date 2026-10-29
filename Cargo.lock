@@ -2532,6 +2532,7 @@ dependencies = [
  "blam_geometry",
  "blam_h2",
  "blam_texture",
+ "halo3_anim",
  "halo3_audio",
  "halo3_bike",
  "halo3_core",

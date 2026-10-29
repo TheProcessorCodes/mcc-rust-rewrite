@@ -288,6 +288,18 @@ impl Animator {
         self.position = None;
     }
 
+    /// Plays an animation by its full name (`fall`, `device:power`,
+    /// `combat:rifle:melee`) as the base, from the start.
+    pub fn play_named(&mut self, name: &str, looping: bool) -> bool {
+        match self.model.named(name) {
+            Some(id) => {
+                self.play_id(id, name, looping);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Playback speed of the base animation (1 = Halo's 30 frames a second).
     pub fn set_speed(&mut self, speed: f32) {
         if let Some(b) = &mut self.base {

@@ -24,6 +24,11 @@
 //!
 //! `--foot` starts on foot at the start spawn (`foot/mod.rs`; F toggles).
 //!
+//! halo3 <map> --anim-test flood=move_front,sentinel=aim,... [--anim-at x,y,z,yaw]
+//!                        a row of the map's bipeds playing Halo 3's own
+//!                        animations (`anim_test.rs`); with `--shot` for
+//!                        pictures
+//!
 //! In a map, J switches between flying and skating (see `skate.rs`), B
 //! between flying and the dirt bike (`bike/mod.rs`), PageDown / PageUp step
 //! through the zone sets, Home loads every BSP. Escape or Start pauses and
@@ -34,6 +39,7 @@
 //! maps (`coagulation`, or `h2:NAME`) in `%HALO2_MAPS%` or MCC's
 //! `halo2\h2_maps_win64_dx11` (`halo2.rs`).
 
+mod anim_test;
 mod halo2;
 mod pause;
 mod shot;
@@ -191,6 +197,27 @@ fn main() -> anyhow::Result<()> {
         }
     };
     let shot = shot_plan(&args, &scene)?;
+    let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
+    let anim_test = match (value("--anim-test"), map_file) {
+        (Some(spec), Some(cache)) => {
+            // Three world units in front of the first view (or the start),
+            // on the ground, facing back at it.
+            let (eye, yaw, eye_height) = match shot.as_ref().and_then(|p| p.views.first()) {
+                Some(v) => (v.position, v.yaw_deg.to_radians(), 0.6),
+                None => scene
+                    .starts
+                    .first()
+                    .map(|s| (s.position, s.yaw, 0.0))
+                    .or_else(|| scene.spawns.first().map(|s| (s.position, s.yaw, 0.0)))
+                    .unwrap_or((Vec3::ZERO, 0.0, 0.0)),
+            };
+            let ahead = Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 3.0;
+            let fallback = (eye + ahead - Vec3::Z * eye_height, yaw + std::f32::consts::PI);
+            Some(anim_test::load(cache, &spec, value("--anim-at").as_deref(), fallback)?)
+        }
+        (Some(_), None) => anyhow::bail!("--anim-test needs a Halo 3 map"),
+        _ => None,
+    };
     let zones = world::zones::Zones::of(&scene);
     let loaded = world::zones::initial(&args, &zones)?;
     if !zones.layout.zone_sets.is_empty() {
@@ -330,6 +357,9 @@ fn main() -> anyhow::Result<()> {
         } else if let Some(s) = scene.starts.first() {
             app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
         }
+    }
+    if let Some(pending) = anim_test {
+        app.insert_resource(pending).add_plugins(anim_test::AnimTestPlugin);
     }
     app.insert_resource(weapons::PendingArsenal(arsenal));
     app.insert_resource(zones)
