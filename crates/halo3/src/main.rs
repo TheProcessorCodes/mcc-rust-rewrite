@@ -46,6 +46,7 @@ mod shot;
 mod skate;
 mod swim;
 mod textures;
+mod weapons;
 mod world;
 
 use std::path::PathBuf;
@@ -333,7 +334,12 @@ fn main() -> anyhow::Result<()> {
         .insert_resource(world::PendingScene(Some(scene), Some(textures), map_file))
         .insert_resource(world::sky::PendingSky(Some(sky)))
         .insert_resource(world::water::PendingWater(Some(water)))
-        .add_plugins((pause::PausePlugin, fly_camera::FlyCameraPlugin, world::WorldPlugin))
+        .add_plugins((
+            pause::PausePlugin,
+            fly_camera::FlyCameraPlugin,
+            world::WorldPlugin,
+            weapons::WeaponsPlugin,
+        ))
         .run();
     Ok(())
 }
