@@ -15,6 +15,7 @@ pub mod sbsp;
 pub mod scenario;
 pub mod scene;
 pub mod vertex;
+pub mod weapons;
 pub mod zones;
 
 use std::path::Path;
