@@ -73,6 +73,8 @@ fn grab_cursor(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut windows: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    // The bike's tuning menu wants the pointer while it is up.
+    tuning: Option<Res<crate::bike::tune::TuneMenu>>,
     // Whether Escape has handed the cursor back; a click takes it again.
     mut released: Local<bool>,
     mut was_focused: Local<bool>,
@@ -91,7 +93,8 @@ fn grab_cursor(
     if mouse.just_pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Right) {
         *released = false;
     }
-    let want = window.focused && !*released;
+    let menu = tuning.is_some_and(|t| t.open);
+    let want = window.focused && !*released && !menu;
     let mode = if want {
         CursorGrabMode::Locked
     } else {

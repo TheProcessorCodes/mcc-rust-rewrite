@@ -13,6 +13,7 @@
 //! | LT | S | brake |
 //! | A (hold) | Space (hold) | back up, to 3 m/s |
 //! | Y | R | stand the bike back up |
+//! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
 //! abyss) puts the bike back where it last rode well, as a crash does.
@@ -23,6 +24,7 @@
 
 pub mod physics;
 pub mod pose;
+pub mod tune;
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
@@ -36,7 +38,7 @@ use crate::skate::{RiderPose, Skating, assets_root};
 use crate::world::zones::LoadedBsps;
 use crate::world::{to_halo, to_render, to_render_dir};
 
-use physics::{Bike, Controls, World};
+use physics::{Bike, Controls, Tuning, World};
 
 /// The map's collision (Halo units), handed over by `main`.
 #[derive(Resource)]
@@ -60,10 +62,24 @@ impl Plugin for BikePlugin {
         app.init_resource::<Riding>()
             .init_resource::<AutoStart>()
             .init_resource::<StickPool>()
+            .init_resource::<BikeTuning>()
+            .add_plugins(tune::TunePlugin)
             .add_systems(Startup, setup)
-            .add_systems(Update, (ride.run_if(crate::pause::running), draw_bike, show_status).chain());
+            .add_systems(
+                Update,
+                (
+                    ride.run_if(crate::pause::running).run_if(tune::closed),
+                    draw_bike,
+                    show_status,
+                )
+                    .chain(),
+            );
     }
 }
+
+/// The physics the tuning menu has set; every bike rides on it.
+#[derive(Resource, Default)]
+pub struct BikeTuning(pub Tuning);
 
 #[derive(Resource, Default)]
 struct Riding {
@@ -172,6 +188,7 @@ fn ride(
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
     input: Option<Res<BikeInput>>,
+    tuning: Res<BikeTuning>,
     kill: Option<Res<crate::falls::KillZones>>,
     fallback: Option<Res<crate::swim::FallbackSpot>>,
     mut rider: ResMut<RiderPose>,
@@ -260,6 +277,7 @@ fn ride(
         None => read_controls(pad, &keys),
     };
     let dt = time.delta_secs().min(0.1);
+    bike.tuning = tuning.0;
     bike.step(world, controls, dt);
     if let Some(kill) = kill.as_deref()
         && let Some(volume) = kill.deadly(to_halo(bike.position))
@@ -443,13 +461,17 @@ fn bike_sticks(bike: &Bike, gizmos: &mut Sticks) {
     let axis = physics::steering_axis();
 
     // Wheels: tyre, rim and spokes; the front turns with the bars.
-    for (axle, radius, across) in [
-        (rear, rear_leg.radius, Vec3::X),
-        (front, front_leg.radius, bars * Vec3::X),
+    for (axle, leg, across) in [
+        (rear, rear_leg, Vec3::X),
+        (front, front_leg, bars * Vec3::X),
     ] {
-        let centre = w(axle);
+        let (centre, radius) = (w(axle), leg.radius);
         let across = rot * across;
-        ring(gizmos, centre, across, radius, rubber);
+        // The tread: two rubber rings, the outer edges `width` apart.
+        let edge = (leg.width * 0.5 - COLOURS[rubber].3).max(0.0);
+        for s in [edge, -edge] {
+            ring(gizmos, centre + across * s, across, radius, rubber);
+        }
         ring(gizmos, centre, across, radius * 0.78, metal);
         let u = across.any_orthonormal_vector();
         let v = across.cross(u);
@@ -460,7 +482,7 @@ fn bike_sticks(bike: &Bike, gizmos: &mut Sticks) {
     }
 
     // Forks: two legs from the triple clamp to the axle.
-    let clamp = front_leg.extended + axis * 0.95;
+    let clamp = physics::fork_base() + axis * 0.95;
     let side = bars * Vec3::X * 0.09;
     for s in [side, -side] {
         gizmos.line(w(clamp + s), w(front + s), metal);
@@ -481,8 +503,8 @@ fn bike_sticks(bike: &Bike, gizmos: &mut Sticks) {
     }
 
     // Frame: head tube, down tube and cradle, top rail, subframe.
-    let head_top = front_leg.extended + axis * 0.92;
-    let head_low = front_leg.extended + axis * 0.70;
+    let head_top = physics::fork_base() + axis * 0.92;
+    let head_low = physics::fork_base() + axis * 0.70;
     let pivot = Vec3::new(0.0, -0.18, -0.20);
     let cradle = Vec3::new(0.0, -0.40, 0.08);
     let seat_front = Vec3::new(0.0, 0.26, -0.05);
@@ -544,8 +566,10 @@ fn show_status(
         return;
     };
     let status = format!(
-            "bike {:.0} km/h, {} wheel{} down{}",
+            "bike {:.0} km/h, gear {}, {:.0} rpm, {} wheel{} down{}",
             b.speed() * 3.6,
+            b.gear + 1,
+            b.rpm,
             b.grounded(),
             if b.grounded() == 1 { "" } else { "s" },
         if b.crashed.is_some() { ", CRASHED" } else { "" },

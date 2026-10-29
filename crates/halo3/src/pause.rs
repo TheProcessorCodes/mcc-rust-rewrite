@@ -42,7 +42,7 @@ pub fn running(paused: Res<Paused>) -> bool {
 }
 
 #[derive(Component)]
-struct PauseMenu;
+pub struct PauseMenu;
 
 /// Which tab is up, an index into `TABS`.
 #[derive(Resource, Default)]
@@ -83,6 +83,7 @@ const BIKE: &[[&str; 2]] = &[
     ["left trigger", "brake"],
     ["A (hold)", "back up"],
     ["Y", "stand the bike back up"],
+    ["0 (keyboard)", "physics tuning: sliders for grip, power, lean ..."],
     ["View / Back", "get off the bike"],
     ["Start", "pause"],
 ];
@@ -215,7 +216,7 @@ fn spawn_menu(mut commands: Commands) {
         });
 }
 
-fn toggle(
+pub fn toggle(
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut paused: ResMut<Paused>,
