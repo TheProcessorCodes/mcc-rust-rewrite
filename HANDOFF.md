@@ -1,8 +1,9 @@
 # Halo 3 Rust rewrite: handoff
 
-First written 2026-10-27 at the end of a research thread in `mw2-skate-3-src`; rewritten the
-same day after the first build session in this folder. `README.md` has the layout and the
-status list; `docs/` has the format notes the code is written from.
+First written 2026-10-27 at the end of a research thread in `mw2-skate-3-src`; last
+rewritten 2026-10-28 after the lighting, rider, campaign, streaming, water, sound and
+multiplayer-map work. `README.md` has the layout and the per-feature status list; `docs/` has
+the format notes the code is written from; `docs/viewer.md` has the controls.
 
 ## The goal
 
@@ -11,11 +12,11 @@ so the user can **skate (Skate 3 physics) on real Halo 3 maps**.
 
 | step | goal | state |
 |---|---|---|
-| 1 | get custom code into Halo 3, via a rewrite or a custom launcher | done as a rewrite: our code reads the real maps |
-| 2 | noclip: fly around the maps | built (`halo3.exe`), awaiting the user's first playtest |
-| 3 | skate on multiplayer maps | next: collision and rails are ready, the skate crates are not linked yet |
-| 4 | skate on campaign maps | 120_halo built (zone sets, start location, per-cluster sky and haze, skating per zone set), awaiting a playtest; other campaign maps not checked |
-| later | dirt bike game (MX vs ATV Reflex) in the mix | not before skating works |
+| 1 | get custom code into Halo 3, via a rewrite or a custom launcher | done as a rewrite: our code reads the real maps from the MCC install |
+| 2 | noclip: fly around the maps | done and playtested (keyboard, mouse after Tab, gamepad, Shift for speed) |
+| 3 | skate on multiplayer maps | done and playtested on Valhalla: the Skate 3 crates are linked and Master Chief rides. Guardian, Last Resort, High Ground and Blackout are built and pass tests but are not playtested |
+| 4 | skate on campaign maps | narrowed to the final mission, `120_halo`: zone sets, streaming, culling and skating across zone sets are built, awaiting a playtest. Other missions not checked |
+| later | dirt bike game (MX vs ATV Reflex) in the mix | started: B rides a dirt bike; the user's other sessions are tuning it towards stock Reflex |
 
 ## The decision (made 2026-10-27)
 
@@ -30,73 +31,117 @@ own words under `docs/format/`, each verified against the bytes of the user's ma
 Python probes (`docs/format/scripts/`). This project stays Apache-2.0 like IW4L. Nobody has
 copied a line of C# or XML; keep it that way, or raise it with the user first.
 
-## What exists now
+## What is done
 
-A Cargo workspace (`cargo build`, `cargo test`, all green, clippy clean):
+A Cargo workspace (`cargo build`, `cargo test`, all green). Crates:
 
 | crate | what it does |
 |---|---|
-| `blam_cache` | opens a `.map` read-only (memory-mapped): header, four sections and their address rules, tag classes, tag index, tag names, string ids with the namespace table, a cursor for tag data (blocks, tag references, data references), and the resource system (`zone` gestalt, `play` layout table, deflate pages, shared caches, fixed-up definitions) |
-| `blam_geometry` | decodes structure BSPs (clusters and instances via the lightmap BSP data tag's geometry), render models (first permutation per region, nodes, instanced geometry), the scenario's scenery / crates / machines / controls / sky, and the **real collision BSP** (`structure_bsp_tag_resources`: winged-edge surfaces fanned into triangles, with material and surface flags, instanced geometry placed) into one plain `Scene` |
-| `blam_texture` | bitmap tags -> mip chains (primary/secondary pages, cube maps, arrays, the 11 formats MCC uses plus BC4), own CPU decoders to RGBA8, and the shader resolver (options, template usages, bitmaps with xforms, blend / alpha test / two-sided, terrain layers) |
-| `blam_cli` | `blam info|classes|tags|strings|string-id|dump|geometry|rails|nodes|bitmap|shader|textures` ; `geometry --obj` writes the render geometry and the collision as OBJ (metres, Y up); `bitmap --png` writes mip 0 |
-| `halo3` | the viewer: bevy 0.20, one mesh per material with its real colour texture (BC kept compressed), tiling, alpha test and blending; terrain draws its four-layer blend; directional and ambient light, a flying camera (keyboard, mouse, gamepad), collision shell on V, P prints the camera position in Halo units |
+| `blam_cache` | opens a `.map` read-only (memory-mapped): header, sections, tag index and names, string ids, a tag data cursor, the resource system (zone gestalt, play layout, deflate pages, shared caches) |
+| `blam_geometry` | structure BSPs, render models, scenario objects, sky, the real collision BSP, lightmaps, atmosphere, camera fx (exposure), zone sets, trigger volumes and cluster portals, into one plain `Scene` |
+| `blam_texture` | bitmap tags to mip chains (BC kept compressed, own CPU decoders) and the shader resolver |
+| `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
+| `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound |
+| `halo3` | the game: bevy 0.20, flying, skating, the dirt bike, sound, the pause menu, headless screenshots |
 
-Verified against HaloExport's sidecars for Valhalla (`riverworld`) and The Pit (`cyberdyne`):
-every triangle count matches exactly (clusters, instances, scenery, crates, machines), bounds
-match to the metre, and the collision BSP comes out with the counts the research predicted
-(30,560 world triangles on Valhalla). Campaign maps decode all their BSPs (120_halo 11, 100_citadel
-15, 030_outskirts 6 with 3.25 M triangles) in under a second each. `cargo test` pins these.
+What the game does now:
+
+- **Look.**
+  - Lighting: Halo 3's baked lightmaps (SH coefficients and intensity; per-vertex, probe and per-pixel instances).
+  - Surfaces: the four-layer terrain blend; detail and normal maps on Halo's own tangents; specular from the lightmap's dominant light; self-illumination and plasma glow; alpha-tested cut-outs; multiply decals.
+  - Sky: the real sky (`skya`) with scattering, haze per cluster through the BSP's atmosphere palette, night skies (Blackout).
+  - Exposure: per map, plus auto exposure, from the camera fx.
+  - Spawn markers and editor-only objects are hidden.
+  - Docs: `docs/format/lightmaps.md`, `sky-and-atmosphere.md`, `shaders.md`.
+- **Water.** Animated waves from the shader's slope arrays, sky reflection, depth murk, shore fade, foam and waterfalls. Deep water sinks the skater, who respawns at the last dry spot (`docs/format/water.md`, `swim.rs`).
+- **Skating.**
+  - The Skate 3 crates come from `mw2-skate-3-src` as a path dependency and run on a worker thread (`skate.rs`).
+  - Skate collision is the real collision BSP; grind rails come from IW4L's lip detector.
+  - Kill volumes and the bottom of the world respawn you (`falls.rs`).
+  - J or both sticks toggles skating.
+- **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great".
+- **Dirt bike.** B rides it, with Master Chief on it (`bike/`). The user's other sessions are tuning it to stock Reflex (branches `bike-tune`, `bike-gas-backwards`, `bike-air-wheel`).
+- **Campaign, 120_halo.** Its 8 zone sets switch by PageUp / PageDown, `--zone`, or the scenario's own switch volumes as you move. You start at the player starting location (`docs/format/zone-sets.md`).
+- **Culling and streaming.**
+  - The world is chunked into 64 wu cells.
+  - Culling is by frustum, cluster portals (`docs/format/sbsp-portals.md`) and screen size; instance fade sizes are honoured.
+  - Only the loaded zone set's meshes and textures are on the GPU, built in the background. Skate collision is swapped in without stopping the ride.
+  - On section 6 this takes 206 MiB of textures instead of 383. Frame time is now limited by pixel shading, not draw count (`docs/viewer.md`, `docs/format/lod.md`).
+- **Sound.**
+  - Cluster ambience with its random details, cross-faded as you move.
+  - Sound scenery placed in the world and attenuated by distance.
+  - Music by hand: M, or `--music` (the Warthog run on 120_halo).
+  - Board roll, grind and landing sounds.
+  - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
+- **Pause menu.** Escape or Start. It has tabs for free roam, dirt bike and skate controls; Q quits.
+- **Headless screenshots.** `halo3.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits. Claude may run this on its own to check visuals; it never opens a window.
+
+Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has numbers):
+
+| map | file | state |
+|---|---|---|
+| Valhalla | `riverworld` | playtested: flying, skating, Master Chief |
+| The Pit | `cyberdyne` | playtested: flying |
+| Guardian | `guardian` | built, tests pass, not playtested |
+| Last Resort | `zanzibar` | built, tests pass, not playtested |
+| High Ground | `deadlock` | built, tests pass, not playtested; seam where the cove's water meets the sky's sea |
+| Blackout | `lockout` | built, tests pass, not playtested |
+| Halo (final mission) | `120_halo` | built with streaming, not playtested |
+| Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
 
 Run it:
 
 ```
 cargo build
-target\debug\blam.exe geometry riverworld --obj out\riverworld.obj
-& "target\debug\halo3.exe" riverworld
-& "target\debug\halo3.exe" --test-scene
+& "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\target\debug\halo3.exe" riverworld
+& "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\target\debug\halo3.exe" 120_halo --zone 6 --music 120_music_15
 ```
 
-`docs/viewer.md` has the controls. Nothing in this folder launches the game.
+## What is left
 
-## What the next session should do, in order
+**Waiting on the user's playtest.** These are built but the user has not run them yet:
 
-1. **Hear how the viewer playtest went.** Nobody has run `halo3.exe` yet (the rule is the user
-   playtests). Likely issues: camera direction signs, mouse grab on Windows, performance on
-   campaign maps (all BSPs are drawn at once; `--bsp` selection is only in the CLI so far).
-2. **Textures: base colour done (2026-10-28), real shaders next.** `docs/viewer.md` lists what
-   is drawn. Next steps, roughly in order of visible gain: detail maps and the four-layer terrain
-   blend (an `ExtendedMaterial` with its own fragment shader, `docs/bevy-textures.md` section 10),
-   normal maps (Halo's own tangents or `bevy_mikktspace`; BC5 is signed, `flip_normal_map_y`
-   unverified), splitting translucent batches per placement for sorting. Ask the user how the
-   textured viewer looks first: brightness (all colour maps sampled as sRGB), the dominant-layer
-   terrain, and whether anything that should be invisible is drawn.
-3. **Skate glue (goal 3).** `docs/skate-interface.md` is the contract. Collision triangles and
-   the lip detector input are ready in `Scene::collision` (Halo wu, Z up). Open choices there:
-   - link the skate crates as a **path dependency** on `mw2-skate-3-src\src\mashup\skate\crates`
-     or **copy** them in: ask the user (the handoff before this one asked the same);
-   - the scale constant `k` (true scale vs the Spartan-sized skater IW4L ships, see section 10
-     of that doc);
-   - the rider: the Spartan biped (`objects\characters\masterchief`) needs skinned vertex
-     decoding (`s_skinned_vertex`), its node names mapped onto the 35 skate bones (`rig.rs`
-     table), and skinned drawing in bevy.
-   The user's converted Skate 3 data is at `D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\assets`.
-4. **Spawns** are done for multiplayer: every `objects\multi\spawning\respawn_point*` and
-   `initial_spawn_point` placement is a `Scene::spawns` entry (position, yaw, kind); Valhalla
-   has 107, The Pit a similar number. The viewer starts at the first one. Campaign maps
-   start at the scenario's player starting location, found by our own probes
-   (`docs/format/zone-sets.md`, which also has zone sets, per-cluster sky and atmosphere,
-   trigger volumes and zone-set switch volumes).
-5. **Campaign (goal 4), 2026-10-28: 120_halo.** Zone sets switch with PageUp / PageDown,
-   `--zone`, or the scenario's switch volumes as you move; only the loaded zone set is on the GPU
-   (streamed per BSP in the background, textures decoded with it); the world is chunked and
-   culled by frustum, cluster portals (`docs/format/sbsp-portals.md`) and screen size;
-   skating swaps the new zone set's collision in without stopping the ride
-   (`docs/viewer.md` "Streaming and culling"). Fixed in review: the run's haze (cluster
-   atmosphere goes through the BSP's palette: `trench`, not `interior`), the black rider (light
-   samples inside triangles), the dark start (auto exposure). Next: playtest the streaming on the
-   run; the other campaign maps (010_jungle's BSP 11 still fails with "segment has no page"); a
-   real look at the sky from far above the play space (now the trench haze colour, no black).
+1. 120_halo: streaming and culling on the Warthog run, and skating across zone sets (`--zone 4`).
+2. Sound on Valhalla and 120_halo: anything too loud, too quiet or broken.
+3. The material, water and exposure changes made since the last look at Valhalla.
+4. Guardian, Last Resort, High Ground and Blackout.
+
+**Look, still different from real Halo 3:**
+
+- Real cube-map reflections (now an SH stand-in) and parallax.
+- Halo's exact specular and tonemap curve.
+- Haze that varies with height; cliffs come out a little too warm.
+- Water's painted masks; High Ground's seam between the cove and the sea.
+- The rider is lit at one level for his whole body (no per-part lighting).
+
+**Sound, still missing:** reverb from the BSP acoustics, dialogue, and the game's real mix levels.
+
+**Campaign:**
+
+- The other missions are untested.
+- `010_jungle` BSP 11 fails with "segment has no page".
+- Seen from far above the play space, the sky is only the trench haze colour.
+
+**Not started (the big pieces):**
+
+- An on-foot Spartan: walking, jumping, Halo's movement rules and biped collision.
+- Weapons, vehicles (the Warthog), and objects that move (machines, doors).
+- HaloScript and AI, so campaign missions play rather than just load.
+- Reflex's real physics data read from the game files. The bike now uses numbers from the
+  `D:\reflex-tools\physics` docs.
+
+Suggested order: playtest 120_halo first, then either the on-foot Spartan (to make it feel like
+Halo) or the look fixes above.
+
+## Working rules for agents
+
+- New work goes in a new worktree under `.claude/worktrees/`, on its own branch from master
+  (CLAUDE.md). Each worktree needs a junction `.claude\worktrees\mw2-skate-3-src` pointing at the
+  real `mw2-skate-3-src` folder so the skate crates' relative path resolves.
+- Agents commit their own files by path once verified; never `git add -A` in a shared tree.
+- The `bike-*` and `pause-menu` worktrees, and any locked agent worktree, belong to the user's
+  other sessions; leave them alone.
+- `.gitattributes` forces LF.
 
 ## Open questions and known gaps
 
