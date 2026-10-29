@@ -952,9 +952,9 @@ impl Bike {
             if c.brake > 0.0 {
                 let step = c.brake.min(1.0) * WHEEL_BRAKE_DECEL * dt;
                 self.wheel_spin -= self.wheel_spin.clamp(-step, step);
-            } else if c.throttle > 0.0 && !c.reverse {
+            } else if throttle > 0.0 {
                 let limit = LIMITER_RPM / 60.0 * std::f32::consts::TAU / ratio;
-                let step = c.throttle.min(1.0) * WHEEL_REV_ACCEL * dt;
+                let step = throttle * WHEEL_REV_ACCEL * dt;
                 self.wheel_spin = (self.wheel_spin + step).min(limit.max(before));
             } else {
                 self.wheel_spin *= (-dt / WHEEL_COAST_SECONDS).exp();
