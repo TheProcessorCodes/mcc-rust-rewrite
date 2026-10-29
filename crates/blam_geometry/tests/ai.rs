@@ -46,7 +46,7 @@ fn halo_squads_and_zones() {
     assert_eq!(data.squad_groups[left].parent, Some(sentinels as u16));
     assert_eq!(data.squads_in_group(data.group("all").unwrap()).len(), 216);
 
-    // 343 Guilty Spark: the monitor with his beam, in the ziggurat's BSP.
+    // 343 Guilty Spark: the monitor with his beam, in the control room.
     let spark = data.squad("343_spark").expect("343_spark");
     let cell = &spark.cells[0];
     assert_eq!(cell.count, 1);
@@ -56,7 +56,7 @@ fn halo_squads_and_zones() {
     assert_eq!(short(weapon.name()), "monitor_beam");
     let loc = &cell.locations[0];
     assert!((loc.position.x + 118.99).abs() < 0.01 && (loc.position.y + 441.12).abs() < 0.01, "{:?}", loc.position);
-    assert_eq!(loc.bsp, Some(2));
+    assert_eq!(loc.bsp, Some(5), "120_bsp_050, the control room");
 
     // A combat form at the ziggurat: a brute form with a spike rifle.
     let c1 = data.squad("combat_01").expect("combat_01");

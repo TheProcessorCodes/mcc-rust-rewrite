@@ -135,7 +135,7 @@ cargo build
 - Halo's own biped animations (`jmad`) for the on-foot Spartan, first-person arms, grenades,
   melee, damage and something to shoot at.
 - Vehicles (the Warthog), and objects that move (machines, doors).
-- HaloScript and AI, so campaign missions play rather than just load.
+- HaloScript, so campaign missions play rather than just load (AI: see "Enemies and AI").
 - Reflex's real physics data read from the game files. The bike now uses numbers from the
   `D:\reflex-tools\physics` docs.
 
@@ -165,6 +165,68 @@ towards Reflex. "Reflex v1" (`crates/halo3_bike/src/reflex.rs`) keeps Unleashed'
 Reflex's numbers and steering, lean and grip rules, and is the default; the tuning menu (0) is
 back, with Unleashed as a switch. Awaiting the user's playtest; the doc's "Reflex v1" section has
 the details.
+
+## Enemies and AI (2026-10-29, worktree `enemies-ai`)
+
+`crates/halo3_ai`, reader `blam_geometry::ai`, format `docs/format/ai.md`, CLI `blam ai <map>
+[--squads] [--zones] [--characters]`, tests `crates/blam_geometry/tests/ai.rs`. Built and checked
+with headless shots; not playtested.
+
+- **What 120_halo has**: 262 squads in 19 groups, 15 characters: the Flood (elite, human and brute
+  combat forms, infection forms, carriers, stalker and tank pure forms, the ranged pure form),
+  sentinel aggressors, 343 Guilty Spark (`monitor`, `monitor_combat`), Johnson, the Arbiter. Zone
+  sets 0-1 the ziggurat, 2 the control room, 3 the way out, 4-7 the Warthog run (`blam ai 120_halo`).
+- **Placement until scripts run** (`AutoPlace`, `--ai nearby|zone|off|none`): default `nearby`, a
+  squad appears the first time you come within 70 m of it, at most 40 living. Squads go when their
+  BSPs unload.
+- **Works**: real models (skinned, bind pose), weapons in hand, sight/hearing from the character
+  tags, LOS on the collision, walkers on the Spartan's capsule code, flyers hover, Flood charge and
+  melee with the biped's melee damage, ranged actors keep the character's combat range (zone firing
+  positions) and fire bursts from its firing patterns, rounds hurt actors and the player both ways
+  (damage effect numbers), shields before body, death (fall, sink, vanish; infection forms pop), the
+  player's shields (70) and body (45) from his model, recharge, red flash, death and respawn at the
+  last quiet checkpoint, HUD bars. Teams from the unit tags; Flood and Sentinels hostile to all,
+  Guilty Spark allied until a script says otherwise.
+- **Stubbed / own numbers**: run speeds (Halo uses animation root motion), head-shot double damage,
+  explosion damage 120 for rockets / grenades, no pathfinding graph (straight lines + firing
+  positions + a hop when stuck), no vehicles (Warthog / chopper crews skipped), no grenades, no
+  carrier spawns, no infection reanimating corpses, AI only fights while you are on foot (rounds fly
+  on the on-foot collision).
+
+**For the script agent** (all in `halo3_core::ai`, no dependency on `halo3_ai` needed):
+`MessageWriter<AiCommand>` with `Place { who: AiRef::named("sentinels"), count: None }` (`ai_place`;
+squad or group names, `squad/cell` takes the squad), `Erase` (`ai_erase`), `Kill` (`ai_kill`),
+`Allegiance { a, b, allied }` (`ai_allegiance`, teams in `halo3_core::ai::team`). Read
+`Res<AiCensus>` for `ai_living_count` / `ai_spawn_count` (squads and groups by name). When scripts
+start, set `ResMut<AutoPlace>` to `AutoPlace::Off`. `Res<PlayerVitality>` has the player's state.
+
+Adapter for `halo3_script` (branch `halo-script`, whose `AiHooks::call` is synchronous with no ECS
+access): take a clone of the `halo3_core::ai::AiBridge` resource (the AI plugin inits it; it is an
+`Arc<Mutex<..>>`) into a struct implementing `AiHooks`, and map `ai_place` ->
+`bridge.send(AiCommand::Place { who: AiRef::named(name), count })`, `ai_erase` / `ai_kill` likewise,
+`ai_allegiance` / `ai_allegiance_remove` -> `Allegiance`, `ai_living_count` ->
+`bridge.living_count(Some(name))`, `ai_spawn_count` -> `spawn_count`; return `None` for the rest.
+Commands go out the next frame; the census comes back every frame. `squad/location`
+(`arbiter_trench/trench`) places one actor at that named starting location; any other suffix
+(`warthog01/driver` when no location matches) places the whole squad. Known gap for the Warthog run:
+`warthog01..04`, `chopper*` and `secret_egg*` (a Mongoose) are vehicle crews with no character, so
+they place nobody until vehicles exist; `arbiter_trench/trench` places the Arbiter.
+
+**For the animation agent**: each actor root has `ActorSkeleton` (joint entities in node order, local
+`Transform` = node relative to parent in Halo model units, bind pose in `bind`, `animations` = the
+unit's `jmad` tag index) and `ActorActivity` (state Idle / Alert / Moving / Firing / Melee / Dying /
+Dead, Halo-frame velocity, yaw, aim, time in state). Write joint transforms and the skinned meshes
+follow; set `posed_externally` once you do. The dead tip over by their root transform.
+
+Adapter for `halo3_anim` (branch `biped-anim`) once both are on master: its `pose_joints` writes
+joint `GlobalTransform`s as `owner * halo_to_render() * node` after propagation, but an actor's root
+already carries the Halo axes and world-unit scale (`place::root_transform`). So at spawn, give the
+root a child with `Transform::from_matrix(halo_to_render().inverse())` holding
+`(Animator::new(AnimModel::load(cache, unit_tag)).with_seed(n), AnimJoints(skeleton.joints.clone()))`
+(the joints are already in render-model node order), set `posed_externally = true`, and each frame
+map `ActorActivity` to `set_stance` / `play` / `play_once("melee")` / `aim`; `take_root_motion()`
+can replace `ActorKind::speed`. Weapons hang off the joint entities' propagated (bind) frames, so
+they would need re-parenting to the posed hand (one `GlobalTransform` write after `AnimSystems`).
 
 ## Open questions and known gaps
 

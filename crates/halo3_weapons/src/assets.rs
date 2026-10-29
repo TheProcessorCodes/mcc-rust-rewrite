@@ -87,6 +87,12 @@ pub struct Arsenal {
 /// Reads the map's weapons: every kind placed on the map, plus the
 /// start-up loadout. `None` (logged) when the map has none.
 pub fn load(cache: &CacheFile) -> Option<Arsenal> {
+    load_with(cache, &[])
+}
+
+/// [`load`], plus the `weap` tags in `extra` (the weapons the map's actors
+/// carry: `halo3_ai::weapon_tags`).
+pub fn load_with(cache: &CacheFile, extra: &[u32]) -> Option<Arsenal> {
     let started = std::time::Instant::now();
     let all = match blam_geometry::weapons::weapons(cache) {
         Ok(w) => w,
@@ -105,7 +111,9 @@ pub fn load(cache: &CacheFile) -> Option<Arsenal> {
     let mut kinds: Vec<Kind> = Vec::new();
     let mut by_tag: HashMap<u32, usize> = HashMap::new();
     let wanted = |w: &Weapon| {
-        LOADOUT.contains(&w.tag_path.as_str()) || placements.iter().any(|p| p.tag == Some(w.tag_index))
+        LOADOUT.contains(&w.tag_path.as_str())
+            || placements.iter().any(|p| p.tag == Some(w.tag_index))
+            || extra.contains(&w.tag_index)
     };
     for weapon in all.into_iter().filter(|w| wanted(w)) {
         let Some(mode) = weapon.render_model else {

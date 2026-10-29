@@ -24,6 +24,10 @@
 //!
 //! `--foot` starts on foot at the start spawn (`foot/mod.rs`; F toggles).
 //!
+//! `--ai nearby|zone|off|none`: how the campaign's squads are placed while
+//! scripts do not place them (`halo3_ai`; default `nearby`: a squad appears
+//! when you come within 70 m of it).
+//!
 //! In a map, J switches between flying and skating (see `skate.rs`), B
 //! between flying and the dirt bike (`bike/mod.rs`), PageDown / PageUp step
 //! through the zone sets, Home loads every BSP. Escape or Start pauses and
@@ -38,6 +42,7 @@ mod halo2;
 mod pause;
 mod shot;
 
+use halo3_ai as ai;
 use halo3_audio as audio;
 use halo3_bike as bike;
 use halo3_core::{falls, fly_camera};
@@ -87,11 +92,12 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut foot_tuning = None;
     let mut arsenal = None;
+    let mut ai_assets = None;
     let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
-  halo3 <map> [--foot]
+  halo3 <map> [--foot] [--ai nearby|zone|off|none]
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
   halo3 --test-scene");
             std::process::exit(2);
@@ -171,7 +177,12 @@ fn main() -> anyhow::Result<()> {
                 Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
             }
             let chief = rider::load_chief(cache);
-            arsenal = weapons::assets::load(cache);
+            // The scenario's squads, and the weapons they carry.
+            if value_of(&args, "--ai").as_deref() != Some("none") {
+                ai_assets = ai::load(cache);
+            }
+            let extra = ai_assets.as_ref().map(ai::AiAssets::weapon_tags).unwrap_or_default();
+            arsenal = weapons::assets::load_with(cache, &extra);
             match blam_geometry::movement::read(cache) {
                 Ok(m) => {
                     eprintln!(
@@ -332,6 +343,19 @@ fn main() -> anyhow::Result<()> {
         }
     }
     app.insert_resource(weapons::PendingArsenal(arsenal));
+    if ai_assets.is_some() {
+        // `--ai nearby` (default): squads appear as you come near them;
+        // `--ai zone`: every squad of the loaded zone set at once; `--ai
+        // off`: only scripts place them; `--ai none`: no AI at all.
+        let mode = match value_of(&args, "--ai").as_deref() {
+            Some("zone") => ai::AutoPlace::ZoneSet,
+            Some("off") => ai::AutoPlace::Off,
+            _ => ai::AutoPlace::default(),
+        };
+        app.insert_resource(mode)
+            .insert_resource(ai::PendingAi(ai_assets))
+            .add_plugins(ai::AiPlugin);
+    }
     app.insert_resource(zones)
         .insert_resource(world::stream::ZoneTriggers::new(shot_mode))
         .insert_resource(loaded)
@@ -345,6 +369,11 @@ fn main() -> anyhow::Result<()> {
         ))
         .run();
     Ok(())
+}
+
+/// The value after `flag`, if given.
+fn value_of(args: &[String], flag: &str) -> Option<String> {
+    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
 }
 
 /// `--shot <dir>` with its `--view` and `--size` options, if given.
