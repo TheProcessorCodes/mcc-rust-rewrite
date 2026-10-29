@@ -1,0 +1,14 @@
+[package]
+name = "halo3_anim"
+description = "Halo 3's own animations (jmad) on bipeds and device machines: pick by mode/class/type/action, blend, pose skinned joints"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+blam_anim = { workspace = true }
+blam_cache = { workspace = true }
+blam_geometry = { workspace = true }
+halo3_core = { workspace = true }
