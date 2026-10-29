@@ -1,6 +1,6 @@
 [package]
 name = "halo3"
-description = "The Halo 3 runtime: window, renderer, flying camera; later players and skating"
+description = "The Halo 3 runtime: wires the halo3_* crates into an app; screenshots and the pause menu"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,12 +14,12 @@ path = "src/main.rs"
 bevy = { workspace = true, features = ["bevy_audio"] }
 blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
-blam_texture = { workspace = true }
-blam_sound = { workspace = true }
-glam = { workspace = true }
 anyhow = { workspace = true }
-# The Skate 3 board and rig files IW4L derives from skater.glb (read at run time).
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-half = "2"
-skate-host = { path = "../../../mw2-skate-3-src/src/mashup/skate/crates/skate-host" }
+halo3_audio = { workspace = true }
+halo3_bike = { workspace = true }
+halo3_core = { workspace = true }
+halo3_rider = { workspace = true }
+halo3_skate = { workspace = true }
+halo3_swim = { workspace = true }
+halo3_textures = { workspace = true }
+halo3_world = { workspace = true }

@@ -2,7 +2,7 @@
 //!
 //! - Per-pixel lightmapped placements (every lit BSP cluster, most
 //!   instances) keep their lightmap texcoord as `UV_1`; the fragment shader
-//!   `world/shaders/lightmap.wesl` decodes the BSP's two DXT5 arrays there with
+//!   `shaders/lightmap.wesl` decodes the BSP's two DXT5 arrays there with
 //!   the surface normal.
 //! - Everything else gets its irradiance per vertex on the CPU, as the
 //!   vertex colour: per-vertex lit instances from their own coefficients,
@@ -29,7 +29,7 @@ use blam_geometry::lightmap::ShLight;
 use blam_geometry::{Kind, Lighting, Scene};
 use blam_texture::{Format, Texture, rgba};
 
-use crate::textures::LightmapTextures;
+use halo3_textures::LightmapTextures;
 
 /// Multiplies Halo's irradiance before bevy's tonemapping on Valhalla,
 /// picked by comparing screenshots with the game (`docs/viewer.md`).
@@ -145,7 +145,7 @@ pub fn auto_exposure(
     time: Res<Time>,
     lights: Option<Res<SceneLights>>,
     loaded: Option<Res<super::zones::LoadedBsps>>,
-    mut cameras: Query<(Entity, &GlobalTransform, Option<&mut bevy::render::view::ColorGrading>), With<crate::fly_camera::FlyCamera>>,
+    mut cameras: Query<(Entity, &GlobalTransform, Option<&mut bevy::render::view::ColorGrading>), With<halo3_core::fly_camera::FlyCamera>>,
     mut state: Local<Option<(f32, Vec3)>>,
 ) {
     static OFF: std::sync::LazyLock<bool> =
@@ -214,7 +214,7 @@ pub fn exposure() -> f32 {
 
 pub type HaloMaterial = ExtendedMaterial<StandardMaterial, HaloLightmap>;
 
-const SHADER: &str = "embedded://halo3/world/shaders/lightmap.wesl";
+const SHADER: &str = "embedded://halo3_world/shaders/lightmap.wesl";
 
 /// The Halo half of [`HaloMaterial`]: the BSP's two lightmap arrays
 /// (absent for vertex-lit batches) and the ranges that scale them, and for

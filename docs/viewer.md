@@ -34,7 +34,7 @@ middle.
 | Escape | give the cursor back; click the window to take it again |
 | P | print the camera's position in Halo units to the console |
 | V | show or hide the game's real collision: green shell for surfaces, red for invisible walls |
-| J | skate / fly (`crates/halo3/src/skate.rs`) |
+| J | skate / fly (`crates/halo3_skate/src/lib.rs`) |
 | B, or gamepad View / Back | dirt bike / fly (see "Dirt bike" below) |
 | PageDown / PageUp | next / previous zone set (campaign maps) |
 | Home | load every BSP at once |

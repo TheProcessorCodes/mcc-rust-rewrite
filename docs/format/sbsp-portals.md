@@ -10,7 +10,7 @@ equal to the collision BSP's).
 
 Code: `crates/blam_geometry/src/sbsp.rs` (`read_portals`, `leaf_clusters`),
 `collision.rs` (`tree`), `scene.rs` (`Portal`, `ClusterLocator`), viewer
-`crates/halo3/src/world/culling.rs`. Test: `zones::tests::riverworld_portals_and_spawn_clusters`.
+`crates/halo3_world/src/culling.rs`. Test: `zones::tests::riverworld_portals_and_spawn_clusters`.
 
 Probe: `python -I docs/format/scripts/probe_sbsp_portals.py <map> MODE <bsp index>`, MODE `root`
 (every block header in the first 0x400 bytes of the sbsp, with the gap to the next block over the

@@ -27,8 +27,8 @@ use super::build::{self, BuildInput, BuiltChunk, BuiltUnit, Lit, Unit};
 use super::lighting::{self, HaloLightmap, HaloMaterial};
 use super::zones::{self, LoadedBsps, Zones};
 use super::{BatchMaterial, Triangles, Upload, Uploaded};
-use crate::fly_camera::FlyCamera;
-use crate::textures::LightmapTextures;
+use halo3_core::fly_camera::FlyCamera;
+use halo3_textures::LightmapTextures;
 
 /// Triangles uploaded per frame while streaming (the startup load takes
 /// everything at once).
@@ -206,7 +206,7 @@ impl Plugin for StreamPlugin {
 fn switch_test(
     zones: Res<Zones>,
     mut loaded: ResMut<LoadedBsps>,
-    rider: Option<Res<crate::skate::RiderPose>>,
+    rider: Option<Res<halo3_core::skate::RiderPose>>,
     time: Res<Time<Real>>,
     mut done: Local<bool>,
 ) {
@@ -546,7 +546,7 @@ fn zone_triggers(
     mut loaded: ResMut<LoadedBsps>,
     mut residency: ResMut<Residency>,
     cameras: Query<&GlobalTransform, With<FlyCamera>>,
-    rider: Option<Res<crate::skate::RiderPose>>,
+    rider: Option<Res<halo3_core::skate::RiderPose>>,
     on: Option<Res<ZoneTriggers>>,
     mut inside: Local<Option<Vec<bool>>>,
 ) {

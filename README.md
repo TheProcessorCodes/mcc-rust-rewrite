@@ -25,7 +25,15 @@ the format descriptions the code is written from.
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
-| `crates/halo3` | the viewer: a window, the BSP drawn, a flying camera (`docs/viewer.md`) |
+| `crates/halo3` | the `halo3` binary: wires the crates below into an app, `--shot` screenshots, the pause menu (`docs/viewer.md`) |
+| `crates/halo3_core` | what the runtime crates share: coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones. Every `halo3_*` crate depends on it, so keep it small |
+| `crates/halo3_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
+| `crates/halo3_world` | the world on the GPU: BSP streaming, culling, lightmaps, sky, water, zone keys |
+| `crates/halo3_audio` | the map's sounds, music and the board sounds |
+| `crates/halo3_skate` | skating through the Skate 3 engine (`skate-host`) |
+| `crates/halo3_rider` | the Spartan on the board |
+| `crates/halo3_bike` | the dirt bike |
+| `crates/halo3_swim` | water, sinking and splashes |
 | `docs/format` | the file format, field by field |
 | `docs/` | notes on IW4L and the skate interface |
 

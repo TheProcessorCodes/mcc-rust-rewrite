@@ -146,7 +146,7 @@ sampled in world space instead (5).
 
 ## 5. What the viewer draws
 
-`crates/halo3/src/world/water.rs` and `world/shaders/water.wesl`; `docs/viewer.md` "Water".
+`crates/halo3_world/src/water.rs` and `world/shaders/water.wesl`; `docs/viewer.md` "Water".
 
 - Waves: the slope array, at Halo world XY x 0.25 (`WAVE_UV_PER_WU`, by eye) x the
   `wave_slope_array` xform, scrolled by its functions; the slice from `time_warp`
@@ -187,7 +187,7 @@ sampled in world space instead (5).
   its bed 6.18 wu (19 m) below. The water surface spans z -0.4..0.8 over x -40.9..157.5,
   y -150.4..92.5 (2,607 triangles).
 
-What the skater does (`crates/halo3/src/swim.rs`):
+What the skater does (`crates/halo3_swim/src/lib.rs`):
 
 | case | rule |
 |---|---|

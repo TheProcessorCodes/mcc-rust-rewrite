@@ -12,8 +12,8 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use crate::pause::running;
+use crate::coords::{to_halo, to_halo_dir};
 use crate::skate::Skating;
-use crate::world::{to_halo, to_halo_dir};
 
 pub struct FlyCameraPlugin;
 

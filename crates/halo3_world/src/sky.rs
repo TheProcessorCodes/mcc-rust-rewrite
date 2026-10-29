@@ -3,7 +3,7 @@
 //!
 //! - Sky placements: `world.rs` spawns them with a plain StandardMaterial
 //!   and a [`SkyBatch`] marker; [`swap_sky_materials`] replaces that with a
-//!   [`SkyMaterial`] (fragment shader `world/shaders/sky.wesl`) that combines
+//!   [`SkyMaterial`] (fragment shader `shaders/sky.wesl`) that combines
 //!   the shader's base and detail maps the way its `albedo` option says, adds
 //!   self-illumination, and runs Halo 3's light scattering from the camera
 //!   to the surface. The near-black sky dome turns blue that way.
@@ -32,7 +32,7 @@ use super::lighting;
 
 pub type SkyMaterial = ExtendedMaterial<StandardMaterial, SkyShading>;
 
-const SHADER: &str = "embedded://halo3/world/shaders/sky.wesl";
+const SHADER: &str = "embedded://halo3_world/shaders/sky.wesl";
 
 /// How a sky shader's `albedo` option combines its maps (the numbers the
 /// fragment shader switches on).

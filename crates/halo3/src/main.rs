@@ -30,25 +30,24 @@
 //!
 //! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install.
 
-mod audio;
-mod bike;
-mod falls;
-mod fly_camera;
 mod pause;
-mod rider;
 mod shot;
-mod skate;
-mod swim;
-mod textures;
-mod world;
+
+use halo3_audio as audio;
+use halo3_bike as bike;
+use halo3_core::{falls, fly_camera};
+use halo3_rider as rider;
+use halo3_skate as skate;
+use halo3_swim as swim;
+use halo3_textures as textures;
+use halo3_world as world;
 
 use std::path::PathBuf;
 
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 
-pub(crate) const DEFAULT_MAPS: &str =
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps";
+use halo3_core::DEFAULT_MAPS;
 
 fn resolve_map(arg: &str) -> PathBuf {
     let p = PathBuf::from(arg);

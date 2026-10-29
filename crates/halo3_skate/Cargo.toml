@@ -1,0 +1,13 @@
+[package]
+name = "halo3_skate"
+description = "Skating on Halo 3 maps through the Skate 3 engine (skate-host)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+blam_geometry = { workspace = true }
+halo3_core = { workspace = true }
+skate-host = { path = "../../../mw2-skate-3-src/src/mashup/skate/crates/skate-host" }

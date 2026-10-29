@@ -1,0 +1,12 @@
+[package]
+name = "halo3_textures"
+description = "Resolves a Halo 3 scene's materials to decoded textures and lightmaps (no bevy)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_cache = { workspace = true }
+blam_geometry = { workspace = true }
+blam_texture = { workspace = true }

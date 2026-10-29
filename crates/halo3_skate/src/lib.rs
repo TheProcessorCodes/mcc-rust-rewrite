@@ -16,7 +16,6 @@
 //! The rider is the map's Spartan on the Skate 3 board (`rider.rs`); a
 //! stick figure stands in when either is missing.
 
-use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
 
@@ -27,13 +26,10 @@ use skate_host::bridge::{InputFrame, Pose, PreparedCollision, Session};
 
 use blam_geometry::{Collision, TriggerVolume, rails};
 
-use crate::fly_camera::FlyCamera;
-use crate::world::zones::LoadedBsps;
-use crate::world::{to_halo_dir, to_render};
-
-/// What IW4L ships: a Spartan-sized skater (`docs/skate-interface.md` 10).
-const DEFAULT_SCALE: f32 = 33.0 * 0.0254;
-const DEFAULT_ASSETS: &str = r"D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\assets";
+use halo3_core::coords::{to_halo_dir, to_render};
+use halo3_core::fly_camera::FlyCamera;
+pub use halo3_core::skate::{Respawn, RiderPose, SkateMotion, Skating, assets_root, scale};
+use halo3_core::zones::LoadedBsps;
 
 /// The map data the skate world is built from, handed over by `main`: the
 /// collision, the trigger volumes (rails in kill volumes are dropped) and the
@@ -53,18 +49,9 @@ impl Plugin for SkatePlugin {
             .init_resource::<SkateMotion>()
             .add_systems(
                 Update,
-                (update.run_if(crate::pause::running), publish_motion, draw_rider, show_status).chain(),
+                (update.run_if(halo3_core::pause::running), publish_motion, draw_rider, show_status).chain(),
             );
     }
-}
-
-/// How the ride is going, for the board sounds (`audio/`): whether the
-/// skater is riding, the board speed in m/s and the engine's state name.
-#[derive(Resource, Default, Clone, Debug)]
-pub struct SkateMotion {
-    pub riding: bool,
-    pub speed: f32,
-    pub state: String,
 }
 
 fn publish_motion(host: Res<Host>, mut motion: ResMut<SkateMotion>) {
@@ -72,43 +59,6 @@ fn publish_motion(host: Res<Host>, mut motion: ResMut<SkateMotion>) {
         motion.riding = host.active;
         motion.speed = host.speed;
         motion.state.clone_from(&host.state);
-    }
-}
-
-/// The latest pose for drawing the rider, in skate space (`docs/skate-interface.md`
-/// section 4); divide by `scale` for the renderer frame.
-#[derive(Resource)]
-pub struct RiderPose {
-    pub active: bool,
-    pub names: Vec<String>,
-    pub bones: Vec<Mat4>,
-    pub scale: f32,
-    /// The engine's chase camera in the renderer frame, and its vertical FOV
-    /// in radians.
-    pub camera: Option<(Transform, f32)>,
-    /// Whether `update` puts the view camera on the engine's camera.
-    pub drive_camera: bool,
-    /// Seconds of input fed since the skater was dropped in.
-    pub skated: f32,
-    /// A model draws the rider: no stick figure.
-    pub drawn: bool,
-    /// The dirt bike holds the rider (`bike`): no board, no skating.
-    pub bike: bool,
-}
-
-impl Default for RiderPose {
-    fn default() -> Self {
-        RiderPose {
-            active: false,
-            names: Vec::new(),
-            bones: Vec::new(),
-            scale: scale(),
-            camera: None,
-            drive_camera: true,
-            skated: 0.0,
-            drawn: false,
-            bike: false,
-        }
     }
 }
 
@@ -124,16 +74,6 @@ impl AutoStart {
         AutoStart(Some((spawn, yaw + std::f32::consts::FRAC_PI_2)))
     }
 }
-
-/// Put the riding skater back at a Halo position (world units) facing a
-/// Halo yaw (radians), through `Session::activate`; taken by `update`
-/// (`swim.rs` uses it after the skater sinks).
-#[derive(Resource, Default)]
-pub struct Respawn(pub Option<(Vec3, f32)>);
-
-/// Marks the camera while the skate engine drives it.
-#[derive(Component)]
-pub struct Skating;
 
 enum Job {
     /// Build the skate world from the collision of these BSPs (bit `n`:
@@ -177,15 +117,6 @@ struct Host {
     swapping: bool,
 }
 
-/// The skate scale `k`: `HALO3_SKATE_SCALE` or the default.
-pub fn scale() -> f32 {
-    std::env::var("HALO3_SKATE_SCALE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .filter(|k: &f32| *k > 0.0)
-        .unwrap_or(DEFAULT_SCALE)
-}
-
 impl Default for Host {
     fn default() -> Self {
         Host {
@@ -204,13 +135,6 @@ impl Default for Host {
             swapping: false,
         }
     }
-}
-
-pub fn assets_root() -> PathBuf {
-    ["HALO3_SKATE_ASSETS", "IW4L_SKATE_ASSETS"]
-        .iter()
-        .find_map(std::env::var_os)
-        .map_or_else(|| PathBuf::from(DEFAULT_ASSETS), PathBuf::from)
 }
 
 /// The collision as the skate engine wants it: skate metres, no degenerate

@@ -20,8 +20,8 @@ use bevy::prelude::*;
 
 use blam_cache::CacheFile;
 
-use crate::fly_camera::FlyCamera;
-use crate::world::zones::{LoadedBsps, Zones};
+use halo3_core::fly_camera::FlyCamera;
+use halo3_core::zones::{LoadedBsps, Zones};
 use library::{Clips, Loaded, SoundData};
 use mixer::{Clip, Mixer, MixerAsset, Play, VoiceId};
 
@@ -88,7 +88,7 @@ impl Plugin for HaloAudioPlugin {
                     trace,
                 )
                     .chain()
-                    .after(crate::world::zones::ZoneKeys),
+                    .after(halo3_core::zones::ZoneKeys),
             );
         if self.output {
             app.add_audio_source::<MixerAsset>()
@@ -240,9 +240,9 @@ fn listener(cameras: Query<&GlobalTransform, With<FlyCamera>>, mut l: ResMut<Lis
     let Ok(c) = cameras.single() else {
         return;
     };
-    l.position = crate::world::to_halo(c.translation());
-    l.right = crate::world::to_halo_dir(*c.right()).normalize_or_zero();
-    l.forward = crate::world::to_halo_dir(*c.forward()).normalize_or_zero();
+    l.position = halo3_core::coords::to_halo(c.translation());
+    l.right = halo3_core::coords::to_halo_dir(*c.right()).normalize_or_zero();
+    l.forward = halo3_core::coords::to_halo_dir(*c.forward()).normalize_or_zero();
     l.valid = true;
 }
 
@@ -809,7 +809,7 @@ struct BoardSounds {
 fn board(
     time: Res<Time>,
     sounds: Option<Res<Sounds>>,
-    motion: Option<Res<crate::skate::SkateMotion>>,
+    motion: Option<Res<halo3_core::skate::SkateMotion>>,
     mixer: Res<Mixer>,
     mut b: ResMut<BoardSounds>,
 ) {

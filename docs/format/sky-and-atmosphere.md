@@ -6,7 +6,7 @@ own probes (`blam dump`, `blam shader`, small Python readers); no GPL code or pl
 Field names are ours, chosen for what the data does; where a meaning is a guess it says so.
 
 Code: `crates/blam_geometry/src/atmosphere.rs` (reader, tests pin the numbers below),
-`crates/halo3/src/world/sky.rs` and `world/shaders/sky.wesl` (drawing).
+`crates/halo3_world/src/sky.rs` and `world/shaders/sky.wesl` (drawing).
 
 ## 1. Where things are
 

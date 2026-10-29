@@ -2508,13 +2508,102 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "halo3_audio",
+ "halo3_bike",
+ "halo3_core",
+ "halo3_rider",
+ "halo3_skate",
+ "halo3_swim",
+ "halo3_textures",
+ "halo3_world",
+]
+
+[[package]]
+name = "halo3_audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "blam_cache",
  "blam_sound",
- "blam_texture",
- "glam",
- "half",
+ "halo3_core",
+]
+
+[[package]]
+name = "halo3_bike"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_geometry",
+ "halo3_core",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "halo3_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "blam_geometry",
+]
+
+[[package]]
+name = "halo3_rider"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_cache",
+ "blam_geometry",
+ "blam_texture",
+ "half",
+ "halo3_core",
+ "halo3_textures",
+ "halo3_world",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "halo3_skate"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_geometry",
+ "halo3_core",
  "skate-host",
+]
+
+[[package]]
+name = "halo3_swim"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_geometry",
+ "halo3_core",
+]
+
+[[package]]
+name = "halo3_textures"
+version = "0.1.0"
+dependencies = [
+ "blam_cache",
+ "blam_geometry",
+ "blam_texture",
+]
+
+[[package]]
+name = "halo3_world"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "blam_cache",
+ "blam_geometry",
+ "blam_texture",
+ "halo3_core",
+ "halo3_textures",
 ]
 
 [[package]]

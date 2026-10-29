@@ -46,6 +46,11 @@ impl KillZones {
     }
 }
 
+/// Where to put the skater when it sinks before ever touching dry ground:
+/// the map's start spawn (Halo position, yaw).
+#[derive(Resource, Clone, Copy)]
+pub struct FallbackSpot(pub Vec3, pub f32);
+
 #[cfg(test)]
 mod tests {
     use super::*;

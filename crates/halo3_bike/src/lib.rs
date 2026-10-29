@@ -31,10 +31,10 @@ use bevy::window::PrimaryWindow;
 use blam_geometry::Collision;
 use blam_geometry::collision::surface_flags;
 
-use crate::fly_camera::FlyCamera;
-use crate::skate::{RiderPose, Skating, assets_root};
-use crate::world::zones::LoadedBsps;
-use crate::world::{to_halo, to_render, to_render_dir};
+use halo3_core::coords::{to_halo, to_render, to_render_dir};
+use halo3_core::fly_camera::FlyCamera;
+use halo3_core::skate::{RiderPose, Skating, assets_root};
+use halo3_core::zones::LoadedBsps;
 
 use physics::{Bike, Controls, World};
 
@@ -61,7 +61,7 @@ impl Plugin for BikePlugin {
             .init_resource::<AutoStart>()
             .init_resource::<StickPool>()
             .add_systems(Startup, setup)
-            .add_systems(Update, (ride.run_if(crate::pause::running), draw_bike, show_status).chain());
+            .add_systems(Update, (ride.run_if(halo3_core::pause::running), draw_bike, show_status).chain());
     }
 }
 
@@ -172,8 +172,8 @@ fn ride(
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
     input: Option<Res<BikeInput>>,
-    kill: Option<Res<crate::falls::KillZones>>,
-    fallback: Option<Res<crate::swim::FallbackSpot>>,
+    kill: Option<Res<halo3_core::falls::KillZones>>,
+    fallback: Option<Res<halo3_core::falls::FallbackSpot>>,
     mut rider: ResMut<RiderPose>,
     loaded: Res<LoadedBsps>,
     time: Res<Time>,

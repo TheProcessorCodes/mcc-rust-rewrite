@@ -36,10 +36,10 @@ use blam_geometry::render_model::ModelParts;
 use blam_geometry::{Scene, WORLD_UNIT_METRES};
 use blam_texture::{Texture, rgba};
 
-use crate::skate::{RiderPose, assets_root};
-use crate::textures::MaterialTextures;
-use crate::world::lighting::{SceneLights, default_light, exposure};
-use crate::world::to_halo;
+use halo3_core::coords::to_halo;
+use halo3_core::skate::{RiderPose, assets_root};
+use halo3_textures::MaterialTextures;
+use halo3_world::lighting::{SceneLights, default_light, exposure};
 
 /// Render model tags to try, multiplayer Spartan first.
 const CHIEF_TAGS: [&str; 2] = [
@@ -190,7 +190,7 @@ pub fn load_chief(cache: &CacheFile) -> Option<ChiefModel> {
             m.shader_tag = None;
         }
     }
-    let textures = crate::textures::load(cache, &scene);
+    let textures = halo3_textures::load(cache, &scene);
     scene.materials = all;
     let mut tinted = HashMap::new();
     if let Ok(resources) = cache.resources() {
@@ -787,7 +787,7 @@ fn light_rider(
     rider: Option<ResMut<Rider>>,
     pose: Res<RiderPose>,
     lights: Option<Res<SceneLights>>,
-    loaded: Option<Res<crate::world::zones::LoadedBsps>>,
+    loaded: Option<Res<halo3_core::zones::LoadedBsps>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let Some(mut rider) = rider else {

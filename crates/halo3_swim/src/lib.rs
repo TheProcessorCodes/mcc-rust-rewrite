@@ -26,9 +26,10 @@ use bevy::prelude::*;
 
 use blam_geometry::Scene;
 
-use crate::falls::KillZones;
-use crate::skate::{Respawn, RiderPose};
-use crate::world::{to_halo, to_render};
+use halo3_core::coords::{to_halo, to_render};
+pub use halo3_core::falls::FallbackSpot;
+use halo3_core::falls::KillZones;
+use halo3_core::skate::{Respawn, RiderPose};
 
 /// Water deeper than this (world units, 1 wu = 3.048 m) cannot be ridden:
 /// about 1.4 m, chest-deep on the skater.
@@ -187,11 +188,6 @@ impl SwimState {
     }
 }
 
-/// Where to put the skater when it sinks before ever touching dry ground:
-/// the map's start spawn (Halo position, yaw).
-#[derive(Resource, Clone, Copy)]
-pub struct FallbackSpot(pub Vec3, pub f32);
-
 /// One splash droplet, in the renderer frame.
 #[derive(Component)]
 struct Drop {
@@ -214,7 +210,7 @@ impl Plugin for SwimPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SwimState::new())
             .init_resource::<Splashes>()
-            .add_systems(Update, (water_rules.run_if(crate::pause::running), draw_splashes).chain());
+            .add_systems(Update, (water_rules.run_if(halo3_core::pause::running), draw_splashes).chain());
     }
 }
 

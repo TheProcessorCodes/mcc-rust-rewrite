@@ -17,6 +17,8 @@ use bevy::prelude::*;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use halo3_core::pause::Paused;
+
 pub struct PausePlugin;
 
 impl Plugin for PausePlugin {
@@ -31,14 +33,6 @@ impl Plugin for PausePlugin {
                     .after(InputSystems),
             );
     }
-}
-
-#[derive(Resource, Default)]
-pub struct Paused(pub bool);
-
-/// A run condition for systems that should stop behind the menu.
-pub fn running(paused: Res<Paused>) -> bool {
-    !paused.0
 }
 
 #[derive(Component)]

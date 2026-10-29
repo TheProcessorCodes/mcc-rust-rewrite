@@ -23,9 +23,10 @@ use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
 
-use crate::fly_camera::FlyCamera;
-use crate::skate::RiderPose;
-use crate::world::{Triangles, to_render, to_render_dir};
+use halo3_core::coords::{to_halo, to_render, to_render_dir};
+use halo3_core::fly_camera::FlyCamera;
+use halo3_core::skate::RiderPose;
+use halo3_world::Triangles;
 
 /// Seconds to wait before the first picture, for shaders to compile (they
 /// build in the background) and meshes and textures to reach the GPU; later
@@ -305,7 +306,7 @@ fn step(
     mut exit: MessageWriter<AppExit>,
     time: Res<Time<Real>>,
     drawn: Query<(&ViewVisibility, Option<&Triangles>), With<Mesh3d>>,
-    portals: Option<Res<crate::world::culling::PortalView>>,
+    portals: Option<Res<halo3_world::culling::PortalView>>,
 ) {
     let Some(target) = progress.target.clone() else {
         return;
@@ -393,8 +394,8 @@ fn step(
     if let Some(pose) = skate
         && let Some(i) = pose.names.iter().position(|n| n == "HIPS")
     {
-        let h = crate::world::to_halo(pose.bones[i].w_axis.truncate() / pose.scale);
-        let c = pose.camera.map(|(v, _)| crate::world::to_halo(v.translation));
+        let h = to_halo(pose.bones[i].w_axis.truncate() / pose.scale);
+        let c = pose.camera.map(|(v, _)| to_halo(v.translation));
         eprintln!("shot: rider hips at halo [{:.2}, {:.2}, {:.2}], engine camera {c:.2?}", h.x, h.y, h.z);
     }
     progress.pending = true;

@@ -1,0 +1,12 @@
+[package]
+name = "halo3_core"
+description = "What the halo3 crates share: coordinate frames, pause flag, fly camera, zone-set state, rider pose, kill zones"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+blam_geometry = { workspace = true }
+anyhow = { workspace = true }

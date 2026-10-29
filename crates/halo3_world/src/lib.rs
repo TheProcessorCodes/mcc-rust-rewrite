@@ -19,11 +19,11 @@ use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use blam_geometry::{Kind, Scene, Shading, WORLD_UNIT_METRES};
+use blam_geometry::{Kind, Scene, Shading};
 use blam_texture::{Blend, Format, Texture, rgba};
 
-use crate::fly_camera::FlyCamera;
-use crate::textures::{Look, MaterialTextures};
+use halo3_core::fly_camera::FlyCamera;
+use halo3_textures::{Look, MaterialTextures};
 
 pub mod build;
 pub mod culling;
@@ -37,23 +37,7 @@ use build::BuildInput;
 use lighting::{Atlas, HaloLightmap, HaloMaterial, SurfaceLights};
 use zones::{BspMember, LoadedBsps, ShowCollision};
 
-/// Halo world units, Z up, to renderer metres, Y up.
-pub fn to_render(h: Vec3) -> Vec3 {
-    Vec3::new(h.x, h.z, -h.y) * WORLD_UNIT_METRES
-}
-
-/// Renderer metres, Y up, to Halo world units, Z up.
-pub fn to_halo(r: Vec3) -> Vec3 {
-    Vec3::new(r.x, -r.z, r.y) / WORLD_UNIT_METRES
-}
-
-pub fn to_halo_dir(r: Vec3) -> Vec3 {
-    Vec3::new(r.x, -r.z, r.y)
-}
-
-pub fn to_render_dir(h: Vec3) -> Vec3 {
-    Vec3::new(h.x, h.z, -h.y)
-}
+pub use halo3_core::coords::{to_halo, to_halo_dir, to_render, to_render_dir};
 
 /// The scene and its decoded textures, handed from `main` to the startup
 /// system.
@@ -81,7 +65,7 @@ impl Plugin for WorldPlugin {
             .add_systems(Startup, spawn_world)
             .add_systems(
                 Update,
-                (toggle_collision.run_if(crate::pause::running), spawn_collision_on_demand).chain(),
+                (toggle_collision.run_if(halo3_core::pause::running), spawn_collision_on_demand).chain(),
             );
     }
 }
@@ -295,7 +279,7 @@ pub(crate) fn normal_image(t: &Texture, bc: bool) -> Result<(Image, bool), Strin
 
 /// A 1x1 white image whose only job is to carry the repeating, trilinear,
 /// anisotropic sampler the surface maps are read with.
-pub(super) fn sampler_carrier() -> Image {
+pub(crate) fn sampler_carrier() -> Image {
     let mut image = Image::new(
         Extent3d {
             width: 1,
@@ -314,14 +298,14 @@ pub(super) fn sampler_carrier() -> Image {
 /// How a bitmap is uploaded: as a colour (sRGB), as plain data (linear), or
 /// as a normal map ([`normal_image`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Upload {
+pub(crate) enum Upload {
     Colour,
     Linear,
     Normal,
 }
 
 /// The `StandardMaterial` for one scene material.
-pub(super) fn standard_material(
+pub(crate) fn standard_material(
     name: &str,
     material: Option<&blam_geometry::Material>,
     look: Option<&Look>,
@@ -398,7 +382,7 @@ pub(super) fn standard_material(
 }
 
 /// A terrain material's GPU images and xforms, ready for [`HaloLightmap`].
-pub(super) struct TerrainImages {
+pub(crate) struct TerrainImages {
     /// `None`: no blend map, all layers that are on weigh the same.
     blend_map: Option<Handle<Image>>,
     blend_xform: Vec4,
@@ -417,7 +401,7 @@ struct TerrainLayerImages {
 }
 
 /// An uploaded image and whether it reads -1..1 (BC5 normal maps).
-pub(super) type Uploaded = Option<(Handle<Image>, bool)>;
+pub(crate) type Uploaded = Option<(Handle<Image>, bool)>;
 
 fn xform_vec(x: &blam_texture::Xform) -> Vec4 {
     Vec4::new(x.scale[0], x.scale[1], x.offset[0], x.offset[1])
@@ -425,8 +409,8 @@ fn xform_vec(x: &blam_texture::Xform) -> Vec4 {
 
 /// Uploads (or reuses) a terrain's images; `None` when the blend map or
 /// every layer failed, so the caller falls back to the dominant layer.
-pub(super) fn terrain_textures(
-    t: &crate::textures::TerrainLook,
+pub(crate) fn terrain_textures(
+    t: &halo3_textures::TerrainLook,
     image: &mut dyn FnMut(u32, Upload) -> Uploaded,
 ) -> Option<TerrainImages> {
     let blend_map = match t.blend_map {
@@ -462,12 +446,12 @@ fn normalise_terrain() -> bool {
 
 /// Whether terrain draws its four-layer blend (the default);
 /// `HALO3_TERRAIN_BLEND=0` draws the dominant layer alone, as before.
-pub(super) fn terrain_blend() -> bool {
+pub(crate) fn terrain_blend() -> bool {
     std::env::var("HALO3_TERRAIN_BLEND").map_or(true, |v| v != "0")
 }
 
 impl TerrainImages {
-    pub(super) fn apply(self, e: &mut HaloLightmap) {
+    pub(crate) fn apply(self, e: &mut HaloLightmap) {
         // A layer that is off still binds a real texture (another layer's)
         // and gets zero weight.
         let fill = self.layers.iter().flatten().next().map(|l| l.base.clone());
@@ -532,12 +516,12 @@ impl TerrainImages {
 
 /// Fills in the material model of an ordinary shader: its extra maps
 /// (detail, bump, specular mask, self-illumination) and parameters.
-pub(super) fn apply_surface(
-    s: &crate::textures::SurfaceLook,
+pub(crate) fn apply_surface(
+    s: &halo3_textures::SurfaceLook,
     e: &mut HaloLightmap,
     image: &mut dyn FnMut(u32, Upload) -> Uploaded,
 ) {
-    use crate::textures::{Illum, Model, SpecMask};
+    use halo3_textures::{Illum, Model, SpecMask};
     let mut get = |m: Option<(u32, blam_texture::Xform)>, how: Upload| {
         m.and_then(|(b, x)| image(b, how).map(|(h, signed)| (h, xform_vec(&x), signed)))
     };
@@ -633,7 +617,7 @@ pub(super) fn apply_surface(
 /// goal and return areas, hills and territories): Forge shows them, a game
 /// only its own game type's, and then mostly as effects. Unnamed placements
 /// are called after their object (`scenario.rs`), e.g. `respawn_point 12`.
-pub(super) fn is_editor_only(placement: &str) -> bool {
+pub(crate) fn is_editor_only(placement: &str) -> bool {
     let object = placement.split(' ').next().unwrap_or(placement);
     [
         "spawn_point",
@@ -710,7 +694,7 @@ fn spawn_world(
         if surface.is_empty() { " (none: default sun)" } else { "" }
     );
     let lightmap_ok = textures.lightmaps.iter().map(Option::is_some).collect();
-    let crate::textures::MaterialTextures {
+    let halo3_textures::MaterialTextures {
         looks,
         bitmaps,
         lightmaps,
@@ -1034,7 +1018,7 @@ mod tests {
     fn riverworld_images_have_exact_lengths() {
         let dir = std::env::var_os("HALO3_MAPS")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from(crate::DEFAULT_MAPS));
+            .unwrap_or_else(|| std::path::PathBuf::from(halo3_core::DEFAULT_MAPS));
         let path = dir.join("riverworld.map");
         if !path.exists() {
             return;
@@ -1046,7 +1030,7 @@ mod tests {
             ..Default::default()
         };
         blam_geometry::decode_into(&cache, &options, &mut scene).unwrap();
-        let textures = crate::textures::load(&cache, &scene);
+        let textures = halo3_textures::load(&cache, &scene);
         assert!(textures.bitmaps.len() >= 50, "{} bitmaps", textures.bitmaps.len());
         let textured = textures.looks.iter().flatten().filter(|l| l.texture.is_some()).count();
         assert!(textured >= 60, "{textured} textured materials");

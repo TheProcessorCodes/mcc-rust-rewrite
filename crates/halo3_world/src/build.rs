@@ -31,7 +31,7 @@ use blam_geometry::{Kind, Lighting, Placement, Scene, Shading, WORLD_UNIT_METRES
 use super::lighting::{self, SurfaceLights};
 use super::zones::BspMember;
 use super::{is_editor_only, to_render, to_render_dir};
-use crate::textures::Look;
+use halo3_textures::Look;
 
 /// Grid cell size for splitting the world into chunks, world units
 /// (64 wu = 195 m).
@@ -125,7 +125,7 @@ pub struct BuiltUnit {
     /// The bitmaps and lightmaps its materials need, decoded with it (CPU
     /// copies, dropped once uploaded).
     pub bitmaps: HashMap<u32, blam_texture::Texture>,
-    pub lightmaps: HashMap<u32, crate::textures::LightmapTextures>,
+    pub lightmaps: HashMap<u32, halo3_textures::LightmapTextures>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -485,12 +485,12 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
                 if seen.insert(c.material)
                     && let Some(look) = input.look(c.material)
                 {
-                    wanted.extend(crate::textures::bitmaps_of(look));
+                    wanted.extend(halo3_textures::bitmaps_of(look));
                 }
             }
             wanted.sort_unstable();
             wanted.dedup();
-            crate::textures::decode_bitmaps(cache, scene, &wanted, &maps)
+            halo3_textures::decode_bitmaps(cache, scene, &wanted, &maps)
         }
         None => Default::default(),
     };

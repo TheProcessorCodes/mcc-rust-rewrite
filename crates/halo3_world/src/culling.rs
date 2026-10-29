@@ -27,7 +27,7 @@ use super::CollisionOverlay;
 use super::build::Cull;
 use super::stream::WorldSource;
 use super::zones::{BspMember, LoadedBsps, ShowCollision};
-use crate::fly_camera::FlyCamera;
+use halo3_core::fly_camera::FlyCamera;
 
 /// The smallest a prop may look on screen, in pixels of a 720-line view
 /// (its bounding radius), before its chunk is dropped.

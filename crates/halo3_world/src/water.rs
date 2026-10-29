@@ -1,5 +1,5 @@
 //! Water (`rmw ` shaders) and flowing waterfalls, drawn by their own
-//! material (`world/shaders/water.wesl`). Layout and evidence:
+//! material (`shaders/water.wesl`). Layout and evidence:
 //! `docs/format/water.md`.
 //!
 //! - Water: waves from the shader's slope array (16 animated slices of
@@ -42,7 +42,7 @@ use super::BatchMaterial;
 
 pub type WaterMaterial = ExtendedMaterial<StandardMaterial, WaterShading>;
 
-const SHADER: &str = "embedded://halo3/world/shaders/water.wesl";
+const SHADER: &str = "embedded://halo3_world/shaders/water.wesl";
 
 /// Wave texture coordinates per Halo world unit before the shader's own
 /// xform: Halo samples the wave arrays in world space (the water mesh's UV
