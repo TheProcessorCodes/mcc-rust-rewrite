@@ -59,6 +59,19 @@ pub const AIR_PITCH: f32 = 9.0;
 pub const AIR_ROLL: f32 = 7.0;
 pub const AIR_YAW: f32 = 5.0;
 
+/// The rear wheel and the engine turning it, as felt at the axle, kg·m².
+/// Speeding it up or slowing it down twists the frame the other way: gas in
+/// the air lifts the front, the rear brake drops it.
+pub const WHEEL_INERTIA: f32 = 0.45;
+/// How fast the unloaded rear wheel spins up on full gas in the air, rad/s²,
+/// and how far past the top speed it can overspin, m/s at the tyre.
+pub const WHEEL_REV_ACCEL: f32 = 40.0;
+pub const WHEEL_OVERSPIN: f32 = 4.0;
+/// The rear brake locks the wheel in the air, rad/s², and with neither
+/// pedal the engine slows it gently (time constant, seconds).
+pub const WHEEL_BRAKE_DECEL: f32 = 300.0;
+pub const WHEEL_COAST_SECONDS: f32 = 4.0;
+
 /// Ground balance controller (roll), and the most lean it asks for.
 pub const ROLL_KP: f32 = 1500.0;
 pub const ROLL_KD: f32 = 420.0;
@@ -388,6 +401,8 @@ pub struct Bike {
     pub lean: Vec2,
     /// Rear, front.
     pub wheels: [WheelState; 2],
+    /// The rear wheel's spin, rad/s, positive rolling forward.
+    pub wheel_spin: f32,
     /// Seconds left lying in the dirt.
     pub crashed: Option<f32>,
     /// Where to come back after a crash: position and heading, recorded
@@ -414,6 +429,7 @@ impl Bike {
             steer: 0.0,
             lean: Vec2::ZERO,
             wheels: [WheelState::default(); 2],
+            wheel_spin: 0.0,
             crashed: None,
             safe: Vec::new(),
             safe_clock: 0.0,
@@ -625,6 +641,32 @@ impl Bike {
             // only pitch and yaw the bike.
             let t = (hit.point - self.position).cross(f);
             torque += t - fwd * t.dot(fwd);
+        }
+
+        // The rear wheel. On the ground it rolls with the bike (the tyre
+        // force above already pitches the frame). Off the ground nothing
+        // holds it, so gas spins it up and the brake locks it, and the frame
+        // takes the opposite twist about the axle.
+        let rear_radius = legs[0].radius;
+        if self.wheels[0].contact.is_some() {
+            self.wheel_spin = speed / rear_radius;
+        } else {
+            let before = self.wheel_spin;
+            if c.brake > 0.0 {
+                let step = c.brake.min(1.0) * WHEEL_BRAKE_DECEL * dt;
+                self.wheel_spin -= self.wheel_spin.clamp(-step, step);
+            } else if c.throttle > 0.0 && !c.reverse {
+                let limit = (TOP_SPEED + WHEEL_OVERSPIN) / rear_radius;
+                let step = c.throttle.min(1.0) * WHEEL_REV_ACCEL * dt;
+                self.wheel_spin = (self.wheel_spin + step).min(limit.max(before));
+            } else {
+                self.wheel_spin *= (-dt / WHEEL_COAST_SECONDS).exp();
+            }
+            // The wheel spins about the bike's +X (rolling forward), and
+            // +X on the frame is nose down: speeding the wheel up lifts the
+            // nose, slowing it drops it.
+            let reaction = -WHEEL_INERTIA * (self.wheel_spin - before) / dt;
+            torque += r * Vec3::X * reaction;
         }
 
         let grounded = self.grounded();
@@ -909,6 +951,45 @@ mod tests {
         );
         // Forward on the stick: nose down.
         assert!(bike.forward().y < -0.3, "forward {:?}", bike.forward());
+    }
+
+    /// The nose's pitch (forward.y) after `seconds` in the air with the rear
+    /// wheel spinning as if it left the ground at 15 m/s.
+    fn air_nose_after(c: Controls, seconds: f32) -> f32 {
+        let w = floor();
+        let mut bike = Bike::new(Vec3::new(0.0, 60.0, 0.0), 0.0);
+        bike.wheel_spin = 15.0 / rear_leg().radius;
+        ride(&w, &mut bike, c, seconds);
+        bike.forward().y
+    }
+
+    #[test]
+    fn gas_in_the_air_lifts_the_front_a_little() {
+        let coast = air_nose_after(default(), 1.0);
+        let gas = air_nose_after(
+            Controls {
+                throttle: 1.0,
+                ..default()
+            },
+            1.0,
+        );
+        assert!(gas > coast + 0.05, "gas {gas} coast {coast}");
+        // A little, not a backflip.
+        assert!(gas < 0.4, "gas {gas}");
+    }
+
+    #[test]
+    fn rear_brake_in_the_air_drops_the_front_a_little() {
+        let coast = air_nose_after(default(), 0.5);
+        let brake = air_nose_after(
+            Controls {
+                brake: 1.0,
+                ..default()
+            },
+            0.5,
+        );
+        assert!(brake < coast - 0.05, "brake {brake} coast {coast}");
+        assert!(brake > -0.4, "brake {brake}");
     }
 
     #[test]
