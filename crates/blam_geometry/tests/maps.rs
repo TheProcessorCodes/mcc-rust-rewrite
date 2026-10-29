@@ -299,6 +299,88 @@ fn blackout_counts() {
     }
 }
 
+/// Rat's Nest (`armory`, a DLC map: tags under `levels\dlc\armory`) has no
+/// HaloExport reference: our own counts, measured with `blam geometry` and
+/// `blam rails` and checked by looking. An underground motor pool in a
+/// cliff; the west side opens onto an overlook above a canyon, and
+/// `kill_vol_cliff` catches anyone who drops off it.
+#[test]
+fn rats_nest_counts() {
+    let Some(path) = map("armory") else { return };
+    let scene = blam_geometry::load_map(&path).expect("armory decodes");
+    let c = count(&scene);
+    // 38 clusters, 1,909 instances with 1,906 placed.
+    assert_eq!(c.clusters_placed, 38);
+    assert_eq!(c.instances_placed, 1906);
+    assert_eq!(c.cluster_triangles, 20613);
+    assert_eq!(c.instance_triangles, 620354);
+    assert_eq!(c.scenery_triangles, 181448);
+    assert_eq!(c.crate_triangles, 60491);
+    assert_eq!(c.machine_triangles, 0);
+    assert_eq!(c.sky_triangles, 10818);
+    assert_eq!(scene.materials.len(), 168);
+    let (lo, hi) = scene.bounds.expect("world bounds");
+    assert!((lo.x - -99.980).abs() < 2e-3 && (hi.x - 22.751).abs() < 2e-3, "{lo} {hi}");
+    assert!((lo.y - -81.846).abs() < 2e-3 && (hi.y - 66.116).abs() < 2e-3, "{lo} {hi}");
+    assert!((lo.z - -57.737).abs() < 2e-3 && (hi.z - 40.024).abs() < 2e-3, "{lo} {hi}");
+
+    // No water. The smoke columns (`smoke_a`, `smoke_thin`) are scrolling
+    // alpha-blended two_detail shaders, the kind the viewer draws as a
+    // waterfall, but only the sky uses them.
+    assert!(!scene.materials.iter().any(|m| m.shader_class == "rmw "));
+    for (i, m) in scene.materials.iter().enumerate() {
+        if !(m.tag_path.ends_with("\\smoke_a") || m.tag_path.ends_with("\\smoke_thin")) {
+            continue;
+        }
+        for p in &scene.placements {
+            if scene.meshes[p.mesh as usize].parts.iter().any(|part| part.material == i as u32) {
+                assert_eq!(p.kind, Kind::Sky, "{} on {}", m.tag_path, p.name);
+            }
+        }
+    }
+
+    // The real collision: 19,044 world and 319,704 instanced triangles.
+    let col = &scene.collision;
+    let bsp = col
+        .triangles
+        .iter()
+        .filter(|t| matches!(t.source, blam_geometry::CollisionSource::Bsp(_)))
+        .count();
+    assert_eq!(bsp, 19044);
+    assert_eq!(col.triangles.len() - bsp, 319704);
+    assert_eq!(col.materials.len(), 80);
+
+    // 97 respawn points (92 visible markers, 5 invisible), all on the
+    // floors of the base (z -9.8 to -6.8), on collision and clear of it.
+    assert_eq!(scene.spawns.len(), 97);
+    for sp in &scene.spawns {
+        let p = sp.position;
+        assert!(p.z > -9.85 && p.z < -6.75, "{sp:?}");
+        assert!(p.x > -10.0 && p.x < 21.1 && p.y.abs() < 30.7, "{sp:?}");
+    }
+    check_spawns(&scene);
+
+    // The drop off the overlook: `kill_vol_cliff` spans the canyon west of
+    // x -8.75 from z -46.5 up to -16.4, well under the overlook's floor
+    // (z -10); no spawn is in it.
+    let kills: Vec<_> = scene.trigger_volumes.iter().filter(|v| v.kills()).collect();
+    assert_eq!(kills.len(), 1);
+    assert_eq!(kills[0].name, "kill_vol_cliff");
+    assert!(kills[0].contains(glam::Vec3::new(-50.0, 0.0, -30.0)));
+    assert!(kills[0].contains(glam::Vec3::new(-10.0, 0.0, -17.0)));
+    assert!(!kills[0].contains(glam::Vec3::new(-10.0, 0.0, -10.0)));
+    assert!(!kills[0].contains(glam::Vec3::new(-50.0, 0.0, -15.0)));
+    assert!(!scene.spawns.iter().any(|s| kills[0].contains(s.position)));
+
+    // Grind rails: about 6,987 found (pipe railings, ibeams, kerbs,
+    // crates), 47 of them in the kill volume dropped.
+    let (rails, census) = blam_geometry::rails::find_rails(col);
+    assert!((6975..=7000).contains(&census.rails), "{} rails", census.rails);
+    let found = rails.len();
+    let rails = blam_geometry::rails::outside_kill_volumes(rails, &scene.trigger_volumes);
+    assert!((40..=55).contains(&(found - rails.len())), "{} rails dropped", found - rails.len());
+}
+
 #[test]
 fn campaign_map_selects_one_bsp() {
     let Some(path) = map("120_halo") else { return };

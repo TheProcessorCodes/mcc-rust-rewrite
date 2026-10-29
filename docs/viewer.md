@@ -337,6 +337,16 @@ Blackout (`lockout`) has one too, `kill_volume_bottom`, from z -18.3 down past t
 anyone who drops off the rig falls about six world units past the lowest deck (-12.6) and is
 put back. The rig's legs and cross beams at z -13 to -18 are above it, so a fall can land on
 them; their grind rails (about 660) are kept.
+Rat's Nest (`armory`) has `kill_vol_cliff` over the canyon west of the overlook (x under -8.75,
+z -46.5 to -16.4; the overlook's floor is at -10): a rider who goes over the edge lands on the
+cliff's ledges or falls into it and is put back. Its 47 rails are dropped. Under the volume, on
+the canyon floor at z -52, the scenario stacks a pile of Forge blocks (`box_*`, `wall_*`, two of
+each size); nobody reaches them and they are not seen from the play space.
+
+Rat's Nest's crates and props (`crate_packing_giant_mp` in the hangar, jersey barriers, barrels)
+have no collision yet: the collision is the structure BSP and its instances only, and scenery and
+crates' own collision models (`coll`) are not decoded, on any map. The skater and the bike ride
+through them.
 
 High Ground's cove (`deadlock_water_awesome`, a flat sheet at z 4.41 over x -37.0..15.1,
 y -67.8..-25.5) ends in a straight hard edge out at sea, where the sky model's far sea (`lake`,
