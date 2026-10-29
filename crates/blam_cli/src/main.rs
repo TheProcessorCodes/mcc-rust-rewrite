@@ -19,7 +19,7 @@
 //! ```
 //!
 //! `<map>` is a path, or a bare name such as `riverworld` looked up in
-//! `$HALO3_MAPS` or the default MCC install.
+//! `$HALO3_MAPS`, else the MCC install `halo3` setup saved or Steam lists.
 
 mod geometry;
 mod halo2;
@@ -37,21 +37,14 @@ use blam_cache::{CacheFile, StringId, TagEntry};
 use blam_geometry::{Options, Scene, WORLD_UNIT_METRES};
 use glam::Vec3;
 
-const DEFAULT_MAPS: &str =
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps";
-
+/// Halo 3's maps folder in the player's MCC (`game_paths`: `$HALO3_MAPS`,
+/// the game's saved setup, else Steam's libraries).
 pub(crate) fn maps_dir() -> PathBuf {
-    std::env::var_os("HALO3_MAPS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_MAPS))
+    game_paths::halo3_maps().unwrap_or_default()
 }
 
-/// MCC's Halo 2 (classic) maps, tried when a bare name is not a Halo 3 map.
-const DEFAULT_H2_MAPS: &str =
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11";
-
-/// A path, or a bare name: a Halo 3 map in `$HALO3_MAPS` (or the MCC
-/// install), else a Halo 2 map in `$HALO2_MAPS` (or the MCC install).
+/// A path, or a bare name: a Halo 3 map in the player's MCC, else a Halo 2
+/// (classic) map there (`$HALO2_MAPS` overrides).
 /// `h2:NAME` asks for the Halo 2 map when both games have one by that name
 /// (`lockout`, `zanzibar`).
 fn resolve_map(arg: &str) -> PathBuf {
@@ -68,10 +61,7 @@ fn resolve_map(arg: &str) -> PathBuf {
         name.push_str(".map");
     }
     let h3 = maps_dir().join(&name);
-    let h2 = std::env::var_os("HALO2_MAPS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_H2_MAPS))
-        .join(&name);
+    let h2 = game_paths::halo2_maps().unwrap_or_default().join(&name);
     if h2_only || (!h3.exists() && h2.exists()) { h2 } else { h3 }
 }
 
@@ -127,7 +117,7 @@ impl Args {
 
 pub(crate) fn usage() -> ! {
     eprintln!(
-        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS (default: the MCC install)."
+        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS, else the MCC install halo3 setup saved or Steam lists."
     );
     std::process::exit(2)
 }

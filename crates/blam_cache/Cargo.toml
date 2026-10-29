@@ -10,3 +10,6 @@ publish.workspace = true
 memmap2 = { workspace = true }
 thiserror = { workspace = true }
 flate2 = { workspace = true }
+
+[dev-dependencies]
+game_paths = { workspace = true }

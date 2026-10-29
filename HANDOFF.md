@@ -105,6 +105,16 @@ cargo build
 & "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\target\debug\halo3.exe" 120_halo --zone 6 --music 120_music_15
 ```
 
+**First-run setup (2026-10-29).** The first windowed launch asks for MCC and, optionally, Skate 3
+(`.iso` or `default.xex`), converts Skate 3 once and saves everything in
+`%LOCALAPPDATA%\Halo3Rewrite` (`crates/halo3_setup`, README "First run"). All game paths go
+through `crates/game_paths`; no code names a folder on this PC any more. Still open for a
+public release: `skate-host` is a path dependency on `mw2-skate-3-src`, the release needs
+`skate\iw4l-skate-convert.exe` beside `halo3.exe`, there is no `LICENSE` file, and only MCC's
+Halo 3 builds in `blam_cache::KNOWN_BUILDS` are read (setup says so when the build is newer).
+The full-dump disc offsets (XGD2/XGD3 video partition) in `halo3_setup/src/xiso.rs` are from
+the format, not checked on a real full dump; a trimmed image was.
+
 ## What is left
 
 **Waiting on the user's playtest.** These are built but the user has not run them yet:

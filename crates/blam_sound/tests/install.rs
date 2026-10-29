@@ -8,9 +8,7 @@ use blam_sound::Library;
 use blam_sound::tags::SoundTags;
 
 fn maps() -> Option<PathBuf> {
-    let dir = std::env::var_os("HALO3_MAPS").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps")
-    });
+    let dir = game_paths::halo3_maps()?;
     dir.join("riverworld.map").exists().then_some(dir)
 }
 

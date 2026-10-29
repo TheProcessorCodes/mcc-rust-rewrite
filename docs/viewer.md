@@ -8,8 +8,8 @@ cargo build -p halo3
 & "target\debug\halo3.exe" --test-scene
 ```
 
-A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam MCC
-install. `--test-scene` shows a made-up room (floor, ramp, boxes) for checking
+A bare map name is looked up in the MCC install first-run setup saved
+(`README.md` "First run"; `%HALO3_MAPS%` overrides). `--test-scene` shows a made-up room (floor, ramp, boxes) for checking
 the camera without any map decoding.
 
 Headless pictures (no window; `shot.rs`):

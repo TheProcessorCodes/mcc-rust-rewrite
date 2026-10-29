@@ -8,11 +8,7 @@ use std::path::PathBuf;
 use blam_geometry::{CollisionSource, Kind};
 
 fn map(name: &str) -> Option<PathBuf> {
-    let dir = std::env::var_os("HALO2_MAPS").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11")
-    });
-    let p = dir.join(format!("{name}.map"));
-    p.exists().then_some(p)
+    game_paths::halo2_map(name)
 }
 
 #[test]
@@ -20,8 +16,7 @@ fn halo2_maps_are_told_from_halo3_maps() {
     if let Some(p) = map("coagulation") {
         assert!(blam_h2::is_halo2(&p));
     }
-    let h3 = PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps\riverworld.map");
-    if h3.exists() {
+    if let Some(h3) = game_paths::halo3_map("riverworld") {
         assert!(!blam_h2::is_halo2(&h3));
     }
 }

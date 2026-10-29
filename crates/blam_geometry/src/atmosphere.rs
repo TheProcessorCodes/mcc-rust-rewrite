@@ -150,13 +150,7 @@ mod tests {
     use super::*;
 
     fn open(name: &str) -> Option<CacheFile> {
-        let dir = std::env::var_os("HALO3_MAPS")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps".into()
-            });
-        let path = dir.join(format!("{name}.map"));
-        path.exists().then(|| CacheFile::open(path).unwrap())
+        game_paths::halo3_map(name).map(|path| CacheFile::open(path).unwrap())
     }
 
     #[test]

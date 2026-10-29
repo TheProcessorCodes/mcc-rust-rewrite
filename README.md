@@ -26,6 +26,8 @@ the format descriptions the code is written from.
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
+| `crates/game_paths` | where the player's games are: the saved setup, dev overrides (`HALO3_MAPS`, ...), Steam's library list. No dependencies; the readers' tests use it |
+| `crates/halo3_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`), convert it once, save the answers |
 | `crates/halo3` | the `halo3` binary: wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
 | `crates/halo3_core` | what the runtime crates share: coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
 | `crates/halo3_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
@@ -39,6 +41,27 @@ the format descriptions the code is written from.
 | `crates/halo3_swim` | water, sinking and splashes |
 | `docs/format` | the file format, field by field |
 | `docs/` | notes on IW4L and the skate interface |
+
+## First run
+
+Nothing from either game ships with this project. The first time `halo3` opens a window it asks
+for the player's own copies, once:
+
+1. **Halo: The Master Chief Collection** (required). Found through Steam's library list and
+   confirmed, or picked by hand; the Halo 3 build is checked.
+2. **Skate 3 for Xbox 360** (optional; No plays without skating). Either the disc image
+   (`.iso`) or the extracted game's `default.xex` with its `data` folder. From an image only
+   what the converter reads is copied out (`default.xex`, four `.big` files and `data\anim`,
+   about 512 MB, deleted afterwards). The
+   converter is IW4L's `iw4l-skate-convert.exe`, looked for at `skate\` beside `halo3.exe`
+   (the release layout), else the player is asked to point at it.
+
+The answers and the converted Skate 3 data go in `%LOCALAPPDATA%\Halo3Rewrite` (`setup.env`,
+`skate-data\`), per user, so every copy of the exe shares them. `halo3 --setup` asks again.
+Headless `--shot` runs never show a dialog: they use what is saved, else Steam's MCC.
+
+Dev overrides: `HALO3_MCC`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO3_SKATE_ASSETS` (or
+`IW4L_SKATE_ASSETS`), `HALO3_SKATE_CONVERTER`, `HALO3_SETUP_DIR`.
 
 ## Try it
 
@@ -56,12 +79,12 @@ target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_mu
 & "target\debug\halo3.exe" riverworld
 ```
 
-A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
-install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
+A bare map name is looked up in the MCC install setup saved (`%HALO3_MAPS%`
+overrides; the `blam` tool also finds MCC through Steam). `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
 `sidewinder` Avalanche, `guardian` Guardian,
 `lockout` Blackout, `chill` Narrows, `armory` Rat's Nest, `shrine` Sandtrap,
-`sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
+`sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in MCC's
 `halo2\h2_maps_win64_dx11` (`coagulation`; `h2:NAME` when Halo 3 has a map of
 that name, see `docs/viewer.md` "Halo 2 maps").
 

@@ -10,7 +10,3 @@ pub mod pause;
 pub mod skate;
 pub mod weapons;
 pub mod zones;
-
-/// The default MCC Halo 3 maps folder; `%HALO3_MAPS%` overrides it.
-pub const DEFAULT_MAPS: &str =
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps";

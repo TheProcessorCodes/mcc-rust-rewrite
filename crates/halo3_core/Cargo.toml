@@ -10,3 +10,4 @@ publish.workspace = true
 bevy = { workspace = true }
 blam_geometry = { workspace = true }
 anyhow = { workspace = true }
+game_paths = { workspace = true }

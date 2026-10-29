@@ -9,12 +9,14 @@ members = [
     "crates/blam_h2",
     "crates/blam_sound",
     "crates/blam_texture",
+    "crates/game_paths",
     "crates/halo3",
     "crates/halo3_audio",
     "crates/halo3_bike",
     "crates/halo3_core",
     "crates/halo3_foot",
     "crates/halo3_rider",
+    "crates/halo3_setup",
     "crates/halo3_skate",
     "crates/halo3_swim",
     "crates/halo3_textures",
@@ -40,11 +42,13 @@ blam_geometry = { path = "crates/blam_geometry" }
 blam_texture = { path = "crates/blam_texture" }
 blam_sound = { path = "crates/blam_sound" }
 blam_h2 = { path = "crates/blam_h2" }
+game_paths = { path = "crates/game_paths" }
 halo3_audio = { path = "crates/halo3_audio" }
 halo3_bike = { path = "crates/halo3_bike" }
 halo3_core = { path = "crates/halo3_core" }
 halo3_foot = { path = "crates/halo3_foot" }
 halo3_rider = { path = "crates/halo3_rider" }
+halo3_setup = { path = "crates/halo3_setup" }
 halo3_skate = { path = "crates/halo3_skate" }
 halo3_swim = { path = "crates/halo3_swim" }
 halo3_textures = { path = "crates/halo3_textures" }

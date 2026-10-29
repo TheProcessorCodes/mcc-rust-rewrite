@@ -9,15 +9,7 @@ use blam_cache::CacheFile;
 use blam_geometry::weapons::{self, ItemKind};
 
 fn map(name: &str) -> Option<PathBuf> {
-    let dir = std::env::var_os("HALO3_MAPS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(
-                r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps",
-            )
-        });
-    let p = dir.join(format!("{name}.map"));
-    p.exists().then_some(p)
+    game_paths::halo3_map(name)
 }
 
 fn close(a: f32, b: f32) -> bool {

@@ -30,9 +30,11 @@
 //! lists the controls (`pause.rs`).
 //! ```
 //!
-//! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install; Halo 2
-//! maps (`coagulation`, or `h2:NAME`) in `%HALO2_MAPS%` or MCC's
-//! `halo2\h2_maps_win64_dx11` (`halo2.rs`).
+//! The first launch asks for the player's MCC install and, optionally,
+//! their Skate 3 (`.iso` or `default.xex`), and saves the answers
+//! (`halo3_setup`); `--setup` asks again. `<map>` is looked up in that MCC's
+//! `halo3\maps` (`%HALO3_MAPS%` overrides), Halo 2 maps (`coagulation`, or
+//! `h2:NAME`) in its `halo2\h2_maps_win64_dx11` (`%HALO2_MAPS%`; `halo2.rs`).
 
 mod halo2;
 mod pause;
@@ -54,16 +56,9 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use bevy::window::PresentMode;
 
-use halo3_core::DEFAULT_MAPS;
-
-/// MCC's Halo 2 (classic) maps, tried when a bare name is not a Halo 3 map.
-pub(crate) const DEFAULT_H2_MAPS: &str =
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11";
-
-/// A path, or a bare name: a Halo 3 map in `%HALO3_MAPS%` (or the MCC
-/// install), else a Halo 2 map in `%HALO2_MAPS%` (or the MCC install).
-/// `h2:NAME` picks the Halo 2 map when both games have one by that name
-/// (`lockout`, `zanzibar`).
+/// A path, or a bare name: a Halo 3 map in the player's MCC (`game_paths`),
+/// else a Halo 2 (classic) map there. `h2:NAME` picks the Halo 2 map when
+/// both games have one by that name (`lockout`, `zanzibar`).
 fn resolve_map(arg: &str) -> PathBuf {
     let p = PathBuf::from(arg);
     if p.exists() {
@@ -77,23 +72,46 @@ fn resolve_map(arg: &str) -> PathBuf {
     if !name.ends_with(".map") {
         name.push_str(".map");
     }
-    let dir = |var: &str, default: &str| std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default));
-    let h3 = dir("HALO3_MAPS", DEFAULT_MAPS).join(&name);
-    let h2 = dir("HALO2_MAPS", DEFAULT_H2_MAPS).join(&name);
+    let h3 = game_paths::halo3_maps().unwrap_or_default().join(&name);
+    let h2 = game_paths::halo2_maps().unwrap_or_default().join(&name);
     if h2_only || (!h3.exists() && h2.exists()) { h2 } else { h3 }
 }
 
-fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut foot_tuning = None;
-    let mut arsenal = None;
-    let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
-        None | Some("--help") | Some("-h") => {
-            eprintln!("usage:
+const USAGE: &str = "usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 <map> [--foot]
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
-  halo3 --test-scene");
+  halo3 --setup [<map>]    choose MCC and Skate 3 again
+  halo3 --test-scene";
+
+fn main() -> anyhow::Result<()> {
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(args.first().map(String::as_str), Some("--help" | "-h")) {
+        eprintln!("{USAGE}");
+        std::process::exit(2);
+    }
+    // First-run setup: MCC (required) and Skate 3 (optional), asked once
+    // and saved (`halo3_setup`). Headless screenshots never show a dialog.
+    let redo = args.iter().any(|a| a == "--setup");
+    args.retain(|a| a != "--setup");
+    if args.first().map(String::as_str) != Some("--test-scene") {
+        let interactive = !args.iter().any(|a| a == "--shot");
+        if let Err(e) = halo3_setup::prepare(interactive, redo) {
+            if interactive {
+                halo3_setup::fail(&e);
+            }
+            anyhow::bail!(e);
+        }
+    }
+    let mut foot_tuning = None;
+    let mut arsenal = None;
+    let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
+        None => {
+            if redo {
+                eprintln!("setup saved in {}", game_paths::settings_path().display());
+                return Ok(());
+            }
+            eprintln!("{USAGE}");
             std::process::exit(2);
         }
         Some("--test-scene") => (
