@@ -459,7 +459,7 @@ fn handle(
     let mag = kind.weapon.magazines.first();
     if let Some(m) = mag {
         let can = held.reload <= 0.0 && held.ammo.reserve > 0 && held.ammo.loaded < m.rounds_loaded_maximum as i32;
-        if can && (wants || (held.ammo.loaded == 0 && held.cooldown <= 0.0)) {
+        if can && (wants || held.ammo.loaded == 0) {
             held.reload = reload_time(kind);
             held.zoom = 0;
             held.burst = 0;
