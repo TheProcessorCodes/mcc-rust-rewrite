@@ -42,6 +42,8 @@ A Cargo workspace (`cargo build`, `cargo test`, all green). Crates:
 | `blam_texture` | bitmap tags to mip chains (BC kept compressed, own CPU decoders) and the shader resolver |
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
 | `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound |
+| `blam_script` | the scenario's HaloScript: scripts, globals, expression nodes, the names they use; decompiled to source |
+| `halo3_script` | runs a map's scripts in the game (threads, objects, devices, trigger volumes, insertions), with AI and animation hooks |
 | `halo3` | the game: bevy 0.20, flying, skating, the dirt bike, sound, the pause menu, headless screenshots |
 
 What the game does now:
@@ -135,7 +137,7 @@ cargo build
 - Halo's own biped animations (`jmad`) for the on-foot Spartan, first-person arms, grenades,
   melee, damage and something to shoot at.
 - Vehicles (the Warthog), and objects that move (machines, doors).
-- HaloScript and AI, so campaign missions play rather than just load.
+- AI, so campaign missions play rather than just load (HaloScript runs: see below; its AI calls are hooks).
 - Reflex's real physics data read from the game files. The bike now uses numbers from the
   `D:\reflex-tools\physics` docs.
 
@@ -165,6 +167,32 @@ towards Reflex. "Reflex v1" (`crates/halo3_bike/src/reflex.rs`) keeps Unleashed'
 Reflex's numbers and steering, lean and grip rules, and is the default; the tuning menu (0) is
 back, with Unleashed as a switch. Awaiting the user's playtest; the doc's "Reflex v1" section has
 the details.
+
+## HaloScript and the Warthog run (2026-10-29, branch `halo-script`)
+
+The scenario's compiled scripts are read (`blam_script`, `docs/format/halo-script.md`):
+`blam scripts 120_halo` prints all 731 scripts as Lisp-like source, `--functions` the 281
+functions they call, `--grep TEXT` one topic. The game runs them (`halo3_script`) when asked:
+
+```
+& "<worktree>\out\bin\halo3.exe" 120_halo --insertion trench_run
+```
+
+runs `ins_trench_run` the way Bungie's designers did at the console: zone set
+`120_04_100_110`, the player put at the run's start flag, `mission_halo` wakes the Warthog run
+chapter. Driving into the run brings its floor plates in stretch by stretch; then rows of
+plates drop away behind and beside you every `trench_speed` ticks and others blow up ahead,
+exactly as the map's `trench_timer_*` / `trench_run_*_event_*` scripts say. Each dropped plate
+loses its collision at once (bike and Spartan at once, the skater a second later when its
+collision is rebuilt) and tumbles away. **Placed objects now collide** (their `coll` models):
+the run's plates are its only floor, so before this the whole run had no collision.
+
+Stubs and hooks: AI (`ai_place warthog01` etc.) goes to `AiHooks` (enemies agent), device
+animation (the run's two sinking islands) to `DevicePoser` (animation agent) with a made-up
+sink as the fallback, effects are stand-in flashes, cinematics / sound / HUD are no-ops that log
+once. Without `--insertion` / `--scripts` nothing changes from before except object collision.
+Tested headless (`halo3_script/tests/warthog_run.rs` drives the player through the run's
+volumes and checks plates drop); awaiting the user's playtest.
 
 ## Open questions and known gaps
 

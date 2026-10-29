@@ -24,6 +24,14 @@
 //!
 //! `--foot` starts on foot at the start spawn (`foot/mod.rs`; F toggles).
 //!
+//! halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary]
+//!                        run the map's own scripts (`halo3_script`): NAME
+//!                        runs the insertion script `ins_NAME` as the
+//!                        designers did at the console (120_halo:
+//!                        `trench_run`, the Warthog run); N starts the
+//!                        mission at insertion point N. `--scripts` runs
+//!                        them from the mission's own start.
+//!
 //! In a map, J switches between flying and skating (see `skate.rs`), B
 //! between flying and the dirt bike (`bike/mod.rs`), PageDown / PageUp step
 //! through the zone sets, Home loads every BSP. Escape or Start pauses and
@@ -87,11 +95,13 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut foot_tuning = None;
     let mut arsenal = None;
+    let mut scripts: Option<halo3_script::PendingScripts> = None;
     let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 <map> [--foot]
+  halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary]   e.g. 120_halo --insertion trench_run
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
   halo3 --test-scene");
             std::process::exit(2);
@@ -133,6 +143,14 @@ fn main() -> anyhow::Result<()> {
                 ..Default::default()
             };
             blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
+            // Objects collide (`HALO3_OBJECT_COLLISION=0`: not): crates,
+            // rocks, and the Warthog run's floor plates, which are its
+            // only floor.
+            if !std::env::var("HALO3_OBJECT_COLLISION").is_ok_and(|v| v == "0") {
+                let n = blam_geometry::objects::add_collision(cache, &mut scene);
+                eprintln!("object collision: {n} triangles");
+            }
+            scripts = scripts_for(&args, cache, &mut scene);
             eprintln!(
                 "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
                 scene.name,
@@ -332,6 +350,9 @@ fn main() -> anyhow::Result<()> {
         }
     }
     app.insert_resource(weapons::PendingArsenal(arsenal));
+    if let Some(s) = scripts {
+        app.insert_resource(s).add_plugins(halo3_script::ScriptPlugin);
+    }
     app.insert_resource(zones)
         .insert_resource(world::stream::ZoneTriggers::new(shot_mode))
         .insert_resource(loaded)
@@ -345,6 +366,50 @@ fn main() -> anyhow::Result<()> {
         ))
         .run();
     Ok(())
+}
+
+/// The map's scripts, when asked for: `--insertion NAME|N` or `--scripts`
+/// (`halo3_script`). Marks the objects they move before the world is
+/// built from the scene.
+fn scripts_for(
+    args: &[String],
+    cache: &blam_cache::CacheFile,
+    scene: &mut blam_geometry::Scene,
+) -> Option<halo3_script::PendingScripts> {
+    let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
+    let insertion = value("--insertion");
+    if insertion.is_none() && !args.iter().any(|a| a == "--scripts") {
+        return None;
+    }
+    let data = halo3_script::prepare(cache, scene)?;
+    let mut config = halo3_script::Config::default();
+    if let Some(d) = value("--difficulty") {
+        config.difficulty = match d.as_str() {
+            "easy" => 0,
+            "heroic" => 2,
+            "legendary" => 3,
+            _ => 1,
+        };
+    }
+    let mut console = None;
+    match insertion.as_deref().map(|i| (i, i.parse::<i16>())) {
+        Some((_, Ok(n))) => config.insertion_point = n,
+        Some((name, Err(_))) => {
+            let script = if name.starts_with("ins_") { name.to_string() } else { format!("ins_{name}") };
+            if data.script_index(&script).is_some() {
+                // As at the console in the editor: the mission's own
+                // `start` stays out of the way.
+                config.editor = true;
+                console = Some(script);
+            } else {
+                let known: Vec<&str> = data.scripts.iter().map(|s| s.name.as_str()).filter(|n| n.starts_with("ins_")).collect();
+                eprintln!("scripts: no insertion script {script}; this map has {known:?}");
+            }
+        }
+        None => {}
+    }
+    let runtime = halo3_script::setup::runtime(cache, scene, data, config);
+    Some(halo3_script::PendingScripts(Some(runtime), console))
 }
 
 /// `--shot <dir>` with its `--view` and `--size` options, if given.

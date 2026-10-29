@@ -23,6 +23,7 @@ the format descriptions the code is written from.
 | `crates/blam_cache` | opens a `.map`: header, sections, tag index, tag names, string ids, a cursor for tag data, resource pages |
 | `crates/blam_geometry` | decodes structure BSPs (clusters and instances) into plain meshes with materials |
 | `crates/blam_h2` | MCC Halo 2 maps: inflated in memory, tags, `shared.map` and `textures.dat` read, BSP, collision, objects, spawns, shaders and bitmaps decoded into the same `Scene` (`docs/format/halo2.md`) |
+| `crates/blam_script` | reads the HaloScript compiled into a scenario (scripts, globals, the expression table, the names scripts use) and prints it as source (`docs/format/halo-script.md`) |
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
@@ -36,6 +37,7 @@ the format descriptions the code is written from.
 | `crates/halo3_bike` | the dirt bike (MX vs ATV Unleashed's Pro 250) |
 | `crates/halo3_foot` | the Spartan on foot |
 | `crates/halo3_weapons` | the map's weapons, carried and fired on foot |
+| `crates/halo3_script` | runs a map's own scripts: threads at 30 ticks a second, objects created, destroyed, dropped and moved, devices, trigger volumes, insertion points; hooks for the AI and device animation |
 | `crates/halo3_swim` | water, sinking and splashes |
 | `docs/format` | the file format, field by field |
 | `docs/` | notes on IW4L and the skate interface |
@@ -52,6 +54,7 @@ target\debug\blam.exe shader riverworld 11454
 target\debug\blam.exe bitmap riverworld 112 --png out\mountains_snow.png
 target\debug\blam.exe textures riverworld
 target\debug\blam.exe sound riverworld list
+target\debug\blam.exe scripts 120_halo --grep trench_timer_100_001
 target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_music_15"
 & "target\debug\halo3.exe" riverworld
 ```
@@ -239,3 +242,15 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       skate collision swapped in without stopping the ride
       (`docs/viewer.md` "Streaming and culling", `--bench N`). Other campaign maps load the same way but are not checked yet
       (`docs/viewer.md` "Zone sets", `docs/format/zone-sets.md`).
+- [x] HaloScript (2026-10-29; built and tested headless, awaiting a
+      playtest): `blam scripts <map>` prints a map's scripts as source
+      (120_halo: 731 scripts, 113 globals, 281 functions); the game runs
+      them with `--insertion NAME|N` or `--scripts` (`halo3_script`).
+      120_halo's Warthog run plays its own collapse: `--insertion
+      trench_run` switches to the run's zone set and puts you at its start
+      flag, the floor plates appear stretch by stretch, then drop away
+      behind and around you row by row (or blow up ahead), and their
+      collision goes with them so the bike, the Spartan or the skater
+      falls. Placed objects now collide (`coll` models; the run's plates
+      are its only floor). AI, cinematics, sound and real effects are
+      stubs or hooks (`docs/format/halo-script.md` 10).

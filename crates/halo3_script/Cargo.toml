@@ -1,0 +1,15 @@
+[package]
+name = "halo3_script"
+description = "Runs a Halo 3 map's own HaloScript: script threads, objects, devices, trigger volumes, with hooks for the AI and animation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+glam = { workspace = true }
+blam_cache = { workspace = true }
+blam_geometry = { workspace = true }
+blam_script = { workspace = true }
+halo3_core = { workspace = true }
