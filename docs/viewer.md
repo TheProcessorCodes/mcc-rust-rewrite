@@ -281,6 +281,17 @@ Not yet: real cube-map reflections, parallax, `two_detail`'s second detail map, 
 bump. Translucent materials are still one mesh per material, so two
 overlapping translucent materials can sort wrongly.
 
+**Isolation** (`isolation`). The glowing slits round the outer wall are three additive `plasma`
+shaders whose intensity pulses 0 -> 55; two of them store 0 as their intensity and drew nothing,
+so a pulsing intensity stored as 0 now glows at the top of its pulse (`textures.rs`
+`illum_intensity`; `docs/format/shaders.md` 11.4). The pulse is not animated. How bright the
+slits come out also depends on the plasma band weighting (thinness 512 makes the sharp band
+faint). The Flood (`material_model organism` balls, `two_lobe_phong` mounds and plates) is drawn
+diffuse; the tunnels' warm and cool light beams are additive `illum_detail` cones. Isolation
+has no water and no kill volume (only `safe_zone` and three bird flocks): the walls keep the
+skater in, and the floor 20 wu under the lowest collision (z -31.3) catches anything else
+(`docs/format/reference-numbers.md` 11).
+
 ### Water
 
 `world/water.rs` and `world/shaders/water.wesl`; the tag layout and the evidence are in
