@@ -105,6 +105,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut foot_tuning = None;
     let mut arsenal = None;
+    let mut plain_fog = None;
     let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
@@ -125,7 +126,14 @@ fn main() -> anyhow::Result<()> {
         Some(map) if blam_h2::is_halo2(&resolve_map(map)) => {
             // Halo 2: everything decoded up front, no Halo 3 cache file
             // behind it (`halo2.rs`).
-            let (scene, textures) = halo2::load(&resolve_map(map))?;
+            let (scene, textures, fog) = halo2::load(&resolve_map(map))?;
+            plain_fog = fog;
+            // The mean lit surface, for the auto exposure (no camera fx in
+            // Halo 2: the exposure stays at `lighting::EXPOSURE`).
+            if let Some(mean) = world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps) {
+                eprintln!("halo 2 lightmap: mean irradiance {mean:.3}");
+                world::lighting::set_scene_mean(mean);
+            }
             // The rider is Halo 3's Spartan, borrowed from Valhalla when
             // Halo 3 is installed (Halo 2's Master Chief is not decoded).
             let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
@@ -355,6 +363,7 @@ fn main() -> anyhow::Result<()> {
         .insert_resource(loaded)
         .insert_resource(world::PendingScene(Some(scene), Some(textures), map_file))
         .insert_resource(world::sky::PendingSky(Some(sky)))
+        .insert_resource(world::sky::PlainFog(plain_fog))
         .insert_resource(world::water::PendingWater(Some(water)))
         .add_plugins((
             pause::PausePlugin,

@@ -152,8 +152,10 @@ with a `rsrc` marker. Each resource entry:
   alternating).
 - **Vertex buffers** (kind 2, field 0x38): buffer 0 positions, three floats (stride 12 in BSPs;
   12, 16 or 20 in models, the rest being node indices and weights); buffer 1 texcoords, two
-  floats; buffer 2 normal, binormal, tangent, nine floats (36 bytes); buffers 3 and 4 (lightmap
-  texcoords and a 12-byte value) are not read yet. Positions are not compressed on PC.
+  floats; buffer 2 normal, binormal, tangent, nine floats (36 bytes); buffer 3 the lightmap
+  texcoord, two floats, 0..1 over the section's own lightmap page (section 10); buffer 4 three
+  floats per vertex, not read (a direction, presumably the incident light's for bump mapping).
+  Light fixtures' instanced definitions have no buffer 3. Positions are not compressed on PC.
 - Render model regions (+0x1C, 16 bytes: name sid, permutations block +0x08 of 16 bytes: name
   sid, then six i16 section indices from the lowest level of detail to the highest). We take the
   first permutation's highest present level. Shaders block at +0x60 (0x20 each, shader
@@ -209,6 +211,22 @@ collision numbers are ours alone.
 
 Render model reference at +0x00. Coagulation's sky model has 8 pieces, 349 triangles: stars,
 two moons, the ring, a sun glow, the heavenly glow, a fog band and cloud cover.
+
+The root is 0xAC bytes, with three blocks of one element each on Lockout and Coagulation:
+
+| offset | element | meaning (read from the values) |
+|---|---|---|
+| +0x1C | 0x0C | a tag reference and a float (null and 0.8 on Lockout); not read |
+| +0x48 | 0x18 | **fog**: colour (three floats, gamma space) +0x00, maximum density +0x0C, start distance +0x10, opaque distance +0x14 (world units) |
+| +0x78 | 0x5C | a light: zero colour, then two angles (0.698, -0.436 rad on Lockout), a null reference, a colour (0.59, 0.61, 0.70) and power 0.25; not read |
+
+| map | fog colour | density | start..opaque |
+|---|---|---|---|
+| Lockout | 0.510, 0.588, 0.800 | 0.5 | 0..40 wu |
+| Coagulation | 0.64, 0.51, 0.51 | 0.4 | 10..150 wu |
+
+The viewer draws the fog as a linear distance fog whose colour also fills the background, in
+place of the sky model (`docs/viewer.md` "Halo 2 maps").
 
 ## 8. Shaders (`shad`) and templates (`stem`)
 
@@ -303,3 +321,31 @@ every one of the 1,833 images listed inflates to at least its full chain
 (`probe_h2_bitmaps.py`). Uncompressed rows are tight: `width x bytes per pixel`, no padding
 (Reclaimer's A8R8G8B8 path pads rows by the registration point, which is wrong for MCC; see
 HaloExportH2's README).
+
+## 10. Lightmaps (`ltmp`)
+
+The scenario's BSP entry names the lightmap at +0x18 (section 4). Checked on Lockout and
+Coagulation with `scripts/probe_h2_lightmap.py`.
+
+| offset | meaning |
+|---|---|
+| root +0x80 | lightmap groups (0x84 each; one on both maps) |
+| group +0x08 | 31 elements of 0x400 bytes (on Lockout; palettes of 256 colours by their size; not read) |
+| group +0x18 | the lightmap bitmap (`bitm` reference) |
+| group +0x20 | clusters (0x54 each, one per BSP cluster): geometry section fields with a null raw pointer; not read |
+| group +0x28 | **cluster render info** (4 bytes): page (bitmap image) index i16 +0, palette index i8 +2 |
+| group +0x30 | instanced definitions (0x54 each, one per definition); not read |
+| group +0x48 | **instance render info** (4 bytes), one per instance: page index i16 +0 (-1: none) |
+| group +0x50 | one per instance; not read |
+
+The pages are the bitmap's images: plain **A8R8G8B8** light colours on MCC (Lockout: 65 pages
+from 32x64 to 512x1024, the unused texels a flat lilac 116, 114, 216), so the palette indices
+have nothing to index. Lockout's clusters use pages 0-15 in order, its instances 16-64; the 26
+light fixtures have none and no lightmap texcoords. A vertex's light is the page's texel at its
+buffer 3 texcoord (section 5); an instance reads its own page through its definition's
+texcoords.
+
+How the game combines the light with the surface is not in the map (MCC's PC shaders are not
+in the `.map`). The viewer treats the texel as a gamma-space colour that multiplies the
+surface, doubled (`halo3::halo2::LIGHTMAP_SCALE`, picked by eye on Lockout): dark blue snow
+outside, warm lamp pools inside.

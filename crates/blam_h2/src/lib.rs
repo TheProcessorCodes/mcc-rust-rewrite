@@ -17,6 +17,7 @@
 pub mod bitmap;
 pub mod cache;
 pub mod collision;
+pub mod lightmap;
 pub mod section;
 pub mod shader;
 
@@ -24,8 +25,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use blam_geometry::{
-    BspInfo, ClusterInfo, CollisionMaterial, CollisionSource, Kind, Lighting, Material, Mesh, Placement, Scene, Shading,
-    Spawn, SpawnKind, StartingLocation, TriggerVolume,
+    BspInfo, ClusterInfo, CollisionMaterial, CollisionSource, Kind, Lighting, Lightmap, Material, Mesh, Placement, Scene,
+    Shading, Spawn, SpawnKind, StartingLocation, TriggerVolume,
 };
 use blam_texture::Texture;
 use glam::{Mat4, Vec3};
@@ -79,6 +80,9 @@ pub struct Stats {
     pub objects: HashMap<Kind, usize>,
     pub models_failed: Vec<String>,
     pub bitmaps_failed: Vec<String>,
+    /// Lightmap pages packed, and placements lit from them.
+    pub lightmap_pages: usize,
+    pub lightmapped: usize,
 }
 
 /// A decoded map.
@@ -89,7 +93,38 @@ pub struct Loaded {
     pub looks: Vec<Option<Look>>,
     /// The bitmaps the looks use, by tag index, each once.
     pub bitmaps: HashMap<u32, Texture>,
+    /// The first sky's fog, when it has one.
+    pub fog: Option<Fog>,
+    /// Each `scene.lightmaps` entry's atlas of light colours (A8R8G8B8,
+    /// `lightmap.rs`); its `Lighting::PerPixel` texcoords point into it.
+    pub lightmaps: Vec<Texture>,
     pub stats: Stats,
+}
+
+/// A sky's fog (`sky ` `+0x48`, 0x18 each; `docs/format/halo2.md` 7):
+/// its colour as stored (gamma space, like the textures), how thick it
+/// gets, and where it starts and reaches that thickness, in world units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fog {
+    pub colour: [f32; 3],
+    pub max_density: f32,
+    pub start: f32,
+    pub opaque: f32,
+}
+
+/// The fog of the scenario's first sky.
+fn sky_fog(map: &Map, scnr: Reader<'_>) -> Result<Option<Fog>> {
+    let Some(s) = scnr.block(0x8, 8)?.into_iter().next() else { return Ok(None) };
+    let Some(sky) = map.tag_data(s.tag_ref(0)?) else { return Ok(None) };
+    let Some(f) = sky.block(0x48, 0x18)?.into_iter().next() else { return Ok(None) };
+    let fog = Fog {
+        colour: f.vec3(0)?.to_array(),
+        max_density: f.f32(0xC)?,
+        start: f.f32(0x10)?,
+        opaque: f.f32(0x14)?,
+    };
+    let ok = fog.colour.iter().all(|c| c.is_finite()) && fog.max_density > 0.0 && fog.opaque > fog.start;
+    Ok(ok.then_some(fog))
 }
 
 /// Scene materials by shader datum.
@@ -156,6 +191,7 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
     };
     let mut materials = Materials::default();
     let mut stats = Stats::default();
+    let mut lightmaps = Vec::new();
 
     // Structure BSPs (scenario +0x210, 0x44 each; the sbsp reference at +0x10).
     for (bi, b) in scnr.block(0x210, 0x44)?.into_iter().enumerate() {
@@ -164,7 +200,17 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
             eprintln!("bsp {bi}: no structure bsp data");
             continue;
         };
-        decode_bsp(map, sbsp, bi as u32, options, &mut scene, &mut materials, &mut stats)
+        // The BSP's lightmap; a map without one still draws, by the
+        // default sun.
+        let pages = if options.textures {
+            lightmap::read(map, b).unwrap_or_else(|e| {
+                eprintln!("bsp {bi}: lightmap: {e}");
+                None
+            })
+        } else {
+            None
+        };
+        decode_bsp(map, sbsp, bi as u32, pages, options, &mut scene, &mut materials, &mut stats, &mut lightmaps)
             .map_err(|e| Error::Invalid(format!("bsp {bi} {}: {e}", map.tag_name(sbsp_id).unwrap_or("?"))))?;
     }
     if scene.bsps.is_empty() {
@@ -175,6 +221,10 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
         decode_objects(map, scnr, &mut scene, &mut materials, &mut stats)?;
     }
     decode_spawns(map, scnr, &mut scene)?;
+    let fog = sky_fog(map, scnr).unwrap_or_else(|e| {
+        eprintln!("sky fog: {e}");
+        None
+    });
 
     let mut bitmaps = HashMap::new();
     if options.textures {
@@ -213,6 +263,8 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
         scene,
         looks: materials.looks,
         bitmaps,
+        fog,
+        lightmaps,
         stats,
     })
 }
@@ -222,10 +274,12 @@ fn decode_bsp(
     map: &Map,
     sbsp: Reader<'_>,
     index: u32,
+    pages: Option<lightmap::Pages>,
     options: &Options,
     scene: &mut Scene,
     materials: &mut Materials,
     stats: &mut Stats,
+    lightmaps: &mut Vec<Texture>,
 ) -> Result<()> {
     let holder = sbsp.map;
     let name = holder.tags.iter().find(|t| t.offset == Some(sbsp.at)).map_or(String::new(), |t| t.name.clone());
@@ -241,6 +295,24 @@ fn decode_bsp(
             Vec3::new(r.f32(at + 4)?, r.f32(at + 12)?, r.f32(at + 20)?),
         ))
     };
+    // One atlas for the BSP's pages: `Lighting::PerPixel` into it for every
+    // cluster and instance that has a page and lightmap texcoords.
+    let atlas = pages.as_ref().map(|p| lightmap::Atlas::pack(&p.pages, &format!("{name} lightmap")));
+    let lightmap_index = scene.lightmaps.len() as u32;
+    let lit = |page: Option<u32>, uvs: Vec<[f32; 2]>, stats: &mut Stats| -> Lighting {
+        match (&atlas, page) {
+            (Some(a), Some(p)) if a.has(p) && !uvs.is_empty() => {
+                stats.lightmapped += 1;
+                Lighting::PerPixel {
+                    lightmap: lightmap_index,
+                    uvs: uvs.into_iter().map(|uv| a.place(p, uv)).collect(),
+                }
+            }
+            _ => Lighting::None,
+        }
+    };
+    let cluster_page = |k: usize| pages.as_ref().and_then(|p| p.clusters.get(k).copied().flatten());
+    let instance_page = |k: usize| pages.as_ref().and_then(|p| p.instances.get(k).copied().flatten());
     let world = bounds(sbsp, 0x34)?;
     scene.bounds = Some(match scene.bounds {
         Some((a, b)) => (a.min(world.0), b.max(world.1)),
@@ -258,9 +330,10 @@ fn decode_bsp(
             acoustics: None,
         });
         let mesh_name = format!("{} cluster {ci}", name.rsplit('\\').next().unwrap_or(&name));
-        let mesh = section::decode(c, section::BSP, &mesh_name, &mut |k| material(scene, k))?;
-        if let Some(mesh) = mesh {
+        let mesh = section::decode_lit(c, section::BSP, &mesh_name, &mut |k| material(scene, k))?;
+        if let Some((mesh, uvs)) = mesh {
             stats.clusters += 1;
+            let lighting = lit(cluster_page(ci), uvs, stats);
             let m = scene.meshes.len() as u32;
             scene.meshes.push(mesh);
             scene.placements.push(Placement {
@@ -269,7 +342,7 @@ fn decode_bsp(
                 mesh: m,
                 transform: Mat4::IDENTITY,
                 mirrored: false,
-                lighting: Lighting::None,
+                lighting,
                 bsps: mask,
                 sky: None,
                 cluster: Some(ci as u32),
@@ -282,10 +355,12 @@ fn decode_bsp(
     // (+0x140, 0x58).
     let definitions = sbsp.block(0x138, 0xC8)?;
     stats.instance_definitions += definitions.len();
-    let mut def_mesh: Vec<Option<Option<u32>>> = vec![None; definitions.len()];
+    // Each definition's mesh and lightmap texcoords (over whichever page an
+    // instance of it uses).
+    let mut def_mesh: Vec<Option<Option<(u32, Vec<[f32; 2]>)>>> = vec![None; definitions.len()];
     let instances = sbsp.block(0x140, 0x58)?;
     let mut instance_transforms = Vec::new();
-    for inst in &instances {
+    for (ii, inst) in instances.iter().enumerate() {
         let scale = inst.f32(0)?;
         let scale = if scale == 0.0 { 1.0 } else { scale };
         let cols = [inst.vec3(0x4)?, inst.vec3(0x10)?, inst.vec3(0x1C)?].map(|v| v.to_array());
@@ -296,13 +371,15 @@ fn decode_bsp(
         let Some(slot) = usize::try_from(def).ok().filter(|&d| d < definitions.len()) else { continue };
         if def_mesh[slot].is_none() {
             let mesh_name = format!("instance {slot}");
-            let mesh = section::decode(definitions[slot], section::BSP, &mesh_name, &mut |k| material(scene, k))?;
-            def_mesh[slot] = Some(mesh.map(|m| {
+            let mesh = section::decode_lit(definitions[slot], section::BSP, &mesh_name, &mut |k| material(scene, k))?;
+            def_mesh[slot] = Some(mesh.map(|(m, uvs)| {
                 scene.meshes.push(m);
-                scene.meshes.len() as u32 - 1
+                (scene.meshes.len() as u32 - 1, uvs)
             }));
         }
-        if let Some(Some(m)) = def_mesh[slot] {
+        if let Some(Some((m, uvs))) = &def_mesh[slot] {
+            let m = *m;
+            let lighting = lit(instance_page(ii), uvs.clone(), stats);
             stats.instances += 1;
             scene.placements.push(Placement {
                 name: inst_name,
@@ -310,7 +387,7 @@ fn decode_bsp(
                 mesh: m,
                 transform,
                 mirrored,
-                lighting: Lighting::None,
+                lighting,
                 bsps: mask,
                 sky: None,
                 cluster: None,
@@ -345,6 +422,17 @@ fn decode_bsp(
         scene.collision.triangles = out;
     }
 
+    if let Some(a) = atlas {
+        stats.lightmap_pages += a.rects.iter().filter(|r| r[2] > 0).count();
+        scene.lightmaps.push(Lightmap {
+            bsp: index,
+            coefficients_bitmap: None,
+            intensity_bitmap: None,
+            // The viewer encodes the colours and sets the ranges.
+            scales: [0.0; 5],
+        });
+        lightmaps.push(a.texture);
+    }
     scene.bsps.push(BspInfo {
         index,
         name,

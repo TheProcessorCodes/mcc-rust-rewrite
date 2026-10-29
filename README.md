@@ -221,8 +221,8 @@ both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
       scenery 2,324, crates 2); the collision BSP gives 8,586 world and
       4,502 instanced triangles (no broken loops); 123 spawns, all on a
       floor; base and detail textures, the ground's detail blend, foliage,
-      glows drawn. Not yet: Halo 2's lightmaps (default sun and sky) and
-      its sky (a plain blue clear colour). Skating (610 rails), the bike
+      glows drawn. Lit by its own lightmap and fogged by its sky's fog
+      (see Lockout). Not yet: its sky model (the fog colour stands in). Skating (610 rails), the bike
       and the Spartan rider (borrowed from Valhalla) run on it. Pinned by `cargo test`
       (`crates/blam_h2/tests/coagulation.rs`).
 - [x] Halo 2: Lockout (`lockout`; Halo 3's Blackout, also `lockout.map`,
@@ -230,8 +230,10 @@ both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
       7,049 triangles, 75 instances 7,414, 15 crates, 5 scenery; 5,570
       world and 7,312 instanced collision triangles, 66 spawns, 675 rails,
       all 33 bitmaps decoded. No HaloExportH2 export to check against; our
-      own counts are pinned (`crates/blam_h2/tests/lockout.rs`). Same gaps
-      as Coagulation, plus a few small black panels on the boxes.
+      own counts are pinned (`crates/blam_h2/tests/lockout.rs`). Lit by
+      its lightmap (65 pages packed into one atlas, the light fixtures from
+      the nearest surface) and the sky's blue fog (`docs/format/halo2.md`
+      7, 10). Not yet: the sky model; a few small black panels on the boxes.
 - [x] Milestone 3b: collision and rails fed to the skate world (playtested
       on Valhalla).
 - [x] Milestone 4: Skate 3 crates plugged in (path dependency on

@@ -6,29 +6,38 @@
 //! What is drawn (first pass, `docs/viewer.md` "Halo 2 maps"): each
 //! material's base map with its tiling, the detail map over it, alpha-tested
 //! foliage, blended glass and additive glows; detail-blend ground mixes its
-//! two detail maps by the base map's alpha through the terrain path. No
-//! lightmaps yet: the world is lit by the default sun and sky.
+//! two detail maps by the base map's alpha through the terrain path.
+//!
+//! Lighting: Halo 2's lightmap pages are plain light colours (`blam_h2`
+//! packs each BSP's pages into one atlas). The viewer's lightmap shader
+//! reads Halo 3's SH coefficients, so each colour is written as the constant
+//! term alone (`encode_lightmap`): it then lights every surface with that
+//! colour whatever its normal, as Halo 2's lightmap does.
 
 use std::path::Path;
 
 use blam_geometry::Scene;
 use blam_texture::{Blend, Format, Kind, Texture, Xform, rgba};
 
-use crate::textures::{Look, MaterialTextures, SurfaceLook, TerrainLayerLook, TerrainLook};
+use crate::textures::{LightmapTextures, Look, MaterialTextures, SurfaceLook, TerrainLayerLook, TerrainLook};
+use crate::world::sky::PlainFogSetting;
 
 /// Tag indices for the blend maps made here, past any real tag index.
 const SYNTHETIC: u32 = 0x1_0000;
 
-pub fn load(path: &Path) -> anyhow::Result<(Scene, MaterialTextures)> {
+/// The map's scene and looks, and its sky's fog for the camera.
+pub fn load(path: &Path) -> anyhow::Result<(Scene, MaterialTextures, Option<PlainFogSetting>)> {
     let started = std::time::Instant::now();
     let map = blam_h2::Map::open(path)?;
     let loaded = blam_h2::decode(&map, &blam_h2::Options::default())?;
     let s = &loaded.stats;
     eprintln!(
-        "halo 2 {}: {} clusters, {} instances, {} triangles; collision {} + {} triangles; {} spawns; {} bitmaps ({} not decoded) in {:.1} s",
+        "halo 2 {}: {} clusters, {} instances ({} lightmapped from {} pages), {} triangles; collision {} + {} triangles; {} spawns; {} bitmaps ({} not decoded) in {:.1} s",
         map.map_name,
         s.clusters,
         s.instances,
+        s.lightmapped,
+        s.lightmap_pages,
         loaded.scene.triangle_count(),
         s.bsp_collision_triangles,
         s.instance_collision_triangles,
@@ -41,8 +50,34 @@ pub fn load(path: &Path) -> anyhow::Result<(Scene, MaterialTextures)> {
         eprintln!("  {f}");
     }
     let blam_h2::Loaded {
-        scene, looks, mut bitmaps, ..
+        mut scene,
+        looks,
+        mut bitmaps,
+        lightmaps,
+        fog,
+        ..
     } = loaded;
+    if let Some(f) = fog {
+        eprintln!(
+            "sky fog: colour {:.2?}, up to {:.2} from {} to {} wu",
+            f.colour, f.max_density, f.start, f.opaque
+        );
+    }
+    let fog = fog.map(|f| PlainFogSetting {
+        colour: f.colour,
+        max_density: f.max_density,
+        start: f.start,
+        opaque: f.opaque,
+    });
+    let lightmaps = lightmaps
+        .iter()
+        .zip(&mut scene.lightmaps)
+        .map(|(atlas, lm)| {
+            let (textures, range) = encode_lightmap(atlas, lightmap_scale());
+            lm.scales = [range, 0.0, 0.0, 0.0, 0.0];
+            Some(textures)
+        })
+        .collect();
     let mut out = Vec::with_capacity(looks.len());
     for (i, l) in looks.iter().enumerate() {
         out.push(l.as_ref().map(|l| convert(l, i as u32, &mut bitmaps)));
@@ -52,9 +87,93 @@ pub fn load(path: &Path) -> anyhow::Result<(Scene, MaterialTextures)> {
         MaterialTextures {
             looks: out,
             bitmaps,
-            lightmaps: Vec::new(),
+            lightmaps,
         },
+        fog,
     ))
+}
+
+/// What a Halo 2 lightmap texel's light (sRGB, as stored) is multiplied by
+/// before the viewer's exposure: `HALO2_LIGHTMAP_SCALE`, else
+/// [`LIGHTMAP_SCALE`].
+fn lightmap_scale() -> f32 {
+    std::env::var("HALO2_LIGHTMAP_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|s: &f32| s.is_finite() && *s > 0.0)
+        .unwrap_or(LIGHTMAP_SCALE)
+}
+
+/// Halo 2's lightmap texel to the viewer's irradiance, after its sRGB
+/// value is made linear. Halo 2 lights in gamma space with the lightmap
+/// doubled (overbright), `2^2.2` in linear terms, and the viewer multiplies
+/// irradiance by its exposure (`lighting::EXPOSURE`, 4): `2^2.2 / 4`.
+/// Checked by eye on Lockout.
+pub const LIGHTMAP_SCALE: f32 = 1.15;
+
+/// The SH constant term that gives irradiance `e` on every normal
+/// (`blam_geometry::lightmap::irradiance_with_dominant`: `c0 * 0.886227 / pi`).
+const C0_PER_IRRADIANCE: f32 = std::f32::consts::PI / 0.886227;
+
+/// The viewer's lightmap arrays for one atlas of Halo 2 light colours, and
+/// the range of c0. Layer 0 and 1 of the coefficients are c0's base and
+/// residual (`luvw`: `((a + b) * 2 - 2) * a.alpha * b.alpha * range`); the
+/// residual's colour is a fixed mid grey, so the base's colour carries the
+/// hue and the two alphas the size (split as square roots, for precision in
+/// the dark). The other coefficients and the dominant light are zero: their
+/// ranges are 0, so their layers are left out (the shader clamps the layer
+/// index) and the intensity array is one black texel.
+fn encode_lightmap(atlas: &Texture, scale: f32) -> (LightmapTextures, f32) {
+    let srgb = |b: u8| {
+        let c = b as f32 / 255.0;
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    };
+    let src = atlas.level(0, 0).unwrap_or(&[]);
+    // c0 per texel, R G B.
+    let c0: Vec<[f32; 3]> = src
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| [p[2], p[1], p[0]].map(|b| srgb(b) * scale * C0_PER_IRRADIANCE))
+        .collect();
+    let range = c0.iter().flat_map(|c| c.iter().copied()).fold(0.0f32, f32::max).max(1e-6);
+    const MID: u8 = 128;
+    let mid = MID as f32 / 255.0;
+    let mut base = Vec::with_capacity(src.len());
+    let mut residual = Vec::with_capacity(src.len());
+    for c in &c0 {
+        let m = c[0].max(c[1]).max(c[2]) / range;
+        let qa = (m.sqrt() * 255.0).round().clamp(0.0, 255.0);
+        let qb = if qa > 0.0 { (m * 255.0 * 255.0 / qa).round().clamp(0.0, 255.0) } else { 0.0 };
+        let l = qa / 255.0 * qb / 255.0 * range;
+        let a = |v: f32| {
+            if l > 0.0 { ((v / (2.0 * l) + 1.0 - mid) * 255.0).round().clamp(0.0, 255.0) as u8 } else { MID }
+        };
+        // Bytes B G R A.
+        base.extend_from_slice(&[a(c[2]), a(c[1]), a(c[0]), qa as u8]);
+        residual.extend_from_slice(&[MID, MID, MID, qb as u8]);
+    }
+    base.extend_from_slice(&residual);
+    let array = |name: String, width, height, layers, pixels| Texture {
+        name,
+        tag_index: u32::MAX,
+        bitmap_index: 0,
+        kind: Kind::Array,
+        width,
+        height,
+        layers,
+        format: Format::A8R8G8B8,
+        srgb: false,
+        curve: 0,
+        mips: vec![pixels],
+    };
+    (
+        LightmapTextures {
+            coefficients: array(format!("{} (c0)", atlas.name), atlas.width, atlas.height, 2, base),
+            intensity: array(format!("{} (no dominant light)", atlas.name), 1, 1, 1, vec![MID, MID, MID, 0]),
+        },
+        range,
+    )
 }
 
 fn convert(l: &blam_h2::Look, material: u32, bitmaps: &mut std::collections::HashMap<u32, Texture>) -> Look {

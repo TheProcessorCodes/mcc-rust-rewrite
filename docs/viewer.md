@@ -704,10 +704,19 @@ skating (J), the dirt bike (B), rails and the fall-out-of-the-world respawn work
 With no atmosphere tag the camera gets a fog that never thickens (the world shaders need the
 fog binding).
 
+Lighting: Halo 2's lightmap (`docs/format/halo2.md` 10). `blam_h2` packs each BSP's pages into
+one atlas and gives every cluster and instance with a page per-pixel lighting; the light
+fixtures and the objects take the nearest lit surface's light, as on Halo 3 maps. The pages are
+plain colours while the lightmap shader reads Halo 3's SH coefficients, so `halo3::halo2`
+writes each colour as the constant term alone, which lights every normal the same.
+`HALO2_LIGHTMAP_SCALE` (default 1.15) multiplies it. The sky's fog (`halo2.md` 7) becomes a
+linear distance fog, and its colour fills the background: Lockout's blue mist, Coagulation's
+reddish dusk.
+
 Drawn: each material's base map with its tiling and its detail map, the ground's two detail
 maps blended by the base map's alpha (through the terrain path), alpha-tested foliage and
 banners, additive glows and light bands. The rider is Halo 3's Spartan, borrowed from
-`riverworld.map` when Halo 3 is installed. Not yet: the sky (its model decodes, but its layers
+`riverworld.map` when Halo 3 is installed. Not yet: the sky model (it decodes, but its layers
 need Halo 2's sky blending; drawn as plain translucent meshes they walled the canyon in flat
-blue, so the clear colour stands in), Halo 2's lightmaps (the world is lit by the default sun
-and sky), bump and environment maps, water as water (a plain see-through surface), fog, sound.
+blue, so the fog colour stands in), the lightmaps' bump direction (buffer 4) and the sky's
+light, bump and environment maps, water as water (a plain see-through surface), sound.
