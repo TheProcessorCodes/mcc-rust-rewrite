@@ -38,7 +38,7 @@ use blam_geometry::collision::surface_flags;
 
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{Bail, Dismount, RiderPose, Skating, assets_root, bail_pressed};
+use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, Skating, assets_root, bail_pressed};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Bike, Controls, World};
@@ -66,6 +66,7 @@ impl Plugin for BikePlugin {
             .init_resource::<AutoStart>()
             .init_resource::<StickPool>()
             .init_resource::<Dismount>()
+            .init_resource::<Mount>()
             .add_plugins(tune::TunePlugin)
             .add_systems(Startup, setup)
             .add_systems(
@@ -186,7 +187,7 @@ fn ride(
     mut commands: Commands,
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
-    mut dismount: ResMut<Dismount>,
+    (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
     input: Option<Res<BikeInput>>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
     fallback: Option<Res<halo3_core::falls::FallbackSpot>>,
@@ -209,7 +210,8 @@ fn ride(
 
     // The world follows the loaded zone set.
     let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
-    let wanted = riding.bike.is_some() || toggle || auto.0.is_some();
+    let mounting = matches!(mount.0, Some((Ride::Bike, _)));
+    let wanted = riding.bike.is_some() || toggle || auto.0.is_some() || mounting;
     if wanted && riding.mask != Some(mask) {
         riding.world = Some(build_world(&input.0, mask));
         riding.mask = Some(mask);
@@ -227,6 +229,31 @@ fn ride(
                 .unwrap_or(0.4),
         );
         riding.eye = None;
+        rider.skated = 0.0;
+        rider.bike = true;
+        commands.entity(camera).insert(Skating);
+    } else if mounting {
+        // Straight from walking: the bike under him, with his momentum.
+        let Some((_, bail)) = mount.0.take() else {
+            return;
+        };
+        let flat = Vec3::new(bail.velocity.x, 0.0, bail.velocity.z);
+        let heading = if flat.length() > 1.0 {
+            flat.x.atan2(flat.z)
+        } else {
+            bail.yaw + std::f32::consts::PI
+        };
+        let mut bike = Bike::dropped(world, bail.position + Vec3::Y, heading);
+        // In the air (a jump, a fall): where he is, not on the ground below.
+        if bike.position.y < bail.position.y - 0.5 {
+            bike = Bike::new(bail.position + Vec3::Y * physics::rest_height(), heading);
+        }
+        bike.velocity = bail.velocity;
+        bike.wheel_spin = bail.velocity.dot(bike.forward()) / physics::rear_leg().radius;
+        riding.bike = Some(bike);
+        riding.neutral = None;
+        riding.eye = None;
+        riding.look = Vec3::ZERO;
         rider.skated = 0.0;
         rider.bike = true;
         commands.entity(camera).insert(Skating);
@@ -248,7 +275,10 @@ fn ride(
             return;
         }
         if rider.active {
-            warn!("bike: stop skating or walking first (J / F)");
+            // On foot, B is his to hand over (`Mount`).
+            if !rider.foot {
+                warn!("bike: stop skating first (J), or jump off (G)");
+            }
             return;
         }
         let f = transform.forward().as_vec3();

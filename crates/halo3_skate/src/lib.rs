@@ -30,7 +30,7 @@ use blam_geometry::{Collision, TriggerVolume, rails};
 use halo3_core::coords::{to_halo_dir, to_render};
 use halo3_core::fly_camera::FlyCamera;
 pub use halo3_core::skate::{Respawn, RiderPose, SkateMotion, Skating, assets_root, scale};
-use halo3_core::skate::{Bail, Dismount, bail_pressed};
+use halo3_core::skate::{Bail, Dismount, Mount, Ride, bail_pressed};
 use halo3_core::zones::LoadedBsps;
 
 /// The map data the skate world is built from, handed over by `main`: the
@@ -48,6 +48,7 @@ impl Plugin for SkatePlugin {
             .init_resource::<AutoStart>()
             .init_resource::<Respawn>()
             .init_resource::<Dismount>()
+            .init_resource::<Mount>()
             .add_systems(Startup, start_worker)
             .init_resource::<SkateMotion>()
             .add_systems(
@@ -446,7 +447,7 @@ fn update(
     mut rider: ResMut<RiderPose>,
     mut auto: ResMut<AutoStart>,
     mut respawn: ResMut<Respawn>,
-    mut dismount: ResMut<Dismount>,
+    (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
@@ -578,6 +579,27 @@ fn update(
         let AutoStart(Some((spawn, heading))) = AutoStart::at(position, yaw) else {
             return;
         };
+        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+        return;
+    }
+    // Straight from walking onto the board, facing the way he moved or
+    // looked; the engine puts the wheels on the ground below.
+    if let Some((Ride::Board, bail)) = mount.0 {
+        mount.0 = None;
+        if !host.ready || host.active {
+            warn!("skate: not ready yet; {}", host.status);
+            return;
+        }
+        let flat = Vec3::new(bail.velocity.x, 0.0, bail.velocity.z);
+        let look = Quat::from_euler(EulerRot::YXZ, bail.yaw, 0.0, 0.0) * Vec3::NEG_Z;
+        let f = to_halo_dir(if flat.length() > 1.0 { flat } else { look });
+        let heading = f.y.atan2(f.x) + std::f32::consts::FRAC_PI_2;
+        let spawn = ((bail.position + Vec3::Y * 0.3) * k).to_array();
+        host.epoch = host.epoch.wrapping_add(1);
+        host.active = true;
+        host.neutral = false;
+        rider.skated = 0.0;
+        commands.entity(camera).insert(Skating);
         let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
         return;
     }

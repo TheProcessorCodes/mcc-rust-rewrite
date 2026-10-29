@@ -15,6 +15,8 @@
 //! | left stick click | Ctrl / C (hold) | crouch |
 //! | d-pad down | T | first / third person |
 //! | d-pad up | F | on foot / flying |
+//! | View / Back | B | back on the bike, keeping his speed |
+//! | both sticks clicked | J | back on the board |
 //!
 //! Kill volumes, the bottom of the world (`halo3_core::falls`) and water over his
 //! head put him back where he last stood.
@@ -35,7 +37,7 @@ use halo3_bike::physics::World;
 use halo3_bike::pose::Rig;
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{Dismount, RiderPose, Skating, assets_root};
+use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, Skating, assets_root};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Controls, Spartan};
@@ -64,6 +66,7 @@ impl Plugin for FootPlugin {
             .init_resource::<FootTuning>()
             .init_resource::<AutoStart>()
             .init_resource::<Dismount>()
+            .init_resource::<Mount>()
             .add_systems(Startup, setup)
             .add_systems(Update, (walk.run_if(halo3_core::pause::running), show_status).chain());
     }
@@ -143,7 +146,7 @@ fn cursor_grabbed(windows: &Query<&CursorOptions, With<PrimaryWindow>>) -> bool 
 pub fn walk(
     mut commands: Commands,
     mut foot: ResMut<OnFoot>,
-    (mut auto, mut dismount): (ResMut<AutoStart>, ResMut<Dismount>),
+    (mut auto, mut dismount, mut mount): (ResMut<AutoStart>, ResMut<Dismount>, ResMut<Mount>),
     input: Option<Res<halo3_bike::BikeInput>>,
     tuning: Res<FootTuning>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
@@ -164,6 +167,19 @@ pub fn walk(
     let foot = &mut *foot;
     let pad = gamepads.iter().next();
     let toggle = keys.just_pressed(KeyCode::KeyF) || pad.is_some_and(|p| p.just_pressed(B::DPadUp));
+    // The bike's and the board's own buttons get back on from walking.
+    let ride = if keys.just_pressed(KeyCode::KeyB) || pad.is_some_and(|p| p.just_pressed(B::Select)) {
+        Some(Ride::Bike)
+    } else if keys.just_pressed(KeyCode::KeyJ)
+        || pad.is_some_and(|p| {
+            (p.just_pressed(B::LeftThumb) && p.pressed(B::RightThumb))
+                || (p.just_pressed(B::RightThumb) && p.pressed(B::LeftThumb))
+        })
+    {
+        Some(Ride::Board)
+    } else {
+        None
+    };
     let Ok((camera, mut transform, mut fly, mut projection)) = cameras.single_mut() else {
         return;
     };
@@ -217,8 +233,12 @@ pub fn walk(
         commands.entity(camera).insert(Skating);
         let v = bail.velocity;
         info!("on foot: jumped off at {:.1} m/s", Vec2::new(v.x, v.z).length());
-    } else if toggle {
-        if foot.spartan.take().is_some() {
+    } else if toggle || (ride.is_some() && foot.spartan.is_some()) {
+        if let Some(spartan) = foot.spartan.take() {
+            if let Some(ride) = ride {
+                let view = rider.camera.map_or(*transform, |(v, _)| v);
+                mount.0 = Some((ride, Bail::new(spartan.position, spartan.velocity, &view)));
+            }
             rider.foot = false;
             rider.first_person = false;
             rider.active = false;

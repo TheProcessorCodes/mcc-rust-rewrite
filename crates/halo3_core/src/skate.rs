@@ -100,6 +100,18 @@ impl Bail {
     }
 }
 
+/// The Spartan getting back on the bike or the board straight from walking:
+/// set by `halo3_foot` as he leaves his feet, taken by `halo3_bike` /
+/// `halo3_skate`. The bike keeps his momentum; the board starts from rest.
+#[derive(Resource, Default)]
+pub struct Mount(pub Option<(Ride, Bail)>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ride {
+    Bike,
+    Board,
+}
+
 /// The bail button, the same while skating and riding: G, or the d-pad's up.
 pub fn bail_pressed(keys: &ButtonInput<KeyCode>, pad: Option<&Gamepad>) -> bool {
     keys.just_pressed(KeyCode::KeyG) || pad.is_some_and(|p| p.just_pressed(GamepadButton::DPadUp))

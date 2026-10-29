@@ -74,6 +74,8 @@ const FREE_ROAM: &[[&str; 3]] = &[
 /// On-foot controls (`foot/mod.rs`): keyboard, controller, what it does.
 const FOOT: &[[&str; 3]] = &[
     ["F", "d-pad up", "get on foot / back to flying"],
+    ["B", "View / Back", "back on the dirt bike, keeping your speed"],
+    ["J", "click both sticks", "back on the skateboard"],
     ["W A S D", "left stick", "move"],
     ["mouse", "right stick", "aim"],
     ["Space", "A", "jump"],
