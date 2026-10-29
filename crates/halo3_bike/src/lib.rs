@@ -67,6 +67,7 @@ impl Plugin for BikePlugin {
         app.init_resource::<Riding>()
             .init_resource::<AutoStart>()
             .init_resource::<StickPool>()
+            .init_resource::<TriggerLog>()
             .add_plugins(tune::TunePlugin)
             .add_systems(Startup, setup)
             .add_systems(
@@ -82,10 +83,53 @@ impl Plugin for BikePlugin {
     }
 }
 
+/// Diagnostic: a record of what the pad sent and what the bike was given,
+/// written next to the exe as `throttle-log.txt`, new each run.
+#[derive(Resource)]
+struct TriggerLog {
+    file: Option<std::fs::File>,
+    started: std::time::Instant,
+    /// The right trigger as bevy last held it, and the throttle made of it.
+    rt: f32,
+    throttle: f32,
+}
+
+impl Default for TriggerLog {
+    fn default() -> Self {
+        let exe = std::env::current_exe().ok();
+        let path = exe.as_ref().and_then(|p| Some(p.parent()?.join("throttle-log.txt")));
+        let file = path.as_ref().and_then(|p| std::fs::File::create(p).ok());
+        match (&path, &file) {
+            (Some(p), Some(_)) => info!("bike: writing trigger samples to {}", p.display()),
+            _ => warn!("bike: could not open throttle-log.txt next to the exe"),
+        }
+        let mut log = Self {
+            file,
+            started: std::time::Instant::now(),
+            rt: 0.0,
+            throttle: 0.0,
+        };
+        log.line(&format!("start: {}", exe.map(|p| p.display().to_string()).unwrap_or_default()));
+        log
+    }
+}
+
+impl TriggerLog {
+    /// Appends `text`, stamped with the seconds since the game started.
+    fn line(&mut self, text: &str) {
+        use std::io::Write;
+        if let Some(f) = self.file.as_mut() {
+            let t = self.started.elapsed().as_secs_f64();
+            let _ = writeln!(f, "{t:9.3} {text}");
+        }
+    }
+}
+
 /// Diagnostic: every trigger sample the pad sends, as bevy receives it from
 /// gilrs and before any filtering, with the time since the one before.
 fn log_trigger_samples(
     mut raw: bevy::ecs::message::MessageReader<bevy::input::gamepad::RawGamepadButtonChangedEvent>,
+    mut log: ResMut<TriggerLog>,
     mut last: Local<Option<std::time::Instant>>,
 ) {
     // Wall-clock time: bevy's `Time` stands still within a frame, and the
@@ -95,6 +139,7 @@ fn log_trigger_samples(
             let now = std::time::Instant::now();
             let since = last.map_or(0.0, |t| now.duration_since(t).as_secs_f64() * 1000.0);
             info!("pad sample: {:?} {:.4} (+{since:.0} ms)", e.button, e.value);
+            log.line(&format!("pad {:?} {:.4} (+{since:.0} ms)", e.button, e.value));
             *last = Some(now);
         }
     }
@@ -243,6 +288,7 @@ fn ride(
     gamepads: Query<&Gamepad>,
     mut cameras: Query<(Entity, &mut Transform, &mut FlyCamera, &mut Projection)>,
     mut logged_throttle: Local<f32>,
+    mut log: ResMut<TriggerLog>,
 ) {
     let Some(input) = input else {
         return;
@@ -352,9 +398,11 @@ fn ride(
 
     bike.step(world, controls, dt);
     // Diagnostic for the throttle: what the pad sends and what the bike does.
-    if (controls.throttle - *logged_throttle).abs() >= 0.05 {
-        *logged_throttle = controls.throttle;
-        info!(
+    let rt = pad.and_then(|p| p.get(B::RightTrigger2)).unwrap_or(0.0);
+    if (controls.throttle - log.throttle).abs() >= 0.01 || (rt - log.rt).abs() >= 0.01 {
+        log.rt = rt;
+        log.throttle = controls.throttle;
+        let text = format!(
             "bike input: RT button {:?}, RZ axis {:?}, throttle {:.2}, {:.0} km/h, gear {}, {:.0} rpm ({} pads)",
             pad.and_then(|p| p.get(B::RightTrigger2)),
             pad.and_then(|p| p.get(GamepadAxis::RightZ)),
@@ -364,6 +412,11 @@ fn ride(
             bike.engine.rpm,
             gamepads.iter().count(),
         );
+        log.line(&text);
+        if (controls.throttle - *logged_throttle).abs() >= 0.05 {
+            *logged_throttle = controls.throttle;
+            info!("{text}");
+        }
     }
     if let Some(kill) = kill.as_deref()
         && let Some(volume) = kill.deadly(to_halo(bike.position))
@@ -644,6 +697,7 @@ fn bike_sticks(bike: &Bike, gizmos: &mut Sticks) {
 
 fn show_status(
     riding: Res<Riding>,
+    log: Res<TriggerLog>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     time: Res<Time>,
     mut logged: Local<f32>,
@@ -652,8 +706,10 @@ fn show_status(
         return;
     };
     let status = format!(
-            "bike ({}) {:.0} km/h, gear {}, {:.0} rpm, {} wheel{} down{}",
+            "bike ({}) RT {:.0}% -> gas {:.0}%, {:.0} km/h, gear {}, {:.0} rpm, {} wheel{} down{}",
             physics::setup().name,
+            log.rt * 100.0,
+            log.throttle * 100.0,
             b.speed() * 3.6,
             b.engine.gear + 1,
             b.engine.rpm,
