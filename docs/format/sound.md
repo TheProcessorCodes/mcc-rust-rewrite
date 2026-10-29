@@ -216,6 +216,7 @@ lists every `lsnd` under a `\music\` folder and plays them by hand.
 
 ## 9. Not decoded
 
-Dialogue banks; pitch ranges past the first; `snde` reverb; the playback parameters' first two
-distances, cone gains; sound classes (`sncl`) and the mix (`snmx`); the per-sound `ugh! + 0xBC`
+Dialogue banks; pitch ranges past the first; `snde` reverb; cone gains; sound class gains and the
+mix (`snmx`) (the classes' limits and default distances, and a reading of all four distances, are
+in `weapon-sounds.md` 7); the per-sound `ugh! + 0xBC`
 block; the 8 DLL setup rows that do not rebuild (unused by the bank).

@@ -93,7 +93,7 @@ Plasma weapons and the laser have no magazine (they run on a battery, not read).
 | 0x88 | block | unknown (1 on laser, rocket, brute shot, needler; 3 on plasma pistol and spiker), not read | |
 | 0x94 | i16 | damage reporting kind; equals the projectile's own at proj +0x1A8 | AR 16, sniper 14, magnum 5 |
 | 0x98 | tag ref | **projectile** (`proj`) | class `proj` on every barrel |
-| 0x128 | block | firing effects (`effe` per shot count), not read | AR: one element, `assault_rifle\fx\firing` |
+| 0x128 | block | firing effects, 0x80 bytes: the firing and empty effects (`weapon-sounds.md` 1) | AR: one element, `assault_rifle\fx\firing` |
 
 ## 6. Projectile (`proj`) and damage effect (`jpt!`)
 
@@ -221,5 +221,5 @@ zanzibar 44 and 32; sandbox 17 and 16.
 4. The `right_hand` marker's rotation is applied as stored (the same convention as node
    quaternions, verified for nodes only). Holding was checked for position (origin = grip), not
    yet seen on screen with an animated Spartan.
-5. Melee damage, heat and battery, aim assist, firing effects and sounds, and the game-type
-   bytes of the placements are not read.
+5. Melee damage, heat and battery, aim assist and the game-type bytes of the placements are not
+   read. Firing effects and sounds are in `weapon-sounds.md`.

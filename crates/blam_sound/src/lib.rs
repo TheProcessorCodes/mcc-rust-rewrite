@@ -20,6 +20,7 @@
 pub mod fsb;
 pub mod tags;
 pub mod vorbis;
+pub mod weapons;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
