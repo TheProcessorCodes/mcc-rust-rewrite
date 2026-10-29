@@ -90,6 +90,7 @@ const BIKE: &[[&str; 2]] = &[
     ["left trigger", "brake"],
     ["A (hold)", "back up"],
     ["Y", "stand the bike back up"],
+    ["d-pad up (G)", "jump off on foot, keeping the bike's speed"],
     ["View / Back", "get off the bike"],
     ["0 (keyboard)", "physics tuning menu"],
     ["Start", "pause"],
@@ -108,6 +109,7 @@ const SKATE: &[[&str; 2]] = &[
     ["A or X", "get up after a bail"],
     ["off the board: X", "jump"],
     ["off the board: LT / RT", "drop / throw the board"],
+    ["d-pad up (G)", "jump off on foot, keeping the board's speed"],
     ["click both sticks", "back to flying"],
     ["Start", "pause"],
 ];

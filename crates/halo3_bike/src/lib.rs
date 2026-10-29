@@ -13,6 +13,7 @@
 //! | LT | S | brake |
 //! | A (hold) | Space (hold) | back up, to 10 mph |
 //! | Y | R | stand the bike back up |
+//! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
@@ -37,7 +38,7 @@ use blam_geometry::collision::surface_flags;
 
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{RiderPose, Skating, assets_root};
+use halo3_core::skate::{Bail, Dismount, RiderPose, Skating, assets_root, bail_pressed};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Bike, Controls, World};
@@ -64,6 +65,7 @@ impl Plugin for BikePlugin {
         app.init_resource::<Riding>()
             .init_resource::<AutoStart>()
             .init_resource::<StickPool>()
+            .init_resource::<Dismount>()
             .add_plugins(tune::TunePlugin)
             .add_systems(Startup, setup)
             .add_systems(
@@ -184,6 +186,7 @@ fn ride(
     mut commands: Commands,
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
+    mut dismount: ResMut<Dismount>,
     input: Option<Res<BikeInput>>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
     fallback: Option<Res<halo3_core::falls::FallbackSpot>>,
@@ -256,6 +259,19 @@ fn ride(
         rider.skated = 0.0;
         rider.bike = true;
         commands.entity(camera).insert(Skating);
+    }
+    // Jumping off onto foot, keeping the bike's momentum.
+    if riding.neutral.is_none()
+        && bail_pressed(&keys, pad)
+        && let Some(bike) = riding.bike.take()
+    {
+        rider.bike = false;
+        rider.active = false;
+        rider.bones.clear();
+        rider.camera = None;
+        commands.entity(camera).remove::<Skating>();
+        dismount.0 = Some(Bail::new(bike.position, bike.velocity, &transform));
+        return;
     }
     let Some(bike) = riding.bike.as_mut() else {
         return;

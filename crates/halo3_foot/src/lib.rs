@@ -3,7 +3,8 @@
 //! the skeleton `halo3_rider` draws).
 //!
 //! F (or the d-pad's up) drops him on the ground under the camera and F
-//! again goes back to flying. The camera sits over his right shoulder; T
+//! again goes back to flying. G (or the d-pad's up) while skating or on the
+//! bike jumps off onto foot, keeping the ride's speed (`Dismount`). The camera sits over his right shoulder; T
 //! (or the d-pad's down) puts it in his eyes.
 //!
 //! | controller | keyboard and mouse | |
@@ -34,7 +35,7 @@ use halo3_bike::physics::World;
 use halo3_bike::pose::Rig;
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{RiderPose, Skating, assets_root};
+use halo3_core::skate::{Dismount, RiderPose, Skating, assets_root};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Controls, Spartan};
@@ -62,6 +63,7 @@ impl Plugin for FootPlugin {
         app.init_resource::<OnFoot>()
             .init_resource::<FootTuning>()
             .init_resource::<AutoStart>()
+            .init_resource::<Dismount>()
             .add_systems(Startup, setup)
             .add_systems(Update, (walk.run_if(halo3_core::pause::running), show_status).chain());
     }
@@ -141,7 +143,7 @@ fn cursor_grabbed(windows: &Query<&CursorOptions, With<PrimaryWindow>>) -> bool 
 pub fn walk(
     mut commands: Commands,
     mut foot: ResMut<OnFoot>,
-    mut auto: ResMut<AutoStart>,
+    (mut auto, mut dismount): (ResMut<AutoStart>, ResMut<Dismount>),
     input: Option<Res<halo3_bike::BikeInput>>,
     tuning: Res<FootTuning>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
@@ -168,7 +170,7 @@ pub fn walk(
 
     // The world follows the loaded zone set.
     let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
-    let wanted = foot.spartan.is_some() || toggle || auto.0.is_some();
+    let wanted = foot.spartan.is_some() || toggle || auto.0.is_some() || dismount.0.is_some();
     if wanted && foot.mask != Some(mask) {
         foot.world = Some(halo3_bike::build_world(&input.0, mask));
         foot.mask = Some(mask);
@@ -203,6 +205,18 @@ pub fn walk(
         // Screenshot walks are shot over the shoulder, to see the body.
         foot.first_person = foot.held.is_none();
         commands.entity(camera).insert(Skating);
+    } else if let Some(bail) = dismount.0.take() {
+        // Off the board or the bike: he jumps clear, carrying its momentum,
+        // still looking where the ride's camera looked.
+        let mut s = Spartan::new(bail.position + Vec3::Y * 0.1, bail.yaw + std::f32::consts::PI);
+        s.velocity = bail.velocity + Vec3::Y * tuning.0.jump;
+        s.jumped = true;
+        start!(s, bail.yaw);
+        foot.pitch = bail.pitch.clamp(-1.45, 1.45);
+        foot.held = None;
+        commands.entity(camera).insert(Skating);
+        let v = bail.velocity;
+        info!("on foot: jumped off at {:.1} m/s", Vec2::new(v.x, v.z).length());
     } else if toggle {
         if foot.spartan.take().is_some() {
             rider.foot = false;
@@ -221,7 +235,11 @@ pub fn walk(
             return;
         }
         if rider.active {
-            warn!("on foot: get off the board or the bike first (J / B)");
+            // The d-pad's up is also the board's and the bike's jump off
+            // (`Dismount`), which they handle.
+            if keys.just_pressed(KeyCode::KeyF) {
+                warn!("on foot: G jumps off the board or the bike");
+            }
             return;
         }
         let s = Spartan::dropped(world, transform.translation, fly.yaw + std::f32::consts::PI);

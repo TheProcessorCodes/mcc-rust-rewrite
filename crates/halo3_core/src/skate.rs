@@ -69,6 +69,42 @@ impl Default for RiderPose {
 #[derive(Resource, Default)]
 pub struct Respawn(pub Option<(Vec3, f32)>);
 
+/// The rider jumping off the board or the bike onto his feet, keeping the
+/// ride's momentum: set by `halo3_skate` / `halo3_bike` as the ride ends,
+/// taken by `halo3_foot`.
+#[derive(Resource, Default)]
+pub struct Dismount(pub Option<Bail>);
+
+/// Where the rider left the ride, in the renderer frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Bail {
+    /// His feet, metres.
+    pub position: Vec3,
+    /// The ride's velocity, m/s.
+    pub velocity: Vec3,
+    /// Where the camera looked: `FlyCamera` yaw and pitch.
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl Bail {
+    /// From the view camera at the moment of the bail.
+    pub fn new(position: Vec3, velocity: Vec3, view: &Transform) -> Bail {
+        let f = view.forward().as_vec3();
+        Bail {
+            position,
+            velocity,
+            yaw: (-f.x).atan2(-f.z),
+            pitch: f.y.clamp(-1.0, 1.0).asin(),
+        }
+    }
+}
+
+/// The bail button, the same while skating and riding: G, or the d-pad's up.
+pub fn bail_pressed(keys: &ButtonInput<KeyCode>, pad: Option<&Gamepad>) -> bool {
+    keys.just_pressed(KeyCode::KeyG) || pad.is_some_and(|p| p.just_pressed(GamepadButton::DPadUp))
+}
+
 /// Marks the camera while the skate engine drives it.
 #[derive(Component)]
 pub struct Skating;
