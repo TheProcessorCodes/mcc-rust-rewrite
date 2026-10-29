@@ -41,33 +41,70 @@ pub struct Tuning {
     pub crouch_height: f32,
     /// Speed while crouched, as a share of running.
     pub crouch_speed: f32,
+    /// Seconds to crouch or stand.
+    pub crouch_time: f32,
     /// Eye height standing and crouched.
     pub stand_eye: f32,
     pub crouch_eye: f32,
 }
 
 impl Default for Tuning {
+    /// Valhalla's numbers (`blam movement riverworld`), for when the map's
+    /// own cannot be read.
     fn default() -> Self {
-        // Halo 3's player numbers in world units, until the map's own are
-        // read (`docs/format/movement.md`).
-        let gravity = 1.0 * WU * 4.171_9;
-        let jump_height = 0.36 * WU;
         Tuning {
             forward: 2.25 * WU,
             backward: 2.0 * WU,
             sideways: 2.0 * WU,
-            ground_accel: 2.25 * WU / 0.12,
-            air_accel: 2.25 * WU / 0.6,
-            jump: (2.0 * gravity * jump_height).sqrt(),
+            ground_accel: 9.6 * WU,
+            air_accel: 1.05 * WU,
+            jump: 3.08 * WU,
+            gravity: blam_geometry::movement::GRAVITY * WU,
+            max_slope: 50f32.to_radians().cos(),
+            step: STEP,
+            radius: 0.175 * WU,
+            stand_height: 0.725 * WU,
+            crouch_height: 0.5 * WU,
+            crouch_speed: 0.9 / 2.25,
+            crouch_time: 0.2,
+            stand_eye: 0.62 * WU,
+            crouch_eye: 0.45 * WU,
+        }
+    }
+}
+
+/// The tallest ledge walked up without a jump, metres. Halo has no such
+/// number: its capsule's round bottom rides up kerbs and stairs. This is
+/// our own choice (`docs/format/movement.md`).
+const STEP: f32 = 0.45;
+
+impl Tuning {
+    /// The map's own player numbers (`blam_geometry::movement`).
+    /// `HALO3_JUMP=<metres>` sets the jump height instead of the tag's
+    /// jump speed.
+    pub fn from_movement(m: &blam_geometry::Movement) -> Tuning {
+        let gravity = m.gravity * WU;
+        let mut jump = m.jump_velocity * WU;
+        if let Some(h) = std::env::var("HALO3_JUMP").ok().and_then(|s| s.parse::<f32>().ok()).filter(|h| *h > 0.0) {
+            jump = (2.0 * gravity * h).sqrt();
+        }
+        Tuning {
+            forward: m.run_forward * WU,
+            backward: m.run_backward * WU,
+            sideways: m.run_sideways * WU,
+            ground_accel: m.run_acceleration * WU,
+            air_accel: m.airborne_acceleration * WU,
+            jump,
             gravity,
-            max_slope: 46f32.to_radians().cos(),
-            step: 0.45,
-            radius: 0.4,
-            stand_height: 2.1,
-            crouch_height: 1.45,
-            crouch_speed: 0.5,
-            stand_eye: 1.9,
-            crouch_eye: 1.3,
+            max_slope: m.max_slope_angle.cos(),
+            step: STEP,
+            radius: m.radius * WU,
+            stand_height: m.height_standing * WU,
+            crouch_height: m.height_crouching * WU,
+            crouch_speed: m.crouch_forward / m.run_forward.max(1e-3),
+            crouch_time: m.crouch_transition_time.max(0.05),
+            stand_eye: m.standing_camera_height * WU,
+            crouch_eye: m.crouching_camera_height * WU,
         }
     }
 }
@@ -216,10 +253,10 @@ impl Spartan {
             let top = self.position + Vec3::Y * self.spheres(t.stand_height)[2];
             world.sphere(candidates, top, t.radius * 0.95, &mut self.contacts);
             if self.contacts.iter().all(|(n, _)| n.y > -0.2) {
-                self.crouch = (self.crouch - dt / 0.15).max(want);
+                self.crouch = (self.crouch - dt / t.crouch_time).max(want);
             }
         } else {
-            self.crouch = (self.crouch + dt / 0.15).min(want);
+            self.crouch = (self.crouch + dt / t.crouch_time).min(want);
         }
 
         // Running: the stick in his facing, each axis at its own top speed.
@@ -438,7 +475,7 @@ mod tests {
         let dt = 1.0 / 60.0;
         s.step(&w, Controls { jump: true, ..default() }, dt);
         assert!(!s.grounded);
-        for _ in 0..120 {
+        for _ in 0..180 {
             s.step(&w, Controls::default(), dt);
             peak = peak.max(s.position.y);
         }

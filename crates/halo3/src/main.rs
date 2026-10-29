@@ -85,6 +85,7 @@ fn resolve_map(arg: &str) -> PathBuf {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut foot_tuning = None;
     let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
@@ -169,6 +170,19 @@ fn main() -> anyhow::Result<()> {
                 Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
             }
             let chief = rider::load_chief(cache);
+            match blam_geometry::movement::read(cache) {
+                Ok(m) => {
+                    eprintln!(
+                        "on foot: {} runs {:.2} wu/s, jumps {:.2} wu/s ({:.2} wu high)",
+                        m.biped,
+                        m.run_forward,
+                        m.jump_velocity,
+                        m.jump_height()
+                    );
+                    foot_tuning = Some(foot::physics::Tuning::from_movement(&m));
+                }
+                Err(e) => eprintln!("on foot: no player numbers ({e}); using Valhalla's"),
+            }
             let sky = world::sky::load(cache, &scene);
             let water = world::water::load(cache, &scene);
             (scene, textures, chief, sky, water, Some(cache))
@@ -271,6 +285,9 @@ fn main() -> anyhow::Result<()> {
         if !collision.triangles.is_empty() {
             app.insert_resource(bike::BikeInput(collision))
                 .add_plugins((bike::BikePlugin, foot::FootPlugin));
+            if let Some(t) = foot_tuning {
+                app.insert_resource(foot::FootTuning(t));
+            }
             // `--foot`: start on foot at the start spawn.
             if !shot_mode
                 && args.iter().any(|a| a == "--foot")

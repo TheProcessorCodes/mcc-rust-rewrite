@@ -51,11 +51,16 @@ impl AutoStart {
     }
 }
 
+/// How the Spartan moves: the map's own player numbers, read by `main`.
+#[derive(Resource, Default, Clone, Copy)]
+pub struct FootTuning(pub physics::Tuning);
+
 pub struct FootPlugin;
 
 impl Plugin for FootPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<OnFoot>()
+            .init_resource::<FootTuning>()
             .init_resource::<AutoStart>()
             .add_systems(Startup, setup)
             .add_systems(Update, (walk.run_if(crate::pause::running), show_status).chain());
@@ -87,11 +92,6 @@ pub struct OnFoot {
 }
 
 impl OnFoot {
-    /// The collision he walks on, once built.
-    pub fn world(&self) -> Option<&World> {
-        self.world.as_ref()
-    }
-
     /// Where the camera looks.
     pub fn aim_rotation(&self) -> Quat {
         Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0)
@@ -130,6 +130,7 @@ fn walk(
     mut foot: ResMut<OnFoot>,
     mut auto: ResMut<AutoStart>,
     input: Option<Res<crate::bike::BikeInput>>,
+    tuning: Res<FootTuning>,
     kill: Option<Res<crate::falls::KillZones>>,
     water: Option<Res<crate::swim::WaterWorld>>,
     fallback: Option<Res<crate::swim::FallbackSpot>>,
@@ -163,20 +164,23 @@ fn walk(
         return;
     };
 
-    let start = |foot: &mut OnFoot, rider: &mut RiderPose, spartan: Spartan, yaw: f32| {
-        foot.spartan = Some(spartan);
-        foot.yaw = yaw;
-        foot.pitch = 0.0;
-        foot.gait = Gait::default();
-        foot.eye_lift = None;
-        foot.boom = 0.0;
-        rider.skated = 0.0;
-        rider.foot = true;
-    };
+    // Fields one by one: `world` borrows `foot.world` meanwhile.
+    macro_rules! start {
+        ($spartan:expr, $yaw:expr) => {{
+            foot.spartan = Some($spartan);
+            foot.yaw = $yaw;
+            foot.pitch = 0.0;
+            foot.gait = Gait::default();
+            foot.eye_lift = None;
+            foot.boom = 0.0;
+            rider.skated = 0.0;
+            rider.foot = true;
+        }};
+    }
     if let Some((position, yaw)) = auto.0.take() {
         let cam_yaw = camera_yaw_of_halo_yaw(yaw);
         let s = Spartan::dropped(world, to_render(position) + Vec3::Y, cam_yaw + std::f32::consts::PI);
-        start(foot, &mut rider, s, cam_yaw);
+        start!(s, cam_yaw);
         foot.held = std::env::var("HALO3_FOOT_WALK").ok().map(|s| {
             let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
             Vec2::new(v.first().copied().unwrap_or(0.0), v.get(1).copied().unwrap_or(0.0))
@@ -204,13 +208,14 @@ fn walk(
             return;
         }
         let s = Spartan::dropped(world, transform.translation, fly.yaw + std::f32::consts::PI);
-        start(foot, &mut rider, s, fly.yaw);
+        start!(s, fly.yaw);
         foot.held = None;
         commands.entity(camera).insert(Skating);
     }
     let Some(spartan) = foot.spartan.as_mut() else {
         return;
     };
+    spartan.tuning = tuning.0;
 
     // Aim: the mouse while it is held, the right stick.
     let dt = time.delta_secs().min(0.1);
@@ -275,7 +280,6 @@ fn walk(
         foot.eye_lift = None;
     }
     rider.skated += dt;
-    rider.first_person = foot.first_person;
 
     // The gait, in rig metres and his own frame (X left, Y forward).
     let k = rider.scale;
@@ -336,12 +340,18 @@ fn walk(
     let (view, fov) = if foot.first_person {
         (Transform::from_translation(eye).with_rotation(rotation), FIRST_FOV)
     } else {
-        let pivot = eye + Vec3::Y * 0.15;
-        let back = rotation * Vec3::new(0.65, 0.25, 3.2);
-        let dir = back.normalize();
-        let mut boom = back.length();
-        if let Some(hit) = world.raycast_far(pivot, dir, boom + 0.3) {
-            boom = (hit.distance - 0.3).max(0.3);
+        // Out to the right shoulder, then back from there, stopping short
+        // of walls both ways.
+        let head = eye + Vec3::Y * 0.15;
+        let out = rotation * Vec3::new(0.7, 0.3, 0.0);
+        let reach = world
+            .raycast_far(head, out.normalize(), out.length() + 0.25)
+            .map_or(1.0, |hit| ((hit.distance - 0.25) / out.length()).max(0.0));
+        let shoulder = head + out * reach;
+        let dir = rotation * Vec3::Z;
+        let mut boom = 3.2f32;
+        if let Some(hit) = world.raycast_far(shoulder, dir, boom + 0.3) {
+            boom = (hit.distance - 0.3).max(0.0);
         }
         // In fast against a wall, out slowly.
         foot.boom = if boom < foot.boom || foot.boom == 0.0 {
@@ -349,8 +359,10 @@ fn walk(
         } else {
             foot.boom + (boom - foot.boom) * (1.0 - (-4.0 * dt).exp())
         };
-        (Transform::from_translation(pivot + dir * foot.boom).with_rotation(rotation), THIRD_FOV)
+        (Transform::from_translation(shoulder + dir * foot.boom).with_rotation(rotation), THIRD_FOV)
     };
+    // A camera pressed into his helmet sees from his eyes instead.
+    rider.first_person = foot.first_person || view.translation.distance(eye) < 0.8;
     rider.camera = Some((view, fov.to_radians()));
     if rider.drive_camera {
         *transform = view;
