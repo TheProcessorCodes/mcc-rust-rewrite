@@ -37,7 +37,7 @@ use halo3_bike::physics::World;
 use halo3_bike::pose::Rig;
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, Skating, assets_root};
+use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, Skating, assets_root, dpad_up_alone};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Controls, Spartan};
@@ -166,7 +166,7 @@ pub fn walk(
     };
     let foot = &mut *foot;
     let pad = gamepads.iter().next();
-    let toggle = keys.just_pressed(KeyCode::KeyF) || pad.is_some_and(|p| p.just_pressed(B::DPadUp));
+    let toggle = keys.just_pressed(KeyCode::KeyF) || pad.is_some_and(dpad_up_alone);
     // The bike's and the board's own buttons get back on from walking.
     let ride = if keys.just_pressed(KeyCode::KeyB) || pad.is_some_and(|p| p.just_pressed(B::Select)) {
         Some(Ride::Bike)

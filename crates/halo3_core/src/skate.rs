@@ -114,7 +114,13 @@ pub enum Ride {
 
 /// The bail button, the same while skating and riding: G, or the d-pad's up.
 pub fn bail_pressed(keys: &ButtonInput<KeyCode>, pad: Option<&Gamepad>) -> bool {
-    keys.just_pressed(KeyCode::KeyG) || pad.is_some_and(|p| p.just_pressed(GamepadButton::DPadUp))
+    keys.just_pressed(KeyCode::KeyG) || pad.is_some_and(dpad_up_alone)
+}
+
+/// The d-pad's up pressed without LB: LB + up is Skate 3's session marker,
+/// which must not also switch modes.
+pub fn dpad_up_alone(pad: &Gamepad) -> bool {
+    pad.just_pressed(GamepadButton::DPadUp) && !pad.pressed(GamepadButton::LeftTrigger)
 }
 
 /// Marks the camera while the skate engine drives it.
