@@ -70,7 +70,24 @@ impl Plugin for BikePlugin {
                     show_status,
                 )
                     .chain(),
-            );
+            )
+            .add_systems(Update, log_trigger_samples);
+    }
+}
+
+/// Diagnostic: every trigger sample the pad sends, as bevy receives it from
+/// gilrs and before any filtering, with the time since the one before.
+fn log_trigger_samples(
+    mut raw: bevy::ecs::message::MessageReader<bevy::input::gamepad::RawGamepadButtonChangedEvent>,
+    time: Res<Time>,
+    mut last: Local<f64>,
+) {
+    for e in raw.read() {
+        if matches!(e.button, B::RightTrigger2 | B::LeftTrigger2) {
+            let now = time.elapsed_secs_f64();
+            info!("pad sample: {:?} {:.4} (+{:.0} ms)", e.button, e.value, (now - *last) * 1000.0);
+            *last = now;
+        }
     }
 }
 
