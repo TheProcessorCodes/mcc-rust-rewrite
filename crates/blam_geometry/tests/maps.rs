@@ -1041,3 +1041,82 @@ fn sandbox_counts() {
         assert!(p.x.abs() < 140.0 && p.y > -141.0 && p.y < 122.0 && p.z > -142.0 && p.z < 54.0, "rail point {p}");
     }
 }
+
+/// Isolation (`docs/format/reference-numbers.md` 11): a Flood-overgrown
+/// Forerunner yard inside a ring of tall walls, with tunnels and a cave
+/// under it. No water and no kill volume: the walls keep everyone in.
+#[test]
+fn isolation_matches_haloexport() {
+    let Some(path) = map("isolation") else { return };
+    let scene = blam_geometry::load_map(&path).expect("isolation decodes");
+    let c = count(&scene);
+    // 49 clusters with 47 meshes, 391 instances all placed.
+    assert_eq!(c.clusters_placed, 47);
+    assert_eq!(c.instances_placed, 391);
+    assert_eq!(c.cluster_triangles, 18987);
+    assert_eq!(c.instance_triangles, 191321);
+    assert_eq!(c.scenery_triangles, 148112);
+    assert_eq!(c.crate_triangles, 19108);
+    assert_eq!(c.machine_triangles, 3134);
+    assert!(!scene.placements.iter().any(|p| p.kind == Kind::Control), "no controls");
+    // HaloExport left the sky out; ours: 6 placements, 5,748 triangles.
+    assert_eq!(c.sky_triangles, 5748);
+    assert_eq!(scene.materials.len(), 61);
+    let (lo, hi) = scene.bounds.expect("world bounds");
+    assert!((lo.x - -112.74447).abs() < 1e-3 && (hi.x - 112.74448).abs() < 1e-3);
+    assert!((lo.y - -39.311527).abs() < 1e-3 && (hi.y - 43.637577).abs() < 1e-3);
+    assert!((lo.z - -14.824824).abs() < 1e-3 && (hi.z - 47.826878).abs() < 1e-3);
+
+    // The one machine, the Flood door `flood_door_fast` on the lower level
+    // north of the middle, tilted 15 degrees: its three pieces (door, hole,
+    // wound) span what they span in HaloExport's glTF.
+    let mut door = (glam::Vec3::splat(f32::INFINITY), glam::Vec3::splat(f32::NEG_INFINITY));
+    for p in scene.placements.iter().filter(|p| p.kind == Kind::Machine) {
+        let mesh = &scene.meshes[p.mesh as usize];
+        for &i in mesh.parts.iter().flat_map(|part| &part.indices) {
+            let w = p.transform.transform_point3(mesh.positions[i as usize]);
+            door = (door.0.min(w), door.1.max(w));
+        }
+    }
+    let near = |a: glam::Vec3, b: [f32; 3]| (a - glam::Vec3::from(b)).abs().max_element() < 0.02;
+    assert!(near(door.0, [-2.6713, 5.8743, -10.932]), "{door:?}");
+    assert!(near(door.1, [2.6989, 11.2887, -5.72]), "{door:?}");
+
+    // No water anywhere: the green in the cave is the `flood_fog` haze.
+    assert!(!scene.materials.iter().any(|m| m.shader_class == "rmw "));
+
+    let col = &scene.collision;
+    let bsp = col
+        .triangles
+        .iter()
+        .filter(|t| matches!(t.source, blam_geometry::CollisionSource::Bsp(_)))
+        .count();
+    assert_eq!(bsp, 16280);
+    assert_eq!(col.triangles.len() - bsp, 79954);
+    assert_eq!(col.materials.len(), 27);
+
+    // Four trigger volumes and none of them kills: `safe_zone` (the whole
+    // yard, every spawn inside it) and three bird flocks beyond the walls.
+    // Falling is caught by the floor under the world (`falls.rs`).
+    let names: Vec<&str> = scene.trigger_volumes.iter().map(|v| v.name.as_str()).collect();
+    assert_eq!(names, ["safe_zone", "flock0", "flock2", "flock3"]);
+    assert!(!scene.trigger_volumes.iter().any(|v| v.kills()));
+    let safe = &scene.trigger_volumes[0];
+    assert!(scene.spawns.iter().all(|s| safe.contains(s.position)));
+
+    // 91 spawns (84 plain, 7 invisible), all on a floor with room above.
+    assert_eq!(scene.spawns.len(), 91);
+    let invisible = scene.spawns.iter().filter(|s| s.kind == blam_geometry::SpawnKind::RespawnInvisible).count();
+    assert_eq!(invisible, 7);
+    let first = scene.spawns[0].position;
+    assert!((first - glam::Vec3::new(18.818, 1.178, -7.455)).length() < 0.01, "{first}");
+    check_spawns(&scene);
+
+    // Grind rails: about 3,904 (the finder's count moves by one or two from
+    // run to run); none in a kill volume or under water to drop.
+    let (rails, census) = blam_geometry::rails::find_rails(col);
+    assert!((3890..=3915).contains(&census.rails), "{} rails", census.rails);
+    let found = rails.len();
+    let rails = blam_geometry::rails::outside_kill_volumes(rails, &scene.trigger_volumes);
+    assert_eq!(rails.len(), found);
+}

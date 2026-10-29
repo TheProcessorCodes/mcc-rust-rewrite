@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use blam_cache::CacheFile;
 use blam_geometry::Scene;
-use blam_texture::shader::{self, Shader};
+use blam_texture::shader::{self, AnimationKind, Shader};
 use blam_texture::{Blend, Texture, TextureSlot, Xform, bitmap, rgba};
 
 /// How one scene material is drawn.
@@ -244,6 +244,72 @@ fn useful_slot(m: &shader::ShaderMap) -> Option<TextureSlot> {
     })
 }
 
+/// `self_illum_intensity`. When a function of time drives it and the stored
+/// value is 0, the top of the function's range instead: Isolation's energy
+/// walls `plasma_wall_b` and `plasma_wall_c` store 0 and pulse 0 -> 55 (8 s
+/// and 10 s), so drawn at the stored value they never lit, while
+/// `plasma_wall_a`, the same pulse with 55 stored, did. The pulse itself is
+/// not drawn. A stored value other than 0 is kept: on the maps checked it is
+/// usually one end of the function's range, and those glows were matched by
+/// eye at it.
+fn illum_intensity(s: &Shader) -> f32 {
+    let stored = s.param("self_illum_intensity").map_or(1.0, |v| v[0]);
+    match s.animation("self_illum_intensity", AnimationKind::Value) {
+        Some(a) if stored == 0.0 => a.from.max(a.to),
+        _ => stored,
+    }
+}
+
+#[cfg(test)]
+mod intensity_tests {
+    use super::illum_intensity;
+    use blam_texture::Blend;
+    use blam_texture::shader::{Animation, AnimationKind, Shader};
+
+    fn shader(stored: f32, pulse: Option<(f32, f32)>) -> Shader {
+        Shader {
+            tag_index: 0,
+            name: "plasma_wall".into(),
+            class: "rmsh".into(),
+            definition: r"shaders\shader".into(),
+            options: vec![("self_illumination".into(), "plasma".into())],
+            maps: Vec::new(),
+            params: vec![("self_illum_intensity".into(), [stored; 4])],
+            base: None,
+            alpha_map: None,
+            albedo_color: None,
+            blend: Blend::Additive,
+            alpha_test: false,
+            two_sided: false,
+            special: false,
+            terrain: None,
+            animations: pulse
+                .map(|(from, to)| Animation {
+                    argument: "self_illum_intensity".into(),
+                    kind: AnimationKind::Value,
+                    period: 8.0,
+                    from,
+                    to,
+                })
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_pulse_stored_as_zero_glows_at_its_top() {
+        // Isolation's plasma_wall_b: 0 stored, 0 -> 55.
+        assert_eq!(illum_intensity(&shader(0.0, Some((0.0, 55.0)))), 55.0);
+        // plasma_wall_a: 55 stored, the same pulse.
+        assert_eq!(illum_intensity(&shader(55.0, Some((0.0, 55.0)))), 55.0);
+        // Narrows' man cannons: 0.5 stored, 1.5 -> 0.5, kept.
+        assert_eq!(illum_intensity(&shader(0.5, Some((1.5, 0.5)))), 0.5);
+        // Not animated: the stored value, even 0.
+        assert_eq!(illum_intensity(&shader(0.0, None)), 0.0);
+        assert_eq!(illum_intensity(&shader(3.0, None)), 3.0);
+    }
+}
+
 /// A Blinn-Phong power with the lobe width of a roughness.
 fn power_of_roughness(r: f32) -> f32 {
     let r = r.clamp(0.02, 1.0);
@@ -383,7 +449,7 @@ fn surface_look(s: &Shader, fetch: &mut dyn FnMut(&TextureSlot) -> Option<u32>) 
         };
         out.env_tint = rgb("env_tint_color", [1.0; 3]);
     }
-    let intensity = p1("self_illum_intensity", 1.0);
+    let intensity = illum_intensity(s);
     out.illum_colour = [rgb("self_illum_color", [1.0; 3]).map(|x| x * intensity); 3];
     out.illum = match s.option("self_illumination").unwrap_or("off") {
         "off" => Illum::Off,

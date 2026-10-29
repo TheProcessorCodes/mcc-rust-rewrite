@@ -758,3 +758,54 @@ the cove lie `water_edge_breakup` cards (17 triangles, z 3.0..3.8), alpha-tested
 mean 0.14). The two controls `wall_switch` and `wall_switch_on` are the same 36-triangle switch box placed
 at the same spot. Shaders shared with Last Resort (`deadlock_screen`, industrial and medical gear) resolve the
 same way; `medical_decals` is a `rmd ` with `blend_mode multiply`.
+
+## 11. Isolation (`isolation`), added 2026-10-29
+
+HaloExport sidecar `D:\reflex-tools\halo-exports\isolation\halo_export.json` (same build, `MccHalo3U13`)
+against `blam geometry isolation`. Every count matches exactly; `isolation_matches_haloexport` in
+`crates/blam_geometry/tests/maps.rs` pins them.
+
+| item | sidecar | ours |
+|---|---|---|
+| bsps | 1, `levels\multi\isolation\isolation` | same |
+| clusters / with a mesh | 49 / 47 | 49 / 47 |
+| instances / placed | 391 / 391 | 391 / 391 |
+| bounds_wu x / y / z | [-112.74447, 112.74448] / [-39.311527, 43.637577] / [-14.824824, 47.826878] | same (stated sbsp bounds) |
+| triangles: world / instance | 18,987 / 191,321 | same |
+| triangles: scenery / crate / machine / control | 148,112 / 19,108 / 3,134 / none | same |
+| nodes: scenery / crate / machine | 189 / 51 / 1 | 299 / 51 / 9 placements (one per mesh of a multi-mesh object) |
+| machine | `flood_door_fast` (mesh 137), glTF translation (0.102, -29.917, -29.608) m, turned 15 degrees about x | the same three pieces; computed from the glTF primitives they span x -2.671..2.699, y 5.874..11.289, z -10.932..-5.720 wu, and ours span the same. The sidecar's `bounds.machine` box (z -11.11..-5.39) is wider: it seems to box the rotated box, not the vertices |
+| materials | 47 | 61 scene materials: the 47, the sky model's 12 (HaloExport left the sky out) and 2 no placed triangle uses |
+| colour bitmaps | 46 written, 0 missing (`z_null_dark`, `z_invis_lightquad` have none) | 49 decoded, 0 failed (`blam textures`) |
+| water | none | none: no `rmw ` shader |
+| skies | [`levels\multi\isolation\sky\sky`] | 6 sky placements, 5,748 triangles |
+
+Ours only (no sidecar equivalent):
+
+| item | value |
+|---|---|
+| shaders in the sbsp | 43 |
+| sections / with geometry | 149 / 147 |
+| collision | 16,280 BSP triangles, 79,954 instanced from 391 instances, 27 materials; 704 invisible, 832 two-sided. Bounds x -44.2..44.2, y -39.3..43.6, z -11.34..43.5, reaching well past the yard's walls. Up-facing opaque render floors (about 52,000 random samples, one per 0.0625 square wu, up to 50 per triangle) all have collision within 0.3 wu in every cluster; the misses are tree branches, ledges high on the outer wall's fins, the Flood balls and the Flood door (objects have no collision here) and a few scattered samples on the Flood mounds and plates |
+| placed geometry bounds (sky left out) | x -25.567..38.975, y -16.208..19.440, z -11.343..21.325 |
+| spawn points | 91 (84 `respawn_point`, 7 `respawn_point_invisible`), z -11.18..-1.76; each stands on collision less than 0.5 wu over it, with nothing through the body (checked by the test) |
+| start spawn | 0: [18.82, 1.18, -7.46] facing 178 deg, on the lawn at the +x end |
+| trigger volumes | `safe_zone` (corner (-25.68, -15.50, -11.84), 51.8 x 33.3 x 15.5 wu: the yard; every spawn is inside), `flock0`, `flock2`, `flock3` (birds, beyond the walls). No kill volume: the walls keep everyone in, and anything that did get out is caught 20 wu under the lowest collision (z -31.3) |
+| camera fx | exposure -5.06 stops (auto range 0..3), mean irradiance 0.310 -> x3.65 |
+| atmosphere | `levels\multi\isolation\sky\isolation`: world and sky setting `flood_fog` (the green haze in the cave and tunnels) |
+| rails | 39,368 walkable edges, 8,830 lips, 7,907 runs, 3,904 rails (3,902 on another run); none dropped (no kill volume, no water) |
+| lit placements (viewer) | 99 nearest surface, 160 per-pixel, 277 per-vertex, 6 sky; 261 spawn-marker pieces not drawn |
+
+Shaders of note. The Flood growths borrow campaign shaders: `flood_sack` (the pulsing Flood balls,
+`objects\levels\solo\060_floodship\...`) is `material_model organism` with a `subsurface_map`,
+`transparence_map` and `flat_environment_map`; the viewer draws `organism` as diffuse only. The Flood
+door uses `cook_torrance`; `cust_flood_bag` (the mounds) and the `110_hc` flood plates `two_lobe_phong`.
+The energy walls, the glowing slits round the outer wall, are three additive `plasma` shaders
+(`plasma_wall_a/b/c`, sharp band only, thinness 512, colour (0.39, 1, 0.93)) whose
+`self_illum_intensity` pulses 0 -> 55 over 5, 8 and 10 s; `a` stores 55, `b` and `c` store 0 (see
+`docs/format/shaders.md` 11.4). The tunnel lights are `light_crusty_warm/cool` (`simple` self-illum x8)
+with additive `light_cone_warm/cool` beams (`material_model none`, `illum_detail`, base
+`gray_50_percent`) and `z_invis_lightquad` (alpha-tested, no colour map, not drawn). The sky borrows The
+Ark's (`070_waste`) sun, galaxy and nebula bitmaps; its dome (`skydome`) is opaque `gray_50_percent`
+times a scrolling detail map, lit, with an `illum_detail` glow whose map (`skydome_detail2`) is black (mean 0.000), so the
+viewer's sky shader drawing `illum_detail` as a plain map loses nothing there. No decals (`rmd `).

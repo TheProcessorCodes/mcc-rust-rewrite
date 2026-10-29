@@ -782,6 +782,22 @@ contribution 0.2-1.0; Last Resort cliffs (terrain) coefficient 1, power 5-10, ti
 
 The emissive light goes through the same exposure as the lit surface.
 
+**Animated intensity.** `self_illum_intensity` is often driven by a function of time
+(`water.md` 3; `blam shader` lists them under `animations`). The value stored with the shader is
+usually one end of the function's range: Last Resort's `military_equipment_2` stores 18 and runs
+18 -> 30, Narrows' man cannons store 0.5 and run 1.5 -> 0.5, Isolation's `plasma_wall_a` stores 55
+and runs 0 -> 55. Its `plasma_wall_b` and `plasma_wall_c` store **0** and run 0 -> 55 (8 s and
+10 s), so drawn at the stored value two of Isolation's three kinds of energy-wall slit stayed dark.
+The viewer does not animate the value; it keeps the stored one, except that an animated value
+stored as 0 takes the top of its range (`textures.rs` `illum_intensity`). Among the level
+`rmsh` shaders of Valhalla, The Pit, Guardian, Last Resort, High Ground, Narrows, Blackout and
+Isolation, only Isolation's two walls and `020_base`'s `computer_screen_small` (0 -> 1, in
+Isolation's tags but not placed) store 0 while animated.
+
+`material_model organism` (Isolation's Flood balls, `060_floodship\shaders\flood_sack`) adds
+`subsurface_map`, `transparence_map`, `occlusion_parameter_map`, `height_map` and a
+`flat_environment_map`; the viewer draws it as diffuse only.
+
 ### 11.5 What the viewer does with it (`world/shaders/lightmap.wesl`)
 
 With the lightmap decoded at the pixel (`lightmaps.md` 5) giving the SH, the dominant direction

@@ -82,6 +82,16 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       alpha-tested `water_edge_breakup` cards drawn whole round the cove,
       multiply decals (`medical_decals`) lit and exposed. Still off: a hard
       seam where the cove's water ends and the sky's far sea begins.
+- [x] Isolation (`isolation`, 2026-10-29; not built yet, awaiting a build
+      and a playtest): every HaloExport count matches (47 cluster meshes,
+      391 instances, 380,662 triangles with objects, the Flood door where
+      HaloExport put it), 49 of 49 colour bitmaps decode, 91 spawns all on
+      the ground and clear of walls, no collision holes under the render
+      floors, no kill volume (the walls keep everyone in), about 3,900
+      rails; pinned by `cargo test` (`docs/format/reference-numbers.md`
+      11). Fixed on the way: two of the three energy-wall glows store an
+      intensity of 0 and pulse up to 55, and drew nothing; they now glow at
+      the top of the pulse. The Flood's `organism` shader is drawn diffuse.
 - [x] Milestone 1c: scenery, crates, machines, controls and the sky placed
       from the scenario, again matching HaloExport's triangle counts exactly.
 - [x] Textures (built, awaiting a playtest): every material draws its real
