@@ -43,3 +43,13 @@ far, the paths on disk and the open decision.
   timeout or run it in the background. Notices also go to `.dev\build-gate.log`.
   `.dev\` is dev-only and not in git (listed in `.git/info/exclude`); if the script is
   missing, build normally.
+- **Every checkout builds into the main checkout's `target\`**, so bevy is compiled once.
+  From inside the checkout (main or worktree) run
+  `& 'D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\.dev\build-shared.ps1'`
+  (default `cargo build -p halo3`; pass other cargo arguments, e.g. `test -p halo3_bike`).
+  It goes through the gate, rebuilds our crates from this checkout when the last build came
+  from another one, and copies the exe to that checkout's `out\bin\halo3.exe`. Hand the user
+  that `out\bin` path to play, never `target\debug\halo3.exe`, which belongs to whichever
+  checkout built last. Don't point plain cargo at the shared `target\`: the shared target
+  keeps one copy of each of our crates, and without the script cargo can reuse another
+  checkout's copy without noticing.
