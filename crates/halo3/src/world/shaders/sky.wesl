@@ -24,7 +24,9 @@ struct SkyParams {
     xform_detail3: vec4<f32>,
     xform_illum: vec4<f32>,
     albedo_colour: vec4<f32>,
-    // Self-illumination colour times intensity; w > 0 when present.
+    // Self-illumination colour times intensity; w: 0 none, 1 from the
+    // illum map, 2 from the albedo (`from_diffuse`), 3 plasma (the illum
+    // slot holds the alpha mask), 4 plasma times the overlay in detail3.
     illum_colour: vec4<f32>,
     // x: albedo mode, y: 1 for additive blending (no inscatter),
     // z: 1 when lit (diffuse), w: exposure.
@@ -42,8 +44,12 @@ struct SkyParams {
     // x: sea level, y: Rayleigh height, z: Mie height, w: distance bias.
     heights: vec4<f32>,
     // x: max fog thickness, y: atmosphere on (1) or off (0),
-    // z: which of detail, detail2, detail3 are present (bits 0, 1, 2).
+    // z: which of detail, detail2, detail3 are present (bits 0, 1, 2),
+    // w: alpha test cutoff (0: none).
     extra: vec4<f32>,
+    // Halogram edge fade: edge tint (w: 1 when on), centre tint (w: power).
+    edge_tint: vec4<f32>,
+    centre_tint: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> sky: SkyParams;
@@ -178,12 +184,32 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let pbr_input = pbr_input_from_standard_material(in, is_front);
     let exposure = sky.mode.w;
     let a = albedo(in.uv);
+    if sky.extra.w > 0.0 && a.a < sky.extra.w {
+        discard;
+    }
     var rgb = a.rgb;
     if sky.mode.z > 0.5 {
         rgb = rgb * sky.light.rgb;
     }
-    if sky.illum_colour.w > 0.0 {
+    let illum_mode = u32(sky.illum_colour.w + 0.5);
+    if illum_mode == 1u {
         rgb = rgb + tex(illum_map, sky.xform_illum, in.uv).rgb * sky.illum_colour.rgb * exposure;
+    } else if illum_mode == 2u {
+        rgb = rgb + a.rgb * sky.illum_colour.rgb * exposure;
+    } else if illum_mode >= 3u {
+        // Plasma: the mask's alpha (its colour channels are black), through
+        // the multiply overlay when there is one.
+        var glow = tex(illum_map, sky.xform_illum, in.uv).a * sky.illum_colour.rgb;
+        if illum_mode == 4u {
+            glow = glow * tex(detail_map3, sky.xform_detail3, in.uv).rgb;
+        }
+        rgb = rgb + glow * exposure;
+    }
+    if sky.edge_tint.w > 0.5 {
+        // Edge-on (|n.v| near 0) takes the edge tint, face-on the centre tint.
+        let v = normalize(view.world_position - in.world_position.xyz);
+        let facing = pow(saturate(abs(dot(normalize(in.world_normal), v))), sky.centre_tint.w);
+        rgb = rgb * mix(sky.edge_tint.rgb, sky.centre_tint.rgb, facing);
     }
     if sky.extra.y > 0.5 {
         let s = scatter(to_halo(view.world_position), to_halo(in.world_position.xyz));

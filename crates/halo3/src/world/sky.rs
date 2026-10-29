@@ -61,6 +61,21 @@ impl Albedo {
     }
 }
 
+/// A sky shader's self-illumination, as the fragment shader switches on it
+/// (`illum_colour.w`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IllumMode {
+    Off = 0,
+    /// The self-illumination map's colour.
+    Map = 1,
+    /// `from_diffuse`: the albedo itself.
+    FromAlbedo = 2,
+    /// `plasma`: the alpha mask's alpha.
+    Plasma = 3,
+    /// `plasma` through a multiply overlay (in the detail3 slot).
+    PlasmaOverlay = 4,
+}
+
 /// A bitmap and its tiling.
 #[derive(Clone, Copy, Debug)]
 pub struct Map {
@@ -78,6 +93,12 @@ pub struct SkyLook {
     pub albedo_colour: [f32; 4],
     /// Self-illumination colour times intensity.
     pub illum: Option<[f32; 3]>,
+    /// Where the glow comes from.
+    pub illum_mode: IllumMode,
+    /// Halogram `edge_fade simple`: edge tint, centre tint and power; the
+    /// colour runs from the edge tint where the surface is seen edge-on to
+    /// the centre tint where it faces the camera.
+    pub edge_fade: Option<([f32; 3], [f32; 3], f32)>,
     pub blend: Blend,
     /// Lit by the sky light (`material_model` other than none).
     pub lit: bool,
@@ -93,6 +114,8 @@ pub struct SkyData {
     pub looks: HashMap<u32, SkyLook>,
     pub bitmaps: HashMap<u32, Texture>,
     pub atmosphere: Option<Atmosphere>,
+    /// [`sky_light_scale`] of the map.
+    pub light_scale: f32,
 }
 
 #[derive(Resource, Default)]
@@ -134,24 +157,55 @@ fn look_of(s: &Shader) -> SkyLook {
         s.map(usage)
             .and_then(|m| Some(Map { bitmap: m.bitmap?, xform: m.xform }))
     };
-    let overlay = map("detail_map_overlay");
-    let illum_on = s.option("self_illumination").is_some_and(|o| o != "off");
-    let illum = illum_on.then(|| {
-        let c = linear(s.param("self_illum_color").unwrap_or([1.0; 4]));
-        let k = s.param("self_illum_intensity").map_or(1.0, |v| v[0]);
-        [c[0] * k, c[1] * k, c[2] * k]
+    let mut overlay = map("detail_map_overlay").or_else(|| map("detail_map3"));
+    let k = s.param("self_illum_intensity").map_or(1.0, |v| v[0]);
+    let (illum_mode, illum_map, illum) = match s.option("self_illumination").unwrap_or("off") {
+        "off" => (IllumMode::Off, None, None),
+        "from_diffuse" => {
+            let c = linear(s.param("self_illum_color").unwrap_or([1.0; 4]));
+            (IllumMode::FromAlbedo, None, Some([c[0] * k, c[1] * k, c[2] * k]))
+        }
+        // Halogram plasma (Blackout's aurora): the alpha mask's alpha times
+        // the mean of the three band colours, through the multiply overlay
+        // (the crawling noise bands are not drawn), as the world does.
+        "plasma" => {
+            let bands = ["color_medium", "color_wide", "color_sharp"].map(|n| linear(s.param(n).unwrap_or([0.0; 4])));
+            let mut c = [0, 1, 2].map(|i| bands.iter().map(|b| b[i]).sum::<f32>() / 3.0 * k);
+            if s.option("overlay") == Some("multiply") {
+                overlay = map("overlay_map");
+                let tint = linear(s.param("overlay_tint").unwrap_or([1.0; 4]));
+                let strength = s.param("overlay_intensity").map_or(1.0, |v| v[0]);
+                c = [0, 1, 2].map(|i| c[i] * tint[i] * strength);
+            }
+            let mask = map("alpha_mask_map");
+            let mode = if overlay.is_some() { IllumMode::PlasmaOverlay } else { IllumMode::Plasma };
+            (if mask.is_some() { mode } else { IllumMode::Off }, mask, Some(c))
+        }
+        // A map-driven glow without its map adds nothing: the empty slot
+        // reads white, which lit Blackout's cloud domes up like day.
+        _ => match map("self_illum_map") {
+            Some(m) => {
+                let c = linear(s.param("self_illum_color").unwrap_or([1.0; 4]));
+                (IllumMode::Map, Some(m), Some([c[0] * k, c[1] * k, c[2] * k]))
+            }
+            None => (IllumMode::Off, None, None),
+        },
+    };
+    let rgb = |name: &str, default: f32| s.param(name).map_or([default; 3], |v| [v[0], v[1], v[2]]);
+    let edge_fade = s.option("edge_fade").is_some_and(|o| o != "none").then(|| {
+        (
+            rgb("edge_fade_edge_tint", 0.0),
+            rgb("edge_fade_center_tint", 1.0),
+            s.param("edge_fade_power").map_or(1.0, |v| v[0]),
+        )
     });
     SkyLook {
+        edge_fade,
         albedo,
-        maps: [
-            map("base_map"),
-            map("detail_map"),
-            map("detail_map2"),
-            overlay.or_else(|| map("detail_map3")),
-            if illum_on { map("self_illum_map") } else { None },
-        ],
+        maps: [map("base_map"), map("detail_map"), map("detail_map2"), overlay, illum_map],
         albedo_colour: linear(s.param("albedo_color").unwrap_or([1.0; 4])),
-        illum,
+        illum: illum.filter(|_| illum_mode != IllumMode::Off),
+        illum_mode,
         blend: s.blend,
         lit: s.option("material_model").is_none_or(|m| m != "none"),
         diffuse: s.param("diffuse_coefficient").map_or(1.0, |v| v[0]),
@@ -162,7 +216,10 @@ fn look_of(s: &Shader) -> SkyLook {
 /// scenario's atmosphere. Failures are logged; those materials keep the
 /// plain drawing.
 pub fn load(cache: &CacheFile, scene: &Scene) -> SkyData {
-    let mut out = SkyData::default();
+    let mut out = SkyData {
+        light_scale: sky_light_scale(&scene.name),
+        ..SkyData::default()
+    };
     match blam_geometry::atmosphere::read(cache) {
         Ok(a) => out.atmosphere = a,
         Err(e) => eprintln!("atmosphere: {e}; no haze"),
@@ -249,9 +306,14 @@ pub struct SkyShading {
     #[uniform(100)]
     pub heights: Vec4,
     /// x: max fog thickness, y: atmosphere on, z: detail maps present
-    /// (bits 0-2).
+    /// (bits 0-2), w: alpha test cutoff (0: no alpha test).
     #[uniform(100)]
     pub extra: Vec4,
+    /// Halogram edge fade: edge tint (w: 1 when on) and centre tint (w: power).
+    #[uniform(100)]
+    pub edge_tint: Vec4,
+    #[uniform(100)]
+    pub centre_tint: Vec4,
     #[texture(101)]
     #[sampler(102)]
     pub base: Option<Handle<Image>>,
@@ -281,10 +343,11 @@ fn v3(c: [f32; 3], w: f32) -> Vec4 {
     Vec4::new(c[0], c[1], c[2], w)
 }
 
-/// Fills in the atmosphere part of a [`SkyShading`].
+/// Fills in the atmosphere part of a [`SkyShading`] (keeping the detail
+/// bits and the alpha cutoff in `extra.zw`).
 fn set_atmosphere(s: &mut SkyShading, a: Option<&AtmosphereSetting>) {
     let Some(a) = a else {
-        s.extra = Vec4::new(0.0, 0.0, 0.0, 0.0);
+        s.extra = Vec4::new(0.0, 0.0, s.extra.z, s.extra.w);
         return;
     };
     s.sun_dir = a.sun_direction().extend(a.mie_g);
@@ -294,7 +357,7 @@ fn set_atmosphere(s: &mut SkyShading, a: Option<&AtmosphereSetting>) {
     s.beta_m_theta = v3(a.beta_m_theta, 0.0);
     s.beta_p_theta = v3(a.beta_p_theta, 0.0);
     s.heights = Vec4::new(a.sea_level, a.rayleigh_height, a.mie_height, a.distance_bias);
-    s.extra = Vec4::new(a.max_fog_thickness.max(1.0), 1.0, 0.0, 0.0);
+    s.extra = Vec4::new(a.max_fog_thickness.max(1.0), 1.0, s.extra.z, s.extra.w);
 }
 
 pub struct SkyPlugin;
@@ -314,10 +377,31 @@ impl Plugin for SkyPlugin {
 /// radius, 7,560 world units.
 const HORIZON_METRES: f32 = 23_000.0;
 
+/// Maps whose lit sky surfaces take a fraction of the daylight below
+/// (`sky-and-atmosphere.md` section 4). Halo's own source of sky light is not
+/// decoded, and nothing found in the tags (atmosphere sun, camera fx,
+/// lightmap) tells a night sky from a day one on every map, so the night
+/// maps are listed. Blackout (`lockout`): its sky dome is a constant white
+/// lit surface and its sea a lit plane; in daylight both came out white.
+const NIGHT_SKIES: &[(&str, f32)] = &[("lockout", 0.1)];
+
+/// The sky light scale of a map ([`NIGHT_SKIES`], else 1).
+pub fn sky_light_scale(map: &str) -> f32 {
+    NIGHT_SKIES
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(map))
+        .map_or(1.0, |(_, k)| *k)
+}
+
 /// Light on lit sky surfaces (clouds, distant mountains): the sunlit ground
-/// irradiance of a clear Valhalla texel, exposed like the world.
-fn sky_light(exposure: f32) -> Vec3 {
-    lighting::default_light().irradiance(Vec3::Z) * exposure
+/// irradiance of a clear Valhalla texel, exposed like the world, times the
+/// map's scale. `HALO3_SKY_LIGHT` overrides the scale.
+fn sky_light(exposure: f32, scale: f32) -> Vec3 {
+    let scale = std::env::var("HALO3_SKY_LIGHT")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .unwrap_or(scale);
+    lighting::default_light().irradiance(Vec3::Z) * exposure * scale
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -354,7 +438,7 @@ fn swap_sky_materials(
         let s = a.sky().map_or("-", |s| s.name.as_str());
         info!("atmosphere {}: world haze {w:?}, sky {s:?}", a.tag_name);
     }
-    let light = sky_light(exposure);
+    let light = sky_light(exposure, data.light_scale);
     let mut swapped = 0;
     for (entity, batch, standard_handle) in &batches {
         let Some(look) = data.looks.get(&batch.0) else {
@@ -395,7 +479,9 @@ fn swap_sky_materials(
             xform_detail3: xform(maps[3].as_ref()),
             xform_illum: xform(maps[4].as_ref()),
             albedo_colour: Vec4::from_array(look.albedo_colour),
-            illum_colour: look.illum.map_or(Vec4::ZERO, |c| v3(c, 1.0)),
+            illum_colour: look.illum.map_or(Vec4::ZERO, |c| v3(c, look.illum_mode as u32 as f32)),
+            edge_tint: look.edge_fade.map_or(Vec4::ZERO, |(e, _, _)| v3(e, 1.0)),
+            centre_tint: look.edge_fade.map_or(Vec4::ONE, |(_, c, p)| v3(c, p)),
             mode: Vec4::new(
                 look.albedo as u32 as f32,
                 (look.blend == Blend::Additive) as u32 as f32,
@@ -410,16 +496,25 @@ fn swap_sky_materials(
             illum: image(maps[4].as_ref()),
             ..default()
         };
-        set_atmosphere(&mut shading, atmosphere.and_then(Atmosphere::sky));
         // Empty detail slots read as neutral grey in the shader (a missing
         // texture binds white, which a detail would scale by 4.6).
         shading.extra.z = (shading.detail.is_some() as u32
             | (shading.detail2.is_some() as u32) << 1
             | (shading.detail3.is_some() as u32) << 2) as f32;
+        // Alpha-tested sky cards (High Ground's `water_edge_breakup` round
+        // the island) cut by the albedo's alpha; drawn whole they were white
+        // sheets on the sea. The base map stays on the StandardMaterial so
+        // bevy's depth prepass (maps with water) cuts the same way.
+        let mask = match base.alpha_mode {
+            AlphaMode::Mask(c) => Some(c),
+            _ => None,
+        };
+        shading.extra.w = mask.unwrap_or(0.0);
+        set_atmosphere(&mut shading, atmosphere.and_then(Atmosphere::sky));
         let material = SkyMaterial {
             base: StandardMaterial {
                 base_color: Color::WHITE,
-                base_color_texture: None,
+                base_color_texture: if mask.is_some() { base.base_color_texture.clone() } else { None },
                 unlit: true,
                 fog_enabled: false,
                 ..base
@@ -458,9 +553,7 @@ fn update_sky_air(
     let setting = sky_setting(&haze, &air);
     for handle in &batches {
         if let Some(mut m) = materials.get_mut(handle) {
-            let detail_bits = m.extension.extra.z;
             set_atmosphere(&mut m.extension, setting);
-            m.extension.extra.z = detail_bits;
         }
     }
 }
@@ -523,6 +616,9 @@ fn update_haze(
     };
     // Campaign clusters name their own setting (`zone-sets.md` 3).
     let a = air.0.and_then(|i| haze.settings.get(i as usize)).unwrap_or(default);
+    if air.is_changed() {
+        info!("haze: {:?} ({})", air.0, a.name);
+    }
     for (transform, mut fog) in &mut cameras {
         let z = super::to_halo(transform.translation()).z;
         if let Some(sky) = sky_setting(&haze, &air) {
@@ -536,6 +632,9 @@ fn update_haze(
         let extinction = extinction * haze.density;
         fog.color = Color::linear_rgb(colour.x, colour.y, colour.z);
         fog.directional_light_color = Color::NONE;
+        // Where the fog starts, for the world shaders (`fog_position` in
+        // `lightmap.wesl`): unused by bevy while the light colour is none.
+        fog.directional_light_exponent = (-a.distance_bias).max(0.0) * WORLD_UNIT_METRES;
         fog.falloff = FogFalloff::Atmospheric {
             extinction,
             inscattering: extinction,
@@ -546,6 +645,12 @@ fn update_haze(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn night_skies() {
+        assert_eq!(sky_light_scale("lockout"), 0.1);
+        assert_eq!(sky_light_scale("riverworld"), 1.0);
+    }
 
     #[test]
     fn densities() {

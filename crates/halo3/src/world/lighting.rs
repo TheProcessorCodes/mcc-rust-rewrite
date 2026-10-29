@@ -105,6 +105,92 @@ pub fn scene_mean_irradiance(scene: &Scene, lightmaps: &[Option<LightmapTextures
     (n > 0).then(|| sum / n as f32)
 }
 
+/// The camera fx's auto-exposure range (`+0x10`, `+0x14`), set once.
+static AUTO_RANGE: std::sync::OnceLock<[f32; 2]> = std::sync::OnceLock::new();
+
+/// Records the map's auto-exposure range in stops (`camera_fx`).
+pub fn set_auto_range(range: [f32; 2]) {
+    if range.iter().all(|r| r.is_finite()) {
+        let _ = AUTO_RANGE.set(range);
+    }
+}
+
+/// The most the auto exposure brightens a dark place, in stops: the width
+/// of the camera fx's auto range (Valhalla 0..3; 120_halo 0..2), at most
+/// [`AUTO_MAX_STOPS`].
+fn auto_max_stops() -> f32 {
+    AUTO_RANGE.get().map_or(2.0, |r| (r[1] - r[0]).max(0.0)).min(AUTO_MAX_STOPS)
+}
+
+/// Cap on [`auto_max_stops`].
+pub const AUTO_MAX_STOPS: f32 = 3.0;
+
+/// How much darker than the map's mean (stops) a place may be before the
+/// auto exposure starts brightening: shade outdoors (Valhalla's first spawn,
+/// under a base's overhang) is part of the look; only real interiors (120_halo's
+/// start, 6.7 stops under the mean; Valhalla's first spawn is 3.6) are brightened, by what lies beyond this.
+pub const AUTO_THRESHOLD: f32 = 4.0;
+
+/// A stand-in for Halo's auto exposure: in a place much darker than the
+/// map's mean lit surface ([`AUTO_THRESHOLD`]), the whole picture is
+/// brightened by up to the camera
+/// fx's auto range (through bevy's colour grading, so the world, the sky,
+/// the haze and the rider move together). The place's light is the lit
+/// surface nearest the camera (`SurfaceLights`, ground first), averaged
+/// over six directions. Adapts over about a second; snaps when the camera
+/// jumps. Never darkens: [`exposure`] already holds the bright maps back.
+/// `HALO3_AUTO_EXPOSURE=0` turns it off.
+pub fn auto_exposure(
+    mut commands: Commands,
+    time: Res<Time>,
+    lights: Option<Res<SceneLights>>,
+    loaded: Option<Res<super::zones::LoadedBsps>>,
+    mut cameras: Query<(Entity, &GlobalTransform, Option<&mut bevy::render::view::ColorGrading>), With<crate::fly_camera::FlyCamera>>,
+    mut state: Local<Option<(f32, Vec3)>>,
+) {
+    static OFF: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var("HALO3_AUTO_EXPOSURE").is_ok_and(|v| v == "0"));
+    let (Some(lights), Some(mean)) = (lights, SCENE_MEAN.get()) else {
+        return;
+    };
+    if *OFF || lights.0.is_empty() {
+        return;
+    }
+    let Ok((entity, transform, grading)) = cameras.single_mut() else {
+        return;
+    };
+    let eye = super::to_halo(transform.translation());
+    let mask = loaded.map_or(0, |l| l.shown);
+    let light = lights.0.near_in(eye, mask);
+    let w = Vec3::new(0.212656, 0.715158, 0.0721856);
+    let local = [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y, Vec3::Z, Vec3::NEG_Z]
+        .iter()
+        .map(|n| light.irradiance(*n).max(Vec3::ZERO).dot(w))
+        .sum::<f32>()
+        / 6.0;
+    let target = ((mean / local.max(1e-4)).log2() - AUTO_THRESHOLD).clamp(0.0, auto_max_stops());
+    let stops = match *state {
+        Some((s, at)) if at.distance(eye) < 20.0 => s + (target - s) * (1.0 - (-time.delta_secs() / 0.7).exp()),
+        _ => target,
+    };
+    if state.is_none_or(|(s, _)| (s * 4.0).round() != (stops * 4.0).round()) {
+        debug!("auto exposure: local light {local:.3} against mean {mean:.3}: +{stops:.2} stops");
+    }
+    *state = Some((stops, eye));
+    match grading {
+        Some(mut g) => {
+            if (g.global.exposure - stops).abs() > 1e-3 {
+                g.global.exposure = stops;
+            }
+        }
+        None => {
+            let mut g = bevy::render::view::ColorGrading::default();
+            g.global.exposure = stops;
+            commands.entity(entity).insert(g);
+        }
+    }
+}
+
 /// The scale from Halo's light to bevy's tonemapper input:
 /// `HALO3_EXPOSURE` when set, else `EXPOSURE * 2^(slope * (stops -
 /// VALHALLA_STOPS))` from the map's camera fx (else [`EXPOSURE`]), held so
@@ -228,7 +314,7 @@ pub struct HaloLightmap {
     #[uniform(100)]
     pub env: Vec4,
     /// x: self-illumination mode (0 off, 1 map, 2 map x detail, 3 from
-    /// diffuse, 4 map x diffuse, 5 three channels).
+    /// diffuse, 4 map x diffuse, 5 three channels, 6 the map's alpha: plasma).
     #[uniform(100)]
     pub illum: Vec4,
     #[uniform(100)]
@@ -299,6 +385,13 @@ impl MaterialExtension for HaloLightmap {
     fn fragment_shader() -> ShaderRef {
         SHADER.into()
     }
+
+    /// The depth prepass (maps with water) must cut `alpha_test_map`
+    /// cut-outs too, or their whole cards hide what is behind them (Last
+    /// Resort's palm fronds drew as white haze-coloured squares).
+    fn prepass_fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
 }
 
 pub struct LightingPlugin;
@@ -306,7 +399,8 @@ pub struct LightingPlugin;
 impl Plugin for LightingPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/lightmap.wesl");
-        app.add_plugins(MaterialPlugin::<HaloMaterial>::default());
+        app.add_plugins(MaterialPlugin::<HaloMaterial>::default())
+            .add_systems(Update, auto_exposure);
     }
 }
 
@@ -429,13 +523,15 @@ pub fn default_light() -> ShLight {
 /// The scene's [`SurfaceLights`], kept after the world is built so moving
 /// things (the rider) can be lit the way objects are.
 #[derive(Resource)]
-pub struct SceneLights(pub SurfaceLights);
+pub struct SceneLights(pub std::sync::Arc<SurfaceLights>);
 
-/// A lit surface point: position, light, and its cluster's BSP mask.
-type Sample = (Vec3, ShLight, u32);
+/// A lit surface point: position, light, its BSP mask, and the height of
+/// its normal (how much it faces up).
+type Sample = (Vec3, ShLight, u32, f32);
 
-/// Lighting sampled at every per-pixel lit cluster vertex, in a grid, for
-/// lighting objects by the nearest lit surface.
+/// Lighting sampled at the vertices of every per-pixel lit cluster and
+/// instance, in a grid, for lighting objects and the rider by the lit
+/// surface under them.
 pub struct SurfaceLights {
     cell: f32,
     grid: HashMap<(i32, i32, i32), Vec<Sample>>,
@@ -443,35 +539,105 @@ pub struct SurfaceLights {
     mean: ShLight,
 }
 
+/// Whether a lightmap texel holds any light: texels outside every chart
+/// (and the unbaked backs of things) decode to zero, which drew the rider
+/// black on 120_halo's Warthog run.
+fn holds_light(l: &ShLight) -> bool {
+    l.c[0].max_element() > 1e-4 || l.dominant.max_element() > 1e-4
+}
+
+/// Spacing of the light samples on big triangles, world units.
+const SAMPLE_SPACING: f32 = 3.0;
+
+/// The samples of one placement's per-pixel lit triangles: inside each
+/// triangle, never on its corners (a vertex's texcoord sits on the edge of
+/// its lightmap chart, where the texel is often the dark padding around the
+/// chart: the black rider), a grid about [`SAMPLE_SPACING`] apart on big
+/// triangles so the nearest sample is near the surface under a point.
+fn sample_placement(scene: &Scene, p: &blam_geometry::Placement, atlas: &Atlas<'_>, uvs: &[[f32; 2]], out: &mut Vec<Sample>) {
+    let mesh = &scene.meshes[p.mesh as usize];
+    // Instances repeat one mesh many times: every other triangle is plenty.
+    let step = if p.kind == Kind::Instance { 2 } else { 1 };
+    let triangles = mesh.parts.iter().flat_map(|part| part.indices.as_chunks::<3>().0.iter());
+    for t in triangles.step_by(step) {
+        let [a, b, c] = t.map(|i| i as usize);
+        let (Some(ua), Some(ub), Some(uc)) = (uvs.get(a), uvs.get(b), uvs.get(c)) else {
+            continue;
+        };
+        let [pa, pb, pc] = [a, b, c].map(|i| p.transform.transform_point3(mesh.positions[i]));
+        let mut normal = (pb - pa).cross(pc - pa).normalize_or_zero();
+        if p.mirrored {
+            normal = -normal;
+        }
+        let longest = pa.distance(pb).max(pb.distance(pc)).max(pc.distance(pa));
+        let k = (longest / SAMPLE_SPACING).ceil().clamp(1.0, 12.0) as u32;
+        // The centres of the k x k sub-triangles, in barycentric
+        // coordinates (u, v), w = 1 - u - v: the upright ones, then the
+        // upside-down ones between them.
+        for i in 0..k {
+            for j in 0..k - i {
+                for (du, dv) in [(1.0 / 3.0, 1.0 / 3.0), (2.0 / 3.0, 2.0 / 3.0)] {
+                    if du > 0.5 && i + j + 1 >= k {
+                        continue;
+                    }
+                    let u = (i as f32 + du) / k as f32;
+                    let v = (j as f32 + dv) / k as f32;
+                    let w0 = 1.0 - u - v;
+                    let uv = [ua[0] * w0 + ub[0] * u + uc[0] * v, ua[1] * w0 + ub[1] * u + uc[1] * v];
+                    let light = atlas.light(uv);
+                    if holds_light(&light) {
+                        out.push((pa * w0 + pb * u + pc * v, light, p.bsps, normal.z));
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl SurfaceLights {
     pub fn build(scene: &Scene, atlases: &[Option<Atlas<'_>>]) -> SurfaceLights {
         let cell = 8.0;
+        let lit: Vec<(&blam_geometry::Placement, &Atlas<'_>, &[[f32; 2]])> = scene
+            .placements
+            .iter()
+            .filter(|p| matches!(p.kind, Kind::Cluster | Kind::Instance))
+            .filter_map(|p| {
+                let Lighting::PerPixel { lightmap, uvs } = &p.lighting else {
+                    return None;
+                };
+                Some((p, atlases.get(*lightmap as usize)?.as_ref()?, uvs.as_slice()))
+            })
+            .collect();
+        // Spread over the cores: every sample decodes ten BC3 blocks.
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 16);
+        let samples: Vec<Sample> = std::thread::scope(|s| {
+            let jobs: Vec<_> = (0..threads)
+                .map(|k| {
+                    let lit = &lit;
+                    s.spawn(move || {
+                        let mut out = Vec::new();
+                        for (p, atlas, uvs) in lit.iter().skip(k).step_by(threads) {
+                            sample_placement(scene, p, atlas, uvs, &mut out);
+                        }
+                        out
+                    })
+                })
+                .collect();
+            jobs.into_iter().flat_map(|j| j.join().unwrap_or_default()).collect()
+        });
         let mut grid: HashMap<(i32, i32, i32), Vec<Sample>> = HashMap::new();
         let mut sum = ShLight::default();
-        let mut n = 0usize;
-        for p in scene.placements.iter().filter(|p| p.kind == Kind::Cluster) {
-            let Lighting::PerPixel { lightmap, uvs } = &p.lighting else {
-                continue;
-            };
-            let Some(Some(atlas)) = atlases.get(*lightmap as usize) else {
-                continue;
-            };
-            let mesh = &scene.meshes[p.mesh as usize];
-            for (pos, uv) in mesh.positions.iter().zip(uvs) {
-                let w = p.transform.transform_point3(*pos);
-                let light = atlas.light(*uv);
-                for k in 0..4 {
-                    sum.c[k] += light.c[k];
-                }
-                sum.dominant += light.dominant;
-                n += 1;
-                grid.entry(Self::key(w, cell)).or_default().push((w, light, p.bsps));
+        for sample in &samples {
+            for k in 0..4 {
+                sum.c[k] += sample.1.c[k];
             }
+            sum.dominant += sample.1.dominant;
+            grid.entry(Self::key(sample.0, cell)).or_default().push(*sample);
         }
-        let mean = if n == 0 {
+        let mean = if samples.is_empty() {
             default_light()
         } else {
-            let s = 1.0 / n as f32;
+            let s = 1.0 / samples.len() as f32;
             ShLight {
                 c: sum.c.map(|c| c * s),
                 dominant: sum.dominant * s,
@@ -492,15 +658,12 @@ impl SurfaceLights {
         self.grid.is_empty()
     }
 
-    /// The lighting of the lit surface vertex nearest `p` (Halo units),
-    /// searching a few cells out; the map's mean light past that.
-    pub fn near(&self, p: Vec3) -> ShLight {
-        self.near_in(p, 0)
-    }
-
-    /// [`near`](Self::near) over the surfaces of the BSPs in `mask` only
-    /// (zero: any), so an object is lit by its own BSP where BSPs overlap
+    /// The lighting of the lit surface nearest `p` (Halo units), searching
+    /// a few cells out (the map's mean light past that), over the surfaces
+    /// of the BSPs in `mask` only (zero: any), so an object is lit by its own BSP where BSPs overlap
     /// (campaign maps swap versions of one space between zone sets).
+    /// Surfaces under `p` facing up count as nearer than walls and
+    /// ceilings: an object stands on the ground it is lit like.
     pub fn near_in(&self, p: Vec3, mask: u32) -> ShLight {
         let (cx, cy, cz) = Self::key(p, self.cell);
         let mut best: Option<(f32, ShLight)> = None;
@@ -514,11 +677,15 @@ impl SurfaceLights {
                         let Some(v) = self.grid.get(&(cx + dx, cy + dy, cz + dz)) else {
                             continue;
                         };
-                        for (q, l, bsps) in v {
+                        for (q, l, bsps, up) in v {
                             if mask != 0 && bsps & mask == 0 {
                                 continue;
                             }
-                            let d = q.distance_squared(p);
+                            // Ground under the point: as is. A wall, a
+                            // ceiling or the underside of a ledge: as if 3
+                            // world units further.
+                            let ground = *up > 0.5 && q.z <= p.z + 0.5;
+                            let d = q.distance_squared(p) + if ground { 0.0 } else { 9.0 };
                             if best.is_none_or(|b| d < b.0) {
                                 best = Some((d, *l));
                             }

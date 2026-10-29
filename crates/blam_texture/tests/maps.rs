@@ -218,3 +218,36 @@ fn riverworld_v_runs_down() {
     eprintln!("mountains_snow: height/V correlation {r:.3} over {n} vertex uses");
     assert!(r < -0.5, "height/V correlation {r:.3}: V should fall as height rises");
 }
+
+/// Guardian's special shaders: the jump pad's plasma keeps its glow in
+/// `alpha_mask_map`'s alpha (the colour channels are black), the abyss fog
+/// plane is alpha-blended, and every render method in the map resolves.
+#[test]
+fn guardian_shaders() {
+    let Some(path) = map("guardian") else { return };
+    let cache = CacheFile::open(path).unwrap();
+    let resources = cache.resources().unwrap();
+
+    let pad = shader::resolve(&cache, 5300).unwrap();
+    assert!(pad.name.ends_with("guardian_jumppad_plasma"), "{}", pad.name);
+    assert_eq!(pad.option("self_illumination"), Some("plasma"));
+    assert_eq!(pad.blend, Blend::Additive);
+    assert!(pad.base.is_none());
+    let mask = pad.map("alpha_mask_map").and_then(|m| m.bitmap).expect("plasma mask");
+    let t = bitmap::decode(&cache, &resources, mask, 0).unwrap();
+    let px = rgba::decode_level(t.format, t.width, t.height, t.level(0, 0).unwrap()).unwrap();
+    let mean = rgba::channel_means(&px);
+    assert!(mean[0] < 0.01 && mean[1] < 0.01 && mean[2] < 0.01, "{mean:?}");
+    assert!((mean[3] - 0.135).abs() < 0.01, "{mean:?}");
+
+    let fog = shader::resolve(&cache, 119).unwrap();
+    assert!(fog.name.ends_with(r"sky\shaders\fog_plane"), "{}", fog.name);
+    assert_eq!(fog.blend, Blend::AlphaBlend);
+
+    for t in cache.tags.iter() {
+        let class = cache.tags.class_of(t).code.as_str();
+        if matches!(class, "rmsh" | "rmtr" | "rmfl" | "rmw " | "rmd " | "rmhg") {
+            shader::resolve(&cache, t.index).unwrap_or_else(|e| panic!("{}: {e}", t.name()));
+        }
+    }
+}

@@ -38,6 +38,10 @@ middle.
 | B, or gamepad View / Back | dirt bike / fly (see "Dirt bike" below) |
 | PageDown / PageUp | next / previous zone set (campaign maps) |
 | Home | load every BSP at once |
+| M | music on / off (the map's showpiece: the Warthog run on 120_halo); Shift+M next track |
+| N | music: switch to the alternate loop and back (at the next loop boundary) |
+| K | mute / unmute |
+| `-` / `=` | sound volume down / up (10 % steps) |
 | gamepad left stick | move |
 | gamepad right stick | look |
 | gamepad right / left trigger | up / down |
@@ -57,9 +61,10 @@ sets; the Warthog run is zone sets 4-7 (`120_04_100_110`, `120_100_110`,
 `120_110_120`, `120_120_130`). Some BSPs are two versions of one place
 (120_halo's `010` and `070`) and overlap if loaded together.
 
-The viewer decodes and uploads every BSP at start (120_halo: about 1 s to
-decode, 2.9 M triangles, 240 MiB of textures) and shows only the loaded zone
-set; switching is instant. Each BSP keeps its own lightmap. What is loaded:
+The viewer decodes every BSP's geometry at start (120_halo: about 1 s,
+2.9 M triangles) but puts only the loaded zone set on the GPU, with the
+textures and lightmaps it uses; see "Streaming and culling" below. What is
+loaded first:
 
 ```
 & "target\debug\halo3.exe" 120_halo                 # the zone set the start is in (zone set 0)
@@ -69,27 +74,92 @@ set; switching is instant. Each BSP keeps its own lightmap. What is loaded:
 & "target\debug\halo3.exe" 120_halo --all-bsps      # everything (overlaps)
 ```
 
-The console prints the zone sets and BSPs at start. Objects follow their
-origin BSP (objects with none always show); a sky shows only while it is the
-sky of the camera's cluster, so 120_halo switches from the snowfield sky to the
-Warthog run's ring sky (`sky_03`) as you cross over. The haze follows the
-camera's cluster too: each cluster names one of the atmosphere tag's settings
-(thick snow, the thin air of the run, none indoors), used for the world fog,
-the sky's scattering and the clear colour; outside every cluster the setting
-most loaded clusters name.
+The console prints the zone sets and BSPs at start. As you fly or skate
+through the scenario's zone-set switch volumes the zone set follows, as in the
+game: entering a `begin_zone_set:` volume builds the next zone set's BSPs in
+the background, entering a `zone_set:` volume switches to it
+(`HALO3_ZONE_TRIGGERS=0` turns this off; it is off for `--shot` unless
+`HALO3_ZONE_TRIGGERS=1`, and whenever `--bsps`, `--all-bsps` or Home chose
+BSPs by hand). PageDown / PageUp still step by hand.
 
-Skating uses the collision of the loaded BSPs only. Changing zone set stops the
-ride and rebuilds the skate world in the background (title bar: "skate:
-loading the new zone set"); J works again when it is ready. Rails inside the
+Objects follow their origin BSP (objects with none always show); a sky shows
+only while it is the sky of the camera's cluster, so 120_halo switches from the
+snowfield sky to the Warthog run's ring sky (`sky_03`) as you cross over. The
+haze follows the camera's cluster too (found through the BSP's collision tree,
+`docs/format/sbsp-portals.md`): each cluster names an entry of its BSP's
+atmosphere palette, which names one of the atmosphere tag's settings (snow at
+the crash site, `interior` inside, the dim red `trench` air of the Warthog
+run), used for the world fog, the sky's scattering and the clear colour;
+outside every cluster the setting most loaded clusters name.
+
+Skating uses the collision of the loaded BSPs only. Changing zone set while
+riding does not stop the ride: the new zone set's collision and rails are built
+on a helper thread and swapped into the running session (title bar: "skate:
+building the new zone set's collision", then "skate: new zone set"; about 3.6 s
+for the Warthog run). Before the first ride the world is built as before. Rails inside the
 scenario's kill volumes are dropped. 120_halo's Warthog run (zone set 6): the
 skate world is ready about 15 s after start (520 k triangles, 6,300 rails found
 in 4.6 s, the skater's own data 6 s). Rails over all 11 BSPs would take 16 s
 and give 58,600, most of them ledges under the run the player never reaches.
 
-`world/zones.rs` is the API a streaming step can drive: `LoadedBsps` (mask,
-zone set, sky), `load_zone_set`, `load_bsps`; the scene keeps the trigger
-volumes and zone-set switch volumes (`Scene::zone_switches`) for that.
-`HALO3_SKY=0` hides the sky, for telling sky pieces from the world.
+`world/zones.rs` is the API: `LoadedBsps` (wanted mask, shown mask, zone set,
+sky), `load_zone_set`, `load_bsps`. `HALO3_SKY=0` hides the sky, for telling
+sky pieces from the world. `HALO3_ZONE_SWITCH_TEST=N@S` switches to zone set N
+after S seconds of skating (or of running), for testing without a keyboard.
+
+## Streaming and culling
+
+`world/build.rs`, `world/stream.rs`, `world/culling.rs`.
+
+- **Chunks.** The world is not one mesh per material any more: each
+  structure BSP is cut into chunks per material and lighting mode, cluster
+  triangles by 64 wu cells, instances and objects by cell, home cluster and
+  size class (bounding radius under 1.5 wu, under 6, larger). Every chunk
+  has its own bounds, so bevy's frustum culling skips what is off screen.
+  Chunks of one material share one material (and its textures).
+- **Units and streaming.** A unit is one BSP with its instances and the
+  objects whose origin it is, or the global unit (sky, objects of no BSP).
+  Only the loaded zone set's units are on the GPU. A unit that is needed is
+  built on a background thread, decoding the bitmaps and lightmap its
+  materials use from the map file, and uploaded about 400 k triangles a frame.
+  The old zone set stays on screen until the new one is complete; then its
+  entities are despawned, which frees their meshes, materials and (when
+  nothing else uses them) textures. 120_halo: building BSP 120 takes 1.1-1.4 s
+  in the background, the switch from zone set 5 to 6 drops BSP 100, and GPU
+  textures go from 190 to 206 MiB (all 11 BSPs: 472 MiB). The CPU no longer
+  keeps every decoded bitmap (396 MiB on 120_halo): only the lightmaps
+  (110 MiB) are decoded at start, for the surface lights, and dropped after
+  the first upload.
+- **Portals.** Each frame the camera's cluster is found in every shown BSP
+  and a flood through the cluster portals, keeping the screen rectangle each
+  portal covers, marks the clusters that can be seen; chunks of the others
+  are hidden (`docs/format/sbsp-portals.md` 4). A camera in no cluster (in a
+  wall, outside the level) sees the whole BSP. `HALO3_PORTALS=0` turns it off.
+- **Size.** Chunks of props whose largest member covers less than 1.5 pixels
+  (bounding radius, 720-line view) are hidden, as are BSP instances smaller
+  than their own fade size (`docs/format/lod.md`; Halo 3 has no other LOD or
+  draw-distance data). The sky is never culled but by the frustum.
+  `HALO3_MIN_PIXELS=0` turns the size rule off.
+
+`--bench N` times N frames before each `--shot` picture (waiting for the GPU
+every frame) and logs what was drawn and the portal state. Measured
+2026-10-28 at 1280x720 (frame ms mean; meshes drawn / entities; triangles
+drawn):
+
+| view | before (one mesh per material) | after |
+|---|---|---|
+| 120_halo `--zone 6`, run tunnel (410, 590, -45) | 3.01 ms; 83 / 567; 944 k | 3.21 ms; 1,134 / 3,171; 861 k (23 of 48 clusters) |
+| 120_halo `--zone 6`, over the run (300, 400, 150) | 3.85 ms; 118 / 567; 1.31 M | 3.89 ms; 1,684 / 3,171; 998 k (4 of 29 clusters) |
+| 120_halo `--all-bsps`, start | 8.47 ms; 392 / 567; 2.73 M | 7.53 ms; 3,393 / 6,530; 1.35 M |
+| riverworld, first spawn | 4.61 ms; 79 / 89; 148 k | 4.57 ms; 320 / 522; 129 k (13 of 26 clusters) |
+| riverworld, overview | 4.54 ms; 82 / 89; 148 k | 4.44 ms; 448 / 522; 144 k (all clusters) |
+
+On this GPU the frame is bound by pixel shading (water, terrain blends,
+haze), not triangles, so halving the triangles barely moves the frame time
+except with every BSP loaded; the wins are in GPU memory (zone set 6: 227 MiB
+of textures uploaded instead of 383) and on slower GPUs. Pictures with and
+without the culling match (`HALO3_PORTALS=0 HALO3_MIN_PIXELS=0`; under 0.1 % of
+pixels differ, a few far props).
 
 ## Frame and units
 
@@ -100,7 +170,7 @@ from the Reflex pipeline sidecars carry over.
 
 ## What is drawn
 
-One bevy mesh per material and lighting mode, every placement baked into
+Chunks of one material and lighting mode per place (see "Streaming and culling"), every placement baked into
 world space; `Sky` placements get their own shader (see "Sky and haze" below).
 
 Before the window opens, `textures.rs` resolves every material's shader tag
@@ -111,8 +181,8 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 |---|---|
 | `rmsh`, `rmhg`, `rmd ` with a `base_map` | the base map, tinted by `albedo_color`, tiled by the base map's xform through `uv_transform` (the mesh keeps the raw UVs) |
 | the rest of an ordinary shader's material | detail map, bump map (and bump detail), specular, environment reflection and self-illumination, in the lighting shader: see "Materials" below |
-| foliage (`rmfl`) and any `alpha_test simple` shader | `AlphaMode::Mask(0.5)` on the base map's alpha, or on `alpha_test_map` when the shader has its own (grates), both sides drawn |
-| `blend_mode` alpha_blend / pre_multiplied_alpha / additive / multiply | `Blend` / `Premultiplied` / `Add` / `Multiply`, no shadows |
+| foliage (`rmfl`) and any `alpha_test simple` shader | `AlphaMode::Mask(0.5)` on the base map's alpha, or on `alpha_test_map` when the shader has its own (grates; Last Resort's palm fronds cut by their bump map's alpha), both sides drawn. The lighting shader is also the depth prepass's fragment shader, so maps with water (which get a depth prepass) cut the same way there; with bevy's own prepass the whole frond cards hid what was behind them and showed the haze colour |
+| `blend_mode` alpha_blend / pre_multiplied_alpha / additive / multiply | `Blend` / `Premultiplied` / `Add` / `Multiply`, no shadows. Multiply decals (High Ground's `medical_decals` on the medical crates) are drawn unlit, unexposed and unfogged: they scale the lit surface under them by their own colour. Lit and exposed, their white background times the exposure brightened what lay under them and washed the red crosses out |
 | opaque shaders | `Opaque`: the base map's alpha is a specular mask, not transparency, and is ignored |
 | terrain (`rmtr`) | the **four-layer blend**, in the lighting shader (see "Terrain" below). If the blend map or every layer fails to decode, or with `HALO3_TERRAIN_BLEND=0`, the single layer the blend map weights most over the whole map, as HaloExport does |
 | water (`rmw `) | its own water material: animated waves, sky reflection, murk and foam (see "Water" below) |
@@ -120,6 +190,7 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 | spawn markers: placements of `respawn_point`, `*_initial_spawn_point`, `*_respawn_zone` objects, and the `objects\multi\shaders\spawn_point*` and `shaders\invalid` shaders | not drawn: Forge shows them, a game never does (they were the black discs and white plasma columns on every map) |
 | constant-colour shaders (no base map) | flat `albedo_color` |
 | additive glows without a base map | `self_illum_map` tinted by `self_illum_color`, added |
+| `self_illumination plasma` (Guardian's jump pads and minilift) | `alpha_mask_map`'s **alpha** (its colour channels are black) times the mean of `color_medium`, `color_wide` and `color_sharp` times `self_illum_intensity`, added; the crawling noise bands are not drawn. Before, these had no `self_illum_map` and drew nothing |
 | "special" shaders (path segment `invisible`, `portal`, `sky_portal`, `z_only`, `black`; effect classes) and alpha-tested shaders without a colour map (light quads) | not drawn |
 | anything that fails to resolve or decode | the old steady hashed colour, with a message on the console |
 
@@ -241,7 +312,8 @@ the collision, so the board rides the river bed and drops to the lake floor on i
 of that, while skating: the last spot where the board stood on dry ground is remembered; going
 into water throws a splash (small white droplets) and logs the depth; in water deeper than
 0.45 wu (about 1.4 m) the skater sinks for 0.6 s and is put back at the last dry spot (the start
-spawn if there was none) through `Session::activate`. Shallow water is ridden on its bed, with
+spawn if there was none) through `Session::activate`. Rails more than that deep under a water
+surface are dropped (`rails::out_of_deep_water`; Last Resort's sea bed had a 108 wu one). Shallow water is ridden on its bed, with
 no drag (the engine takes no outside forces). The fly camera passes through water. Log lines
 start with `water:`.
 
@@ -253,6 +325,26 @@ has stood on dry ground for a second, and `HALO3_SKATE_FOR=<s>` rides that long 
 $env:HALO3_SWIM_TEST="70,20,1.0"; $env:HALO3_SKATE_FOR="8"
 & "target\debug\halo3.exe" riverworld --shot out\shots\lake --skate --view "79.76,-56.73,1.5,-88,0"
 ```
+
+**Falling out of the map** (`falls.rs`). Guardian floats over a misty abyss. The scenario
+puts a kill volume, `kill_drop`, under the walkways (z -0.9 to 13.7; the lowest floor is at
+15.8). Any `kill*` / `*_kill*` trigger volume counts, and so does anything more than 20 wu
+under the lowest collision triangle, so nothing falls for ever on maps without one. The
+skater who falls in is put back at the same last safe spot as after sinking (the start spawn
+if there is none yet; log lines start with `fall:`). The bike is put back where it last rode
+well, as after a crash. The start prints `kill volumes: N; out of the world below z ...`.
+Blackout (`lockout`) has one too, `kill_volume_bottom`, from z -18.3 down past the sea (z -33):
+anyone who drops off the rig falls about six world units past the lowest deck (-12.6) and is
+put back. The rig's legs and cross beams at z -13 to -18 are above it, so a fall can land on
+them; their grind rails (about 660) are kept.
+
+High Ground's cove (`deadlock_water_awesome`, a flat sheet at z 4.41 over x -37.0..15.1,
+y -67.8..-25.5) ends in a straight hard edge out at sea, where the sky model's far sea (`lake`,
+an opaque `rmsh` at z about 2.9-3.7, lit like the rest of the sky) takes over about 1 wu lower and
+greener. The game probably hides that seam with the shader's painted bank alpha (`bankalpha paint`),
+which needs the mask texcoord (`docs/format/water.md` 4.1); the depth fade only fades the beach
+side. Skating: the beach spawns stand in ankle-deep water (0.2 wu); out in the cove the bed is
+1.5 wu down and the skater sinks; the `kill_water2` kill volume lies under the sea bed.
 
 Not done: refraction (no copy of the scene behind, so no wave distortion of the bed), the
 static cube reflection, vertex wave displacement, painted foam, `global_shape` and the
@@ -274,7 +366,7 @@ they are lit as well as by material.
 | BSP clusters, most instanced geometry | the BSP's per-pixel lightmap: two BC3 texture arrays sampled in the shader at the lightmap texcoord (`UV_1`) with the surface normal. Cliff, tree and building shadows on the ground come from here |
 | instances with static per-vertex lighting | their own coefficients, turned into irradiance per vertex on the CPU (vertex colour) |
 | instances with a light probe | the probe (L0 and L1 terms plus its dominant light), per vertex on the CPU |
-| scenery, crates, machines, controls | the lightmap at the lit BSP vertex nearest the bottom centre of the object, per vertex with each vertex's normal (an approximation: the scenario's own scenery/machine probes are not matched up yet) |
+| scenery, crates, machines, controls | the lightmap at the lit surface nearest the bottom centre of the object (samples inside every per-pixel lit cluster and instance triangle, about 3 wu apart; up-facing ground under the point counts as nearer than walls and ceilings), per vertex with each vertex's normal (an approximation: the scenario's own scenery/machine probes are not matched up yet). The rider is lit the same way |
 | the sky | its own shader and the map's atmosphere ("Sky and haze" below) |
 | maps with no lightmap, `--test-scene` | a fixed sunny Valhalla texel (`lighting::default_light`) |
 
@@ -289,6 +381,14 @@ irradiance (every 25th BSP cluster vertex, luminance) comes out at most 3.0
 and Sandtrap (1.15, x2.6) are held back. The log prints it (`camera fx ...:
 exposure -2.51 stops, mean irradiance 0.101 -> x10.51`). `HALO3_EXPOSURE` sets a fixed
 multiplier, `HALO3_EXPOSURE_SLOPE` the 0.6. Not done: Halo's own auto
+
+**Auto exposure** (a stand-in for Halo's): in a place more than 4 stops darker than the map's
+mean lit surface the picture is brightened, by the darkness beyond those 4 stops and at most the
+width of the camera fx's auto range (`+0x10..+0x14`; Valhalla 0..3, 120_halo 0..4, capped at 3), through bevy's
+colour grading so world, sky, haze and rider move together. The place's light is the lit surface
+nearest the camera averaged over six directions; it adapts over about a second, snaps when the
+camera jumps, and never darkens. 120_halo's start, inside `120_bsp_010` (whose lightmap is about a
+quarter as bright as the outdoor BSPs'), gets +2.7 stops; Valhalla's shaded first spawn (3.6 stops under) nothing. `HALO3_AUTO_EXPOSURE=0` turns it off.
 exposure and tonemap curve, the probes' L2 terms.
 
 The log says how each placement was lit, e.g. Valhalla:
@@ -309,6 +409,14 @@ The log says how each placement was lit, e.g. Valhalla:
   exponential height falloff, using the setting flagged for the sky (`haze_skydome` on Valhalla).
   The nearly black sky dome comes out blue from that, as in the game. Additive layers only get
   the extinction. Sky bitmaps are sampled linear or sRGB as their DXGI format says.
+  `self_illumination from_diffuse` makes the albedo itself glow (there is no illumination map to
+  sample), and a halogram's `edge_fade simple` runs the colour from `edge_fade_edge_tint` where the
+  surface is seen edge-on to `edge_fade_center_tint` face-on, by `|n.v|^edge_fade_power`. Last
+  Resort's foam rings round the distant islands (`island_water_edges`, additive, x2.75) drew as
+  solid white slabs on the sea without these two.
+- Alpha-tested sky shaders are cut by the albedo's alpha in the sky shader, and keep their base map
+  on the StandardMaterial so bevy's depth prepass cuts them too. High Ground's `water_edge_breakup`
+  cards (alpha mean 0.14) round the cove drew as pale slabs along the edge of the sea.
 - **The world** gets bevy's `DistanceFog` (atmospheric falloff) from the level setting
   (`haze_level`): per-channel extinction and the in-scattered colour, recomputed every frame for
   the camera's height, since the haze thins with height (Mie scale height 6 wu over a sea level at
@@ -320,14 +428,23 @@ The log says how each placement was lit, e.g. Valhalla:
   one, that setting replaces both the level and the sky setting. Lit sky surfaces are scaled by
   their shader's `diffuse_coefficient` (120_halo's ring plates: 0.3).
 - `HALO3_HAZE` scales the world haze's density (`0` turns it off) for comparisons.
+- **Night skies.** Halo's source of light for lit sky surfaces is not decoded; every map gets
+  the sunlit Valhalla irradiance, except the maps listed in `NIGHT_SKIES` (`world/sky.rs`):
+  Blackout (`lockout`) gets a tenth of it, since its sky dome is a white lit surface and its
+  sea a lit plane (`docs/format/sky-and-atmosphere.md` 7). `HALO3_SKY_LIGHT` sets the fraction
+  for any map. Sky self-illumination: `from_diffuse` glows with the albedo, `plasma` (Blackout's
+  aurora) with its alpha mask through the overlay colour.
 - Below a setting's sea level the density stays at the sea level's (world haze and sky alike):
   Sandtrap plays about 20 wu under its sea level, where the exponential falloff made the haze
   e^10 times thicker and every ground-level view black.
 
+The setting's distance bias is applied to the world haze too (no haze in the first 15 wu on
+Valhalla, 100 wu on the Warthog run): bevy's fog has no start, so the start is passed to the world
+and water shaders in the fog's unused directional-light exponent.
+
 Not done: the world haze uses one density for the whole ray (the eye's), so looking down from a
-height onto the lake under-hazes it; the level setting's distance bias (-15 wu, no haze in the
-first 15 wu) and the sun-angle dependence of the haze colour are not applied to the world (bevy's
-fog has neither); `desaturation` (used by The Pit, 0.2) is ignored; Halo's real sky lighting and
+height onto the lake under-hazes it; the sun-angle dependence of the haze colour is not applied
+to the world; `desaturation` (used by The Pit, 0.2) is ignored; Halo's real sky lighting and
 exposure curve is not decoded (the `cfxs` exposure is, see "Lighting"); no sun glare or bloom; the sky does not move with the camera
 (it is at true size, about 7,500 wu out, which is what the haze distances need).
 
@@ -348,7 +465,9 @@ stick model). Dual-stick riding in the style of MX vs ATV Reflex:
 | Y | R | stand the bike back up |
 
 Hitting the bars or the rider's head, or landing upside down, is a crash: two
-seconds later the bike comes back where it last rode well. The rider is one
+seconds later the bike comes back where it last rode well. Falling into a kill
+volume or out of the world brings it back there at once (see "Falling out of
+the map" above). The rider is one
 stiff stance (attack position) kept on the pegs and grips by IK. The bike is a
 stick model of unlit cylinders for now. It rides on the loaded zone set's
 collision. Tuning constants are at the top of `physics.rs`.
@@ -356,3 +475,65 @@ collision. Tuning constants are at the top of `physics.rs`.
 Headless check: `halo3 riverworld --shot DIR --bike --view spawn50` rides from
 spawn 50 holding `HALO3_BIKE_THROTTLE` (default 0.4) for `HALO3_SKATE_FOR`
 seconds, then takes the rider pictures.
+
+## Sound
+
+`crates/halo3/src/audio/` plays Halo 3's own sound from the user's install: the
+`snd!` / `lsnd` / `ssce` tags of the map (`crates/blam_sound`, `docs/format/sound.md`) and
+the samples of MCC's FMOD bank `halo3\fmod\pc\sfx.fsb` (Vorbis, decoded with lewton;
+the Vorbis setup headers are rebuilt from the user's `halo3.dll`). Nothing is copied into
+this repo. `HALO3_AUDIO=0` turns sound off; `--shot` never opens the sound device.
+
+- **Mixer** (`mixer.rs`): one endless 48 kHz stereo source handed to bevy_audio, into which
+  every voice is mixed, with its own gains, pitch (playback rate) and a soft limiter.
+  A voice plays a queue of clips, then random permutations of its loop forever, the way
+  Halo loops a looping sound's permutations; loop permutations are cut at the bank's loop
+  end. Decoding runs on a worker thread as clips are needed (a loop starts once all its
+  permutations are in); multichannel samples (120_halo's quad wind) are folded to stereo.
+- **Background per cluster**: the camera's cluster (through the collision tree of the
+  loaded BSPs) names an entry of its BSP's acoustics palette, whose background `lsnd`
+  plays non-positional at its track gain, cross-fading over about a second when the entry
+  changes (Valhalla: `halo_ext` outside, `riverworld_interior` in the bases). Outside every
+  cluster the last background stays.
+- **Details**: each background's detail sounds (birds, gusts, cicadas) fire at random
+  within their period, at a random yaw, pitch and distance around the listener; mono ones
+  are panned there, stereo ones play as they are.
+- **Sound scenery**: every placement of the scenario's sound scenery whose origin BSP is
+  loaded plays its `lsnd` loop at its position when the camera comes within its far
+  distance (the placement's own bounds, else the sound's playback distances): full volume
+  inside the near distance, falling as the square of the remaining fraction to silence at
+  the far one, equal-power panned by the camera's right vector. Valhalla has 77 (the
+  waterfall, the creek and brook along the river, the lake shore). Two stand-ins for
+  the game's undecoded sound classes and mix: only the 2 loudest placements of one
+  looping sound play at a time, and sound scenery is mixed 6 dB down (120_halo's eight
+  falling-plate loops along the Warthog run otherwise summed to -5 dBFS).
+- **Music** is started by HaloScript in the game; here M plays the map's showpiece (on
+  120_halo `120_music_15`, the Warthog run's `halo3_trench`: 92 s intro, then its four loop
+  permutations), Shift+M the next `lsnd` under a `music` folder, `--music NAME|N` one at
+  start (`--music 120_music_15` or an index into the list the log prints). N moves to the
+  alternate loop through its transition at the end of the current loop, and back. M again
+  plays the outro (or fades out over the track's fade time).
+- **Board sounds while skating** (Skate 3's data has no audio): Halo's own samples, picked
+  from the bank by folder: the Brute chopper's hard-wheel loop for rolling (gain and pitch
+  with speed), a vehicle scrape while grinding, the Chief's hard concrete landing after
+  more than 0.25 s in the air (louder the longer the air). The skate engine's state names
+  (`PhysicsGround`, `PhysicsAir`, `GrindFiftyFifty`, ...) come through `skate::SkateMotion`.
+- **Volume**: `HALO3_VOLUME` (default 0.8) sets the start level, `-` / `=` change it, K mutes.
+
+Headless check: `HALO3_AUDIO_TRACE=1` with `--shot` runs all of this without a sound device
+and logs, 0.3 s after each view, the cluster, background layers and their fade, the sound
+scenery in range with distance and gain, and the decoded clips:
+
+```
+$env:HALO3_AUDIO_TRACE="1"
+target\debug\halo3.exe riverworld --shot .scratch\shots --view "96,-140,2,90,0" --view spawn
+```
+
+`blam sound <map> list | show TAG | wav TAG... | check` lists, inspects and decodes the same
+sounds to WAV (`.scratch/sound` by default) with duration, rate, RMS and peak.
+
+Not done: the sound environments (`snde` reverb) and obstruction; pitch ranges past the
+first; dialogue (the per-language banks); weapon, vehicle, footstep and impact sounds of the
+game world; HaloScript-driven music cues (music is by hand); the dirt bike's engine
+(the Mongoose engine loops are in the bank). Halo's real distance curve and the meaning of
+the playback parameters' first two distances are not checked against the game.

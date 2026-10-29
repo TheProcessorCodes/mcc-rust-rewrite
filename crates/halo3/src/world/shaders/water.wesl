@@ -20,11 +20,26 @@ import bevy_pbr::{
         pbr_fragment::pbr_input_from_standard_material,
         pbr_functions::main_pass_post_lighting_processing,
         forward_io::{VertexOutput, FragmentOutput},
-        mesh_view_bindings::{view, globals},
+        mesh_view_bindings::{view, globals, fog},
         view_transformations::depth_ndc_to_view_z,
     },
     prepass::utils as prepass_utils,
 };
+
+// Halo's fog starts `distance bias` world units from the eye (`skya`
+// setting +0x3C; -100 wu on 120_halo's Warthog run): bevy's fog has no
+// start, so `sky.rs` passes the start in metres in the fog's unused
+// directional-light exponent, and the fragment is moved that much closer
+// for the fog only.
+fn fog_position(world: vec4<f32>) -> vec4<f32> {
+    let start = fog.directional_light_exponent;
+    if start <= 0.0 {
+        return world;
+    }
+    let v = world.xyz - view.world_position;
+    let d = length(v);
+    return vec4(view.world_position + v * (max(d - start, 0.0) / max(d, 1e-4)), world.w);
+}
 
 struct WaterParams {
     params0: vec4<f32>,
@@ -217,7 +232,7 @@ fn waves(halo_pos: vec3<f32>, distance: f32, shape: f32) -> Waves {
 // ---- flow mode
 
 fn flow(in: VertexOutput, is_front: bool) -> FragmentOutput {
-    let pbr_input = pbr_input_from_standard_material(in, is_front);
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
     let base = textureSample(map_a, map_sampler, moved(in.uv, water.xform_a, water.scroll_a));
     var d1 = vec4(vec3(1.0 / DETAIL), 1.0);
     var d2 = vec4(vec3(1.0 / DETAIL), 1.0);
@@ -234,6 +249,7 @@ fn flow(in: VertexOutput, is_front: bool) -> FragmentOutput {
     let n = pbr_input.N;
     let e = irradiance(in, normalize(vec3(n.x, -n.z, n.y)));
     var out: FragmentOutput;
+    pbr_input.world_position = fog_position(pbr_input.world_position);
     out.color = main_pass_post_lighting_processing(pbr_input, vec4(albedo * e * water.params0.w, alpha));
     return out;
 }
@@ -245,7 +261,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     if water.params2.w > 0.5 {
         return flow(in, is_front);
     }
-    let pbr_input = pbr_input_from_standard_material(in, is_front);
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
     let exposure = water.params0.w;
     let eye = to_halo(view.world_position);
     let p = to_halo(in.world_position.xyz);
@@ -336,6 +352,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     let rgb = premul / max(alpha, 1e-3);
     var out: FragmentOutput;
+    pbr_input.world_position = fog_position(pbr_input.world_position);
     out.color = main_pass_post_lighting_processing(pbr_input, vec4(rgb, saturate(alpha)));
     return out;
 }

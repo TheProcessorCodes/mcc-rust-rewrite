@@ -22,6 +22,7 @@ the format descriptions the code is written from.
 |---|---|
 | `crates/blam_cache` | opens a `.map`: header, sections, tag index, tag names, string ids, a cursor for tag data, resource pages |
 | `crates/blam_geometry` | decodes structure BSPs (clusters and instances) into plain meshes with materials |
+| `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
 | `crates/halo3` | the viewer: a window, the BSP drawn, a flying camera (`docs/viewer.md`) |
@@ -39,13 +40,16 @@ target\debug\blam.exe geometry riverworld --obj out\riverworld.obj
 target\debug\blam.exe shader riverworld 11454
 target\debug\blam.exe bitmap riverworld 112 --png out\mountains_snow.png
 target\debug\blam.exe textures riverworld
+target\debug\blam.exe sound riverworld list
+target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_music_15"
 & "target\debug\halo3.exe" riverworld
 ```
 
 A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
-`sidewinder` Avalanche.
+`sidewinder` Avalanche, `guardian` Guardian,
+`lockout` Blackout.
 
 ## Status
 
@@ -57,6 +61,23 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
       campaign maps decode all their BSPs. Checked by `cargo test`.
 - [x] Milestone 2 (built, awaiting a playtest): window, BSP drawn in flat
       colours per material, flying camera with keyboard, mouse and gamepad.
+- [x] Last Resort (`zanzibar`, 2026-10-28): every HaloExport count matches
+      (39 cluster meshes, 1,123 instances, 624,651 triangles with objects),
+      146 of 146 colour bitmaps decode, 106 spawns all on the ground and
+      clear of walls; checked by `cargo test`
+      (`docs/format/reference-numbers.md` 9). Fixed on the way: palm fronds
+      cut by their own `alpha_test_map` in the water depth prepass, the
+      sky's `from_diffuse` glow and halogram edge fade (white slabs on the
+      sea), rails under deep water dropped.
+- [x] High Ground (`deadlock`, 2026-10-28): every HaloExport count matches
+      (43 cluster meshes, 849 instances, 564,094 triangles with objects,
+      the gate machine where HaloExport put it), 101 of 101 colour bitmaps
+      decode, 85 spawns all on the ground and clear of walls, no collision
+      holes under the render floors; checked by `cargo test`
+      (`docs/format/reference-numbers.md` 10). Fixed on the way: the sky's
+      alpha-tested `water_edge_breakup` cards drawn whole round the cove,
+      multiply decals (`medical_decals`) lit and exposed. Still off: a hard
+      seam where the cove's water ends and the sky's far sea begins.
 - [x] Milestone 1c: scenery, crates, machines, controls and the sky placed
       from the scenario, again matching HaloExport's triangle counts exactly.
 - [x] Textures (built, awaiting a playtest): every material draws its real
@@ -88,10 +109,38 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 - [x] Dirt bike (built, awaiting a playtest): B rides a stick-model motocross
       bike with dual-stick physics (left stick bars, right stick rider, RT gas,
       LT brake), the Spartan standing on it (`docs/viewer.md` "Dirt bike").
+- [x] Guardian (`guardian`; built, awaiting a playtest): 26 clusters,
+      471 instances, 258 k triangles, 53 spawns (all on a floor), 14,448 world
+      and 97,940 instanced collision triangles, about 3,400 rails. Falling
+      into the abyss (the `kill_drop` kill volume, or anywhere far below the
+      collision) puts the skater or the bike back where it last stood; the
+      jump pads' and minilift's `plasma` glow is drawn. Pinned by
+      `cargo test` (our own counts: there is no HaloExport reference).
+- [x] Sound (built, awaiting a playtest): Halo 3's own audio from MCC's FMOD
+      bank (`halo3\fmod\pc\sfx.fsb`, Vorbis; setup headers rebuilt from the
+      user's `halo3.dll`), driven by the map's tags: each cluster's background
+      ambience with its random details, cross-faded as you move; the sound
+      scenery placed in the world, panned and attenuated by distance; music by
+      hand (M; the Warthog run on 120_halo); board roll, grind and landing
+      sounds while skating. K mutes, `-` / `=` volume, `HALO3_AUDIO=0` off
+      (`docs/format/sound.md`, `docs/viewer.md` "Sound").
+- [x] Blackout (`lockout`, DLC; built, awaiting a playtest): 21 clusters,
+      447 instances, 442 k triangles, 80 spawns (all on a floor), 19,326
+      world and 166,536 instanced collision triangles, about 4,150 rails.
+      A night sky: the sky's lit pieces get a tenth of the daylight
+      (`NIGHT_SKIES` in `world/sky.rs`), so the sea is black under white ice
+      floes, with the moon, its halo and the aurora (`plasma`) drawn.
+      Dropping off the rig (`kill_volume_bottom`, z -18.3) puts the skater
+      or the bike back. Pinned by `cargo test` (our own counts).
 - [ ] Milestone 3b: feed collision and rails to the skate world.
 - [ ] Milestone 4: Skate 3 crates plugged in.
 - [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets
-      (PageUp / PageDown, `--zone`), the player starting location, sky and
-      haze per cluster, skating on the loaded zone set with kill-volume rails
-      dropped. Other campaign maps load the same way but are not checked yet
+      (PageUp / PageDown, `--zone`, and the scenario's switch volumes), the
+      player starting location, sky and haze per cluster, skating on the
+      loaded zone set with kill-volume rails dropped.
+- [x] Culling and streaming (built, awaiting a playtest): chunked world with
+      frustum, cluster-portal and screen-size culling; only the loaded zone
+      set's meshes and textures on the GPU, built in the background; the
+      skate collision swapped in without stopping the ride
+      (`docs/viewer.md` "Streaming and culling", `--bench N`). Other campaign maps load the same way but are not checked yet
       (`docs/viewer.md` "Zone sets", `docs/format/zone-sets.md`).

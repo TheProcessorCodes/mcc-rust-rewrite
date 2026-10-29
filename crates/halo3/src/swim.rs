@@ -15,6 +15,10 @@
 //!
 //! The engine takes no outside forces, so shallow water cannot slow the
 //! board down (no drag); see the doc.
+//!
+//! The same last safe spot is where the skater comes back after falling into
+//! a kill volume or out of the world (`falls.rs`; Guardian's abyss), so this
+//! runs on maps without water too.
 
 use std::collections::HashMap;
 
@@ -22,12 +26,13 @@ use bevy::prelude::*;
 
 use blam_geometry::Scene;
 
+use crate::falls::KillZones;
 use crate::skate::{Respawn, RiderPose};
 use crate::world::{to_halo, to_render};
 
 /// Water deeper than this (world units, 1 wu = 3.048 m) cannot be ridden:
 /// about 1.4 m, chest-deep on the skater.
-pub const DEEP_WU: f32 = 0.45;
+pub const DEEP_WU: f32 = blam_geometry::rails::DEEP_WATER;
 /// How long the board must stay under deep water before the skater is
 /// taken back.
 pub const SINK_SECONDS: f32 = 0.6;
@@ -55,10 +60,6 @@ impl Columns {
             }
         }
         Columns { cell, triangles, grid }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.triangles.is_empty()
     }
 
     /// Heights where the vertical line through `(x, y)` crosses a triangle
@@ -112,11 +113,15 @@ impl WaterWorld {
     /// From the scene's triangles drawn with the given water materials and
     /// its collision.
     pub fn build(scene: &Scene, water_materials: &[u32]) -> WaterWorld {
-        let water: Vec<[Vec3; 3]> = scene
-            .world_triangles()
-            .filter(|(m, _)| water_materials.contains(m))
-            .map(|(_, t)| t)
-            .collect();
+        let water: Vec<[Vec3; 3]> = if water_materials.is_empty() {
+            Vec::new()
+        } else {
+            scene
+                .world_triangles()
+                .filter(|(m, _)| water_materials.contains(m))
+                .map(|(_, t)| t)
+                .collect()
+        };
         let ground = scene.collision.triangles.iter().map(|t| t.points).collect();
         WaterWorld {
             water: Columns::new(water, 4.0),
@@ -239,8 +244,10 @@ fn board_of(pose: &RiderPose) -> Option<(Vec3, f32)> {
     Some(((f + b) * 0.5, d.y.atan2(d.x)))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn water_rules(
     world: Option<Res<WaterWorld>>,
+    kill: Option<Res<KillZones>>,
     fallback: Option<Res<FallbackSpot>>,
     pose: Option<Res<RiderPose>>,
     time: Res<Time>,
@@ -251,7 +258,7 @@ fn water_rules(
     let (Some(world), Some(pose)) = (world, pose) else {
         return;
     };
-    if world.water.is_empty() || !pose.active || pose.bones.is_empty() {
+    if !pose.active || pose.bones.is_empty() || pose.bike {
         state.in_water = false;
         state.under = 0.0;
         return;
@@ -264,6 +271,26 @@ fn water_rules(
     let Some((board, heading)) = board_of(&pose) else {
         return;
     };
+    if let Some(volume) = kill.as_deref().and_then(|k| k.deadly(board)) {
+        let back = state
+            .safe
+            .map(|s| (s, "the last safe spot"))
+            .or_else(|| fallback.as_deref().map(|f| ((f.0, f.1), "the start spawn (no safe spot yet)")));
+        match back {
+            Some(((p, yaw), what)) => {
+                info!(
+                    "fall: into {volume} at halo [{:.2}, {:.2}, {:.2}]; back to {what} halo [{:.2}, {:.2}, {:.2}]",
+                    board.x, board.y, board.z, p.x, p.y, p.z
+                );
+                respawn.0 = Some((p, yaw));
+            }
+            None => warn!("fall: into {volume}, but no safe spot is known; left where it is"),
+        }
+        state.under = 0.0;
+        state.in_water = false;
+        state.settling = 0.5;
+        return;
+    }
     let probe = world.probe(board);
     let under = probe.surface.is_some_and(|s| board.z < s);
     let mut on_dry_ground = false;

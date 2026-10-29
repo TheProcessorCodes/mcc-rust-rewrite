@@ -20,12 +20,41 @@
 // approximation of Halo's: the dominant light of the lightmap is the one
 // analytic light; the SH towards the reflection stands in for the area
 // specular and for dynamic cube maps.
+//
+// The same file is the material's prepass fragment shader (`PREPASS_PIPELINE`,
+// the depth prepass maps with water get): there it only cuts cut-outs whose
+// shader has its own `alpha_test_map`, which bevy's prepass cannot know about.
 
+@if(!PREPASS_PIPELINE)
 import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, main_pass_post_lighting_processing},
     forward_io::{VertexOutput, FragmentOutput},
+    mesh_view_bindings::{view, fog},
 };
+@if(PREPASS_PIPELINE)
+import bevy_pbr::{prepass::io::VertexOutput, render::pbr_prepass_functions::prepass_sample_color_and_alpha_discard};
+@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
+import bevy_pbr::prepass::io::FragmentOutput;
+@if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS)
+import bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector;
+@if(PREPASS_PIPELINE && !BINDLESS)
+import bevy_pbr::render::pbr_bindings::material;
+
+// Halo's fog starts `distance bias` world units from the eye (`skya`
+// setting +0x3C; -100 wu on 120_halo's Warthog run): bevy's fog has no
+// start, so `sky.rs` passes the start in metres in the fog's unused
+// directional-light exponent, and the fragment is moved that much closer
+// for the fog only.
+fn fog_position(world: vec4<f32>) -> vec4<f32> {
+    let start = fog.directional_light_exponent;
+    if start <= 0.0 {
+        return world;
+    }
+    let v = world.xyz - view.world_position;
+    let d = length(v);
+    return vec4(view.world_position + v * (max(d - start, 0.0) / max(d, 1e-4)), world.w);
+}
 
 struct HaloLightmapParams {
     // Ranges of SH coefficients c0..c3.
@@ -65,7 +94,7 @@ struct HaloLightmapParams {
     // Reflection colour (tint times contribution).
     env: vec4<f32>,
     // x: self-illumination mode (0 off, 1 map, 2 map x detail,
-    // 3 from diffuse, 4 map x diffuse, 5 three channels).
+    // 3 from diffuse, 4 map x diffuse, 5 three channels, 6 plasma: map alpha).
     illum: vec4<f32>,
     illum_a: vec4<f32>,
     illum_b: vec4<f32>,
@@ -273,6 +302,47 @@ fn to_halo_dir(r: vec3<f32>) -> vec3<f32> {
     return vec3(r.x, -r.z, r.y);
 }
 
+// Prepass: the alpha test, by `alpha_test_map` when the shader has one, else
+// bevy's own (the base map's alpha).
+@if(PREPASS_PIPELINE)
+fn prepass_cut(in: VertexOutput) {
+@if(VERTEX_UVS_A) {
+    if halo.alpha_flags.x != 0.0 {
+@if(!BINDLESS)
+        let cutoff = material.alpha_cutoff;
+@else
+        let cutoff = 0.5;
+        let cut = textureSample(alpha_map, surface_sampler, xform(in.uv, halo.alpha_xform)).a;
+        if cut < cutoff {
+            discard;
+        }
+        return;
+    }
+}
+    prepass_sample_color_and_alpha_discard(in);
+}
+
+@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
+@fragment
+fn fragment(in: VertexOutput) -> FragmentOutput {
+    prepass_cut(in);
+    var out: FragmentOutput;
+@if(UNCLIPPED_DEPTH_ORTHO_EMULATION)
+    out.frag_depth = in.unclipped_depth;
+@if(NORMAL_PREPASS)
+    out.normal = vec4(normalize(in.world_normal) * 0.5 + vec3(0.5), 1.0);
+@if(MOTION_VECTOR_PREPASS)
+    out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);
+    return out;
+}
+
+@if(PREPASS_PIPELINE && !PREPASS_FRAGMENT)
+@fragment
+fn fragment(in: VertexOutput) {
+    prepass_cut(in);
+}
+
+@if(!PREPASS_PIPELINE)
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
@@ -340,6 +410,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             illum = im.rgb * colour.rgb * halo.illum_a.rgb;
         } else if mode == 5.0 {
             illum = im.r * halo.illum_a.rgb + im.g * halo.illum_b.rgb + im.b * halo.illum_c.rgb;
+        } else if mode == 6.0 {
+            // Plasma: the mask is in the alpha channel.
+            illum = im.a * halo.illum_a.rgb;
         }
     }
 @if(VERTEX_TANGENTS) {
@@ -376,7 +449,20 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 }
 
     colour = vec4((colour.rgb + illum) * halo.extra.y, colour.a);
+@if(BLEND_MULTIPLY) {
+    // Multiply decals (`rmd ` blend_mode multiply: High Ground's
+    // `medical_decals`) scale the lit surface under them by their own
+    // colour: unlit and unexposed, or the white of the texture times the
+    // exposure turned them into white sheets. The vertex colour is the
+    // irradiance of vertex-lit objects; take it back out.
+    var unlit = pbr_input.material.base_color.rgb;
+@if(VERTEX_COLORS) {
+    unlit = unlit / max(in.color.rgb, vec3(1e-4));
+}
+    colour = vec4(min(unlit, vec3(1.0)), colour.a);
+}
     var out: FragmentOutput;
+    pbr_input.world_position = fog_position(pbr_input.world_position);
     out.color = main_pass_post_lighting_processing(pbr_input, colour);
     return out;
 }

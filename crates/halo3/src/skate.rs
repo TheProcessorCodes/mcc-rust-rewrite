@@ -23,7 +23,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use skate_host::bridge::{InputFrame, Pose, Session};
+use skate_host::bridge::{InputFrame, Pose, PreparedCollision, Session};
 
 use blam_geometry::{Collision, TriggerVolume, rails};
 
@@ -36,9 +36,10 @@ const DEFAULT_SCALE: f32 = 33.0 * 0.0254;
 const DEFAULT_ASSETS: &str = r"D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\assets";
 
 /// The map data the skate world is built from, handed over by `main`: the
-/// collision, and the trigger volumes (rails in kill volumes are dropped).
+/// collision, the trigger volumes (rails in kill volumes are dropped) and the
+/// water surfaces (rails under deep water are dropped), all in Halo units.
 #[derive(Resource)]
-pub struct SkateInput(pub Option<Collision>, pub Vec<TriggerVolume>);
+pub struct SkateInput(pub Option<Collision>, pub Vec<TriggerVolume>, pub Vec<[Vec3; 3]>);
 
 pub struct SkatePlugin;
 
@@ -49,7 +50,28 @@ impl Plugin for SkatePlugin {
             .init_resource::<AutoStart>()
             .init_resource::<Respawn>()
             .add_systems(Startup, start_worker)
-            .add_systems(Update, (update.run_if(crate::pause::running), draw_rider, show_status).chain());
+            .init_resource::<SkateMotion>()
+            .add_systems(
+                Update,
+                (update.run_if(crate::pause::running), publish_motion, draw_rider, show_status).chain(),
+            );
+    }
+}
+
+/// How the ride is going, for the board sounds (`audio/`): whether the
+/// skater is riding, the board speed in m/s and the engine's state name.
+#[derive(Resource, Default, Clone, Debug)]
+pub struct SkateMotion {
+    pub riding: bool,
+    pub speed: f32,
+    pub state: String,
+}
+
+fn publish_motion(host: Res<Host>, mut motion: ResMut<SkateMotion>) {
+    if motion.riding != host.active || motion.speed != host.speed || motion.state != host.state {
+        motion.riding = host.active;
+        motion.speed = host.speed;
+        motion.state.clone_from(&host.state);
     }
 }
 
@@ -115,8 +137,12 @@ pub struct Skating;
 
 enum Job {
     /// Build the skate world from the collision of these BSPs (bit `n`:
-    /// BSP `n`), replacing any session before.
+    /// BSP `n`). The first makes the session; later ones build the new
+    /// collision on a helper thread and swap it in while the skater rides
+    /// on (`Install`).
     World(u32),
+    /// Collision built for request `n` (the latest `World` wins).
+    Install(u64, Box<PreparedCollision>, usize, usize),
     Activate(u64, [f32; 3], f32, f32),
     Step(u64, f32, InputFrame, f32),
     Suspend,
@@ -124,6 +150,8 @@ enum Job {
 
 enum Reply {
     Ready(usize, usize),
+    /// The ride goes on on new collision.
+    Swapped(usize, usize),
     Activated(u64, Pose),
     Pose(u64, Pose),
     Error(String),
@@ -145,6 +173,8 @@ struct Host {
     status: String,
     /// The BSPs the skate world was last asked to hold.
     world: Option<u32>,
+    /// A new zone set's collision is being built to swap in.
+    swapping: bool,
 }
 
 /// The skate scale `k`: `HALO3_SKATE_SCALE` or the default.
@@ -171,6 +201,7 @@ impl Default for Host {
             state: String::new(),
             status: String::new(),
             world: None,
+            swapping: false,
         }
     }
 }
@@ -205,8 +236,31 @@ fn skate_triangles(collision: &Collision, k: f32) -> Vec<[[f32; 3]; 3]> {
         .collect()
 }
 
+/// The skate engine's triangles and grind rails for the BSPs in `mask`
+/// (rails inside kill volumes dropped), skate metres.
+#[allow(clippy::type_complexity)]
+fn skate_world(
+    collision: &Collision,
+    volumes: &[TriggerVolume],
+    water: &[[Vec3; 3]],
+    mask: u32,
+    k: f32,
+) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>) {
+    let loaded = collision.of_bsps(mask);
+    let triangles = skate_triangles(&loaded, k);
+    let (found, _) = rails::find_rails(&loaded);
+    let found = rails::outside_kill_volumes(found, volumes);
+    let found = rails::out_of_deep_water(found, water, rails::DEEP_WATER);
+    let rails = found
+        .iter()
+        .map(|r| r.iter().map(|p| (to_render(*p) * k).to_array()).collect())
+        .collect();
+    (triangles, rails)
+}
+
 fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: Res<LoadedBsps>) {
     let volumes = std::mem::take(&mut input.1);
+    let water = std::mem::take(&mut input.2);
     let Some(collision) = input.0.take() else {
         return;
     };
@@ -219,6 +273,10 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
     let k = host.scale;
     let (send, jobs) = mpsc::channel::<Job>();
     let (publish, replies) = mpsc::channel::<Reply>();
+    let resend = send.clone();
+    let collision = std::sync::Arc::new(collision);
+    let volumes = std::sync::Arc::new(volumes);
+    let water = std::sync::Arc::new(water);
     let spawned = std::thread::Builder::new()
         .name("halo3-skate".into())
         // The engine recurses deeply.
@@ -228,16 +286,66 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                 let mut session: Option<Session> = None;
                 let mut epoch = 0;
                 let mut accumulated = 0.0;
+                // The latest world request, for dropping stale installs.
+                let mut request = 0u64;
                 while let Ok(job) = jobs.recv() {
-                    // Only the latest world request matters: skip ahead
-                    // when the zone set was changed several times.
                     let job = match job {
+                        Job::World(mask) if session.is_some() => {
+                            // Riding: build beside the simulation and swap.
+                            request += 1;
+                            let n = request;
+                            let builder = session.as_ref().unwrap().collision_builder();
+                            let (collision, volumes, water, resend) = (
+                                std::sync::Arc::clone(&collision),
+                                std::sync::Arc::clone(&volumes),
+                                std::sync::Arc::clone(&water),
+                                resend.clone(),
+                            );
+                            let spawned = std::thread::Builder::new()
+                                .name("halo3-skate-collision".into())
+                                .stack_size(32 * 1024 * 1024)
+                                .spawn(move || {
+                                    let started = std::time::Instant::now();
+                                    let (triangles, rails) = skate_world(&collision, &volumes, &water, mask, k);
+                                    let counts = (triangles.len(), rails.len());
+                                    match builder.build(triangles, rails) {
+                                        Ok(prepared) => {
+                                            eprintln!(
+                                                "skate: collision for BSP mask {mask:#x} built in {:.1} s ({} triangles, {} rails)",
+                                                started.elapsed().as_secs_f32(),
+                                                counts.0,
+                                                counts.1
+                                            );
+                                            let _ = resend.send(Job::Install(n, Box::new(prepared), counts.0, counts.1));
+                                        }
+                                        Err(e) => eprintln!("skate: collision for BSP mask {mask:#x}: {e}"),
+                                    }
+                                });
+                            if let Err(e) = spawned {
+                                eprintln!("skate: collision thread: {e}");
+                            }
+                            continue;
+                        }
+                        Job::Install(n, prepared, t, r) => {
+                            if n == request
+                                && let Some(session) = session.as_mut()
+                            {
+                                session.install_collision(*prepared)?;
+                                if publish.send(Reply::Swapped(t, r)).is_err() {
+                                    return Ok(());
+                                }
+                            }
+                            continue;
+                        }
+                        // Only the latest world request matters: skip ahead
+                        // when the zone set was changed several times.
                         Job::World(mask) => {
                             let mut mask = mask;
                             let mut next = None;
                             for j in jobs.try_iter() {
                                 match j {
                                     Job::World(m) => mask = m,
+                                    Job::Install(..) => {}
                                     other => {
                                         next = Some(other);
                                         break;
@@ -247,15 +355,8 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                             // Free the old world before building the next.
                             drop(session.take());
                             let started = std::time::Instant::now();
-                            let loaded = collision.of_bsps(mask);
-                            let triangles = skate_triangles(&loaded, k);
-                            let (found, _) = rails::find_rails(&loaded);
-                            let found = rails::outside_kill_volumes(found, &volumes);
+                            let (triangles, rails) = skate_world(&collision, &volumes, &water, mask, k);
                             let rails_found = started.elapsed().as_secs_f32();
-                            let rails: Vec<Vec<[f32; 3]>> = found
-                                .iter()
-                                .map(|r| r.iter().map(|p| (to_render(*p) * k).to_array()).collect())
-                                .collect();
                             let counts = (triangles.len(), rails.len());
                             session = Some(Session::new(&root, triangles, rails, [0.0; 3], 0.0)?);
                             eprintln!(
@@ -278,7 +379,7 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                         continue;
                     };
                     match job {
-                        Job::World(_) => {}
+                        Job::World(_) | Job::Install(..) => {}
                         Job::Activate(new_epoch, spawn, heading, aspect) => {
                             epoch = new_epoch;
                             accumulated = 0.0;
@@ -448,6 +549,11 @@ fn update(
                 host.ready = true;
                 host.status = format!("skate: ready ({t} triangles, {r} rails), J to ride");
             }
+            Reply::Swapped(t, r) => {
+                host.swapping = false;
+                host.status = format!("skate: new zone set ({t} triangles, {r} rails)");
+                info!("{}", host.status);
+            }
             Reply::Activated(e, p) | Reply::Pose(e, p) if e == host.epoch => latest = Some(p),
             Reply::Activated(..) | Reply::Pose(..) => {}
             Reply::Error(e) => failed = Some(e),
@@ -494,7 +600,14 @@ fn update(
     let Some(send) = host.send.clone() else {
         return;
     };
-    if new_world {
+    if new_world && host.ready {
+        // The session exists: the new collision is built beside it and
+        // swapped in; the ride goes on meanwhile.
+        host.world = Some(mask);
+        host.swapping = true;
+        host.status = "skate: building the new zone set's collision".into();
+        let _ = send.send(Job::World(mask));
+    } else if new_world {
         host.world = Some(mask);
         host.ready = false;
         host.status = "skate: loading the new zone set".into();

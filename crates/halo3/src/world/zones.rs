@@ -1,12 +1,13 @@
 //! Which structure BSPs are loaded: zone sets.
 //!
-//! Every BSP of the map is decoded and put on the GPU at start (120_halo's
-//! eleven take about two seconds); what changes is which are shown. Each
-//! world batch carries a [`BspMember`] saying which BSPs it belongs to, and
+//! Every BSP of the map is decoded at start; only the loaded ones are on
+//! the GPU (`stream.rs` uploads and drops them per BSP). Each world chunk
+//! carries a [`BspMember`] saying which BSPs it belongs to, and
 //! [`LoadedBsps`] says which are loaded. [`load_zone_set`] and [`load_bsps`]
-//! are the whole API: change the resource and [`apply_visibility`] follows,
-//! the skate world rebuilds from the loaded BSPs' collision (`skate.rs`),
-//! and the sky and haze follow the camera's cluster ([`follow_cluster`]).
+//! are the whole API: change the resource and the streaming and culling
+//! follow (`stream.rs`, `culling.rs`), the skate world rebuilds from the
+//! loaded BSPs' collision (`skate.rs`), and the sky and haze follow the
+//! camera's cluster ([`follow_cluster`]).
 //!
 //! Keys: PageDown / PageUp step to the next / previous zone set, Home loads
 //! every BSP at once. `docs/format/zone-sets.md` has the tag layout.
@@ -15,7 +16,6 @@ use bevy::prelude::*;
 
 use blam_geometry::{Kind, Scene};
 
-use super::CollisionOverlay;
 use super::sky::CameraAir;
 use crate::fly_camera::FlyCamera;
 
@@ -79,7 +79,11 @@ impl Zones {
 /// drawn.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct LoadedBsps {
+    /// The BSPs wanted: switching zone sets changes this.
     pub mask: u32,
+    /// The BSPs on screen: follows `mask` once their units are uploaded
+    /// (`stream.rs`), so the old zone set stays drawn until then.
+    pub shown: u32,
     pub zone_set: Option<usize>,
     pub sky: Option<u32>,
 }
@@ -89,12 +93,13 @@ impl LoadedBsps {
         // `HALO3_SKY=0` hides the sky, for telling sky pieces from the world.
         static SKY_OFF: std::sync::LazyLock<bool> =
             std::sync::LazyLock::new(|| std::env::var("HALO3_SKY").is_ok_and(|v| v == "0"));
-        (m.bsps == 0 || m.bsps & self.mask != 0)
+        (m.bsps == 0 || m.bsps & self.shown != 0)
             && (m.sky.is_none() || (m.sky == self.sky && !*SKY_OFF))
     }
 }
 
-/// Loads zone set `n` (BSPs only; nothing is unloaded from the GPU).
+/// Loads zone set `n`: its BSPs are streamed in and the others out
+/// (`stream.rs`).
 pub fn load_zone_set(loaded: &mut LoadedBsps, zones: &Zones, n: usize) {
     let Some(z) = zones.layout.zone_sets.get(n) else {
         return;
@@ -171,9 +176,18 @@ impl Plugin for ZonesPlugin {
         app.init_resource::<Zones>()
             .init_resource::<LoadedBsps>()
             .init_resource::<ShowCollision>()
-            .add_systems(Update, (zone_keys.run_if(crate::pause::running), follow_cluster, apply_visibility).chain());
+            .add_systems(
+                Update,
+                (zone_keys.run_if(crate::pause::running), follow_cluster)
+                    .chain()
+                    .in_set(ZoneKeys),
+            );
     }
 }
+
+/// The zone keys and the camera's cluster, before streaming.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ZoneKeys;
 
 fn zone_keys(keys: Res<ButtonInput<KeyCode>>, zones: Res<Zones>, mut loaded: ResMut<LoadedBsps>) {
     let count = zones.layout.zone_sets.len();
@@ -225,23 +239,5 @@ fn follow_cluster(
     {
         loaded.sky = Some(sky);
         info!("sky {sky}");
-    }
-}
-
-fn apply_visibility(
-    loaded: Res<LoadedBsps>,
-    show: Res<ShowCollision>,
-    mut members: Query<(&BspMember, &mut Visibility, Has<CollisionOverlay>)>,
-    added: Query<(), Added<BspMember>>,
-) {
-    if !loaded.is_changed() && !show.is_changed() && added.is_empty() {
-        return;
-    }
-    for (m, mut v, overlay) in &mut members {
-        let shown = loaded.shows(m) && (!overlay || show.0);
-        let want = if shown { Visibility::Inherited } else { Visibility::Hidden };
-        if *v != want {
-            *v = want;
-        }
     }
 }

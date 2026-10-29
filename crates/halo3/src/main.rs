@@ -10,10 +10,17 @@
 //!                        the same, after two seconds of skating
 //! halo3 <map> --shot <dir> --bike [--view ...]
 //!                        the same, after two seconds on the dirt bike
+//! halo3 <map> --shot <dir> --bench N [--view ...]
+//!                        before each picture, time N frames and count what
+//!                        is drawn (log lines start with `bench:`)
 //!
 //! halo3 <map> --zone N|NAME | --bsps 0,3,5 | --all-bsps
 //!                        which structure BSPs to load first (default: the
 //!                        zone set the player starts in; `world/zones.rs`)
+//!
+//! halo3 <map> --music NAME|N
+//!                        start a music track (`audio/`; M plays the map's
+//!                        showpiece, e.g. the Warthog run on 120_halo)
 //!
 //! In a map, J switches between flying and skating (see `skate.rs`), B
 //! between flying and the dirt bike (`bike/mod.rs`), PageDown / PageUp step
@@ -23,7 +30,9 @@
 //!
 //! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install.
 
+mod audio;
 mod bike;
+mod falls;
 mod fly_camera;
 mod pause;
 mod rider;
@@ -58,11 +67,11 @@ fn resolve_map(arg: &str) -> PathBuf {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (scene, textures, chief, sky, water) = match args.first().map(String::as_str) {
+    let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
-  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike]
+  halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike] [--bench N]
   halo3 --test-scene");
             std::process::exit(2);
         }
@@ -72,16 +81,19 @@ fn main() -> anyhow::Result<()> {
             None,
             world::sky::SkyData::default(),
             world::water::WaterData::default(),
+            None,
         ),
         Some(map) => {
             let path = resolve_map(map);
             let started = std::time::Instant::now();
-            let cache = blam_cache::CacheFile::open(&path)?;
+            // Kept open for the whole run: zone sets decode their textures
+            // from it when they load (`world/stream.rs`).
+            let cache: &'static blam_cache::CacheFile = Box::leak(Box::new(blam_cache::CacheFile::open(&path)?));
             let mut scene = blam_geometry::Scene {
                 name: cache.header.map_name.clone(),
                 ..Default::default()
             };
-            blam_geometry::decode_into(&cache, &blam_geometry::Options::default(), &mut scene)?;
+            blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
             eprintln!(
                 "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
                 scene.name,
@@ -91,11 +103,10 @@ fn main() -> anyhow::Result<()> {
                 started.elapsed().as_secs_f32()
             );
             let started = std::time::Instant::now();
-            let textures = textures::load(&cache, &scene);
-            let bytes: usize = textures.bitmaps.values().map(|t| t.byte_len()).sum();
+            let textures = textures::load_with(cache, &scene, false);
+            let bytes: usize = textures.lightmaps.iter().flatten().map(|t| t.coefficients.byte_len() + t.intensity.byte_len()).sum();
             eprintln!(
-                "textures: {} colour bitmaps for {} materials, {:.1} MiB, loaded in {:.1} s",
-                textures.bitmaps.len(),
+                "textures: {} materials resolved (their bitmaps load with their zone set), lightmaps {:.1} MiB, in {:.1} s",
                 scene.materials.len(),
                 bytes as f64 / (1 << 20) as f64,
                 started.elapsed().as_secs_f32()
@@ -104,13 +115,15 @@ fn main() -> anyhow::Result<()> {
             if let Some(mean) = mean {
                 world::lighting::set_scene_mean(mean);
             }
-            match blam_geometry::camera_fx::read(&cache) {
+            match blam_geometry::camera_fx::read(cache) {
                 Ok(Some(fx)) => {
                     world::lighting::set_map_exposure(fx.exposure);
+                    world::lighting::set_auto_range(fx.auto_range);
                     eprintln!(
-                        "camera fx {}: exposure {:.2} stops, mean irradiance {:.3} -> x{:.2}",
+                        "camera fx {}: exposure {:.2} stops (auto range {:?}), mean irradiance {:.3} -> x{:.2}",
                         fx.tag,
                         fx.exposure,
+                        fx.auto_range,
                         mean.unwrap_or(0.0),
                         world::lighting::exposure()
                     );
@@ -118,10 +131,10 @@ fn main() -> anyhow::Result<()> {
                 Ok(None) => eprintln!("no camera fx: exposure x{}", world::lighting::exposure()),
                 Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
             }
-            let chief = rider::load_chief(&cache);
-            let sky = world::sky::load(&cache, &scene);
-            let water = world::water::load(&cache, &scene);
-            (scene, textures, chief, sky, water)
+            let chief = rider::load_chief(cache);
+            let sky = world::sky::load(cache, &scene);
+            let water = world::water::load(cache, &scene);
+            (scene, textures, chief, sky, water, Some(cache))
         }
     };
     let shot = shot_plan(&args, &scene)?;
@@ -137,6 +150,9 @@ fn main() -> anyhow::Result<()> {
         );
     }
     let title = format!("Halo 3 - {}", scene.name);
+    // Sound plays only in a window (`audio/`); `--shot` never opens the
+    // sound device.
+    let sound = audio::wanted(shot.is_some());
     let mut app = App::new();
     match &shot {
         // No window and no event loop: render into an image on a plain loop.
@@ -147,22 +163,40 @@ fn main() -> anyhow::Result<()> {
                     exit_condition: bevy::window::ExitCondition::DontExit,
                     ..default()
                 })
-                .disable::<bevy::winit::WinitPlugin>(),
+                .disable::<bevy::winit::WinitPlugin>()
+                .disable::<bevy::audio::AudioPlugin>(),
         )
         .add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
             std::time::Duration::from_millis(1),
         )),
-        None => app.add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title,
-                present_mode: PresentMode::AutoVsync,
+        None => {
+            let plugins = DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title,
+                    present_mode: PresentMode::AutoVsync,
+                    ..default()
+                }),
                 ..default()
-            }),
-            ..default()
-        })),
+            });
+            if sound {
+                app.add_plugins(plugins)
+            } else {
+                app.add_plugins(plugins.disable::<bevy::audio::AudioPlugin>())
+            }
+        }
     };
+    if sound || audio::trace_wanted() {
+        let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
+        app.add_plugins(audio::HaloAudioPlugin {
+            cache: map_file,
+            output: sound,
+            trace: audio::trace_wanted(),
+            music: value("--music"),
+        });
+    }
     let skating = shot.as_ref().is_none_or(|p| p.rides());
     let collision = scene.collision.clone();
+    let shot_mode = shot.is_some();
     if let Some(plan) = shot {
         if plan.rides() {
             // Ride from the first view, or the start spawn.
@@ -190,6 +224,7 @@ fn main() -> anyhow::Result<()> {
         app.insert_resource(skate::SkateInput(
             (!scene.collision.triangles.is_empty()).then(|| scene.collision.clone()),
             scene.trigger_volumes.clone(),
+            scene.water_triangles(),
         ))
         .insert_resource(rider::PendingChief(chief))
         .add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
@@ -197,8 +232,12 @@ fn main() -> anyhow::Result<()> {
             app.insert_resource(bike::BikeInput(collision))
                 .add_plugins(bike::BikePlugin);
         }
-        // Water surfaces and the ground under them, for sinking and
+        // Kill volumes and the bottom of the world (`falls.rs`), water
+        // surfaces and the ground under them, for sinking, falling and
         // respawning (`swim.rs`).
+        let kill = falls::KillZones::new(&scene.trigger_volumes, &scene.collision);
+        eprintln!("kill volumes: {}; out of the world below z {:.1} wu", kill.volumes.len(), kill.floor);
+        app.insert_resource(kill);
         let mut water_materials: Vec<u32> = water
             .looks
             .iter()
@@ -206,16 +245,19 @@ fn main() -> anyhow::Result<()> {
             .map(|(m, _)| *m)
             .collect();
         water_materials.sort_unstable();
-        if !water_materials.is_empty() {
+        if !scene.collision.triangles.is_empty() {
             app.insert_resource(swim::WaterWorld::build(&scene, &water_materials));
-            if let Some(s) = scene.spawns.first() {
-                app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
-            }
+        }
+        if let Some(s) = scene.spawns.first() {
+            app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
+        } else if let Some(s) = scene.starts.first() {
+            app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
         }
     }
     app.insert_resource(zones)
+        .insert_resource(world::stream::ZoneTriggers::new(shot_mode))
         .insert_resource(loaded)
-        .insert_resource(world::PendingScene(Some(scene), Some(textures)))
+        .insert_resource(world::PendingScene(Some(scene), Some(textures), map_file))
         .insert_resource(world::sky::PendingSky(Some(sky)))
         .insert_resource(world::water::PendingWater(Some(water)))
         .add_plugins((pause::PausePlugin, fly_camera::FlyCameraPlugin, world::WorldPlugin))
@@ -256,5 +298,6 @@ fn shot_plan(args: &[String], scene: &blam_geometry::Scene) -> anyhow::Result<Op
         size,
         skate: args.iter().any(|a| a == "--skate"),
         bike: args.iter().any(|a| a == "--bike"),
+        bench: value("--bench").map(|n| n.parse()).transpose()?.unwrap_or(0),
     }))
 }

@@ -15,6 +15,9 @@
 //! | Y | R | stand the bike back up |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
+//! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
+//! abyss) puts the bike back where it last rode well, as a crash does.
+//!
 //! `--shot DIR --bike` rides from the first view (or the start spawn) for a
 //! couple of seconds, then takes the rider pictures; `HALO3_BIKE_THROTTLE`
 //! sets the throttle it holds meanwhile (default 0.4).
@@ -186,6 +189,8 @@ fn ride(
     mut auto: ResMut<AutoStart>,
     input: Option<Res<BikeInput>>,
     tuning: Res<BikeTuning>,
+    kill: Option<Res<crate::falls::KillZones>>,
+    fallback: Option<Res<crate::swim::FallbackSpot>>,
     mut rider: ResMut<RiderPose>,
     loaded: Res<LoadedBsps>,
     time: Res<Time>,
@@ -274,6 +279,24 @@ fn ride(
     let dt = time.delta_secs().min(0.1);
     bike.tuning = tuning.0;
     bike.step(world, controls, dt);
+    if let Some(kill) = kill.as_deref()
+        && let Some(volume) = kill.deadly(to_halo(bike.position))
+    {
+        let at = to_halo(bike.position);
+        bike.respawn(world);
+        // Never rode well yet: the start spawn.
+        if kill.deadly(to_halo(bike.position)).is_some()
+            && let Some(f) = fallback.as_deref()
+        {
+            *bike = Bike::dropped(world, to_render(f.0) + Vec3::Y, heading_of_halo_yaw(f.1));
+        }
+        let back = to_halo(bike.position);
+        info!(
+            "fall: bike into {volume} at halo [{:.2}, {:.2}, {:.2}]; back at [{:.2}, {:.2}, {:.2}]",
+            at.x, at.y, at.z, back.x, back.y, back.z
+        );
+        riding.eye = None;
+    }
     rider.skated += dt;
 
     // The rider, as skate bones (skate metres, world): see `pose.rs`.

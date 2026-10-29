@@ -43,6 +43,9 @@ const MIN_RAIL: f32 = 24.0;
 const MAX_SLOPE: f32 = 0.7;
 /// Chains continue through a joint turning less than about 35 degrees.
 const MIN_TURN_COS: f32 = 0.82;
+/// Water deeper than this (world units, about 1.4 m) cannot be ridden: the
+/// viewer sinks the skater there, so rails under it are dropped.
+pub const DEEP_WATER: f32 = 0.45;
 /// The skate engine counts rails in a u16.
 const MAX_RAILS: usize = u16::MAX as usize;
 
@@ -109,13 +112,62 @@ pub fn outside_kill_volumes(rails: Vec<Vec<Vec3>>, volumes: &[TriggerVolume]) ->
     if kill.is_empty() {
         return rails;
     }
-    let deadly = |p: Vec3| kill.iter().any(|v| v.contains(p));
+    cut_where(rails, |p| kill.iter().any(|v| v.contains(p)))
+}
+
+/// Cuts rails (Halo units) where they run more than `depth` under a water
+/// surface (`water`: the triangles drawn with water shaders). The water
+/// surface is not in the collision, so the lips of a sea bed (Last Resort's
+/// beach) are real rails a skater could only reach by sinking. Split as in
+/// [`outside_kill_volumes`].
+pub fn out_of_deep_water(rails: Vec<Vec<Vec3>>, water: &[[Vec3; 3]], depth: f32) -> Vec<Vec<Vec3>> {
+    if water.is_empty() {
+        return rails;
+    }
+    const CELL: f32 = 8.0;
+    let cell = |v: f32| (v / CELL).floor() as i32;
+    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (i, t) in water.iter().enumerate() {
+        let lo = t[0].min(t[1]).min(t[2]);
+        let hi = t[0].max(t[1]).max(t[2]);
+        for x in cell(lo.x)..=cell(hi.x) {
+            for y in cell(lo.y)..=cell(hi.y) {
+                grid.entry((x, y)).or_default().push(i);
+            }
+        }
+    }
+    let drowned = |p: Vec3| {
+        grid.get(&(cell(p.x), cell(p.y))).is_some_and(|tris| {
+            tris.iter()
+                .filter_map(|&i| height_over(&water[i], p.x, p.y))
+                .any(|surface| surface - p.z > depth)
+        })
+    };
+    cut_where(rails, drowned)
+}
+
+/// The height of a triangle over `(x, y)`, when the point is inside its
+/// footprint and the triangle is not vertical.
+fn height_over(t: &[Vec3; 3], x: f32, y: f32) -> Option<f32> {
+    let [a, b, c] = *t;
+    let d = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+    if d.abs() < 1e-9 {
+        return None;
+    }
+    let u = ((x - a.x) * (c.y - a.y) - (c.x - a.x) * (y - a.y)) / d;
+    let v = ((b.x - a.x) * (y - a.y) - (x - a.x) * (b.y - a.y)) / d;
+    (u >= 0.0 && v >= 0.0 && u + v <= 1.0).then_some(a.z + u * (b.z - a.z) + v * (c.z - a.z))
+}
+
+/// Splits rails at every segment whose ends or middle are `bad`; pieces of
+/// one point are dropped.
+fn cut_where(rails: Vec<Vec<Vec3>>, bad: impl Fn(Vec3) -> bool) -> Vec<Vec<Vec3>> {
     let mut out = Vec::new();
     for rail in rails {
         let mut piece: Vec<Vec3> = Vec::new();
         for w in rail.windows(2) {
             let (a, b) = (w[0], w[1]);
-            if deadly(a) || deadly(b) || deadly((a + b) * 0.5) {
+            if bad(a) || bad(b) || bad((a + b) * 0.5) {
                 if piece.len() >= 2 {
                     out.push(std::mem::take(&mut piece));
                 }
