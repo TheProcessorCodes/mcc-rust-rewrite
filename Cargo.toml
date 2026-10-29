@@ -2,7 +2,7 @@
 # no game files live here. See HANDOFF.md and README.md.
 [workspace]
 resolver = "3"
-members = ["crates/blam_cache", "crates/blam_cli", "crates/blam_geometry", "crates/blam_sound", "crates/blam_texture", "crates/halo3"]
+members = ["crates/blam_cache", "crates/blam_h2", "crates/blam_cli", "crates/blam_geometry", "crates/blam_sound", "crates/blam_texture", "crates/halo3"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,6 +21,7 @@ blam_cache = { path = "crates/blam_cache" }
 blam_geometry = { path = "crates/blam_geometry" }
 blam_texture = { path = "crates/blam_texture" }
 blam_sound = { path = "crates/blam_sound" }
+blam_h2 = { path = "crates/blam_h2" }
 # The same bevy as IW4L and the skate crates (skate-host wants 0.20 with
 # std, multi_threaded and bevy_log), so the skate glue ports over unchanged.
 bevy = { version = "0.20", default-features = false, features = [
