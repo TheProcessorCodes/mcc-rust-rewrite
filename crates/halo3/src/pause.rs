@@ -95,7 +95,6 @@ const BIKE: &[[&str; 2]] = &[
     ["left trigger", "brake"],
     ["A (hold)", "back up"],
     ["Y", "stand the bike back up"],
-    ["0 (keyboard)", "physics tuning: sliders for grip, power, lean ..."],
     ["View / Back", "get off the bike"],
     ["Start", "pause"],
 ];

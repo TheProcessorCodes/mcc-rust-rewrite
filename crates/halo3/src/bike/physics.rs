@@ -1,290 +1,67 @@
-//! The dirt bike as a rigid body: two raycast suspension wheels with tyre
-//! friction, a handlebar, a rider whose weight moves with the right stick,
-//! and a few probe spheres so the frame and the rider can hit things.
+//! The dirt bike as a rigid body on two suspension wheels, ridden the way MX
+//! vs ATV Unleashed rides it (`unleashed.rs` holds the stock Pro 250's
+//! numbers, `docs/bike-unleashed.md` the model in plain words).
 //!
 //! Plain Rust over glam, no bevy systems: `mod.rs` feeds it the controller
 //! and draws the result. Everything is in the renderer frame (metres, Y up).
 //!
 //! The bike's own frame: +X left, +Y up, +Z forward (the skater rig's
-//! frame too, so the rider pose needs no axis swap). Its origin is the
-//! centre of mass of bike and rider together.
+//! frame too, so the rider pose needs no axis swap). Its origin sits
+//! `FRAME_LIFT` above the static centre of gravity of bike and rider (where
+//! the frame, pegs and probes below were laid out); the rider's weight
+//! shift moves the real centre fore and aft.
 //!
-//! The model follows stock MX vs ATV Reflex's mx450f, as read out of the
-//! game's data and code in `D:\reflex-tools\physics` (`reflex\docs\fields\
-//! lean.md`, `susp-tires.md`; numbers from `dumps\stock-json`):
-//! - Reflex's engine and automatic five-speed: its torque curve through the
-//!   gear that gives the most wheel torque for the speed, engine braking off
-//!   the throttle, a hard limiter; the tyres decide how much reaches the
-//!   ground;
-//! - the left stick turns the bars through a speed curve (30 deg standing,
-//!   9.5 at 50 mph), squared and lagged;
-//! - the lean is placed, not balanced: a lean-for-speed curve times the
-//!   stick sets the angle, and the bike is turned about its tyres to it, so
-//!   a turn can never tip it over;
-//! - each tyre cancels its contact patch's sideways slip, up to grip x load;
-//!   past the friction circle it slides, and a sliding tyre gains a side force
-//!   that grows with the slide, so slides catch themselves;
-//! - the right stick moves the rider: on the ground his weight presses the
-//!   front or back down (wheelies, stoppies) and side to side leans the bike
-//!   further and tightens the turn; in the air it rotates the bike (pitch,
-//!   lean and whip).
+//! What makes it Unleashed rather than a free bicycle:
+//! - on the ground the bike cannot roll by itself. The bars and the lean are
+//!   set from the stick (lean grows with speed up to 45° at 35 mph), the
+//!   tyres only push and yaw it;
+//! - each wheel is a spring along the ground's normal; the tyres' grip acts
+//!   near the centre of gravity, so it steers the bike without tipping it;
+//!   sideways grip follows slip speed on a curve that peaks and fades;
+//! - a five-speed engine with a slipping clutch and automatic shifts drives
+//!   the rear wheel; too much torque spins it, too much brake locks it;
+//! - pulling back on the gas holds a wheelie at an angle set by the stick,
+//!   full forward on the brakes holds a stoppie;
+//! - in the air the stick turns the bike against heavy damping, and let go
+//!   it levels and lines up with where it is going.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use bevy::math::{Mat3, Quat, Vec2, Vec3};
 
+use super::unleashed::{RPM, Setup, Tyre, ft, lerp_clamp};
+
 pub const GRAVITY: f32 = 9.81;
 
-/// Bike and rider together, kg: Reflex's chassis 99, rider 58, wheels 19.
-pub const MASS: f32 = 177.0;
-/// The rider's share, for the weight shift.
-pub const RIDER_MASS: f32 = 58.0;
-/// Principal moments about the local X (pitch), Y (yaw), Z (roll) axes:
-/// Reflex's chassis (13.6 / 19.0 / 13.6) with the rider and the wheels
-/// added about the shared centre of mass.
-pub const INERTIA: Vec3 = Vec3::new(36.0, 32.0, 28.0);
+/// How far the bike frame's origin sits above the centre of gravity.
+pub const FRAME_LIFT: f32 = 0.135;
 
-/// Engine torque by crank speed: rpm, N·m (Reflex stock: 55 N·m peak at
-/// about 5400 rpm, nothing left at the limiter).
-const TORQUE_CURVE: [(f32, f32); 9] = [
-    (0.0, 13.4),
-    (1990.0, 40.1),
-    (3380.0, 50.6),
-    (4613.0, 54.5),
-    (6034.0, 54.2),
-    (7456.0, 45.0),
-    (8467.0, 30.6),
-    (9604.0, 14.8),
-    (11500.0, 0.0),
-];
-/// Engine braking off the throttle: this much drag at the crank, N·m, times
-/// a share by rpm.
-pub const ENGINE_DRAG: f32 = 27.1;
-const DRAG_CURVE: [(f32, f32); 6] = [
-    (0.0, 0.0),
-    (2717.0, 0.162),
-    (3918.0, 0.11),
-    (6730.0, 0.734),
-    (8815.0, 0.734),
-    (11500.0, 1.0),
-];
-pub const IDLE_RPM: f32 = 1500.0;
-pub const LIMITER_RPM: f32 = 11500.0;
-/// Overall ratios, crank to rear wheel, first to fifth.
-pub const GEARS: [f32; 5] = [19.72, 16.11, 13.53, 11.50, 9.63];
-/// The rear tyre radius the gearing works through (Reflex's 0.317 m; the
-/// drawn tyre is a little bigger).
-pub const GEAR_RADIUS: f32 = 0.317;
-/// Seconds since the last shift before the box shifts up, or down.
-const UPSHIFT_WAIT: f32 = 0.3;
-const DOWNSHIFT_WAIT: f32 = 0.15;
-/// Ground drag on the whole bike by speed: m/s, N (Reflex stock).
-const GROUND_DRAG: [(f32, f32); 4] = [(0.0, 0.0), (17.6, 107.0), (31.4, 458.0), (45.2, 663.0)];
-/// Backing up (hold A): a push that fades out between these speeds, N, m/s.
-pub const REVERSE_FORCE: f32 = 667.0;
-const REVERSE_FADE: (f32, f32) = (0.76, 3.81);
-
-/// The engine's torque at an rpm, N·m.
-pub fn engine_torque(rpm: f32) -> f32 {
-    lerp_table(&TORQUE_CURVE, rpm)
+/// An axle from `unleashed.rs` (from the centre of gravity) in the bike frame.
+fn frame(axle: Vec3) -> Vec3 {
+    axle - Vec3::Y * FRAME_LIFT
 }
 
-/// The crank speed in a gear for a forward speed, rpm: clutch always in,
-/// held up at idle, never past the limiter.
-fn gear_rpm(ratio: f32, speed: f32) -> f32 {
-    let wheel = (speed / GEAR_RADIUS).max(0.5);
-    (wheel * ratio * 60.0 / std::f32::consts::TAU).clamp(IDLE_RPM, LIMITER_RPM)
+/// The stock bike, built once.
+pub fn setup() -> &'static Setup {
+    static SETUP: OnceLock<Setup> = OnceLock::new();
+    SETUP.get_or_init(Setup::pro_250)
 }
-
-/// The gear with the most torque at the wheel for a speed (Reflex's
-/// automatic): ties go to the lower gear.
-fn best_gear(gearing: f32, speed: f32) -> usize {
-    let mut best = (0, f32::MIN);
-    for (i, &g) in GEARS.iter().enumerate() {
-        let ratio = g * gearing;
-        let score = ratio * engine_torque(gear_rpm(ratio, speed));
-        if score > best.1 + 1e-3 {
-            best = (i, score);
-        }
-    }
-    best.0
-}
-/// Full brakes, m/s², split front / rear: Reflex's 339 N·m front and
-/// 475 N·m rear at the tyre radii, a rear-biased pair.
-pub const BRAKE_DECEL: f32 = 13.8;
-pub const BRAKE_FRONT: f32 = 0.39;
-
-/// Tyre grip on normal ground, front and rear alike (Reflex 1.3).
-pub const GRIP: f32 = 1.3;
-/// A sliding tyre keeps this share of its grip...
-pub const SLIDE_GRIP: f32 = 0.9;
-/// ...plus a side force that grows with the slide (Reflex 300 lbf), N,
-/// reached at `SLIDE_CURVE`'s last speed.
-pub const SLIDE_FORCE: f32 = 1334.0;
-/// The side force's share by sideways slide speed, m/s.
-const SLIDE_CURVE: [(f32, f32); 5] = [(0.0, 0.0), (4.5, 0.26), (8.9, 0.72), (13.3, 0.93), (17.9, 1.0)];
-/// A sliding tyre's grip along its rolling direction.
-const SLIDE_LONG: f32 = 0.8;
-
-const MPH: f32 = 0.44704;
-
-/// Full-stick bar angle by forward speed: mph, degrees (Reflex stock).
-const STEER_CURVE: [(f32, f32); 8] = [
-    (0.0, 30.0),
-    (10.0, 29.3),
-    (20.0, 27.5),
-    (30.0, 23.5),
-    (40.0, 16.1),
-    (50.0, 9.5),
-    (60.0, 6.7),
-    (80.0, 4.7),
-];
-/// The most the bars ever turn.
-const STEER_MAX: f32 = 30.0 * std::f32::consts::PI / 180.0;
-/// Seconds the bars lag the stick.
-pub const STEER_LAG: f32 = 0.15;
-
-/// Full-stick lean by forward speed: mph, degrees (Reflex stock).
-const LEAN_CURVE: [(f32, f32); 7] = [
-    (0.0, 5.6),
-    (10.0, 13.0),
-    (20.0, 17.0),
-    (30.0, 20.0),
-    (40.0, 24.0),
-    (50.0, 27.0),
-    (80.0, 34.0),
-];
-/// Seconds the lean lags its target.
-pub const LEAN_LAG: f32 = 0.3;
-/// How much the rider leaning into a turn adds: to the lean (full rider
-/// lean with full steer leans x1.55) and to the bar angle.
-pub const RIDER_LEAN: f32 = 0.55;
-pub const RIDER_STEER: f32 = 0.2;
-
-/// A curve given in mph and degrees, at a speed in m/s, in radians.
-fn mph_curve(curve: &[(f32, f32)], speed: f32) -> f32 {
-    lerp_table(curve, speed.abs() / MPH).to_radians()
-}
-
-/// Piecewise linear through `table`, held flat past both ends.
-fn lerp_table(table: &[(f32, f32)], x: f32) -> f32 {
-    let (first, last) = (table[0], table[table.len() - 1]);
-    if x <= first.0 {
-        return first.1;
-    }
-    for w in table.windows(2) {
-        let ((x0, y0), (x1, y1)) = (w[0], w[1]);
-        if x <= x1 {
-            return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
-        }
-    }
-    last.1
-}
-
-/// The bars at full stick for a speed (m/s), radians, before tuning.
-pub fn steer_lock(speed: f32) -> f32 {
-    mph_curve(&STEER_CURVE, speed)
-}
-
-/// The lean at full stick for a speed (m/s), radians, before tuning.
-pub fn lean_for(speed: f32) -> f32 {
-    mph_curve(&LEAN_CURVE, speed)
-}
-
-/// How far the rider moves his weight at full stick, metres (X left, Z forward).
-pub const LEAN_REACH: Vec2 = Vec2::new(0.25, 0.30);
-/// How hard the weight shift works on the ground (1 = only gravity):
-/// Reflex's rider is light (58 kg) but a body of his own that throws the
-/// bike about, more than his weight alone would.
-pub const LEAN_GAIN: f32 = 2.5;
-/// Angular accelerations the rider gives in the air at full stick, rad/s².
-pub const AIR_PITCH: f32 = 9.0;
-pub const AIR_ROLL: f32 = 7.0;
-pub const AIR_YAW: f32 = 5.0;
-
-/// The rear wheel and the engine turning it, as felt at the axle, kg·m².
-/// Speeding it up or slowing it down twists the frame the other way: gas in
-/// the air lifts the front, the rear brake drops it.
-pub const WHEEL_INERTIA: f32 = 0.45;
-/// How fast the unloaded rear wheel spins up on full gas in the air, rad/s²
-/// (as far as the limiter in the gear it is in).
-pub const WHEEL_REV_ACCEL: f32 = 40.0;
-/// The rear brake locks the wheel in the air, rad/s², and with neither
-/// pedal the engine slows it gently (time constant, seconds).
-pub const WHEEL_BRAKE_DECEL: f32 = 300.0;
-pub const WHEEL_COAST_SECONDS: f32 = 4.0;
 
 /// Seconds lying in the dirt before the bike comes back.
 pub const CRASH_SECONDS: f32 = 2.0;
 
-/// The values the tuning menu (`tune.rs`) can change while riding. The
-/// default is the stock bike: the constants above.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Tuning {
-    /// Scale the engine's torque, the gear ratios and the engine braking.
-    pub torque: f32,
-    pub gearing: f32,
-    pub engine_brake: f32,
-    pub brake_decel: f32,
-    pub brake_front: f32,
-    pub grip: f32,
-    /// The sliding side force, N.
-    pub slide_force: f32,
-    /// Scales the steering curve.
-    pub steer_lock: f32,
-    pub steer_lag: f32,
-    /// Scales the lean curve.
-    pub lean_depth: f32,
-    pub lean_lag: f32,
-    /// Scales what the rider's sideways lean adds to the lean and the bars.
-    pub rider_lean: f32,
-    pub lean_gain: f32,
-    /// Scale the suspension springs and dampers.
-    pub spring: f32,
-    pub damper: f32,
-    /// Scales the rider's spin in the air.
-    pub air: f32,
-}
-
-impl Default for Tuning {
-    fn default() -> Self {
-        Tuning {
-            torque: 1.0,
-            gearing: 1.0,
-            engine_brake: 1.0,
-            brake_decel: BRAKE_DECEL,
-            brake_front: BRAKE_FRONT,
-            grip: GRIP,
-            slide_force: SLIDE_FORCE,
-            steer_lock: 1.0,
-            steer_lag: STEER_LAG,
-            lean_depth: 1.0,
-            lean_lag: LEAN_LAG,
-            rider_lean: 1.0,
-            lean_gain: LEAN_GAIN,
-            spring: 1.0,
-            damper: 1.0,
-            air: 1.0,
-        }
-    }
-}
-
-/// One suspension leg and its wheel.
+/// One suspension leg and its wheel, for drawing and the rider.
 #[derive(Clone, Copy, Debug)]
 pub struct Leg {
     /// The axle at full extension, bike frame.
     pub extended: Vec3,
-    /// The direction the axle moves when the suspension compresses.
+    /// The direction the axle is drawn moving as the suspension compresses.
     pub axis: Vec3,
     pub travel: f32,
     pub radius: f32,
     /// Tread width, metres (drawn only).
     pub width: f32,
-    /// Spring N/m, and the damper compressing (bump) and extending
-    /// (rebound), N·s/m.
-    pub spring: f32,
-    pub bump: f32,
-    pub rebound: f32,
 }
 
 /// The rake of the forks: the steering axis leans back this far from vertical.
@@ -294,67 +71,29 @@ pub fn steering_axis() -> Vec3 {
     Vec3::new(0.0, RAKE.cos(), -RAKE.sin())
 }
 
-/// Where the axles sit with the rider on: below the centre of mass, and
-/// along the bike either side of it. A long wheelbase (1.75 m) for a
-/// steadier ride.
-const AXLE_Y: f32 = -0.30;
-const REAR_Z: f32 = -0.85;
-const FRONT_Z: f32 = 0.90;
-
-/// The share of the weight each wheel carries, from the lever arms.
-fn front_share() -> f32 {
-    -REAR_Z / (FRONT_Z - REAR_Z)
-}
-
-/// A leg whose axle sits at `rest` under its share of the weight: full
-/// extension is that far down again by the sag the spring gives.
-fn leg(rest: Vec3, share: f32, spring: f32) -> Leg {
-    let axis = Vec3::Y;
-    let sag = MASS * GRAVITY * share / spring;
+fn leg(axle: Vec3, t: &Tyre, width: f32) -> Leg {
     Leg {
-        extended: rest - axis * sag,
-        axis,
-        travel: 0.0,
-        radius: 0.0,
-        width: 0.0,
-        spring,
-        bump: 0.0,
-        rebound: 0.0,
+        extended: axle,
+        axis: Vec3::Y,
+        travel: t.strut,
+        radius: t.radius,
+        width,
     }
 }
 
-/// Reflex's rear: a 13.9 kN/m (950 lbf/ft) spring, 584 / 1167 N·s/m.
 pub fn rear_leg() -> Leg {
-    Leg {
-        travel: 0.37,
-        radius: 0.355,
-        width: 0.13,
-        bump: 584.0,
-        rebound: 1167.0,
-        ..leg(Vec3::new(0.0, AXLE_Y, REAR_Z), 1.0 - front_share(), 13860.0)
-    }
+    let s = setup();
+    leg(frame(s.rear_axle), &s.rear, 0.13)
 }
 
-/// Reflex's forks: 20.2 kN/m measured straight up (1100 lbf/ft along the
-/// raked fork), 438 / 876 N·s/m. The leg slides straight up the bike like
-/// the rear: the forks are drawn raked, but a raked ray would shrink the
-/// tyre by the cosine.
 pub fn front_leg() -> Leg {
-    Leg {
-        travel: 0.40,
-        radius: 0.37,
-        width: 0.11,
-        bump: 438.0,
-        rebound: 876.0,
-        ..leg(Vec3::new(0.0, AXLE_Y, FRONT_Z), front_share(), 20200.0)
-    }
+    let s = setup();
+    leg(frame(s.front_axle), &s.front, 0.11)
 }
 
-/// How far above the top of its travel a wheel's ray starts, so a wheel
-/// pushed past the bump stop still finds the ground.
-const RAY_HEADROOM: f32 = 0.45;
-/// The bump stop: past full travel the frame itself hits.
-const BUMP_STOP: f32 = 90000.0;
+/// How far above the extended axle a wheel's ray starts, so a wheel pushed
+/// past full travel still finds the ground.
+const RAY_HEADROOM: f32 = 0.6;
 
 /// Where the rider stands, bike frame (render metres): footpegs (left;
 /// mirror X for the right), the middle of the bars at rest, half the bar
@@ -363,10 +102,10 @@ pub const PEG: Vec3 = Vec3::new(0.19, -0.25, -0.12);
 pub const BAR_HALF_WIDTH: f32 = 0.40;
 pub const HIPS: Vec3 = Vec3::new(0.0, 0.55, -0.30);
 
-/// Where the forks are drawn from: the front axle 10 cm below its rest
-/// height, so the bars and the triple clamp stay put whatever the spring.
+/// Where the forks are drawn from: the front axle at full extension, so
+/// the bars and the triple clamp stay put whatever the spring.
 pub fn fork_base() -> Vec3 {
-    Vec3::new(0.0, AXLE_Y - 0.10, FRONT_Z)
+    front_leg().extended
 }
 
 /// The middle of the bars: on the steering axis, above the fork top.
@@ -378,8 +117,8 @@ pub fn bar_centre() -> Vec3 {
 /// and whether touching anything with it is a crash.
 pub const PROBES: [(Vec3, f32, bool); 6] = [
     (Vec3::new(0.0, -0.40, 0.05), 0.14, false), // skid plate
-    (Vec3::new(0.0, 0.05, -1.13), 0.12, false), // rear fender
-    (Vec3::new(0.0, 0.10, 1.03), 0.12, false),  // front fender
+    (Vec3::new(0.0, 0.05, -1.08), 0.12, false), // rear fender
+    (Vec3::new(0.0, 0.10, 0.98), 0.12, false),  // front fender
     (Vec3::new(0.0, 0.18, -0.30), 0.16, false), // seat
     (Vec3::new(0.0, 0.62, 0.40), 0.16, true),   // bars and hands
     (Vec3::new(0.0, 1.30, 0.20), 0.24, true),   // the rider's head
@@ -606,56 +345,68 @@ fn closest_point(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
     a + ab * (vb * denom) + ac * (vc * denom)
 }
 
+
 /// One wheel as last simulated, for drawing and the rider.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WheelState {
-    /// How far into its travel the suspension is.
+    /// How far into its travel the suspension is, as drawn: it extends no
+    /// faster than the strut lets it.
     pub compression: f32,
     pub contact: Option<Hit>,
+    /// Spinning under power or locked under the brake.
+    pub sliding: bool,
 }
 
-/// A tyre on the ground this sub-step, for the tyre solve.
+/// The engine and gearbox.
 #[derive(Clone, Copy, Debug)]
-struct Tyre {
-    point: Vec3,
-    /// Rolling and sideways directions, along the ground.
-    long: Vec3,
-    lat: Vec3,
-    /// The suspension's push, N.
-    load: f32,
-    /// Drive, brake and rolling drag along `long`, N, before grip.
-    f_long: f32,
+pub struct Engine {
+    pub rpm: f32,
+    /// 0-based.
+    pub gear: usize,
+    /// The clutch grips without slipping.
+    pub locked: bool,
+    /// The rear wheel's rpm through the gears last step, to see it cross the engine's.
+    wheel_rpm: f32,
+    /// What a spinning rear tyre really holds back, at the engine, N·m.
+    tyre_load: f32,
+}
+
+/// The controls after the bike's own rate limits.
+#[derive(Clone, Copy, Debug, Default)]
+struct Held {
+    /// +1 right.
+    steer: f32,
+    /// The rider's weight: +1 all the way back.
+    back: f32,
+    gas: f32,
+    brake: f32,
 }
 
 /// The bike's state. `steer` is the bar angle in radians, positive to the left.
 #[derive(Clone, Debug)]
 pub struct Bike {
+    /// The bike frame's origin, world.
     pub position: Vec3,
     pub rotation: Quat,
+    /// World frame, m/s and rad/s.
     pub velocity: Vec3,
-    /// World frame, rad/s.
     pub spin: Vec3,
     pub steer: f32,
-    /// The steer stick, squared and lagged.
-    steer_in: f32,
-    /// The lean the bike is placed at on the ground, radians, positive right.
-    lean_angle: f32,
-    /// The ground's up, slowly filtered: what the lean is measured from.
-    up_ref: Vec3,
-    /// The rider's weight shift, smoothed from the stick (same axes).
+    /// The rider's weight shift, smoothed from the stick (X right, Y forward).
     pub lean: Vec2,
     /// Rear, front.
     pub wheels: [WheelState; 2],
     /// The rear wheel's spin, rad/s, positive rolling forward.
     pub wheel_spin: f32,
-    /// The gear (0 is first) and the crank speed, rpm.
-    pub gear: usize,
-    pub rpm: f32,
-    /// Seconds since the last shift.
-    shift_clock: f32,
+    pub engine: Engine,
     /// Seconds left lying in the dirt.
     pub crashed: Option<f32>,
-    pub tuning: Tuning,
+    held: Held,
+    /// Where the real centre of gravity is, bike frame from `position`.
+    cog: Vec3,
+    /// The wheelie and stoppie holds' integral, N·m, and whether a stoppie is on.
+    pitch_integral: f32,
+    stoppie: bool,
     /// Where to come back after a crash: position and heading, recorded
     /// while both wheels are down, the oldest about two seconds back.
     safe: Vec<(Vec3, f32)>,
@@ -669,8 +420,13 @@ pub fn heading_rotation(heading: f32) -> Quat {
     Quat::from_rotation_y(heading)
 }
 
+/// Moves `v` toward `target` by at most `rate * dt`.
+fn toward(v: f32, target: f32, rate: f32, dt: f32) -> f32 {
+    v + (target - v).clamp(-rate * dt, rate * dt)
+}
+
 impl Bike {
-    /// A bike standing on its wheels at rest with its centre of mass at `position`.
+    /// A bike standing on its wheels at rest with its centre of gravity at `position`.
     pub fn new(position: Vec3, heading: f32) -> Bike {
         Bike {
             position,
@@ -678,17 +434,21 @@ impl Bike {
             velocity: Vec3::ZERO,
             spin: Vec3::ZERO,
             steer: 0.0,
-            steer_in: 0.0,
-            lean_angle: 0.0,
-            up_ref: Vec3::Y,
             lean: Vec2::ZERO,
             wheels: [WheelState::default(); 2],
             wheel_spin: 0.0,
-            gear: 0,
-            rpm: IDLE_RPM,
-            shift_clock: 0.0,
+            engine: Engine {
+                rpm: setup().min_rpm,
+                gear: 0,
+                locked: false,
+                wheel_rpm: 0.0,
+                tyre_load: 0.0,
+            },
             crashed: None,
-            tuning: Tuning::default(),
+            held: Held::default(),
+            cog: Vec3::NEG_Y * FRAME_LIFT,
+            pitch_integral: 0.0,
+            stoppie: false,
             safe: Vec::new(),
             safe_clock: 0.0,
             candidates: Vec::new(),
@@ -740,7 +500,7 @@ impl Bike {
     /// The axle of a leg (0 rear, 1 front) at its current compression, bike frame.
     pub fn axle(&self, leg: usize) -> Vec3 {
         let l = if leg == 0 { rear_leg() } else { front_leg() };
-        l.extended + l.axis * self.wheels[leg].compression
+        l.extended + l.axis * self.wheels[leg].compression.min(l.travel)
     }
 
     /// The bars' rotation about the steering axis, bike frame.
@@ -759,10 +519,8 @@ impl Bike {
     pub fn step(&mut self, world: &World, controls: Controls, dt: f32) {
         const SUB: f32 = 1.0 / 240.0;
         // A frame with no time in it (the first frame can be one) would
-        // divide by zero: with the rear wheel off the ground its spin-up
-        // torque is (change in spin) / dt = 0 / 0, and the NaN reaches the
-        // tyre solve's grip limits, where `clamp` panics. Seen on Narrows
-        // (`chill --bike --view spawn33`, also spawns 10, 31, 32, 34).
+        // divide by zero in the sub-steps. Seen on Narrows (`chill --bike
+        // --view spawn33`, also spawns 10, 31, 32, 34).
         if dt <= 0.0 || !dt.is_finite() {
             return;
         }
@@ -801,231 +559,335 @@ impl Bike {
     /// Back on the wheels where it last rode well (or upright where it is).
     pub fn respawn(&mut self, world: &World) {
         let (at, heading) = self.safe.first().copied().unwrap_or((self.position, self.heading()));
-        let (safe, tuning) = (std::mem::take(&mut self.safe), self.tuning);
+        let safe = std::mem::take(&mut self.safe);
         *self = Bike::dropped(world, at + Vec3::Y * 0.5, heading);
         self.safe = safe;
-        self.tuning = tuning;
     }
 
     /// Stands the bike up where it is, facing the way it was going.
     pub fn reset_here(&mut self, world: &World) {
-        let (safe, tuning) = (std::mem::take(&mut self.safe), self.tuning);
+        let safe = std::mem::take(&mut self.safe);
         *self = Bike::dropped(world, self.position + Vec3::Y * 0.5, self.heading());
         self.safe = safe;
-        self.tuning = tuning;
+    }
+
+    /// The engine for one step: shifts, turns the clutch and returns the
+    /// torque it puts on the rear wheel, N·m.
+    fn drive(&mut self, s: &Setup, speed: f32, dt: f32) -> f32 {
+        let gas = self.held.gas;
+        // Automatic gears, from the road speed.
+        let e = &mut self.engine;
+        let road_rpm = speed / s.rear.radius * s.ratio(e.gear) * RPM;
+        if road_rpm > s.upshift_rpm && e.gear + 1 < s.gears.len() {
+            e.gear += 1;
+        } else if road_rpm < s.downshift_rpm && e.gear > 0 {
+            e.gear -= 1;
+        }
+        let ratio = s.ratio(e.gear);
+        // The clutch is in while it creeps along with no gas.
+        let clutch = if speed < 5.0 * super::unleashed::MPH && gas == 0.0 { 1.0 } else { 0.0 };
+        let grip = 1.0 - clutch;
+
+        let throttle = (gas + s.idle_throttle).min(1.0);
+        let braking = s.engine_braking * e.rpm * e.rpm;
+        let engine = throttle * (s.curve_torque(e.rpm) + braking) - braking;
+        let wheel_rpm = self.wheel_spin * ratio * RPM;
+        if e.locked && (clutch >= 1.0 || engine.abs() > grip * s.clutch_static) {
+            e.locked = false;
+        }
+        let mut through = engine;
+        if !e.locked {
+            through = grip * s.clutch_kinetic * if e.rpm < wheel_rpm { -1.0 } else { 1.0 };
+            // The wheel's rpm crossing the engine's: they lock together.
+            let crossed = (e.wheel_rpm < e.rpm && e.rpm < wheel_rpm) || (e.wheel_rpm > e.rpm && e.rpm > wheel_rpm);
+            if grip > 0.0 && crossed {
+                e.locked = true;
+                through = engine;
+            }
+        }
+        e.wheel_rpm = wheel_rpm;
+        if e.locked {
+            e.rpm = wheel_rpm;
+        } else {
+            // A spinning tyre loads the engine with what it really grips.
+            let load = if self.wheels[0].sliding && self.wheels[0].contact.is_some() {
+                grip * e.tyre_load
+            } else {
+                through
+            };
+            e.rpm += (engine - load) / s.engine_inertia * dt * RPM;
+        }
+        e.rpm = e.rpm.clamp(s.min_rpm, s.max_rpm());
+        through * ratio
+    }
+
+    fn point_velocity(&self, com: Vec3, p: Vec3) -> Vec3 {
+        self.velocity + self.spin.cross(p - com)
     }
 
     fn sub_step(&mut self, world: &World, candidates: &[u32], c: Controls, dt: f32) {
+        let s = setup();
         let r = Mat3::from_quat(self.rotation);
-        let up = r * Vec3::Y;
-        let fwd = r * Vec3::Z;
-        let gravity = Vec3::NEG_Y * GRAVITY;
-        let mut force = gravity * MASS;
-        let mut torque = Vec3::ZERO;
-        let point_velocity = |b: &Bike, p: Vec3| b.velocity + b.spin.cross(p - b.position);
+        let (side, up, fwd) = (r.x_axis, r.y_axis, r.z_axis);
+
+        // The controls, through the bike's rate limits.
+        let mut held = self.held;
+        held.steer = toward(held.steer, c.steer.clamp(-1.0, 1.0), s.steer_rate, dt);
+        held.back = toward(held.back, (-c.lean.y).clamp(-1.0, 1.0), s.lean_rate, dt);
+        let gas = if c.reverse { 0.0 } else { c.throttle.clamp(0.0, 1.0) };
+        held.gas = toward(held.gas, gas, s.pedal_rate, dt);
+        held.brake = toward(held.brake, c.brake.clamp(0.0, 1.0), s.pedal_rate, dt);
+        self.held = held;
+        self.lean = Vec2::new(toward(self.lean.x, c.lean.x.clamp(-1.0, 1.0), s.lean_rate, dt), -held.back);
+
+        // The rider's weight moves the centre of gravity fore and aft.
+        let travel = if held.back >= 0.0 { s.cofg_travel_back } else { s.cofg_travel_forward };
+        self.cog = Vec3::new(0.0, -FRAME_LIFT, -held.back * travel);
+        let mut com = self.position + r * self.cog;
         let speed = self.velocity.dot(fwd);
-        let t = self.tuning;
-        let lag = |seconds: f32| 1.0 - (-dt / seconds.max(1e-3)).exp();
 
-        // The rider's weight follows the stick quickly.
-        let lean_target = c.lean.clamp_length_max(1.0);
-        self.lean += (lean_target - self.lean) * (1.0 - (-12.0 * dt).exp());
+        // The bars: set from the stick, less lock the faster it goes.
+        let scale = lerp_clamp(speed.abs(), s.steer_speed[0], s.steer_scale[0], s.steer_speed[1], s.steer_scale[1]);
+        self.steer = -held.steer * s.max_steer * scale;
 
-        // The bars: the stick squared and lagged, times the lock for the
-        // speed. The rider leaning the same way turns them further; leaning
-        // against the turn takes some away.
-        let stick = c.steer.clamp(-1.0, 1.0);
-        self.steer_in += (stick * stick.abs() - self.steer_in) * lag(t.steer_lag);
-        let lock = steer_lock(speed) * t.steer_lock;
-        let rider = self.lean.x * t.rider_lean;
-        let agrees = rider * self.steer_in >= 0.0;
-        let bars = if agrees {
-            self.steer_in * lock + RIDER_STEER * lock * rider
-        } else {
-            self.steer_in * lock * (1.0 - RIDER_STEER * rider.abs())
-        };
-        // Positive is to the left; the stick's positive is right.
-        self.steer = -bars.clamp(-STEER_MAX, STEER_MAX);
+        let mut force = Vec3::NEG_Y * GRAVITY * s.gravity_scale * s.mass;
+        let mut torque = Vec3::ZERO;
+        let drive = self.drive(s, speed, dt);
 
-        // The lean it heads for: the curve for the speed times the steer,
-        // more when the rider leans into it. Positive leans right.
-        let rider_lean = if agrees { RIDER_LEAN * rider } else { 0.0 };
-        let wanted = lean_for(speed) * t.lean_depth * (stick + rider_lean);
-        self.lean_angle += (wanted - self.lean_angle) * lag(t.lean_lag);
-
-        // The engine and the automatic box. Any brake shuts the throttle.
-        let throttle = if c.brake > 0.0 { 0.0 } else { c.throttle.clamp(0.0, 1.0) };
-        self.shift_clock += dt;
-        if self.grounded() > 0 {
-            let best = best_gear(t.gearing, speed);
-            if best > self.gear && throttle > 0.0 && self.shift_clock >= UPSHIFT_WAIT {
-                self.gear = best;
-                self.shift_clock = 0.0;
-            } else if best < self.gear && self.shift_clock >= DOWNSHIFT_WAIT {
-                // On the gas one gear at a time; off it, straight down.
-                self.gear = if throttle > 0.0 { self.gear - 1 } else { best };
-                self.shift_clock = 0.0;
+        // Wheels: spring along the ground's normal, grip near the middle.
+        let mut normals = Vec3::ZERO;
+        let mut rear_normal = Vec3::Y;
+        for i in 0..2 {
+            let (tyre, axle) = if i == 0 { (&s.rear, frame(s.rear_axle)) } else { (&s.front, frame(s.front_axle)) };
+            let a = self.position + r * axle;
+            let reach = RAY_HEADROOM + tyre.radius + tyre.strut + 0.3;
+            let mut hit = world.raycast(candidates, a + up * RAY_HEADROOM, -up, reach);
+            // The tyre's lowest point towards that ground, in the wheel's plane.
+            let lowest = |n: Vec3| (n - side * side.dot(n)).normalize_or(up);
+            if let Some(h) = hit {
+                let m = lowest(h.normal);
+                if let Some(h2) = world.raycast(candidates, a + m * RAY_HEADROOM, -m, reach) {
+                    hit = Some(h2);
+                } else if h.normal.dot(m) < 0.2 {
+                    hit = None;
+                }
             }
-        }
-        let ratio = GEARS[self.gear] * t.gearing;
-        self.rpm = gear_rpm(ratio, speed);
-        // Engine braking fades out as the throttle opens.
-        let drag = -ratio * ENGINE_DRAG * t.engine_brake * lerp_table(&DRAG_CURVE, self.rpm);
-        let drive = ratio * engine_torque(self.rpm) * t.torque;
-
-        // Wheels: suspension now, the tyres once the other forces are in.
-        let mut ground_normal = Vec3::ZERO;
-        let mut ground_point = Vec3::ZERO;
-        let mut tyres: [Option<Tyre>; 2] = [None, None];
-        let legs = [rear_leg(), front_leg()];
-        for (i, leg) in legs.iter().enumerate() {
-            let axis = r * leg.axis;
-            let top = self.to_world(leg.extended + leg.axis * (leg.travel + RAY_HEADROOM));
-            let reach = leg.travel + leg.radius + RAY_HEADROOM;
-            let Some(hit) = world.raycast(candidates, top, -axis, reach) else {
-                self.wheels[i] = WheelState::default();
+            let contact = hit.and_then(|h| {
+                let m = lowest(h.normal);
+                let facing = m.dot(h.normal);
+                if facing < 0.2 {
+                    return None;
+                }
+                let bottom = a - m * tyre.radius;
+                let depth = (h.point - bottom).dot(h.normal) / facing;
+                (depth > 0.0).then_some((h, bottom + m * depth, depth))
+            });
+            let before = self.wheels[i].compression;
+            let wheel_torque = if i == 0 { drive } else { 0.0 };
+            let Some((h, p, mut depth)) = contact else {
+                self.wheels[i] = WheelState {
+                    compression: (before - tyre.max_decompression_rate * dt).max(0.0),
+                    contact: None,
+                    sliding: false,
+                };
+                if i == 0 {
+                    // Free in the air: the engine and brake spin it.
+                    let turning = self.wheel_spin.clamp(-1.0, 1.0);
+                    let t = wheel_torque - (tyre.wheel_friction + held.brake * tyre.max_braking_torque) * turning;
+                    let next = self.wheel_spin + t / tyre.wheel_inertia() * dt;
+                    // Brakes and friction stop it, never turn it backwards.
+                    self.wheel_spin = if next * self.wheel_spin < 0.0 && wheel_torque == 0.0 { 0.0 } else { next };
+                }
                 continue;
             };
-            let s = reach - hit.distance;
-            let vc = point_velocity(self, hit.point);
-            let s_rate = -vc.dot(axis);
-            let damper = if s_rate > 0.0 { leg.bump } else { leg.rebound };
-            let mut push = leg.spring * t.spring * s.min(leg.travel) + damper * t.damper * s_rate;
-            if s > leg.travel {
-                push += BUMP_STOP * (s - leg.travel);
+            let n = h.normal;
+            normals += n;
+            if i == 0 {
+                rear_normal = n;
             }
-            let push = push.max(0.0);
-            self.wheels[i] = WheelState {
-                compression: s.min(leg.travel),
-                contact: Some(hit),
-            };
-            let n = hit.normal;
-            // The ground pushes back along its normal (pushing along the
-            // raked fork would shove the bike backwards).
-            let f_susp = n * push;
-            ground_normal += n;
-            ground_point += hit.point;
-            force += f_susp;
-            let tq = (hit.point - self.position).cross(f_susp);
-            torque += tq - fwd * tq.dot(fwd);
+            // Past the strut's travel the frame bottoms out.
+            if depth > tyre.strut {
+                let excess = depth - tyre.strut;
+                self.position += n * excess * 0.9;
+                com += n * excess * 0.9;
+                let into = self.point_velocity(com, p).dot(n);
+                if into < 0.0 {
+                    self.velocity -= n * into;
+                }
+                depth = tyre.strut;
+            }
+            let vp = self.point_velocity(com, p);
+            let rate = (-vp.dot(n)).clamp(-tyre.max_compression_rate, tyre.max_compression_rate);
+            let ratio = if rate < 0.0 { tyre.bounce } else { tyre.rebound };
+            let load = (s.spring_rate(tyre) * depth + s.damping(tyre, ratio) * rate).max(0.0);
+            let f_spring = n * load;
+            force += f_spring;
+            torque += (p - com).cross(f_spring);
 
             // The tyre: which way it rolls, flattened onto the ground.
-            let heading = if i == 1 {
-                r * (Quat::from_axis_angle(steering_axis(), self.steer) * Vec3::Z)
-            } else {
-                fwd
-            };
+            let heading = if i == 1 { r * (self.bar_rotation() * Vec3::Z) } else { fwd };
             let long = (heading - n * n.dot(heading)).normalize_or(fwd);
-            let v_long = point_velocity(self, hit.point).dot(long);
-            // Rolling resistance; the ground drag is on the whole bike below.
-            let mut f_long = -v_long * 2.0;
-            // The gas wins over backing up.
-            if i == 0 && c.reverse && throttle == 0.0 {
-                let (from, to) = REVERSE_FADE;
-                let fade = 1.0 - ((v_long.abs() - from) / (to - from)).clamp(0.0, 1.0);
-                f_long -= REVERSE_FORCE * if v_long > 0.5 { 0.0 } else { fade };
-            } else if i == 0 {
-                // Engine braking only holds back a wheel turning forwards; it
-                // fades out as the throttle opens. The drive pulls either way.
-                let drag = drag * (v_long / 1.0).clamp(0.0, 1.0);
-                f_long += (drag + (drive - drag) * throttle) / GEAR_RADIUS;
-            }
-            // Gas while rolling backwards also brakes, so it stops quickly
-            // and then drives off forwards.
-            let backwards = if v_long < 0.0 { throttle } else { 0.0 };
-            let brake = c.brake.min(1.0).max(backwards);
-            if brake > 0.0 {
-                let share = if i == 1 { t.brake_front } else { 1.0 - t.brake_front };
-                let max = brake * MASS * t.brake_decel * share;
-                f_long += (-v_long * 4000.0).clamp(-max, max);
-            }
-            tyres[i] = Some(Tyre {
-                point: hit.point,
-                long,
-                lat: n.cross(long),
-                load: push,
-                f_long,
-            });
-        }
-
-        // The rear wheel. On the ground it rolls with the bike (the tyre
-        // force above already pitches the frame). Off the ground nothing
-        // holds it, so gas spins it up and the brake locks it, and the frame
-        // takes the opposite twist about the axle.
-        let rear_radius = legs[0].radius;
-        if self.wheels[0].contact.is_some() {
-            self.wheel_spin = speed / rear_radius;
-        } else {
-            let before = self.wheel_spin;
-            if c.brake > 0.0 {
-                let step = c.brake.min(1.0) * WHEEL_BRAKE_DECEL * dt;
-                self.wheel_spin -= self.wheel_spin.clamp(-step, step);
-            } else if throttle > 0.0 {
-                let limit = LIMITER_RPM / 60.0 * std::f32::consts::TAU / ratio;
-                let step = throttle * WHEEL_REV_ACCEL * dt;
-                self.wheel_spin = (self.wheel_spin + step).min(limit.max(before));
+            let lat = n.cross(long);
+            let v_long = vp.dot(long);
+            let v_lat = vp.dot(lat);
+            let rolling = (0.3 * ft(v_long)).clamp(-1.0, 1.0);
+            let t = wheel_torque - (tyre.wheel_friction + held.brake * tyre.max_braking_torque) * rolling;
+            let wanted = t / tyre.radius;
+            let limit = tyre.max_drive * load;
+            let (f_long, sliding) = if wanted > limit {
+                (tyre.skid_drive * load, true)
+            } else if wanted < -limit {
+                (-tyre.skid_drive * load, true)
             } else {
-                self.wheel_spin *= (-dt / WHEEL_COAST_SECONDS).exp();
+                (wanted, false)
+            };
+            // Sideways: grip against slip speed, stiffer when nearly stopped.
+            let mut slip = ft(v_lat);
+            let rolling_ft = ft(v_long).abs();
+            if rolling_ft < 10.0 {
+                slip *= lerp_clamp(rolling_ft, 0.0, 5.0, 10.0, 1.0);
             }
-            // The wheel spins about the bike's +X (rolling forward), and
-            // +X on the frame is nose down: speeding the wheel up lifts the
-            // nose, slowing it drops it.
-            let reaction = -WHEEL_INERTIA * (self.wheel_spin - before) / dt;
-            torque += r * Vec3::X * reaction;
-            // The engine turns with the free wheel.
-            self.rpm = (self.wheel_spin * ratio * 60.0 / std::f32::consts::TAU).clamp(IDLE_RPM, LIMITER_RPM);
+            let curve = if held.brake > 0.0 {
+                &tyre.braking
+            } else if sliding {
+                &tyre.slipping
+            } else {
+                &tyre.side
+            };
+            let f_lat = curve.grip(slip) * load;
+            let f_tyre = long * f_long + lat * f_lat;
+            force += f_tyre;
+            torque += (r * tyre.force_position).cross(f_tyre);
+
+            if i == 0 {
+                self.engine.tyre_load = f_long * tyre.radius / s.ratio(self.engine.gear);
+                self.wheel_spin = if sliding {
+                    self.wheel_spin + (t - f_long * tyre.radius) / tyre.wheel_inertia() * dt
+                } else {
+                    v_long / tyre.radius
+                };
+            }
+            self.wheels[i] = WheelState {
+                compression: depth.max(before - tyre.max_decompression_rate * dt),
+                contact: Some(h),
+                sliding,
+            };
+        }
+        // The rev limiter.
+        let ratio = s.ratio(self.engine.gear);
+        if self.engine.locked && self.wheel_spin * ratio * RPM > s.max_rpm() {
+            self.wheel_spin = s.max_rpm() / ratio / RPM;
+        }
+        let grounded = self.grounded();
+
+        // Wheelie and stoppie holds.
+        let pitch = fwd.y.clamp(-1.0, 1.0).asin();
+        let nose_up_rate = -self.spin.dot(side);
+        let rear_down = self.wheels[0].contact.is_some();
+        let front_down = self.wheels[1].contact.is_some();
+        if front_down && held.brake > 0.0 && ft(speed) > 15.0 && held.back <= -0.99 {
+            self.stoppie = true;
+        }
+        let wheelie = rear_down && held.gas > 0.0 && ft(speed) > 5.0 && held.brake == 0.0 && held.back >= 0.5;
+        let lbf_ft = super::unleashed::LBF_FT;
+        if self.stoppie {
+            let fade = lerp_clamp(speed, 0.0, 0.0, s.stoppie_top_speed, 1.0);
+            let target = fade * (2.0 * held.back + 1.0) * s.max_stoppie_pitch;
+            let e = s.stoppie_pitch_gain * (pitch - target) + nose_up_rate;
+            self.pitch_integral += e * dt * 500.0 * lbf_ft;
+            torque += side * (self.pitch_integral + e * s.pitch_rate_gain * lbf_ft);
+            // The bars still turn it about the front tyre.
+            let yaw_right = -self.spin.dot(rear_normal);
+            let t = (s.stoppie_yaw_rate_scale * held.steer - yaw_right) * 1000.0 * lbf_ft;
+            torque -= rear_normal * t;
+            self.stoppie = !rear_down && held.brake > 0.0 && held.back <= -0.1 && ft(speed) > 7.0;
+        } else if wheelie {
+            let target = (2.0 * held.back - 1.0) * s.max_pitch;
+            let e = s.pitch_gain * (pitch - target) + nose_up_rate;
+            self.pitch_integral += e * dt * 500.0 * lbf_ft;
+            let fade = (1.0 - speed / s.wheelie_top_speed).clamp(0.0, 1.0);
+            torque += side * (self.pitch_integral + e * s.pitch_rate_gain * lbf_ft) * fade;
+        } else {
+            self.pitch_integral = 0.0;
         }
 
-        let grounded = self.grounded();
-        if grounded > 0 {
-            // Ground drag, against the way it is going.
-            let flat = self.velocity - Vec3::Y * self.velocity.y;
-            force -= flat.normalize_or_zero() * lerp_table(&GROUND_DRAG, flat.length());
+        // Backing up: a push towards walking pace backwards.
+        if c.reverse && rear_down && speed < 1.0 {
+            force += fwd * (s.reverse_speed - speed) * s.reverse_gain;
         }
-        let lean_local = Vec3::new(-self.lean.x * LEAN_REACH.x, 0.0, self.lean.y * LEAN_REACH.y);
-        if grounded > 0 {
-            // The rider's weight, moved off the centre: it pitches the bike
-            // (its sideways part is in the lean above).
-            let arm = r * lean_local;
-            let tq = arm.cross(gravity * RIDER_MASS * t.lean_gain);
-            torque += tq - fwd * tq.dot(fwd);
-        } else {
-            // In the air the rider throws the bike around.
-            let i = INERTIA;
-            let local = Vec3::new(
-                self.lean.y * AIR_PITCH * i.x,
-                (-self.lean.x * AIR_YAW - c.steer * 1.5) * i.y,
-                self.lean.x * AIR_ROLL * i.z,
-            ) * t.air;
-            torque += r * local;
-            // A little air drag on the spin so it settles.
-            torque -= self.spin * 4.0;
+        // Air drag.
+        force -= self.velocity * self.velocity.length() * 0.5 * s.drag;
+
+        if grounded == 0 {
+            // The rider throws the bike around; Unleashed's axes are X
+            // right, Y up, Z forward with left-handed turns, so yaw and roll
+            // flip sign here.
+            let spin = r.transpose() * self.spin;
+            let x = (c.steer + c.lean.x).clamp(-1.0, 1.0);
+            let y = (-c.lean.y).clamp(-1.0, 1.0);
+            let m = s.air_moment;
+            let mut t = Vec3::new(y * m.x, -x * m.y, -x * m.z);
+            let d = s.air_damping;
+            if held.steer.abs() >= 0.1 || x.abs() >= 0.1 || fwd.y.abs() >= 0.94 {
+                t -= spin * d;
+            } else {
+                // Let go: level the lean, line up with the way it is going.
+                let lean_right = side.y.clamp(-1.0, 1.0).asin();
+                t.z -= (s.unroll_gain * lean_right + spin.z) * s.unroll_torque;
+                let flat = Vec3::new(self.velocity.x, 0.0, self.velocity.z);
+                let facing = Vec3::new(fwd.x, 0.0, fwd.z);
+                let off = if ft(flat.length()) > 10.0 && facing.length() > 0.1 {
+                    facing.cross(flat).y.atan2(facing.dot(flat))
+                } else {
+                    0.0
+                };
+                t.y += (s.unyaw_gain * off - spin.y) * s.unyaw_torque;
+                if spin.x.abs() > 0.1 {
+                    t.x -= spin.x * d;
+                }
+                if spin.y.abs() > 0.1 {
+                    t.y -= spin.y * d;
+                }
+            }
+            // The rear brake drops the nose, the gas lifts it.
+            if held.brake > 0.0 {
+                t.x += s.brake_gyro;
+            } else if held.gas > 0.0 {
+                t.x -= s.gas_gyro;
+            }
+            torque += r * t;
+            // And a little sideways push with the stick.
+            if ft(self.velocity.length()) > 10.0 {
+                let left = Vec3::Y.cross(self.velocity).normalize_or_zero();
+                force -= left * x * s.air_force;
+            }
         }
 
         // The frame and the rider against the world.
         let mut crash = false;
         let mut contacts = std::mem::take(&mut self.contacts);
-        let probes = PROBES.iter().map(|&(p, rad, fatal)| (p, rad, fatal, None)).chain(
-            // The wheels against walls (relative to the bike), so a tyre
-            // into a wall stops rather than climbs.
-            (0..2).map(|i| (self.axle(i), legs[i].radius * 0.95, false, Some(up))),
+        let legs = [rear_leg(), front_leg()];
+        let probes = PROBES.iter().map(|&(p, rad, fatal)| (p, rad, fatal, false)).chain(
+            // The wheels against walls, so a tyre into a wall stops rather
+            // than climbs.
+            (0..2).map(|i| (self.axle(i), legs[i].radius * 0.95, false, true)),
         );
         for (local, radius, fatal, walls_only) in probes {
             let centre = self.to_world(local);
             world.sphere(candidates, centre, radius, &mut contacts);
             for &(n, depth) in &contacts {
-                if walls_only.is_some_and(|u: Vec3| n.dot(u) > 0.5) {
+                if walls_only && n.dot(up) > 0.5 {
                     continue;
                 }
                 let p = centre - n * (radius - depth);
-                let vp = point_velocity(self, p);
+                let vp = self.point_velocity(com, p);
                 let vn = vp.dot(n);
                 let push = (PROBE_SPRING * depth - PROBE_DAMPER * vn).max(0.0);
                 let vt = vp - n * vn;
                 let rub = vt.normalize_or_zero() * -(PROBE_FRICTION * push).min(vt.length() * 3000.0);
                 let f = n * push + rub;
                 force += f;
-                torque += (p - self.position).cross(f);
+                torque += (p - com).cross(f);
                 crash |= fatal;
             }
         }
@@ -1034,141 +896,48 @@ impl Bike {
         if grounded == 0 && up.y < -0.3 && self.contacts_any(world, candidates) {
             crash = true;
         }
-        // So is landing on its side: the lean is placed only from upright-ish.
-        if grounded > 0 && self.lean_now().abs() > 1.2 {
-            crash = true;
-        }
         if crash && self.crashed.is_none() {
             self.crashed = Some(CRASH_SECONDS);
         }
 
-        // Integrate the forces (semi-implicit Euler).
-        self.velocity += force / MASS * dt;
-        let inertia = r * Mat3::from_diagonal(INERTIA) * r.transpose();
-        let inverse = r * Mat3::from_diagonal(INERTIA.recip()) * r.transpose();
-        let gyro = self.spin.cross(inertia * self.spin);
-        self.spin += inverse * (torque - gyro) * dt;
+        // Integrate. On the ground the bike cannot roll: the lean is set below.
+        self.velocity += force / s.mass * dt;
+        let i = s.inertia;
+        let mut spin = r.transpose() * self.spin;
+        let local = r.transpose() * torque;
+        let mut accel = (local - spin.cross(i * spin)) / i;
         if grounded > 0 {
-            // On the ground the lean is placed, not spun up.
-            self.spin -= fwd * self.spin.dot(fwd);
+            accel.z = 0.0;
+            spin.z = 0.0;
         }
-
-        // The tyres, as velocity constraints at the contact patches.
-        self.solve_tyres(&tyres, inverse, fwd, t, dt);
-        self.spin = self.spin.clamp_length_max(20.0);
-
-        self.position += self.velocity * dt;
+        spin += accel * dt;
+        spin = spin.clamp(Vec3::new(-20.0, -s.yaw_rate_limit, -20.0), Vec3::new(20.0, s.yaw_rate_limit, 20.0));
+        self.spin = r * spin;
+        let com = com + self.velocity * dt;
         self.rotation = (Quat::from_scaled_axis(self.spin * dt) * self.rotation).normalize();
-
         if grounded > 0 {
-            // The lean: turn the bike about its tyres to the angle it is
-            // heading for, measured from the ground (slowly filtered, so a
-            // berm leans it with the berm).
-            let ground = (ground_normal / grounded as f32).normalize_or(Vec3::Y);
-            self.up_ref = (self.up_ref + (ground - self.up_ref) * lag(0.25)).normalize_or(Vec3::Y);
-            let fwd = self.forward();
-            let up = self.up();
-            let reference = (self.up_ref - fwd * self.up_ref.dot(fwd)).normalize_or(Vec3::Y);
-            let lean_now = fwd.dot(reference.cross(up)).atan2(reference.dot(up));
-            let turn = Quat::from_axis_angle(fwd, self.lean_angle - lean_now);
-            let pivot = ground_point / grounded as f32;
-            let arm = self.position - pivot;
-            self.position += turn * arm - arm;
-            self.rotation = (turn * self.rotation).normalize();
-        } else {
-            // In the air the lean it lands with is where it starts from.
-            self.lean_angle = self.lean_now();
-            self.up_ref = Vec3::Y;
+            self.lean_on_ground(held.steer, speed, normals.normalize_or(Vec3::Y), dt);
         }
+        self.position = com - self.rotation * self.cog;
     }
 
-    /// The lean right now against straight up, radians, positive right.
-    fn lean_now(&self) -> f32 {
-        let fwd = self.forward();
-        let reference = (Vec3::Y - fwd * fwd.y).normalize_or(Vec3::Y);
-        fwd.dot(reference.cross(self.up())).atan2(reference.dot(self.up()))
-    }
-
-    /// Each tyre stops its patch sliding, sideways and along, as far as its
-    /// grip allows: rounds of impulses, rear and front in turn. Driving and
-    /// braking come first, up to grip x load; the side grip is what the
-    /// friction circle leaves. A tyre that uses all of that is sliding: it
-    /// keeps `SLIDE_GRIP` of its side grip plus a side force that grows with
-    /// the slide (`SLIDE_LONG` of its grip along, if the slide is along).
-    fn solve_tyres(&mut self, tyres: &[Option<Tyre>; 2], inverse: Mat3, fwd: Vec3, t: Tuning, dt: f32) {
-        // An impulse at a patch moves the bike and turns it, but never leans
-        // it. The lean is placed, so the patch's sideways offset from the
-        // centre of mass is not a lever either (it would swing the tail out
-        // under power).
-        let side = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
-        let lever = |point: Vec3| {
-            let arm = point - self.position;
-            arm - side * arm.dot(side)
+    /// Sets the lean from the bars and the speed: towards `steer` times a
+    /// lean that grows with speed, measured from the vertical when slow and
+    /// from the ground when fast.
+    fn lean_on_ground(&mut self, steer: f32, speed: f32, ground: Vec3, dt: f32) {
+        let s = setup();
+        let upright = speed.signum() * lerp_clamp(speed.abs(), s.stand_upright[0], 0.0, s.stand_upright[1], 1.0);
+        let reference = if upright <= 0.0 { Vec3::Y } else { Vec3::Y.lerp(ground, upright) };
+        let f = self.forward();
+        let Some(across) = (reference - f * reference.dot(f)).try_normalize() else {
+            return;
         };
-        let turn_per = |arm: Vec3, dir: Vec3| {
-            let w = inverse * arm.cross(dir);
-            w - fwd * w.dot(fwd)
-        };
-        let mut limits = [0.0f32; 2];
-        let mut applied = [0.0f32; 2];
-        let mut long = [0.0f32; 2];
-        for (i, tyre) in tyres.iter().enumerate() {
-            let Some(ty) = tyre else { continue };
-            let arm = lever(ty.point);
-            let grip = t.grip * ty.load;
-            // Driving and braking: past the grip the wheel spins or locks.
-            let f_long = if ty.f_long.abs() > grip {
-                ty.f_long.signum() * SLIDE_LONG * grip
-            } else {
-                ty.f_long
-            };
-            long[i] = f_long;
-            limits[i] = (grip * grip - f_long * f_long).max(0.0).sqrt() * dt;
-            let j = f_long * dt;
-            self.velocity += ty.long * (j / MASS);
-            self.spin += turn_per(arm, ty.long) * j;
-        }
-        // The front may never turn the bike harder than the rear can hold
-        // it: past that the front washes wide (the stable way to lose it)
-        // rather than flinging the rear out.
-        let balance = |limits: &mut [f32; 2]| {
-            if let [Some(rear), Some(front)] = tyres {
-                let a = (front.point - self.position).dot(fwd).abs().max(0.1);
-                let b = (rear.point - self.position).dot(fwd).abs().max(0.1);
-                limits[1] = limits[1].min(limits[0] * b / a * 0.95);
-            }
-        };
-        balance(&mut limits);
-        for round in 0..8 {
-            if round == 4 {
-                // The tyres that used all their grip are sliding.
-                for (i, tyre) in tyres.iter().enumerate() {
-                    let Some(ty) = tyre else { continue };
-                    if applied[i].abs() < limits[i] * 0.999 {
-                        continue;
-                    }
-                    let arm = lever(ty.point);
-                    let v_lat = (self.velocity + self.spin.cross(arm)).dot(ty.lat);
-                    let grip = t.grip * ty.load;
-                    let share = applied[i].abs() / applied[i].hypot(long[i] * dt).max(1e-6);
-                    let slide = lerp_table(&SLIDE_CURVE, v_lat.abs());
-                    limits[i] = (SLIDE_GRIP * grip * share + t.slide_force * slide) * dt;
-                }
-                balance(&mut limits);
-            }
-            for (i, tyre) in tyres.iter().enumerate() {
-                let Some(ty) = tyre else { continue };
-                let arm = lever(ty.point);
-                let v_lat = (self.velocity + self.spin.cross(arm)).dot(ty.lat);
-                let w = turn_per(arm, ty.lat);
-                let k = 1.0 / MASS + ty.lat.dot(w.cross(arm));
-                let total = (applied[i] - v_lat / k).clamp(-limits[i], limits[i]);
-                let j = total - applied[i];
-                applied[i] = total;
-                self.velocity += ty.lat * (j / MASS);
-                self.spin += w * j;
-            }
-        }
+        let up = self.up();
+        let now = f.dot(across.cross(up)).atan2(across.dot(up));
+        let wanted = steer * lerp_clamp(speed, 0.0, 0.0, s.max_roll_speed, s.max_roll);
+        let lean = now + (wanted - now) * (s.roll_gain * dt).min(1.0);
+        let up = Quat::from_axis_angle(f, lean) * across;
+        self.rotation = Quat::from_mat3(&Mat3::from_cols(up.cross(f), up, f)).normalize();
     }
 
     /// Whether any frame probe touches the world (for the upside-down test).
@@ -1181,18 +950,26 @@ impl Bike {
     }
 }
 
-/// How high the centre of mass sits over flat ground at rest.
+/// How high the bike frame's origin sits over flat ground at rest.
 pub fn rest_height() -> f32 {
-    -AXLE_Y + rear_leg().radius
+    let s = setup();
+    let (f, r) = (frame(s.front_axle), frame(s.rear_axle));
+    let base = f.z - r.z;
+    let weight = s.mass * GRAVITY * s.gravity_scale;
+    let sag = |t: &Tyre, share: f32| share * weight / s.spring_rate(t);
+    let front = s.front.radius - f.y - sag(&s.front, -r.z / base);
+    let rear = s.rear.radius - r.y - sag(&s.rear, f.z / base);
+    (front + rear) * 0.5
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bike::unleashed::MPH;
 
-    /// A flat floor, 1200 m square, at y = 0.
+    /// A flat floor, 800 m square, at y = 0.
     fn floor() -> World {
-        let s = 600.0;
+        let s = 400.0;
         let a = Vec3::new(-s, 0.0, -s);
         let b = Vec3::new(s, 0.0, -s);
         let c = Vec3::new(s, 0.0, s);
@@ -1208,35 +985,10 @@ mod tests {
         }
     }
 
-    /// Full lock and full rider lean at speed, on and off the gas: the rear
-    /// stays planted (the video bug: it slid out from about 15 km/h).
-    #[test]
-    fn hard_turns_keep_the_rear() {
-        for (kmh, throttle) in [(20.0f32, 0.0f32), (20.0, 1.0), (30.0, 0.0), (40.0, 0.0), (40.0, 1.0), (60.0, 0.0)] {
-            let w = floor();
-            let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
-            ride(&w, &mut bike, Controls::default(), 0.5);
-            bike.velocity = bike.forward() * kmh / 3.6;
-            let before = bike.heading();
-            let mut worst = 0.0f32;
-            for _ in 0..120 {
-                let c = Controls {
-                    steer: 1.0,
-                    lean: Vec2::new(1.0, 0.0),
-                    throttle,
-                    ..default()
-                };
-                bike.step(&w, c, 1.0 / 60.0);
-                let rear = bike.to_world(bike.axle(0));
-                let v = bike.velocity + bike.spin.cross(rear - bike.position);
-                let side = bike.rotation * Vec3::X;
-                let side = Vec3::new(side.x, 0.0, side.z).normalize();
-                worst = worst.max(v.dot(side).abs());
-                assert!(bike.crashed.is_none(), "{kmh} km/h: crashed");
-            }
-            assert!(worst < 0.5, "{kmh} km/h, throttle {throttle}: rear slid {worst} m/s");
-            assert!(bike.heading() - before < -0.5, "{kmh} km/h: barely turned");
-            assert!(bike.up().y < 0.97, "{kmh} km/h: did not lean");
+    fn gas(throttle: f32) -> Controls {
+        Controls {
+            throttle,
+            ..default()
         }
     }
 
@@ -1258,56 +1010,27 @@ mod tests {
         assert_eq!(bike.grounded(), 2);
         assert!(bike.crashed.is_none());
         assert!(bike.up().y > 0.99, "up {:?}", bike.up());
-        assert!((bike.position.y - rest_height()).abs() < 0.06, "height {}", bike.position.y);
+        assert!((bike.position.y - rest_height()).abs() < 0.05, "height {} rest {}", bike.position.y, rest_height());
         assert!(bike.velocity.length() < 0.05);
+        assert!((bike.engine.rpm - setup().min_rpm).abs() < 1.0, "idle {}", bike.engine.rpm);
     }
 
     #[test]
-    fn shifts_up_through_the_box() {
+    fn pulls_through_the_gears() {
         let w = floor();
-        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -150.0), 0.0);
+        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -350.0), 0.0);
         ride(&w, &mut bike, Controls::default(), 1.0);
-        assert_eq!(bike.gear, 0);
-        let throttle = Controls {
-            throttle: 1.0,
-            lean: Vec2::new(0.0, 0.6),
-            ..default()
-        };
-        let mut gear = 0;
-        for _ in 0..(14 * 60) {
-            bike.step(&w, throttle, 1.0 / 60.0);
-            // Up one gear or more at a time, never back down on the gas.
-            assert!(bike.gear >= gear, "dropped from {gear} to {}", bike.gear);
-            gear = bike.gear;
-            assert!(bike.rpm <= LIMITER_RPM + 1.0);
-        }
-        assert_eq!(bike.gear, 4, "top gear");
-        // Reflex's 450 runs out of pull about 32 m/s in fifth.
-        let top = bike.speed();
-        assert!(top > 27.0 && top < 36.0, "top speed {top}");
+        ride(&w, &mut bike, gas(1.0), 2.0);
+        // Somewhere near a second-and-a-bit 0-30 mph.
+        let two = bike.speed();
+        assert!(two > 12.0 && two < 22.0, "2 s: {two} m/s");
+        ride(&w, &mut bike, gas(1.0), 8.0);
+        let ten = bike.speed();
+        assert!(ten > 60.0 * MPH && ten < 95.0 * MPH, "10 s: {} mph", ten / MPH);
+        assert!(bike.engine.gear >= 3, "gear {}", bike.engine.gear + 1);
         assert!(bike.crashed.is_none());
         assert!(bike.up().y > 0.95);
-
-        // Off the gas it drops gears and the engine slows it.
-        ride(&w, &mut bike, Controls::default(), 6.0);
-        assert!(bike.gear < 4, "still in {}", bike.gear);
-        assert!(bike.speed() < top - 8.0, "coasting at {}", bike.speed());
-    }
-
-    #[test]
-    fn first_gear_launch_pulls_hard() {
-        let w = floor();
-        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -150.0), 0.0);
-        ride(&w, &mut bike, Controls::default(), 1.0);
-        let gas = Controls {
-            throttle: 1.0,
-            lean: Vec2::new(0.0, 0.6),
-            ..default()
-        };
-        ride(&w, &mut bike, gas, 1.0);
-        let v = bike.speed();
-        assert!(v > 5.0 && v < 13.0, "1 s: {v} m/s");
-        assert!(bike.crashed.is_none());
+        assert!(bike.wheels[1].contact.is_some(), "front up on plain gas");
     }
 
     #[test]
@@ -1325,90 +1048,18 @@ mod tests {
             5.0,
         );
         let v = bike.speed();
-        assert!(v < -2.0 && v > -4.0, "reversing at {v} m/s");
+        assert!((v - setup().reverse_speed).abs() < 0.5, "reversing at {v} m/s");
         assert!(bike.crashed.is_none());
         assert!(bike.up().y > 0.95);
-    }
-
-    /// A plane rising towards +Z at `degrees`, through the origin.
-    fn slope(degrees: f32) -> World {
-        let s = 200.0;
-        let t = degrees.to_radians().tan();
-        let p = |x: f32, z: f32| Vec3::new(x, z * t, z);
-        let (a, b, c, d) = (p(-s, -s), p(s, -s), p(s, s), p(-s, s));
-        World::new([([a, d, c], false), ([a, c, b], false)])
-    }
-
-    /// Seconds of `c` until the bike rolls forwards, and its speed after 2 s.
-    fn gas_from(w: &World, bike: &mut Bike, c: Controls) -> (Option<f32>, f32) {
-        let mut stopped = None;
-        for f in 0..120 {
-            bike.step(w, c, 1.0 / 60.0);
-            if stopped.is_none() && bike.speed() > 0.0 {
-                stopped = Some(f as f32 / 60.0);
-            }
-        }
-        (stopped, bike.speed())
-    }
-
-    #[test]
-    fn gas_while_rolling_back_stops_then_drives_forward() {
-        let gas = Controls {
-            throttle: 1.0,
-            ..default()
-        };
-        // Pushed backwards on the flat, slow and fast.
-        for back in [1.0f32, 3.0, 8.0] {
-            let w = floor();
-            let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
-            ride(&w, &mut bike, Controls::default(), 0.5);
-            bike.velocity = -bike.forward() * back;
-            let (stopped, v) = gas_from(&w, &mut bike, gas);
-            // About as quick as the brakes, then away.
-            let stopped = stopped.unwrap_or(f32::MAX);
-            assert!(stopped < back / 8.0 + 0.1, "from -{back} m/s: forwards after {stopped} s");
-            assert!(v > 3.0, "from -{back} m/s: {v} m/s after 2 s");
-            assert!(bike.crashed.is_none());
-        }
-        // Rolled back down a hill.
-        for deg in [10.0f32, 20.0] {
-            let w = slope(deg);
-            let mut bike = Bike::dropped(&w, Vec3::new(0.0, 2.0, 0.0), 0.0);
-            ride(&w, &mut bike, Controls::default(), 1.5);
-            assert!(bike.speed() < -1.0, "{deg} deg: not rolling back ({} m/s)", bike.speed());
-            let (stopped, v) = gas_from(&w, &mut bike, gas);
-            assert!(stopped.is_some_and(|s| s < 1.0), "{deg} deg: forwards after {stopped:?} s");
-            assert!(v > 1.0, "{deg} deg: {v} m/s after 2 s");
-        }
-    }
-
-    #[test]
-    fn gas_wins_over_backing_up() {
-        let w = floor();
-        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
-        ride(&w, &mut bike, Controls::default(), 0.5);
-        let back = Controls {
-            reverse: true,
-            ..default()
-        };
-        ride(&w, &mut bike, back, 3.0);
-        assert!(bike.speed() < -1.0);
-        let (stopped, v) = gas_from(&w, &mut bike, Controls { throttle: 1.0, ..back });
-        assert!(stopped.is_some_and(|s| s < 0.6), "forwards after {stopped:?} s");
-        assert!(v > 3.0, "{v} m/s after 2 s");
     }
 
     #[test]
     fn brakes_stop_it() {
         let w = floor();
-        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -150.0), 0.0);
+        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -350.0), 0.0);
         ride(&w, &mut bike, Controls::default(), 0.5);
-        let gas = Controls {
-            throttle: 1.0,
-            lean: Vec2::new(0.0, 0.6),
-            ..default()
-        };
-        ride(&w, &mut bike, gas, 2.0);
+        ride(&w, &mut bike, gas(1.0), 2.5);
+        assert!(bike.speed() > 10.0);
         ride(
             &w,
             &mut bike,
@@ -1416,9 +1067,9 @@ mod tests {
                 brake: 1.0,
                 ..default()
             },
-            3.0,
+            4.0,
         );
-        assert!(bike.speed().abs() < 0.3, "still at {} m/s", bike.speed());
+        assert!(bike.speed().abs() < 0.5, "still at {} m/s", bike.speed());
         assert!(bike.crashed.is_none());
     }
 
@@ -1427,11 +1078,7 @@ mod tests {
         let w = floor();
         let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
         ride(&w, &mut bike, Controls::default(), 0.5);
-        let gas = Controls {
-            throttle: 0.6,
-            ..default()
-        };
-        ride(&w, &mut bike, gas, 1.5);
+        ride(&w, &mut bike, gas(0.6), 1.5);
         let before = bike.heading();
         // Right on the stick: the heading turns right (towards -X, so the
         // angle about +Y falls) and the bike leans right.
@@ -1439,7 +1086,7 @@ mod tests {
             &w,
             &mut bike,
             Controls {
-                throttle: 0.3,
+                throttle: 0.4,
                 steer: 1.0,
                 ..default()
             },
@@ -1455,12 +1102,36 @@ mod tests {
     }
 
     #[test]
+    fn holds_a_turn_at_speed() {
+        let w = floor();
+        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
+        ride(&w, &mut bike, Controls::default(), 0.5);
+        ride(&w, &mut bike, gas(1.0), 2.0);
+        // Half lock at speed for three seconds: round and round, upright.
+        ride(
+            &w,
+            &mut bike,
+            Controls {
+                throttle: 0.5,
+                steer: -0.5,
+                ..default()
+            },
+            3.0,
+        );
+        assert!(bike.crashed.is_none());
+        assert_eq!(bike.grounded(), 2);
+        assert!(bike.speed() > 5.0, "{}", bike.speed());
+        assert!(bike.position.length() < 120.0, "ran off to {:?}", bike.position);
+    }
+
+    #[test]
     fn leaning_back_on_the_gas_lifts_the_front() {
         let w = floor();
-        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -150.0), 0.0);
+        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -350.0), 0.0);
         ride(&w, &mut bike, Controls::default(), 0.5);
+        // From a standing start: the hold fades out with speed.
         let mut lifted = false;
-        for _ in 0..90 {
+        for _ in 0..150 {
             bike.step(
                 &w,
                 Controls {
@@ -1473,6 +1144,9 @@ mod tests {
             lifted |= bike.wheels[1].contact.is_none() && bike.wheels[0].contact.is_some();
         }
         assert!(lifted, "never wheelied");
+        // Held, not flipped.
+        assert!(bike.crashed.is_none());
+        assert!(bike.forward().y < 0.8, "forward {:?}", bike.forward());
     }
 
     #[test]
@@ -1486,18 +1160,25 @@ mod tests {
                 lean: Vec2::new(0.0, 1.0),
                 ..default()
             },
-            0.5,
+            1.0,
         );
         // Forward on the stick: nose down.
         assert!(bike.forward().y < -0.3, "forward {:?}", bike.forward());
     }
 
-    /// The nose's pitch (forward.y) after `seconds` in the air with the rear
-    /// wheel spinning as if it left the ground at 15 m/s.
+    #[test]
+    fn air_lean_levels_itself() {
+        let w = floor();
+        let mut bike = Bike::new(Vec3::new(0.0, 60.0, 0.0), 0.0);
+        bike.rotation = Quat::from_rotation_z(0.6);
+        ride(&w, &mut bike, Controls::default(), 1.5);
+        assert!(bike.up().y > 0.97, "up {:?}", bike.up());
+    }
+
+    /// The nose's pitch (forward.y) after `seconds` in the air.
     fn air_nose_after(c: Controls, seconds: f32) -> f32 {
         let w = floor();
         let mut bike = Bike::new(Vec3::new(0.0, 60.0, 0.0), 0.0);
-        bike.wheel_spin = 15.0 / rear_leg().radius;
         ride(&w, &mut bike, c, seconds);
         bike.forward().y
     }
@@ -1505,20 +1186,14 @@ mod tests {
     #[test]
     fn gas_in_the_air_lifts_the_front_a_little() {
         let coast = air_nose_after(default(), 1.0);
-        let gas = air_nose_after(
-            Controls {
-                throttle: 1.0,
-                ..default()
-            },
-            1.0,
-        );
+        let gas = air_nose_after(gas(1.0), 1.0);
         assert!(gas > coast + 0.05, "gas {gas} coast {coast}");
         // A little, not a backflip.
-        assert!(gas < 0.4, "gas {gas}");
+        assert!(gas < 0.6, "gas {gas}");
     }
 
     #[test]
-    fn rear_brake_in_the_air_drops_the_front_a_little() {
+    fn rear_brake_in_the_air_drops_the_front() {
         let coast = air_nose_after(default(), 0.5);
         let brake = air_nose_after(
             Controls {
@@ -1528,7 +1203,7 @@ mod tests {
             0.5,
         );
         assert!(brake < coast - 0.05, "brake {brake} coast {coast}");
-        assert!(brake > -0.4, "brake {brake}");
+        assert!(brake > -0.7, "brake {brake}");
     }
 
     #[test]
@@ -1573,15 +1248,7 @@ mod tests {
             ([wall[0], wall[3], wall[2]], false),
         ]);
         let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
-        ride(
-            &w,
-            &mut bike,
-            Controls {
-                throttle: 0.5,
-                ..default()
-            },
-            4.0,
-        );
+        ride(&w, &mut bike, gas(0.5), 4.0);
         assert!(bike.position.z < 10.0, "through the wall: z {}", bike.position.z);
     }
 
@@ -1607,4 +1274,3 @@ mod tests {
         Controls::default()
     }
 }
-
