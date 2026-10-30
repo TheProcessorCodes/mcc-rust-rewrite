@@ -17,11 +17,15 @@
 //! blam movement <map>                           the player's on-foot movement numbers, wu and metres
 //! blam weapons  <map> [--all] [--meshes] [--markers]  weapon tags, numbers, markers and placements
 //! blam scripts  <map> [--grep TEXT | --functions | --summary]  the scenario's HaloScript as source
+//! blam anim     <map> <jmad | object> [--anim NAME|N [--frame F] | --action m:c:t:a | --check]
+//!                                               an animation graph, a decoded pose, an action lookup
+//! blam anim     <map> --all                     decode every animation of every graph
 //! ```
 //!
 //! `<map>` is a path, or a bare name such as `riverworld` looked up in
 //! `$HALO3_MAPS` or the default MCC install.
 
+mod anim;
 mod geometry;
 mod halo2;
 mod sound;
@@ -135,6 +139,9 @@ impl Args {
                         | "index"
                         | "samples"
                         | "wav"
+                        | "anim"
+                        | "frame"
+                        | "action"
                 );
                 let value = if takes_value { it.next() } else { None };
                 flags.push((name.to_string(), value));
@@ -198,6 +205,7 @@ fn main() -> Result<()> {
         "rails" => rails(&cache, &args),
         "nodes" => nodes(&cache, &args),
         "weapons" => weapons::run(&cache, &args),
+        "anim" => anim::run(&cache, &args),
         "bitmap" => {
             let Some(what) = args.positional.get(1) else {
                 usage()

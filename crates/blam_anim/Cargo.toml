@@ -1,0 +1,11 @@
+[package]
+name = "blam_anim"
+description = "Reads Halo 3 animation graphs (jmad) and their codec data; samples and blends poses"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_cache = { workspace = true }
+glam = { workspace = true }

@@ -20,6 +20,7 @@ the format descriptions the code is written from.
 
 | path | what |
 |---|---|
+| `crates/blam_anim` | Halo 3 animation graphs (`jmad`): skeleton, animation list, the mode / weapon class / weapon type / action tree, every codec of the animation data; poses sampled, blended and turned into skinning matrices (`docs/format/animation.md`) |
 | `crates/blam_cache` | opens a `.map`: header, sections, tag index, tag names, string ids, a cursor for tag data, resource pages |
 | `crates/blam_geometry` | decodes structure BSPs (clusters and instances) into plain meshes with materials |
 | `crates/blam_h2` | MCC Halo 2 maps: inflated in memory, tags, `shared.map` and `textures.dat` read, BSP, collision, objects, spawns, shaders and bitmaps decoded into the same `Scene` (`docs/format/halo2.md`) |
@@ -31,6 +32,7 @@ the format descriptions the code is written from.
 | `crates/halo3_core` | what the runtime crates share: coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
 | `crates/halo3_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
 | `crates/halo3_world` | the world on the GPU: BSP streaming, culling, lightmaps, sky, water, zone keys |
+| `crates/halo3_anim` | Halo's own animations on objects: `AnimModel` (one per object type) and the `Animator` component (actions with fallbacks, cross-fades, overlays, aiming, device positions, root motion) posing skinned joints |
 | `crates/halo3_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
 | `crates/halo3_skate` | skating through the Skate 3 engine (`skate-host`) |
 | `crates/halo3_rider` | the Spartan on the board |
@@ -57,6 +59,9 @@ target\debug\blam.exe textures riverworld
 target\debug\blam.exe sound riverworld list
 target\debug\blam.exe scripts 120_halo --grep trench_timer_100_001
 target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_music_15"
+target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human"
+target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human" --anim combat:any:any:melee --frame 6
+target\debug\blam.exe anim 120_halo --all
 & "target\debug\halo3.exe" riverworld
 ```
 
@@ -132,6 +137,13 @@ both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
 - [x] Grind rails from the collision (IW4L's lip detector, ported): 2,904 on
       Valhalla, edge-of-world rims dropped. `blam rails <map> --obj PATH`.
 - [x] Spawn points (107 on Valhalla); the viewer starts on one.
+- [x] Halo 3 animation (2026-10-29; checked by tests and headless shots, not
+      playtested): `jmad` graphs and every codec in the maps decode (`blam
+      anim`; 5881 of 120_halo's 5996 animations, the rest have no data in
+      that map). `halo3_anim` plays them on the Flood, Sentinels, Master
+      Chief and device machines; `halo3 120_halo --anim-test ...` shows a row
+      of animated bipeds. Not yet wired into the enemies or the on-foot
+      Spartan (`docs/format/animation.md`).
 - [x] Spartan skeleton and skin weights decode (`blam nodes`); bone mapping
       to the skater in `docs/rider.md`.
 - [x] On foot (built, awaiting a playtest): F walks the Spartan with Halo 3's

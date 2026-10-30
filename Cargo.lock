@@ -1635,6 +1635,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "blam_anim"
+version = "0.1.0"
+dependencies = [
+ "blam_cache",
+ "glam",
+]
+
+[[package]]
 name = "blam_cache"
 version = "0.1.0"
 dependencies = [
@@ -1648,6 +1656,7 @@ name = "blam_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blam_anim",
  "blam_cache",
  "blam_geometry",
  "blam_h2",
@@ -2532,6 +2541,7 @@ dependencies = [
  "blam_geometry",
  "blam_h2",
  "blam_texture",
+ "halo3_anim",
  "halo3_audio",
  "halo3_bike",
  "halo3_core",
@@ -2543,6 +2553,17 @@ dependencies = [
  "halo3_textures",
  "halo3_weapons",
  "halo3_world",
+]
+
+[[package]]
+name = "halo3_anim"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_anim",
+ "blam_cache",
+ "blam_geometry",
+ "halo3_core",
 ]
 
 [[package]]

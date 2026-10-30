@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 blam_cache = { workspace = true }
+blam_anim = { workspace = true }
 blam_geometry = { workspace = true }
 glam = { workspace = true }
 anyhow = { workspace = true }
