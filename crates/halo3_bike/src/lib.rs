@@ -18,6 +18,7 @@
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`) |
 //! | LB + d-pad up (hold) | | back to the session marker |
+//! | left stick click | H | engine sound: Reflex's 450F, synth, off (`halo3_audio::engine`) |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
@@ -76,6 +77,7 @@ impl Plugin for BikePlugin {
             .init_resource::<Dismount>()
             .init_resource::<Mount>()
             .init_resource::<SessionFlag>()
+            .init_resource::<halo3_core::bike::BikeMotion>()
             .add_plugins(tune::TunePlugin)
             .add_systems(Startup, (setup, model::start))
             .add_systems(
@@ -87,6 +89,7 @@ impl Plugin for BikePlugin {
                     model::place,
                     model::light,
                     show_status,
+                    publish_motion,
                 )
                     .chain(),
             );
@@ -109,6 +112,29 @@ struct Riding {
     look: Vec3,
     /// Kept while off the bike, as the skate's is.
     marker: marker::SessionMarker,
+}
+
+/// The bike's state for the engine sound (`halo3_audio`).
+fn publish_motion(riding: Res<Riding>, mut motion: ResMut<halo3_core::bike::BikeMotion>) {
+    let m = match riding.bike.as_ref() {
+        Some(b) => {
+            let s = physics::setup();
+            halo3_core::bike::BikeMotion {
+                riding: true,
+                rpm: b.engine.rpm,
+                min_rpm: s.min_rpm,
+                max_rpm: s.max_rpm(),
+                throttle: b.gas(),
+                speed: b.velocity.length(),
+                gear: b.engine.gear,
+                grounded: b.grounded(),
+                crashed: b.crashed.is_some(),
+                rear_sliding: b.wheels[0].sliding && b.wheels[0].contact.is_some(),
+            }
+        }
+        None => halo3_core::bike::BikeMotion::default(),
+    };
+    *motion = m;
 }
 
 /// The skate scale `k` the rider is drawn at (`skate.rs`).

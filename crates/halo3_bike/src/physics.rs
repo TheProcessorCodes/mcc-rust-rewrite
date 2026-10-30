@@ -507,6 +507,11 @@ impl Bike {
         self.velocity.dot(self.forward())
     }
 
+    /// The gas the engine gets this step, after the pedal's rate limit.
+    pub fn gas(&self) -> f32 {
+        self.held.gas
+    }
+
     pub fn grounded(&self) -> usize {
         self.wheels.iter().filter(|w| w.contact.is_some()).count()
     }

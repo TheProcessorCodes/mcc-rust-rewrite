@@ -599,6 +599,7 @@ Unleashed's stock Pro 250 (`docs/bike-unleashed.md`):
 | LT | S | brakes (both wheels); in the air it drops the nose, the gas lifts it |
 | A (hold) | Space (hold) | back up, up to 10 mph |
 | Y | R | stand the bike back up |
+| left stick click | H | engine sound: Reflex's 450F recordings, our synth, off |
 
 Hitting the bars or the rider's head, or landing upside down, is a crash: two
 seconds later the bike comes back where it last rode well. Falling into a kill
@@ -607,6 +608,21 @@ the map" above). The rider is one
 stiff stance (attack position) kept on the pegs and grips by IK. The bike is a
 stick model of unlit cylinders for now. It rides on the loaded zone set's
 collision. Tuning constants are at the top of `physics.rs`.
+
+Engine sound (`crates/halo3_audio/src/engine.rs`), two models to compare; H or a
+click of the left stick goes Reflex → synth → off, and the log says which:
+
+- **Reflex**: the Dakumoto 450F's own 54 recordings, read from the user's Reflex install
+  (`docs/format/reflex-engine-audio.md`). An idle layer, an under-throttle layer that plays
+  the take nearest the rpm and load, pitched to the exact rpm, a dulled coast layer, the
+  limiter loop, and once-off decel sweeps (letting go from high revs), landings and wrecks.
+- **Synth**: our own single-cylinder four-stroke: one blow-down pulse per firing into
+  head-pipe and silencer resonators, tone opening with throttle, intake snarl, valve ticks,
+  a stuttering limiter, pops off the throttle.
+
+Both add wind with speed. Without Reflex the Reflex choice plays the synth.
+`HALO3_ENGINE_WAV=DIR cargo test -p halo3_audio engine` writes both models over the same
+scripted eight-second ride to `DIR\engine-reflex.wav` and `engine-synth.wav`.
 
 Headless check: `halo3 riverworld --shot DIR --bike --view spawn50` rides from
 spawn 50 holding `HALO3_BIKE_THROTTLE` (default 0.4) for `HALO3_SKATE_FOR`
@@ -675,8 +691,7 @@ sounds to WAV (`.scratch/sound` by default) with duration, rate, RMS and peak.
 
 Not done: the sound environments (`snde` reverb) and obstruction; pitch ranges past the
 first; dialogue (the per-language banks); weapon, vehicle, footstep and impact sounds of the
-game world; HaloScript-driven music cues (music is by hand); the dirt bike's engine
-(the Mongoose engine loops are in the bank). Halo's real distance curve and the meaning of
+game world; HaloScript-driven music cues (music is by hand). Halo's real distance curve and the meaning of
 the playback parameters' first two distances are not checked against the game.
 
 ## Halo 2 maps

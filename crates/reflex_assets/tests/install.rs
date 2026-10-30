@@ -44,3 +44,19 @@ fn the_450f_loads() {
     assert!(m.parts.len() > 20);
     assert!(reflex_assets::cortana::is_cortana(&m.textures[bike::KIT]));
 }
+
+#[test]
+fn the_450f_engine_decodes() {
+    let Some(root) = find_reflex() else {
+        eprintln!("no Reflex install; skipped");
+        return;
+    };
+    let clips = reflex_assets::engine_audio::load_450f(&root).unwrap();
+    assert_eq!(clips.len(), 54);
+    let idle = clips.iter().find(|c| c.name == "MXB_450F_IDLE").unwrap();
+    assert_eq!(idle.rate, 44100);
+    // 131,328 samples in the bank's header; the decoder adds its own delay.
+    assert!((131_328..131_328 + 2304).contains(&idle.samples.len()), "{}", idle.samples.len());
+    let peak = idle.samples.iter().fold(0f32, |m, v| m.max(v.abs()));
+    assert!(peak > 0.1 && peak <= 1.0, "peak {peak}");
+}

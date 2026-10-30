@@ -11,4 +11,5 @@ bevy = { workspace = true, features = ["bevy_audio"] }
 blam_cache = { workspace = true }
 blam_sound = { workspace = true }
 halo3_core = { workspace = true }
+reflex_assets = { workspace = true }
 anyhow = { workspace = true }
