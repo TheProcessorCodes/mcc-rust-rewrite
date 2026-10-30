@@ -11,7 +11,9 @@
 //!   as the rpm moves. Most takes were recorded accelerating, so their pitch
 //!   climbs inside the take; at load each one's pitch is followed through it
 //!   (`contour`, held near the table's figure so it cannot jump an octave)
-//!   and the playback rate undoes that, so the pitch heard is the bike's.
+//!   and the playback rate undoes that, so the pitch heard is the one asked
+//!   for. What is asked for follows a recording of Reflex itself (see
+//!   `bike_engine`): a narrow high band on the gas, the idle take off it.
 //! - **Synth**: our own single-cylinder four-stroke, made from nothing: a
 //!   blow-down pulse per firing (every second turn of the crank), each one a
 //!   little different, into two pipe resonators (head pipe, silencer), the
@@ -52,7 +54,14 @@ impl Model {
 /// What the engine is doing, handed to the audio thread each frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Input {
+    /// The rpm the Reflex model plays (see `bike_engine`).
     pub rpm: f32,
+    /// The engine's own rpm, smoothed: the synth's.
+    pub engine_rpm: f32,
+    /// On the limiter, 0 to 1.
+    pub limit: f32,
+    /// Counts up at each gear change.
+    pub shifts: u32,
     pub min_rpm: f32,
     pub max_rpm: f32,
     pub throttle: f32,
@@ -329,6 +338,8 @@ fn one_pole(hz: f32) -> f32 {
 /// Smoothed copies of the inputs, and the edges the models react to.
 struct Follow {
     input: Input,
+    /// Follow `engine_rpm` instead of `rpm` (the synth).
+    engine: bool,
     rpm: f32,
     throttle: f32,
     /// The throttle held in the last half second or so.
@@ -338,10 +349,11 @@ struct Follow {
 }
 
 impl Follow {
-    fn new(input: Input) -> Follow {
+    fn new(input: Input, engine: bool) -> Follow {
         Follow {
             input,
-            rpm: input.rpm,
+            engine,
+            rpm: if engine { input.engine_rpm } else { input.rpm },
             throttle: input.throttle,
             recent: input.throttle,
             landings: input.landings,
@@ -354,7 +366,8 @@ impl Follow {
         let before = (self.rpm, self.throttle);
         // About 40 ms either way; the physics already smooths the pedal.
         let k = (seconds / 0.04).min(1.0);
-        self.rpm += (self.input.rpm - self.rpm) * k;
+        let rpm = if self.engine { self.input.engine_rpm } else { self.input.rpm };
+        self.rpm += (rpm - self.rpm) * k;
         self.throttle += (self.input.throttle - self.throttle) * k;
         self.recent = self.throttle.max(self.recent - seconds * 2.0);
         before
@@ -469,7 +482,7 @@ impl Layer {
             self.grains.clear();
             return;
         }
-        let ratio = |c: &Recording, pos: f64| rate.unwrap_or_else(|| rpm / c.rpm_at(pos)).clamp(0.4, 2.2) as f64 * c.step;
+        let ratio = |c: &Recording, pos: f64| rate.unwrap_or_else(|| rpm / c.rpm_at(pos)).clamp(0.6, 1.8) as f64 * c.step;
         let current = self.grains.iter().rev().find(|g| g.fade_step > 0.0 || g.fade >= 1.0).map(|g| g.clip);
         let wanted = match current {
             None => true,
@@ -492,13 +505,12 @@ impl Layer {
             for (f, o) in out.iter_mut().enumerate() {
                 let step = ratio(clip, g.pos);
                 let i = g.pos as usize;
-                if i + 1 >= n {
+                if i + 2 >= n {
                     g.fade = 0.0;
                     g.fade_step = -1.0;
                     break;
                 }
-                let t = (g.pos - i as f64) as f32;
-                let v = clip.samples[i] + (clip.samples[i + 1] - clip.samples[i]) * t;
+                let v = cubic(&clip.samples, i, (g.pos - i as f64) as f32);
                 let w = (g.fade * std::f32::consts::FRAC_PI_2).sin();
                 let gain = g0 + (g1 - g0) * f as f32 / frames as f32;
                 *o += v * w * gain;
@@ -508,6 +520,16 @@ impl Layer {
         }
         self.grains.retain(|g| g.fade > 0.0 || g.fade_step > 0.0);
     }
+}
+
+/// Four-point Hermite between `s[i]` and `s[i + 1]` (`s[i + 2]` must exist):
+/// cleaner than a straight line when a take is pitched up.
+fn cubic(s: &[f32], i: usize, t: f32) -> f32 {
+    let (y0, y1, y2, y3) = (s[i.saturating_sub(1)], s[i], s[i + 1], s[i + 2]);
+    let c1 = 0.5 * (y2 - y0);
+    let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+    let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+    ((c3 * t + c2) * t + c1) * t + y1
 }
 
 /// A recording played once.
@@ -525,26 +547,22 @@ pub struct Sampled {
     follow: Option<Follow>,
     idle: Layer,
     drive: Layer,
-    coast: Layer,
     limiter: Layer,
     shots: Vec<OneShot>,
     decel_wait: f32,
-    /// Seconds the decel sweep still covers the coast layer.
-    decel_left: f32,
-    coast_lp: f32,
-    gains: [f32; 4],
+    shifts: u32,
+    /// Seconds since the last gear change (the drive layer dips through it).
+    since_shift: f32,
+    gains: [f32; 3],
     wind: Wind,
     rng: Rng,
     mono: Vec<f32>,
-    coast_buf: Vec<f32>,
 }
 
 impl Sampled {
     pub fn new(bank: Arc<Bank>, shared: Arc<Mutex<Input>>) -> Sampled {
         let idle = Layer::new(bank.of(|k| k == Kind::Idle), true);
         let drive = Layer::new(bank.of(|k| matches!(k, Kind::Drive(_))), true);
-        // Off the throttle while still turning over: the light takes, dulled.
-        let coast = Layer::new(bank.of(|k| matches!(k, Kind::Drive(l) if l <= 0.35)), true);
         let limiter = Layer::new(bank.of(|k| k == Kind::Limiter), true);
         Sampled {
             bank,
@@ -552,17 +570,15 @@ impl Sampled {
             follow: None,
             idle,
             drive,
-            coast,
             limiter,
             shots: Vec::new(),
             decel_wait: 0.0,
-            decel_left: 0.0,
-            coast_lp: 0.0,
-            gains: [0.0; 4],
+            shifts: 0,
+            since_shift: 1.0,
+            gains: [0.0; 3],
             wind: Wind { lp: [0.0; 2], rng: Rng(0x2545_f491) },
             rng: Rng(0x9e37_79b9),
             mono: Vec::new(),
-            coast_buf: Vec::new(),
         }
     }
 
@@ -587,7 +603,7 @@ impl Generator for Sampled {
     fn render(&mut self, out: &mut [f32]) -> bool {
         let frames = out.len() / 2;
         let seconds = frames as f32 / RATE as f32;
-        let follow = self.follow.get_or_insert_with(|| Follow::new(*self.shared.lock().unwrap()));
+        let follow = self.follow.get_or_insert_with(|| Follow::new(*self.shared.lock().unwrap(), false));
         let (_, t0) = follow.take(&self.shared, seconds);
         let (i, rpm, t, recent) = (follow.input, follow.rpm, follow.throttle, follow.recent);
         let landed = i.landings != follow.landings;
@@ -597,11 +613,9 @@ impl Generator for Sampled {
 
         // Letting go from high up: the falling sweep, once.
         self.decel_wait -= seconds;
-        self.decel_left -= seconds;
         if t < 0.1 && t0 >= 0.1 && recent > 0.5 && rpm > 6500.0 && self.decel_wait <= 0.0 {
-            self.shot(Kind::Decel, Some(rpm * 0.98), 0.75);
+            self.shot(Kind::Decel, Some(rpm * 0.98), 0.5);
             self.decel_wait = 1.5;
-            self.decel_left = 0.8;
         }
         if landed && i.land_force > 0.1 {
             self.shot(Kind::Land, Some(rpm), 0.35 + 0.45 * i.land_force);
@@ -609,37 +623,34 @@ impl Generator for Sampled {
         if wrecked {
             self.shot(Kind::Wreck, None, 0.9);
         }
+        if i.shifts != self.shifts {
+            self.shifts = i.shifts;
+            self.since_shift = 0.0;
+        }
+        self.since_shift += seconds;
 
-        let (lo, hi) = (i.min_rpm.max(500.0), i.max_rpm.max(i.min_rpm + 1000.0));
+        // As Reflex mixes it (from a recording of the game): on the gas,
+        // the throttle takes; off it, the idle take as recorded, 12 dB
+        // down, whatever the revs; the limiter loop with the wheel free.
+        // A gear change cuts the drive for a tenth of a second.
         let on = smoothstep(0.02, 0.2, t);
-        let limit = smoothstep(hi * 0.95, hi * 0.99, rpm) * smoothstep(0.5, 0.8, t);
-        let duck = if self.decel_left > 0.0 { 0.3 } else { 1.0 };
+        let limit = i.limit;
+        let dip = 1.0 - 0.65 * (1.0 - smoothstep(0.08, 0.18, self.since_shift));
         let target = [
-            (1.0 - on) * (1.0 - smoothstep(lo + 800.0, lo + 2600.0, rpm)) * 0.5,
-            on * (0.5 + 0.7 * t) * (1.0 - 0.7 * limit),
-            (1.0 - on) * smoothstep(lo + 400.0, lo + 2200.0, rpm) * 0.5 * duck,
-            limit * 0.9,
+            (1.0 - on) * 0.3,
+            on * (0.5 + 0.7 * t) * (1.0 - limit) * dip,
+            limit * (0.5 + 0.7 * t),
         ];
         let g0 = self.gains;
         self.gains = target;
 
         self.mono.clear();
         self.mono.resize(frames, 0.0);
-        self.coast_buf.clear();
-        self.coast_buf.resize(frames, 0.0);
         let bank = self.bank.clone();
-        // The idle recording runs a little fast of our idle: as recorded at
-        // idle, rising with the rpm.
-        let idle_rate = (rpm / lo).clamp(1.0, 1.8).powf(0.85);
-        self.idle.render(&bank, &mut self.mono, rpm, 0.0, g0[0], target[0], Some(idle_rate), &mut self.rng);
+        self.idle.render(&bank, &mut self.mono, rpm, 0.0, g0[0], target[0], Some(1.0), &mut self.rng);
         self.drive.render(&bank, &mut self.mono, rpm, t, g0[1], target[1], None, &mut self.rng);
-        self.coast.render(&bank, &mut self.coast_buf, rpm, 0.2, g0[2], target[2], None, &mut self.rng);
-        self.limiter.render(&bank, &mut self.mono, rpm, 1.0, g0[3], target[3], None, &mut self.rng);
-        let k = one_pole(1400.0);
-        for (m, c) in self.mono.iter_mut().zip(&self.coast_buf) {
-            self.coast_lp += (c - self.coast_lp) * k;
-            *m += self.coast_lp;
-        }
+        // Reflex holds the loop at the 450F's 11,500.
+        self.limiter.render(&bank, &mut self.mono, 11_500.0, 1.0, g0[2], target[2], None, &mut self.rng);
         for s in &mut self.shots {
             let c = &bank.clips[s.clip];
             for m in self.mono.iter_mut() {
@@ -749,7 +760,7 @@ impl Generator for Synth {
     fn render(&mut self, out: &mut [f32]) -> bool {
         let frames = out.len() / 2;
         let dt = 1.0 / RATE as f32;
-        let follow = self.follow.get_or_insert_with(|| Follow::new(*self.shared.lock().unwrap()));
+        let follow = self.follow.get_or_insert_with(|| Follow::new(*self.shared.lock().unwrap(), true));
         let (rpm0, t0) = follow.take(&self.shared, frames as f32 * dt);
         let (i, rpm1, t1, recent) = (follow.input, follow.rpm, follow.throttle, follow.recent);
         follow.landings = i.landings;
@@ -839,6 +850,13 @@ pub struct EngineSound {
     tried: bool,
     air: f32,
     crashed: bool,
+    /// The engine's rpm, smoothed, and what the Reflex model plays (see
+    /// `bike_engine`).
+    rpm: f32,
+    heard: f32,
+    limit: f32,
+    gear: usize,
+    shifts: u32,
     landings: u32,
     wrecks: u32,
 }
@@ -873,6 +891,9 @@ pub fn bike_engine(
             mixer.stop(id);
         }
         e.air = 0.0;
+        e.rpm = 0.0;
+        e.heard = 0.0;
+        e.limit = 0.0;
         return;
     }
     if !e.tried {
@@ -926,13 +947,55 @@ pub fn bike_engine(
         e.wrecks += 1;
     }
     e.crashed = m.crashed;
+    // The rpm heard. Pulling away on a slipping clutch the physics holds the
+    // engine at idle while the bike moves; a real one is revved over the
+    // clutch, so it is heard there. The physics rpm also jumps by thousands
+    // in a tenth of a second while the rear tyre spins and grips; a
+    // flywheel cannot, so the heard rpm moves at most 30,000 rpm/s and is
+    // smoothed over about 0.1 s.
+    let mut target = m.rpm;
+    if m.clutch_slipping && m.throttle > 0.05 && !m.crashed {
+        target = target.max(m.min_rpm + 1200.0 + 5500.0 * m.throttle);
+    }
+    if e.rpm <= 0.0 {
+        e.rpm = target;
+    }
+    let smoothed = e.rpm + (target - e.rpm) * (dt / 0.1).min(1.0);
+    e.rpm += (smoothed - e.rpm).clamp(-30_000.0 * dt, 30_000.0 * dt);
+    let engine_rpm = e.rpm;
+    // What Reflex plays on the gas sits between about 7,500 and 10,500 rpm
+    // whatever the bike does (measured off a recording of the game: 8,300
+    // pulling away, 1,500 to 2,000 up through each gear, back down at the
+    // shift), so ours is squeezed into that band; off the gas it falls
+    // towards the idle take.
+    let on_gas = m.throttle > 0.05;
+    let band = 7300.0 + 0.35 * (engine_rpm - m.min_rpm).max(0.0);
+    let heard = if on_gas { band.min(10_900.0) } else { 3700.0 };
+    if e.heard <= 0.0 {
+        e.heard = heard;
+    }
+    let k = (dt / 0.08).min(1.0);
+    e.heard += ((heard - e.heard) * k).clamp(-15_000.0 * dt, 40_000.0 * dt);
+    // The limiter: the engine at its top with the gas held, or the bike
+    // down with the gas held (the wheel spins free).
+    let limit_target = if m.throttle > 0.5 && (m.crashed || m.rpm >= m.max_rpm * 0.97) { 1.0 } else { 0.0 };
+    e.limit += (limit_target - e.limit) * (dt / 0.06).min(1.0);
+    if m.gear != e.gear {
+        e.gear = m.gear;
+        if on_gas {
+            e.shifts += 1;
+        }
+    }
     {
-        let (landings, wrecks, air) = (e.landings, e.wrecks, e.air > 0.0);
+        let (landings, wrecks, air, shifts) = (e.landings, e.wrecks, e.air > 0.0, e.shifts);
         let mut s = e.shared.lock().unwrap();
-        s.rpm = m.rpm;
+        s.rpm = e.heard;
+        s.engine_rpm = engine_rpm;
+        s.limit = e.limit;
+        s.shifts = shifts;
         s.min_rpm = m.min_rpm;
         s.max_rpm = m.max_rpm;
-        s.throttle = if m.crashed { 0.0 } else { m.throttle };
+        s.throttle = m.throttle;
         s.speed = m.speed;
         s.airborne = air;
         s.landings = landings;
@@ -985,7 +1048,12 @@ mod tests {
                     t if t < 7.0 => (11500.0, 1.0),
                     _ => (8000.0, 0.6),
                 };
-                s.rpm = rpm;
+                // The synth hears the engine; the Reflex model the band
+                // `bike_engine` squeezes it into.
+                s.engine_rpm = rpm;
+                s.rpm = if gas > 0.05 { (7300.0 + 0.35 * (rpm - 1500.0)).min(10_900.0) } else { 3700.0 };
+                s.limit = if rpm >= 11_500.0 { 1.0 } else { 0.0 };
+                s.shifts = u32::from(t >= 3.0);
                 s.throttle = gas;
                 s.speed = (t * 4.0).min(20.0);
                 if (7.0..7.03).contains(&t) {

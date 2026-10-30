@@ -613,9 +613,12 @@ Engine sound (`crates/halo3_audio/src/engine.rs`), two models to compare; H or a
 click of the left stick goes Reflex → synth → off, and the log says which:
 
 - **Reflex**: the Dakumoto 450F's own 54 recordings, read from the user's Reflex install
-  (`docs/format/reflex-engine-audio.md`). An idle layer, an under-throttle layer that plays
-  the take nearest the rpm and load, pitched to the exact rpm, a dulled coast layer, the
-  limiter loop, and once-off decel sweeps (letting go from high revs), landings and wrecks.
+  (`docs/format/reflex-engine-audio.md`), mixed the way a recording of Reflex itself shows
+  (2026-10-30): on the gas the throttle takes, the pitch held between about 7,300 and
+  10,900 rpm (our engine's rpm squeezed into that band; Reflex never plays low revs under
+  throttle), a short cut at each gear change; off the gas the idle take as recorded, 12 dB
+  down, whatever the revs; the limiter loop with the gas held and the rear wheel free (in
+  the air, or the bike down); once-off decel sweeps, landings and wrecks.
 - **Synth**: our own single-cylinder four-stroke: one blow-down pulse per firing into
   head-pipe and silencer resonators, tone opening with throttle, intake snarl, valve ticks,
   a stuttering limiter, pops off the throttle.

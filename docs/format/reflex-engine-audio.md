@@ -73,5 +73,18 @@ frequency × 120 for a four-stroke single) gives:
 | `THROTTLE_LAND_01`..`06` (no `04`) | 6,360 to 7,950 | |
 | `FLOODING_01`..`03`, `CHOKE`, `WRECK` | | `CHOKE` and `WRECK` are the same bytes |
 
+## How Reflex mixes them
+
+From a 13 s recording of the game (the user's, 2026-10-30; riding, two jumps, two
+wrecks), pitch and loudness every 0.1 s:
+
+- On the gas the pitch stays between about 7,600 and 10,400 rpm: 8,300 pulling away from
+  slow, rising 1,500 to 2,000 through a gear, dropping 2,000 to 2,500 at the shift, with
+  the level dipping for about 0.1 s at each shift. Low revs are never heard on the gas.
+- Off the gas (and in the air off the gas) it is the idle take at its own pitch (3,300 to
+  3,700), about 14 dB down and dull, within 0.3 s of letting go.
+- The gas held with the rear wheel free (the wrecks) is the limiter loop, steady at
+  11,500, as loud as riding.
+
 Most throttle takes were recorded accelerating, rising 10 to 20 % in pitch through the
 take; `engine.rs` follows each one's pitch through it at load and undoes the rise.

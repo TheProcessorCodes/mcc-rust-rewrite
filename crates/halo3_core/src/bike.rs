@@ -19,6 +19,8 @@ pub struct BikeMotion {
     /// Wheels on the ground.
     pub grounded: usize,
     pub crashed: bool,
+    /// The clutch slipping (pulling away, creeping).
+    pub clutch_slipping: bool,
     /// The rear tyre spinning or locked.
     pub rear_sliding: bool,
 }

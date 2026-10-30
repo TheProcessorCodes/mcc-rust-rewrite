@@ -129,6 +129,7 @@ fn publish_motion(riding: Res<Riding>, mut motion: ResMut<halo3_core::bike::Bike
                 gear: b.engine.gear,
                 grounded: b.grounded(),
                 crashed: b.crashed.is_some(),
+                clutch_slipping: !b.engine.locked,
                 rear_sliding: b.wheels[0].sliding && b.wheels[0].contact.is_some(),
             }
         }
