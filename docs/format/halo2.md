@@ -437,3 +437,15 @@ field; only the root offsets differ.
 **Projectile** (`proj`): maximum range +0x16C, initial and final velocity +0x17C, +0x180 (wu, wu/s;
 battle rifle 40, 400, 400; sniper 120, 1200, 1200; needler 60, 6, 6). The same 0x10 gap as Halo 3's
 range and velocities. The damage effect is not read.
+
+### 11.4 In the viewer
+
+`halo2.rs` reads the above, decodes the weapons' third-person models through the same render
+model path as scenery (`blam_h2::decode_models`, so the compression bounds of section 5 apply:
+the battle rifle is 0.30 wu long) and hands them to `halo3_weapons::assets::from_scene`. Walking
+then works as on Halo 3 maps: the SMG in hand, the 14 netgame weapons lying where the scenario
+puts them, picked up, swapped and fired with the numbers above. Not done: grenades and other
+`eqip` items are not placed; items rest at the netgame point as stored (the game drops them to
+the floor with physics, so some hang a little above it); no first-person model or arms (the
+viewer draws the third-person model in front of the camera, as for Halo 3); the Halo 2 Master
+Chief is not decoded (the rider is still Halo 3's Spartan from Valhalla); no weapon sounds.

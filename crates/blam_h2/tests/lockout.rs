@@ -148,4 +148,13 @@ fn lockout_weapons() {
     assert!(models.meshes.iter().all(|v| !v.is_empty()));
     let br_tris: usize = models.meshes[0].iter().map(|&k| models.scene.meshes[k as usize].triangle_count()).sum();
     assert!(br_tris > 100, "{br_tris}");
+    // 29 materials, every one with a base map that decodes; the battle
+    // rifle is 0.30 wu long (compression bounds applied).
+    assert_eq!(models.looks.len(), 29);
+    assert!(models.looks.iter().all(|l| l.as_ref().and_then(|l| l.base).is_some_and(|(b, _)| models.bitmaps.contains_key(&b))));
+    let (lo, hi) = models.meshes[0].iter().flat_map(|&k| &models.scene.meshes[k as usize].positions).fold(
+        (glam::Vec3::splat(f32::MAX), glam::Vec3::splat(f32::MIN)),
+        |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+    );
+    assert!((hi.x - lo.x - 0.295).abs() < 0.01, "{lo} {hi}");
 }
