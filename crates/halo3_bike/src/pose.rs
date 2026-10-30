@@ -44,6 +44,11 @@ pub struct Stance {
 /// The torso's forward tilt at rest, radians.
 const TORSO: f32 = 0.78;
 
+/// The rider's size on the bike against the Spartan's own (7 ft, 2.1 m):
+/// rider-sized (about 1.8 m) on the real-sized 450F. Only the bike draws
+/// him smaller; on foot and on the board he keeps his size.
+pub const RIDER_SIZE: f32 = 0.85;
+
 impl Rig {
     pub fn load(path: &std::path::Path) -> Result<Rig, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -84,8 +89,11 @@ impl Rig {
         }
     }
 
-    /// Every rig bone posed, skate metres, bike frame (`k` is the skate scale).
+    /// Every rig bone posed, skate metres, bike frame (`k` is the skate scale),
+    /// at `RIDER_SIZE`: posed full size to targets moved out by 1 / size, then
+    /// shrunk about the bike's origin, so hands and feet land on the bike.
     pub fn pose(&self, k: f32, stance: &Stance) -> Vec<Mat4> {
+        let k = k / RIDER_SIZE;
         let lean = stance.lean.clamp_length_max(1.0);
         let mut out = self.bind.clone();
         let mut set = |name: &str, m: Mat4| {
@@ -154,7 +162,8 @@ impl Rig {
         set("SKATEBOARD_ROOT", Mat4::from_translation((rear + front) * 0.5));
         set("TRUCK_BACK", Mat4::from_translation(rear));
         set("TRUCK_FRONT", Mat4::from_translation(front));
-        out
+        let shrink = Mat4::from_scale(Vec3::splat(RIDER_SIZE));
+        out.into_iter().map(|m| shrink * m).collect()
     }
 
     /// Two-bone IK from `root` towards `target`, bending towards `pole`:

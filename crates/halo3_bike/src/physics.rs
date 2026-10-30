@@ -140,7 +140,7 @@ pub const PROBES: [(Vec3, f32, bool); 6] = [
     (Vec3::new(0.0, 0.10, 0.85), 0.12, false),  // front fender
     (Vec3::new(0.0, 0.25, -0.30), 0.16, false), // seat
     (Vec3::new(0.0, 0.47, 0.20), 0.16, true),   // bars and hands
-    (Vec3::new(0.0, 1.30, 0.20), 0.24, true),   // the rider's head
+    (Vec3::new(0.0, 1.18, 0.20), 0.22, true),   // the rider's head, at RIDER_SIZE
 ];
 
 const PROBE_SPRING: f32 = 90000.0;

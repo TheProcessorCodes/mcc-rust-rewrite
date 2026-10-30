@@ -105,11 +105,18 @@ drawn ones so the tyres sit on the ground.
 | hips (frame) | (0, 0.55, -0.30) | (0, 0.515, -0.39), moved with the pegs |
 | skid plate probe | y -0.40, z 0.05 | y -0.30, z 0 (0.30 m clearance) |
 | fender probes | z -1.08 / 0.98 | z -0.98 / 0.85, at the plastics |
+| rider | the Spartan's own size (2.1 m) | 0.85 of it (about 1.8 m), on the bike only |
+| head probe | y 1.30, r 0.24 | y 1.18, r 0.22, for the smaller rider |
 
 The gearing keeps Reflex's road speed for the new rear tyre (`final_ratio = 0.335 / 0.317`).
 The grips now turn about the steering axis through the triple clamp. The plain Unleashed model
 in the tuning menu keeps the Pro 250's shape; with it the drawn wheels sit a few centimetres off
 the forks and swingarm.
+
+The Spartan is 7 ft; on the real-sized 450F that looked like a child's bike, so on the bike
+(only) he is drawn at `pose::RIDER_SIZE` (0.85): posed full size to targets 1 / 0.85 further
+out, then shrunk about the bike's origin, so the hands and feet still land on the grips and pegs.
+On foot and on the board he keeps his size.
 
 ## Drawing
 
