@@ -566,7 +566,7 @@ helmet.
 
 **Weapons.** The map's weapons lie where the scenario places them (42 on
 Valhalla, nine kinds); taken ones come back after the placement's respawn
-time. He starts with the assault rifle. Walking over a weapon he lacks takes it
+time. He starts with the sniper rifle (`halo3_foot::STARTING_WEAPONS`; the assault rifle on a map without one). Walking over a weapon he lacks takes it
 into a free hand; over one he carries, takes its ammo; E swaps. Magazines,
 spare rounds, rounds per second, bursts (battle rifle), single shots,
 charging (plasma pistol, Spartan laser), spread, zoom levels, projectile
