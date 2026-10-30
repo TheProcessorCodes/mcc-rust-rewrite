@@ -691,9 +691,10 @@ target\debug\halo3.exe coagulation --shot .scratch\shots\coagulation --view spaw
 ```
 
 A bare name is tried as a Halo 3 map first, then in `%HALO2_MAPS%` (default: the MCC folder
-above); `h2:NAME` asks for the Halo 2 one when both games have a map of that name (`h2:lockout`,
-`h2:zanzibar`). The header tells the two games apart (`blam_h2::is_halo2`). Only Coagulation
-has been checked. `blam info|tags|strings|geometry|rails|shader|bitmap|textures` work on Halo 2
+above); `h2:NAME` / `h3:NAME` ask for one game when both have a map of that file name
+(`h2:zanzibar`). Lockout is the exception: a bare `lockout` is Halo 2's Lockout, and Halo 3's
+Blackout (also `lockout.map`) goes by `blackout`. The header tells the two games apart (`blam_h2::is_halo2`). Only Coagulation
+has been checked. `blam info|tags|strings|geometry|rails|shader|bitmap|textures|ambience` work on Halo 2
 maps too.
 
 `crates/blam_h2` (`docs/format/halo2.md`) decodes the whole map up front into the same `Scene`
@@ -703,10 +704,29 @@ skating (J), the dirt bike (B), rails and the fall-out-of-the-world respawn work
 With no atmosphere tag the camera gets a fog that never thickens (the world shaders need the
 fog binding).
 
+Lighting: Halo 2's lightmap (`docs/format/halo2.md` 10). `blam_h2` packs each BSP's pages into
+one atlas and gives every cluster and instance with a page per-pixel lighting; the light
+fixtures and the objects take the nearest lit surface's light, as on Halo 3 maps. The pages are
+plain colours while the lightmap shader reads Halo 3's SH coefficients, so `halo3::halo2`
+writes each colour as the constant term alone, which lights every normal the same.
+`HALO2_LIGHTMAP_SCALE` (default 1.15) multiplies it. The sky's fog (`halo2.md` 7) becomes a
+linear distance fog, and its colour fills the background: Lockout's blue mist, Coagulation's
+reddish dusk.
+
 Drawn: each material's base map with its tiling and its detail map, the ground's two detail
 maps blended by the base map's alpha (through the terrain path), alpha-tested foliage and
 banners, additive glows and light bands. The rider is Halo 3's Spartan, borrowed from
-`riverworld.map` when Halo 3 is installed. Not yet: the sky (its model decodes, but its layers
+`riverworld.map` when Halo 3 is installed. Not yet: the sky model (it decodes, but its layers
 need Halo 2's sky blending; drawn as plain translucent meshes they walled the canyon in flat
-blue, so the clear colour stands in), Halo 2's lightmaps (the world is lit by the default sun
-and sky), bump and environment maps, water as water (a plain see-through surface), fog, sound.
+blue, so the fog colour stands in), the lightmaps' bump direction (buffer 4) and the sky's
+light, bump and environment maps, water as water (a plain see-through surface).
+
+Sound (`docs/format/halo2.md` 13): the BSP's background looping sound plays everywhere, not by
+cluster (on Lockout every cluster names the same one). Both its tracks loop at their -3 dB,
+the first permutation first and then the others at random, and the gust detail fires every
+40 to 50 s, placed around the listener. Sound scenery plays at its position: full volume within
+the looping sound's near distance, silent past the far one (Lockout's blowing snow, the canyon
+hawks, two machine hums on the lower level). The samples are Xbox ADPCM from
+`sounds_neutral.dat` beside the map, decoded on a thread at start (0.3 s) and played at 44.1 kHz
+through the 48 kHz mixer by rate. K, `-` and `=` work as on Halo 3 maps. Not yet: reverb (the
+sound environments), in/out and alternate tracks, scales, music.

@@ -121,6 +121,22 @@ pub struct SkyData {
 #[derive(Resource, Default)]
 pub struct PendingSky(pub Option<SkyData>);
 
+/// A plain distance fog for maps with no atmosphere tag: Halo 2's sky fog
+/// (`blam_h2::Fog`). Its colour also stands in for the sky.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct PlainFog(pub Option<PlainFogSetting>);
+
+#[derive(Clone, Copy, Debug)]
+pub struct PlainFogSetting {
+    /// As stored (gamma space).
+    pub colour: [f32; 3],
+    /// How much of the colour the farthest things take (0..1).
+    pub max_density: f32,
+    /// Where it starts and where it reaches `max_density`, world units.
+    pub start: f32,
+    pub opaque: f32,
+}
+
 /// A sky batch, by scene material index; its material is swapped for a
 /// [`SkyMaterial`] once spawned.
 #[derive(Component, Clone, Copy)]
@@ -370,6 +386,7 @@ impl Plugin for SkyPlugin {
             .init_resource::<PendingSky>()
             .init_resource::<WorldHaze>()
             .init_resource::<CameraAir>()
+            .init_resource::<PlainFog>()
             .add_systems(Update, (swap_sky_materials, update_sky_air, add_haze, update_haze).chain());
     }
 }
@@ -565,10 +582,29 @@ fn update_sky_air(
 }
 
 /// Gives the camera its haze once the world is up.
-fn add_haze(mut commands: Commands, cameras: Query<Entity, (With<Camera3d>, Without<DistanceFog>)>, haze: Res<WorldHaze>) {
+fn add_haze(
+    mut commands: Commands,
+    cameras: Query<Entity, (With<Camera3d>, Without<DistanceFog>)>,
+    haze: Res<WorldHaze>,
+    plain: Res<PlainFog>,
+    mut clear: ResMut<ClearColor>,
+) {
     for camera in &cameras {
         let fog = if haze.setting.is_some() {
             DistanceFog::default()
+        } else if let Some(f) = plain.0 {
+            let [r, g, b] = f.colour.map(|c| c.clamp(0.0, 1.0));
+            clear.0 = Color::srgb(r, g, b);
+            DistanceFog {
+                color: Color::srgba(r, g, b, f.max_density.clamp(0.0, 1.0)),
+                directional_light_color: Color::NONE,
+                // No extra start for `fog_position`: the falloff has one.
+                directional_light_exponent: 0.0,
+                falloff: FogFalloff::Linear {
+                    start: f.start * WORLD_UNIT_METRES,
+                    end: f.opaque * WORLD_UNIT_METRES,
+                },
+            }
         } else {
             // No atmosphere tag (Halo 2 maps, the test scene): still a fog
             // for the world shaders' fog binding (`lightmap.wesl`), but one
