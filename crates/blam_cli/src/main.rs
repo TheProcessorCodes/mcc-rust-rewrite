@@ -132,6 +132,7 @@ impl Args {
                         | "png-dir"
                         | "index"
                         | "samples"
+                        | "wav"
                 );
                 let value = if takes_value { it.next() } else { None };
                 flags.push((name.to_string(), value));

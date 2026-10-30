@@ -255,3 +255,105 @@ fn blend_map(base: &Texture, tag_index: u32) -> Option<Texture> {
         mips: vec![bgra],
     })
 }
+
+/// The map's ambience for the sound plugin, decoded when the returned loader
+/// runs (on the plugin's thread): the BSPs' background loops and the
+/// scenario's sound scenery, each permutation decoded from the
+/// `sounds_*.dat` files beside the map (`blam_h2::sound`). A sound that will
+/// not decode is left out with a note.
+pub fn ambience_loader(path: &Path) -> crate::audio::halo2::PlainLoader {
+    let path = path.to_path_buf();
+    Box::new(move || {
+        use crate::audio::halo2::{PlainAmbience, PlainClip, PlainDetail, PlainEmitter, PlainLoop, PlainTrack};
+        use blam_h2::sound;
+        let started = std::time::Instant::now();
+        let map = blam_h2::Map::open(&path).map_err(|e| e.to_string())?;
+        let found = sound::ambience(&map).map_err(|e| e.to_string())?;
+        let files = sound::SoundFiles::beside(&path);
+        let db = |d: f32| 10f32.powf(d / 20.0);
+        // A sound's permutations, decoded, and its own gain and skip.
+        let clips = |id: Option<u32>| -> Option<(Vec<PlainClip>, f32, f32, (f32, f32))> {
+            let s = match sound::sound(&map, id?) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("halo 2 sound {}: {e}", map.tag_name(id?).unwrap_or("?"));
+                    return None;
+                }
+            };
+            let mut out = Vec::new();
+            for (k, p) in s.permutations.iter().enumerate() {
+                match files.decode(&s, k) {
+                    Ok(pcm) => out.push(PlainClip {
+                        rate: pcm.rate,
+                        channels: pcm.channels,
+                        samples: pcm.samples,
+                        skip: p.skip,
+                    }),
+                    Err(e) => eprintln!("halo 2 sound {} {}: {e}", s.name, p.name),
+                }
+            }
+            (!out.is_empty()).then_some((out, s.gain_db, s.skip_fraction, s.distance))
+        };
+        let looping = |id: u32| -> Option<(PlainLoop, (f32, f32))> {
+            let l = match sound::looping(&map, id) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("halo 2 looping sound {id:#x}: {e}");
+                    return None;
+                }
+            };
+            let tracks = l
+                .tracks
+                .iter()
+                .filter_map(|t| {
+                    let (clips, gain_db, _, _) = clips(t.looped)?;
+                    Some(PlainTrack {
+                        name: t.name.clone(),
+                        gain: db(t.gain_db + gain_db),
+                        clips,
+                    })
+                })
+                .collect();
+            let details = l
+                .details
+                .iter()
+                .filter_map(|d| {
+                    let (clips, gain_db, skip, _) = clips(d.sound)?;
+                    Some(PlainDetail {
+                        name: d.name.clone(),
+                        gain: db(d.gain_db + gain_db),
+                        clips,
+                        period: d.period,
+                        skip,
+                        yaw: d.yaw,
+                        pitch: d.pitch,
+                        distance: d.distance,
+                    })
+                })
+                .collect();
+            Some((
+                PlainLoop {
+                    name: l.name,
+                    tracks,
+                    details,
+                },
+                l.distance,
+            ))
+        };
+        let backgrounds = sound::background_loops(&found).into_iter().filter_map(|id| Some(looping(id)?.0)).collect();
+        let emitters = found
+            .emitters
+            .iter()
+            .filter_map(|e| {
+                let (sound, distance) = looping(e.looping)?;
+                Some(PlainEmitter {
+                    position: e.position,
+                    distance,
+                    sound,
+                })
+            })
+            .collect();
+        eprintln!("halo 2 sound: decoded in {:.2} s", started.elapsed().as_secs_f32());
+        Ok(PlainAmbience { backgrounds, emitters })
+    })
+}
