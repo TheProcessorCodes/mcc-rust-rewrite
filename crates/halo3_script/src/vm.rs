@@ -13,6 +13,8 @@ use blam_geometry::TriggerVolume;
 use blam_script::{NodeKind, ScriptData, ScriptType, ValueType};
 use glam::Vec3;
 
+use halo3_core::script_sound::SoundRequest;
+
 use crate::hooks::{AiHooks, DevicePoser, HookContext};
 use crate::objects::Objects;
 use crate::value::{ObjectRef, Value};
@@ -159,6 +161,9 @@ pub struct Runtime {
     pub folders: Vec<Vec<u32>>,
     /// Kill volumes the scripts switched on or off, by trigger volume index.
     pub kill_volumes: Vec<(usize, bool)>,
+    /// Sound function calls for the sound side, oldest first
+    /// (`halo3_core::script_sound`); the game moves them on every frame.
+    pub sounds: Vec<SoundRequest>,
     pub config: Config,
     pub tick: u64,
     logged: HashSet<String>,
@@ -225,6 +230,7 @@ impl Runtime {
             volumes,
             folders,
             kill_volumes: Vec::new(),
+            sounds: Vec::new(),
             config,
             tick: 0,
             logged: HashSet::new(),
@@ -1048,6 +1054,24 @@ impl Runtime {
                 }
                 V(Value::Void)
             }
+            // ---- sound: handed to the sound side ----
+            "sound_looping_start"
+            | "sound_looping_stop"
+            | "sound_looping_stop_immediately"
+            | "sound_looping_set_alternate"
+            | "sound_impulse_start"
+            | "sound_impulse_stop"
+            | "sound_class_set_gain" => {
+                if let Some(r) = self.sound_request(name, a, world, ai) {
+                    if !matches!(r, SoundRequest::Impulse { .. }) {
+                        info!("script {}: {name} {}", self.thread_name(t), sound_args(a));
+                    }
+                    self.sounds.push(r);
+                }
+                V(Value::Void)
+            }
+            // Cinematic music bookkeeping: nothing to do without cinematics.
+            "sound_impulse_mark_as_outro" => V(Value::Void),
             // ---- AI, units and vehicles: the enemies' side ----
             n if is_ai_function(n) => {
                 let ctx = HookContext {
@@ -1069,6 +1093,63 @@ impl Runtime {
             }
         }
     }
+}
+
+impl Runtime {
+    /// The request a sound function call makes (`None`: no tag).
+    fn sound_request(&self, name: &str, a: &[Value], world: &dyn WorldApi, ai: &dyn AiHooks) -> Option<SoundRequest> {
+        let arg = |i: usize| a.get(i).cloned().unwrap_or_default();
+        let tag = || {
+            let raw = arg(0).raw() & 0xFFFF;
+            (raw != 0xFFFF).then_some(raw)
+        };
+        let path = || arg(0).text().unwrap_or("").to_string();
+        let at = || arg(1).object().and_then(|o| self.object_position(o, world, ai));
+        let scale = || a.get(2).map_or(1.0, |v| v.num() as f32);
+        Some(match name {
+            "sound_looping_start" => SoundRequest::LoopStart {
+                tag: tag()?,
+                name: path(),
+                at: at(),
+                scale: scale(),
+            },
+            "sound_looping_stop" | "sound_looping_stop_immediately" => SoundRequest::LoopStop {
+                tag: tag()?,
+                immediately: name.ends_with("immediately"),
+            },
+            "sound_looping_set_alternate" => SoundRequest::LoopAlternate {
+                tag: tag()?,
+                on: arg(1).truthy(),
+            },
+            "sound_impulse_start" => SoundRequest::Impulse {
+                tag: tag()?,
+                name: path(),
+                at: at(),
+                scale: scale(),
+            },
+            "sound_impulse_stop" => SoundRequest::ImpulseStop { tag: tag()? },
+            "sound_class_set_gain" => SoundRequest::ClassGain {
+                class: arg(0).text().unwrap_or("").to_string(),
+                gain: arg(1).num() as f32,
+                seconds: (arg(2).num() / TICKS_PER_SECOND) as f32,
+            },
+            _ => return None,
+        })
+    }
+}
+
+/// A sound call's arguments for the log: tag paths by their last part.
+fn sound_args(a: &[Value]) -> String {
+    a.iter()
+        .map(|v| match v.text() {
+            Some(t) => t.rsplit('\\').next().unwrap_or(t).to_string(),
+            None => match v {
+                Value::Object(None) => "none".into(),
+                v => format!("{}", v.num()),
+            },
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Functions the AI hooks answer.

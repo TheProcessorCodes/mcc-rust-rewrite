@@ -198,6 +198,10 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         );
     }
     wanted.extend(map.music.iter().map(|(t, _)| *t));
+    // What the scripts start: their looping sounds here, their one-shots
+    // below.
+    let is_class = |t: u32, code: &str| cache.tags.get(t).is_some_and(|e| cache.tags.class_of(e).code.as_str() == code);
+    wanted.extend(map.script_sounds.iter().copied().filter(|t| is_class(*t, "lsnd")));
     wanted.extend(weapons.values().flat_map(|w| w.all_loops()));
     let mut seen = HashSet::new();
     let mut sounds = HashMap::new();
@@ -234,7 +238,8 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         }
         loops.insert(l, looping);
     }
-    for s in weapons.values().flat_map(|w| w.all_sounds()) {
+    let one_shots = map.script_sounds.iter().copied().filter(|t| is_class(*t, "snd!"));
+    for s in weapons.values().flat_map(|w| w.all_sounds()).chain(one_shots) {
         if !sounds.contains_key(&s)
             && let Ok(snd) = tags.sound(s)
         {
