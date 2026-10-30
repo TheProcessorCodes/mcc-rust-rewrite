@@ -125,11 +125,17 @@ fn hurt(
 fn fall(
     mut commands: Commands,
     ai: Option<Res<Ai>>,
-    mut actors: Query<(Entity, &mut Actor, &mut Transform, &mut halo3_core::ai::ActorActivity)>,
+    mut actors: Query<(
+        Entity,
+        &mut Actor,
+        &mut Transform,
+        &mut halo3_core::ai::ActorActivity,
+        Option<&crate::animate::Animated>,
+    )>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
-    for (e, mut a, mut t, mut activity) in &mut actors {
+    for (e, mut a, mut t, mut activity, animated) in &mut actors {
         let Some(since) = a.dead else {
             continue;
         };
@@ -159,8 +165,10 @@ fn fall(
         if since > 4.0 {
             a.position.y -= 0.3 * dt;
         }
+        // A death animation lays the body down itself.
         let tilt = (since / 0.6).min(1.0) * std::f32::consts::FRAC_PI_2;
-        *t = root_transform(a.position, a.heading, if a.flying { 0.0 } else { tilt });
+        let tips = !a.flying && !animated.is_some_and(|x| x.has_death);
+        *t = root_transform(a.position, a.heading, if tips { tilt } else { 0.0 });
     }
 }
 

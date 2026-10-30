@@ -17,3 +17,4 @@ halo3_rider = { workspace = true }
 halo3_textures = { workspace = true }
 halo3_weapons = { workspace = true }
 halo3_world = { workspace = true }
+halo3_anim = { workspace = true }

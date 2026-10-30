@@ -22,10 +22,14 @@
 //! `ActorActivity`. `--ai nearby|zone|off` picks the stand-in placement
 //! while scripts do not place squads (`AutoPlace`).
 
+mod animate;
 mod brain;
 mod model;
 mod place;
 mod vitality;
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use bevy::prelude::*;
 
@@ -71,9 +75,11 @@ pub struct ActorKind {
     pub style: Style,
     /// Carriers burst when they reach their target.
     pub bursts: bool,
-    /// Our own: running speed, wu/s (Halo moves actors by their
-    /// animations' root motion, which is not read).
+    /// Running speed, wu/s: the run animation's root motion where the
+    /// unit has one, else our own number.
     pub speed: f32,
+    /// The unit's animations (`halo3_anim`), shared by its actors.
+    pub anim: Option<std::sync::Arc<halo3_anim::AnimModel>>,
 }
 
 /// The map's AI, CPU side, handed from `main`.
@@ -123,7 +129,12 @@ fn speed_of(actor_type: i16, flies: bool) -> f32 {
     }
 }
 
-fn read_kind(cache: &CacheFile, c: &Character, models: &mut Vec<model::ModelData>) -> Option<ActorKind> {
+fn read_kind(
+    cache: &CacheFile,
+    c: &Character,
+    models: &mut Vec<model::ModelData>,
+    anims: &mut HashMap<u32, Option<Arc<halo3_anim::AnimModel>>>,
+) -> Option<ActorKind> {
     let unit_tag = cache.tags.get(c.unit?)?;
     let unit = match tags::read_unit(cache, unit_tag) {
         Ok(u) => u,
@@ -162,6 +173,16 @@ fn read_kind(cache: &CacheFile, c: &Character, models: &mut Vec<model::ModelData
     } else {
         (unit.body_vitality.max(1.0), unit.shield_vitality)
     };
+    let anim = anims
+        .entry(unit_tag.index)
+        .or_insert_with(|| match halo3_anim::AnimModel::load(cache, unit_tag) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                eprintln!("ai: {}: no animations ({e})", c.tag_path);
+                None
+            }
+        })
+        .clone();
     let gun = !unit.weapons.is_empty();
     let style = match c.actor_type {
         10 | 11 | 20 | 21 => Style::Melee,
@@ -169,8 +190,16 @@ fn read_kind(cache: &CacheFile, c: &Character, models: &mut Vec<model::ModelData
         _ if unit.flies || gun => Style::Ranged,
         _ => Style::Ranged,
     };
+    // Halo moves walkers by their run's root motion; the rooted ranged
+    // pure form and the flyers keep ours.
+    let own = speed_of(c.actor_type, unit.flies);
+    let speed = match anim.as_deref().and_then(animate::run_speed) {
+        Some(s) if own > 0.0 && !unit.flies => s,
+        _ => own,
+    };
     Some(ActorKind {
-        speed: speed_of(c.actor_type, unit.flies),
+        speed,
+        anim,
         bursts: c.actor_type == 11,
         character: c.clone(),
         model,
@@ -200,10 +229,11 @@ pub fn load(cache: &CacheFile) -> Option<AiAssets> {
         return None;
     }
     let mut models = Vec::new();
+    let mut anims = HashMap::new();
     let kinds: Vec<Option<ActorKind>> = data
         .characters
         .iter()
-        .map(|c| c.as_ref().and_then(|c| read_kind(cache, c, &mut models)))
+        .map(|c| c.as_ref().and_then(|c| read_kind(cache, c, &mut models, &mut anims)))
         .collect();
     if let Ok(r) = cache.resources() {
         r.clear_page_cache();
@@ -218,11 +248,12 @@ pub fn load(cache: &CacheFile) -> Option<AiAssets> {
     .and_then(|h| tags::model_vitality(cache, h).ok())
     .filter(|(b, s)| *b > 0.0 && *s >= 0.0);
     eprintln!(
-        "ai: {} squads, {} characters ({} drawn from {} models), in {:.1} s",
+        "ai: {} squads, {} characters ({} drawn from {} models, {} animated), in {:.1} s",
         data.squads.len(),
         kinds.iter().flatten().count(),
         kinds.iter().flatten().filter(|k| k.model.is_some()).count(),
         models.len(),
+        kinds.iter().flatten().filter(|k| k.anim.is_some()).count(),
         started.elapsed().as_secs_f32()
     );
     Some(AiAssets {
@@ -259,6 +290,6 @@ impl Plugin for AiPlugin {
             .init_resource::<Targets>()
             .init_resource::<PlayerVitality>()
             .configure_sets(Update, (AiSet::Place, AiSet::Think, AiSet::Hurt).chain())
-            .add_plugins((place::PlacePlugin, brain::BrainPlugin, vitality::VitalityPlugin));
+            .add_plugins((place::PlacePlugin, brain::BrainPlugin, vitality::VitalityPlugin, animate::AnimatePlugin));
     }
 }
