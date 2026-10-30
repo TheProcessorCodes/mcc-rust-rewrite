@@ -1,6 +1,8 @@
 //! The dirt bike: dual-stick motocross riding on the map's collision, with
 //! the Spartan standing on it (`physics.rs` for the bike, `pose.rs` for the
-//! rider). The bike is a stick model for now: thin unlit cylinders.
+//! rider). The bike drawn is Reflex's Dakumoto 450F in the Cortana kit,
+//! read from the user's MX vs ATV Reflex install (`model.rs`); without
+//! Reflex it is a stick model: thin unlit cylinders.
 //!
 //! B (or the controller's View / Back button) drops the bike under the
 //! camera and starts riding; B again goes back to flying.
@@ -26,6 +28,7 @@
 //! sets the throttle it holds meanwhile (default 0.4).
 
 pub mod marker;
+pub mod model;
 pub mod physics;
 pub mod pose;
 pub mod reflex;
@@ -68,15 +71,19 @@ impl Plugin for BikePlugin {
         app.init_resource::<Riding>()
             .init_resource::<AutoStart>()
             .init_resource::<StickPool>()
+            .init_resource::<model::BikeMesh>()
             .init_resource::<Dismount>()
             .init_resource::<Mount>()
             .add_plugins(tune::TunePlugin)
-            .add_systems(Startup, setup)
+            .add_systems(Startup, (setup, model::start))
             .add_systems(
                 Update,
                 (
                     ride.run_if(halo3_core::pause::running).run_if(tune::closed),
+                    model::build,
                     draw_bike,
+                    model::place,
+                    model::light,
                     show_status,
                 )
                     .chain(),
@@ -471,11 +478,12 @@ fn ring(gizmos: &mut Sticks, centre: Vec3, axis: Vec3, radius: f32, colour: usiz
 fn draw_bike(
     mut commands: Commands,
     riding: Res<Riding>,
+    mesh: Res<model::BikeMesh>,
     mut pool: ResMut<StickPool>,
     mut sticks: Query<(&mut Transform, &mut Visibility), Without<FlyCamera>>,
 ) {
     let mut gizmos = Sticks::default();
-    if let Some(bike) = riding.bike.as_ref() {
+    if let Some(bike) = riding.bike.as_ref().filter(|_| !mesh.ready()) {
         bike_sticks(bike, &mut gizmos);
     }
     let pool = &mut *pool;
