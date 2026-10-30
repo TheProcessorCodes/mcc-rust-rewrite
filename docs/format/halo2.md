@@ -349,3 +349,80 @@ How the game combines the light with the surface is not in the map (MCC's PC sha
 in the `.map`). The viewer treats the texel as a gamma-space colour that multiplies the
 surface, doubled (`halo3::halo2::LIGHTMAP_SCALE`, picked by eye on Lockout): dark blue snow
 outside, warm lamp pools inside.
+
+## 11. Weapons
+
+Read by `blam_h2::weapons`, checked on Lockout with `scripts/probe_h2_weapons.py`. All weapon
+tags live in `shared.map`.
+
+**Where they come from.** A Halo 2 multiplayer scenario places no weapons through its weapon
+block (+0x90, palette +0x98; empty on Lockout). Weapons and grenades are **netgame equipment**
+(scenario +0x120), each naming an item collection; what a player spawns with is the **starting
+equipment** (+0x128). Before this reader the viewer read neither, so walking on a Halo 2 map gave
+no weapon at all: the Halo 3 weapon loader (`halo3_weapons::assets::load`) needs a Halo 3 cache
+file, and the Halo 2 path never called anything in its place.
+
+### 11.1 Netgame equipment (+0x120, 0x90 each)
+
+| offset | meaning |
+|---|---|
+| 0x00 | u32 flags (1 on two of Lockout's entries; not read) |
+| 0x04 | four u16 game type values (12, 0, 0, 0 on Lockout; not read) |
+| 0x0E | i16 respawn seconds (30 most, 45 battle rifle, 25 sword, 15 shotgun, 39 sniper) |
+| 0x12 | i16, 1 on the power weapons (sword, shotgun, sniper) and the two empty entries; not read |
+| 0x14 | u8, 0 weapons, 8 grenades, 6 and 7 the two entries with no collection (meaning inferred) |
+| 0x40 | position |
+| 0x4C | yaw, pitch, roll (radians; the sword lies on its side: pitch 1.47, roll -1.55) |
+| 0x58 | item collection (`itmc`) reference |
+
+**Item collection** (`itmc`): entries at +0x00, 0x10 each: weight f32 +0x00, item reference
++0x04 (`weap` or `eqip`), variant string id +0x0C. Lockout's have one entry each; we take the
+first.
+
+**Starting equipment** (+0x128, 0x9C each): six item collection references from +0x3C. Lockout:
+one entry, the SMG.
+
+Lockout: 32 entries, **14 weapons** of 9 kinds (battle rifle x2, sword, magnum x3, needler x2,
+plasma pistol, plasma rifle x2, shotgun, SMG, sniper rifle), 16 grenades (`eqip`, not placed by
+the viewer) and 2 with no collection.
+
+### 11.2 Weapon render model
+
+Object +0x34 names the `hlmt`, whose +0x00 names the render model, as for scenery. The `mode`
+also has:
+
+| offset | meaning |
+|---|---|
+| 0x48 | nodes (0x60): name sid +0x00, parent i16 +0x04, first child +0x06, next sibling +0x08, translation +0x0C, rotation quaternion +0x18 (x, y, z, w; identity stored as 0, 0, 0, -1) |
+| 0x58 | marker groups (0x0C): name sid +0x00, markers +0x04 (0x24: region i8 +0x00, permutation i8 +0x01, node i16 +0x02, translation +0x04, quaternion +0x10, scale +0x20, 0 on weapons) |
+
+The same node layout as Halo 3's `mode` (there at +0x30), and the marker element is Halo 3's
+too, except the node index is an i16 at +0x02 (region and permutation -1 on the Master Chief:
+`ff ff 14 00` is `right_hand` on node 20, `r_hand`).
+
+Halo 2 weapons have **no `right_hand` marker**: the model's origin (the root node) is the grip.
+`primary_trigger` is the muzzle (battle rifle: 0.192, 0, 0.046 wu), `left_hand` the off hand.
+
+### 11.3 `weap` fields
+
+The root is 0x31C bytes. The blocks keep Halo 3's element layouts where both games have the
+field; only the root offsets differ.
+
+| offset | meaning |
+|---|---|
+| 0x1FE | zoom levels i16 (battle rifle 1, sniper 2) |
+| 0x200 | zoom magnification min, max (battle rifle 2, 2; sniper 3.5, 9.5) |
+| 0x2A8 | first person (0x10): render model reference +0x00, animations (`jmad`) +0x08 |
+| 0x2C0 | magazines (0x5C): total initial i16 +0x06, total maximum +0x08, loaded maximum +0x0A, rounds reloaded +0x14 (battle rifle 108, 144, 36, 36; shotgun 36, 48, 12, 1) |
+| 0x2C8 | triggers (0x40): behaviour i16 +0x06 (0 automatic, 1 one per pull, 2 charge, 4 burst: Halo 3's values), primary barrel +0x08, secondary +0x0A |
+| 0x2D0 | barrels (0xEC): rounds per second min, max +0x04; shots per fire i16 x2 +0x1C; fire recovery time +0x20; magazine i16 +0x28; rounds per shot +0x2A; minimum error +0x70; error angle min, max +0x74; projectile reference +0x8C |
+
+- One-shot-per-pull weapons (magnum, shotgun, sniper, plasma pistol) store **0 rounds per
+  second**; the fire recovery time paces them. The reader puts 1 / recovery there (the viewer's
+  fire loop takes the rate as given).
+- The plasma rifle has one magazine of all zeros: read as no magazine (a battery weapon).
+- The sword has no triggers or barrels (it is held but does not fire).
+
+**Projectile** (`proj`): maximum range +0x16C, initial and final velocity +0x17C, +0x180 (wu, wu/s;
+battle rifle 40, 400, 400; sniper 120, 1200, 1200; needler 60, 6, 6). The same 0x10 gap as Halo 3's
+range and velocities. The damage effect is not read.

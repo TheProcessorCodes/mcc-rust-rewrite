@@ -20,6 +20,7 @@ pub mod collision;
 pub mod lightmap;
 pub mod section;
 pub mod shader;
+pub mod weapons;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -228,24 +229,7 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
 
     let mut bitmaps = HashMap::new();
     if options.textures {
-        let mut wanted: Vec<u32> = materials
-            .looks
-            .iter()
-            .flatten()
-            .flat_map(|l| [l.base, l.detail, l.secondary_detail].into_iter().flatten().map(|(b, _)| b))
-            .collect();
-        wanted.sort_unstable();
-        wanted.dedup();
-        for b in wanted {
-            // The tag index is the datum's low half; the salt comes from the index.
-            let Some(datum) = map.tags.get(b as usize).map(|t| t.id) else { continue };
-            match bitmap::decode(map, datum, 0) {
-                Ok(t) => {
-                    bitmaps.insert(b, t);
-                }
-                Err(e) => stats.bitmaps_failed.push(format!("{}: {e}", map.tag_name(datum).unwrap_or("?"))),
-            }
-        }
+        bitmaps = decode_bitmaps(map, &materials.looks, &mut stats.bitmaps_failed);
         if options.verbose {
             eprintln!("textures: {} bitmaps decoded, {} failed", bitmaps.len(), stats.bitmaps_failed.len());
             for f in &stats.bitmaps_failed {
@@ -267,6 +251,68 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
         lightmaps,
         stats,
     })
+}
+
+/// The bitmaps `looks` use (base, detail and secondary detail), by tag
+/// index, each decoded once; failures are listed in `failed`.
+fn decode_bitmaps(map: &Map, looks: &[Option<Look>], failed: &mut Vec<String>) -> HashMap<u32, Texture> {
+    let mut wanted: Vec<u32> = looks
+        .iter()
+        .flatten()
+        .flat_map(|l| [l.base, l.detail, l.secondary_detail].into_iter().flatten().map(|(b, _)| b))
+        .collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let mut bitmaps = HashMap::new();
+    for b in wanted {
+        // The tag index is the datum's low half; the salt comes from the index.
+        let Some(datum) = map.tags.get(b as usize).map(|t| t.id) else { continue };
+        match bitmap::decode(map, datum, 0) {
+            Ok(t) => {
+                bitmaps.insert(b, t);
+            }
+            Err(e) => failed.push(format!("{}: {e}", map.tag_name(datum).unwrap_or("?"))),
+        }
+    }
+    bitmaps
+}
+
+/// Render models decoded on their own (weapons): a scene of their meshes
+/// and its materials' looks and bitmaps, like [`Loaded`].
+pub struct Models {
+    pub scene: Scene,
+    pub looks: Vec<Option<Look>>,
+    pub bitmaps: HashMap<u32, Texture>,
+    /// Per requested model, its meshes (indices into `scene.meshes`), in
+    /// model space; empty when it failed (listed in `failed`).
+    pub meshes: Vec<Vec<u32>>,
+    pub failed: Vec<String>,
+}
+
+/// Decodes render models (`mode` datums) the way scenery is: per region,
+/// the first permutation at its most detailed level.
+pub fn decode_models(map: &Map, modes: &[u32]) -> Models {
+    let mut scene = Scene::default();
+    let mut materials = Materials::default();
+    let mut cache = HashMap::new();
+    let mut failed = Vec::new();
+    let meshes = modes
+        .iter()
+        .map(|&m| {
+            model_meshes(map, m, &mut scene, &mut materials, &mut cache).unwrap_or_else(|e| {
+                failed.push(format!("{}: {e}", map.tag_name(m).unwrap_or("?")));
+                Vec::new()
+            })
+        })
+        .collect();
+    let bitmaps = decode_bitmaps(map, &materials.looks, &mut failed);
+    Models {
+        scene,
+        looks: materials.looks,
+        bitmaps,
+        meshes,
+        failed,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

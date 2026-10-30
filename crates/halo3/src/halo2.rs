@@ -17,6 +17,8 @@
 use std::path::Path;
 
 use blam_geometry::Scene;
+use blam_geometry::weapons::Weapon;
+use halo3_weapons::assets::Arsenal;
 use blam_texture::{Blend, Format, Kind, Texture, Xform, rgba};
 
 use crate::textures::{LightmapTextures, Look, MaterialTextures, SurfaceLook, TerrainLayerLook, TerrainLook};
@@ -25,8 +27,9 @@ use crate::world::sky::PlainFogSetting;
 /// Tag indices for the blend maps made here, past any real tag index.
 const SYNTHETIC: u32 = 0x1_0000;
 
-/// The map's scene and looks, and its sky's fog for the camera.
-pub fn load(path: &Path) -> anyhow::Result<(Scene, MaterialTextures, Option<PlainFogSetting>)> {
+/// The map's scene and looks, its sky's fog for the camera, and its
+/// weapons for walking.
+pub fn load(path: &Path) -> anyhow::Result<(Scene, MaterialTextures, Option<PlainFogSetting>, Option<Arsenal>)> {
     let started = std::time::Instant::now();
     let map = blam_h2::Map::open(path)?;
     let loaded = blam_h2::decode(&map, &blam_h2::Options::default())?;
@@ -82,6 +85,7 @@ pub fn load(path: &Path) -> anyhow::Result<(Scene, MaterialTextures, Option<Plai
     for (i, l) in looks.iter().enumerate() {
         out.push(l.as_ref().map(|l| convert(l, i as u32, &mut bitmaps)));
     }
+    let arsenal = weapons(&map);
     Ok((
         scene,
         MaterialTextures {
@@ -90,7 +94,71 @@ pub fn load(path: &Path) -> anyhow::Result<(Scene, MaterialTextures, Option<Plai
             lightmaps,
         },
         fog,
+        arsenal,
     ))
+}
+
+/// The weapon a player starts with when the scenario names none.
+const FALLBACK_LOADOUT: &str = r"objects\weapons\rifle\battle_rifle\battle_rifle";
+
+/// The map's weapons (`docs/format/halo2.md` 11): those the netgame
+/// equipment places and the starting weapons, each with its numbers from
+/// its `weap` tag and Halo 2's own third-person model. `None` (logged) when
+/// the map has none.
+fn weapons(map: &blam_h2::Map) -> Option<Arsenal> {
+    let items = blam_h2::weapons::netgame_items(map)
+        .map_err(|e| eprintln!("weapons: netgame equipment not read: {e}"))
+        .ok()?;
+    let placements = blam_h2::weapons::weapon_placements(&items);
+    let mut loadout = blam_h2::weapons::starting_weapons(map).unwrap_or_else(|e| {
+        eprintln!("weapons: starting equipment not read: {e}");
+        Vec::new()
+    });
+    if loadout.is_empty() {
+        loadout.extend(map.find(b"weap", FALLBACK_LOADOUT).map(|t| t.id));
+    }
+    let mut wanted: Vec<u32> = placements.iter().filter_map(|p| p.tag).chain(loadout.iter().copied()).collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let read: Vec<Weapon> = wanted
+        .into_iter()
+        .filter_map(|w| match blam_h2::weapons::read_weapon(map, w) {
+            Ok(w) => Some(w),
+            Err(e) => {
+                eprintln!("weapons: {} not read: {e}", map.tag_name(w).unwrap_or("?"));
+                None
+            }
+        })
+        .collect();
+    let modes: Vec<u32> = read.iter().map(|w| w.render_model.unwrap_or(u32::MAX)).collect();
+    let models = blam_h2::decode_models(map, &modes);
+    for f in &models.failed {
+        eprintln!("  weapon model: {f}");
+    }
+    let blam_h2::Models {
+        scene,
+        looks,
+        mut bitmaps,
+        meshes,
+        ..
+    } = models;
+    let looks = looks
+        .iter()
+        .enumerate()
+        .map(|(i, l)| l.as_ref().map(|l| convert(l, i as u32, &mut bitmaps)))
+        .collect();
+    let textures = MaterialTextures {
+        looks,
+        bitmaps,
+        lightmaps: Vec::new(),
+    };
+    eprintln!(
+        "halo 2 weapons: {} netgame items ({} weapons), starting with {}",
+        items.len(),
+        placements.len(),
+        loadout.iter().filter_map(|t| map.tag_name(*t)).collect::<Vec<_>>().join(", ")
+    );
+    halo3_weapons::assets::from_scene(read.into_iter().zip(meshes).collect(), &scene, placements, &loadout, textures)
 }
 
 /// What a Halo 2 lightmap texel's light (sRGB, as stored) is multiplied by

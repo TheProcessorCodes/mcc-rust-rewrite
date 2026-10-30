@@ -126,7 +126,8 @@ fn main() -> anyhow::Result<()> {
         Some(map) if blam_h2::is_halo2(&resolve_map(map)) => {
             // Halo 2: everything decoded up front, no Halo 3 cache file
             // behind it (`halo2.rs`).
-            let (scene, textures, fog) = halo2::load(&resolve_map(map))?;
+            let (scene, textures, fog, h2_arsenal) = halo2::load(&resolve_map(map))?;
+            arsenal = h2_arsenal;
             plain_fog = fog;
             // The mean lit surface, for the auto exposure (no camera fx in
             // Halo 2: the exposure stays at `lighting::EXPOSURE`).

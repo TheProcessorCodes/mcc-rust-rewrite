@@ -73,3 +73,64 @@ fn lockout_counts() {
     let world = col.triangles.iter().filter(|t| matches!(t.source, CollisionSource::Bsp(_))).count();
     assert_eq!((world, col.triangles.len() - world), (5570, 7312));
 }
+
+/// Lockout's weapons (`docs/format/halo2.md` 11, `probe_h2_weapons.py`):
+/// no scenario weapon placements; 32 netgame equipment entries, 14 of them
+/// weapons (9 kinds), 16 grenades and 2 empty; the SMG to start with.
+#[test]
+fn lockout_weapons() {
+    let Some(path) = map("lockout") else { return };
+    let m = blam_h2::Map::open(&path).expect("opens");
+    let items = blam_h2::weapons::netgame_items(&m).expect("netgame equipment");
+    assert_eq!(items.len(), 32);
+    let class = |c: &[u8; 4]| items.iter().filter(|i| i.item_class.as_ref() == Some(c)).count();
+    assert_eq!((class(b"weap"), class(b"eqip"), items.iter().filter(|i| i.item.is_none()).count()), (14, 16, 2));
+    let placed = blam_h2::weapons::weapon_placements(&items);
+    assert_eq!(placed.len(), 14);
+    let mut kinds: Vec<&str> = placed.iter().map(|p| p.tag_path.rsplit('\\').next().unwrap()).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    assert_eq!(
+        kinds,
+        ["battle_rifle", "energy_blade", "magnum", "needler", "plasma_pistol", "plasma_rifle", "shotgun", "smg", "sniper_rifle"]
+    );
+    let start = blam_h2::weapons::starting_weapons(&m).expect("starting equipment");
+    assert_eq!(start.len(), 1);
+    assert_eq!(m.tag_name(start[0]), Some(r"objects\weapons\rifle\smg\smg"));
+
+    // The battle rifle's numbers and markers.
+    let br = placed.iter().find(|p| p.tag_path.ends_with("battle_rifle")).unwrap();
+    assert_eq!(br.respawn_seconds, 45);
+    let w = blam_h2::weapons::read_weapon(&m, br.tag.unwrap()).expect("battle rifle");
+    let mag = &w.magazines[0];
+    assert_eq!((mag.rounds_total_initial, mag.rounds_total_maximum, mag.rounds_loaded_maximum), (108, 144, 36));
+    assert_eq!(w.triggers[0].behavior, 4);
+    assert_eq!(w.barrels[0].shots_per_fire, [3, 3]);
+    assert_eq!(w.barrels[0].rounds_per_second, [15.0, 15.0]);
+    assert_eq!((w.zoom_levels, w.zoom_range), (1, [2.0, 2.0]));
+    let p = w.barrels[0].projectile.as_ref().expect("bullet");
+    assert_eq!((p.maximum_range, p.initial_velocity), (40.0, 400.0));
+    let muzzle = w.muzzle().expect("primary_trigger").model.w_axis;
+    assert!((muzzle.x - 0.192).abs() < 1e-3 && (muzzle.z - 0.046).abs() < 1e-3, "{muzzle}");
+    assert!(w.marker("left_hand").is_some());
+
+    // The plasma rifle's empty magazine makes it a battery weapon; the
+    // sniper zooms twice.
+    let read = |name: &str| {
+        let t = placed.iter().find(|p| p.tag_path.ends_with(name)).unwrap().tag.unwrap();
+        blam_h2::weapons::read_weapon(&m, t).unwrap()
+    };
+    let pr = read("plasma_rifle");
+    assert!(pr.magazines.is_empty() && pr.barrels[0].magazine.is_none());
+    let sniper = read("sniper_rifle");
+    assert_eq!((sniper.zoom_levels, sniper.magazines[0].rounds_loaded_maximum), (2, 4));
+
+    // Every kind's third-person model decodes, with its textures.
+    let weapons: Vec<_> = placed.iter().filter_map(|p| p.tag).collect();
+    let modes: Vec<u32> = weapons.iter().map(|&t| blam_h2::weapons::read_weapon(&m, t).unwrap().render_model.unwrap()).collect();
+    let models = blam_h2::decode_models(&m, &modes);
+    assert!(models.failed.is_empty(), "{:?}", models.failed);
+    assert!(models.meshes.iter().all(|v| !v.is_empty()));
+    let br_tris: usize = models.meshes[0].iter().map(|&k| models.scene.meshes[k as usize].triangle_count()).sum();
+    assert!(br_tris > 100, "{br_tris}");
+}
