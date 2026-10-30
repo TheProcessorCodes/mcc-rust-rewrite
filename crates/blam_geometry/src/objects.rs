@@ -14,6 +14,8 @@ use crate::{Error, Result};
 
 /// `obje +0x34`: the model (`hlmt`).
 const OBJECT_MODEL: usize = 0x34;
+/// `hlmt +0x00`: the render model (`mode`).
+const MODEL_RENDER: usize = 0x00;
 /// `hlmt +0x10`: the collision model (`coll`).
 const MODEL_COLLISION: usize = 0x10;
 /// `hlmt +0x88`: "new damage info", one element; its damage sections block
@@ -39,9 +41,10 @@ pub fn model_of<'a>(cache: &'a CacheFile, object: &TagEntry) -> Result<Option<&'
 /// The collision model of an object tag, in the object's own frame: the
 /// first permutation of every region. Empty when it has none.
 ///
-/// Collision BSPs are in their node's frame; every node is taken at the
-/// origin, which is exact for the one-node objects (plates, crates, rocks)
-/// and approximate for machines with moving parts.
+/// Collision BSPs are in their node's frame; each is put on its render
+/// model node in the bind pose, so it lines up with the drawn mesh (exact
+/// for objects that do not move; a machine's moving parts keep their rest
+/// position).
 pub fn collision_model(cache: &CacheFile, object: &TagEntry) -> Result<Vec<CollisionTriangle>> {
     let Some(hlmt) = model_of(cache, object)? else {
         return Ok(Vec::new());
@@ -53,6 +56,15 @@ pub fn collision_model(cache: &CacheFile, object: &TagEntry) -> Result<Vec<Colli
     if cache.tags.class_of(coll).code != "coll" {
         return Err(Error::Invalid(format!("{}: collision model is not a coll tag", object.name())));
     }
+    // Each collision BSP sits on a node (`+0x00`); its triangles are in
+    // that node's frame, which for machines like the Warthog run's islands
+    // is far from the object's origin. Put them on the render model's
+    // node in its bind pose, where the drawn mesh is.
+    let mode = cache.reader_at(cache.tag_offset(hlmt)? + MODEL_RENDER).tag_ref()?;
+    let nodes = match mode.index.and_then(|i| cache.tags.get(i)) {
+        Some(mode) => crate::render_model::node_frames(cache, mode).unwrap_or_default(),
+        None => Vec::new(),
+    };
     let base = cache.tag_offset(coll)?;
     let blocks = TagBlocks(cache);
     let mut out = Vec::new();
@@ -65,11 +77,17 @@ pub fn collision_model(cache: &CacheFile, object: &TagEntry) -> Result<Vec<Colli
         };
         let bsps = cache.reader_at(perm + 4).block()?;
         for bsp in bsps.elements(COLL_BSP_SIZE) {
+            let node = cache.reader_at(bsp).i16()?;
+            let frame = usize::try_from(node)
+                .ok()
+                .and_then(|n| nodes.get(n))
+                .filter(|m| **m != glam::Mat4::IDENTITY)
+                .map(|m| (*m, m.determinant() < 0.0));
             triangulate(
                 &blocks,
                 bsp + 4,
                 NORMAL,
-                None,
+                frame,
                 CollisionSource::Object { object: u32::MAX, bsps: 0 },
                 &mut out,
                 &mut stats,

@@ -107,3 +107,37 @@ fn warthog_run_floor_is_the_plates() {
         "BSP floor under the plate: {hits:?}"
     );
 }
+
+/// The run's first round island (`100_island01`, a machine) has its
+/// collision on its render model's node, 55.8 wu above the object's origin;
+/// taken at the origin it sat that far under the drawn island and nothing
+/// could stand on it.
+#[test]
+fn island_collision_lines_up_with_its_mesh() {
+    let Some(p) = path("120_halo") else { return };
+    let options = Options {
+        bsps: Some(vec![7]),
+        ..Options::default()
+    };
+    let cache = blam_cache::CacheFile::open(&p).unwrap();
+    let mut scene = blam_geometry::Scene::default();
+    blam_geometry::decode_into(&cache, &options, &mut scene).unwrap();
+    let o = scene
+        .objects
+        .iter()
+        .find(|o| o.name.as_deref() == Some("100_island01"))
+        .expect("100_island01 placed");
+    let tris = objects::collision_model(&cache, cache.tags.get(o.tag).unwrap()).unwrap();
+    let (lo, hi) = objects::bounds(&tris).unwrap();
+    let (lo, hi) = (o.transform.transform_point3(lo), o.transform.transform_point3(hi));
+    let (mut rlo, mut rhi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for pl in &scene.placements[o.placements.start as usize..o.placements.end as usize] {
+        for v in &scene.meshes[pl.mesh as usize].positions {
+            let w = pl.transform.transform_point3(*v);
+            rlo = rlo.min(w);
+            rhi = rhi.max(w);
+        }
+    }
+    let (clo, chi) = (lo.min(hi), lo.max(hi));
+    assert!(clo.abs_diff_eq(rlo, 0.5) && chi.abs_diff_eq(rhi, 0.5), "collision {clo} .. {chi}, mesh {rlo} .. {rhi}");
+}
