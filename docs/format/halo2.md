@@ -449,3 +449,94 @@ puts them, picked up, swapped and fired with the numbers above. Not done: grenad
 the floor with physics, so some hang a little above it); no first-person model or arms (the
 viewer draws the third-person model in front of the camera, as for Halo 3); the Halo 2 Master
 Chief is not decoded (the rider is still Halo 3's Spartan from Valhalla); no weapon sounds.
+
+## 12. Gravity lifts (phantoms)
+
+A Halo 2 lift is not a trigger volume and not a script: it is a **phantom**, a shape in a placed
+object's physics model that collides with nothing but pushes whatever overlaps it. Checked on
+every MCC multiplayer map with `scripts/probe_h2_lifts.py` (`python -I probe_h2_lifts.py all`);
+offsets from Assembly's `Halo2MCC\phmo.xml` (fetched to `.research-cache/assembly-h2`), meanings
+confirmed by the values. `blam_h2::lift` reads them into `Scene::lifts`
+(`blam_geometry::LiftVolume`).
+
+The chain: a scenery, machine, control or crate placement (section 4) -> its object tag
+(+0x34) -> the model `hlmt`, whose **+0x20** names the physics model `phmo` (+0x00 is the render
+model, +0x08 collision, +0x10 animation, +0x18 physics, all empty on Lockout's lift).
+
+`phmo` blocks used:
+
+| offset | element | meaning |
+|---|---|---|
+| +0x28 | 0x68 | **phantom types** (below) |
+| +0x48 | 0xA0 | spheres: radius +0x38, translation +0x90 |
+| +0x58 | 0x60 | pills (capsules): radius +0x38, ends +0x40 and +0x50 |
+| +0x60 | 0xB0 | boxes: half sizes +0x40, rotation rows +0x70 / +0x80 / +0x90 (identity on every box seen), translation +0xA0 |
+| +0x70 | 0x120 | polyhedra: bounding box half sizes +0x40, centre +0x50; vertices inline as groups of four (x x x x, y y y y, z z z z) from +0x70, count +0x100 |
+
+Every shape starts with name string id +0x00, material i16 +0x04 and **phantom type i8 +0x1E**
+(-1: an ordinary collision shape). Shapes are in the physics model's node space; every lift
+seen uses node 0, which sits at the object's origin.
+
+Phantom type (0x68):
+
+| offset | meaning |
+|---|---|
+| +0x00 | flags: bit 2 negates gravity, bit 3 ignores players, bit 6 ignores vehicles (others: ignores weapons, crates, ...) |
+| +0x04 / +0x05 | minimum / maximum object size (u8) |
+| +0x08 | marker name (string id) that aims the push; empty: the object's origin and up |
+| +0x1C | dead radius |
+| +0x20 / +0x24 | centre acceleration / top speed: towards the marker |
+| +0x28 / +0x2C | axis acceleration / top speed: towards the line through the marker along its direction |
+| +0x30 / +0x34 | direction acceleration / top speed: along the marker's direction |
+| +0x18, +0x38..+0x5C | Hooke's law, orbit and alignment terms; zero on Lockout, not read |
+
+Accelerations in wu/s^2, speeds in wu/s. The marker comes from the render model's marker groups
+(`mode` +0x58, 12 bytes: name string id, markers block +0x04 of 36 bytes: node i8 +0x02,
+translation +0x04, rotation i, j, k, w +0x10). The push direction is the marker's **+X turned by
+that quaternion** taken as written: the `direction_up` markers on Coagulation, Cyclotron and the
+rest all come out (0, 0, 1) that way.
+
+### 12.1 Lockout
+
+The lift is the crate `scenarios\objects\multi\lockout\lockout_lift_tube` (crate 0) at
+**(-1.5, 12.53, -12.2)**, angles (yaw -1.571, pitch 0, roll 0.122): its column leans 7 degrees
+towards -X. The render model is the pale blue light column (8 triangles, shader `grav_lift`). The
+physics model has two polyhedra, both boxes 1.21 x 1.21 wu across:
+
+| shape | local z | phantom type | marker | push |
+|---|---|---|---|---|
+| `lower_lift` | 0 .. 4.5 | 0, flags 4 (negates gravity) | `lower_lift_direction` at (0.01, 0, 0), +X turned to (0, 0, 1) | direction 10 / 4, axis 10 / 10 |
+| `upper_lift` | 4.5 .. 6.5 | 1, no flags | `upper_lift_direction` at (0.01, 0, 4.5), (0.866, 0, -0.5) | direction 10 / 4 |
+
+So the lower box carries a player up the shaft at 4 wu/s (12.2 m/s) with gravity off, held on
+the middle; the upper box shoves him out over the top towards world -Y (into the map) and 30
+degrees down, which kills most of the upward speed and puts him on the upper floor.
+`crates/blam_h2/tests/lockout.rs` (`lockout_lift`) pins both boxes.
+
+Walked headless on the real collision (`crates/halo3_foot/tests/lockout_lift.rs`, and
+`halo3 lockout --shot DIR --foot --view "-1.5,12.53,-11.9,-90,0"` with `HALO3_FOOT_WALK=0,0`):
+standing on the pad at z -12.2 he rises at 4 wu/s, peaks at z -6.2 after 2.2 s and lands at
+(-2.07, 9.38, -8.10), on the upper walkway 4.1 wu above the pad, facing into the map.
+
+### 12.2 Other maps
+
+Every MCC multiplayer map's lifts read the same way (`probe_h2_lifts.py all`): Ascension and
+Colossus jump pads (pills, direction 150 / 12 and 100 / 9), Coagulation's two `powerhaus` lifts
+(pill up, pill out), Cyclotron, Foundation, Headlong and Midship (pills), Backwash and Gemini
+(boxes), Derelict, Colossus and Dune's watchtower (polyhedra). Elongation's `crate_cushion` ignores players and is
+skipped. Turf's springs are spheres. Only Lockout has been checked in motion.
+
+### 12.3 How the game uses them (`blam_geometry::lift`)
+
+Each step a body touching a volume (within its radius) gets, from each volume it touches:
+
+- along the direction: the acceleration, until its speed along the direction reaches the top
+  speed (a top speed of 0 is taken as no limit);
+- towards the axis and the centre: the acceleration, steering its velocity across the direction
+  at the line (or point), at most the top speed and slowing to arrive in about 0.2 s. Halo leaves
+  the overshoot to Havok's damping; the settling time is our own choice;
+- no gravity while any volume it touches negates gravity.
+
+Walking (`halo3_foot`) and the dirt bike (`halo3_bike`, unless the volume ignores vehicles) take
+the push through `halo3_core::lifts::Lifts`. The skateboard does not: the Skate 3 engine runs its
+own physics and takes no outside push. Swimming has no lifts.

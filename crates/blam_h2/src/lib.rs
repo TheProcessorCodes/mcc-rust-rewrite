@@ -17,6 +17,7 @@
 pub mod bitmap;
 pub mod cache;
 pub mod collision;
+pub mod lift;
 pub mod lightmap;
 pub mod section;
 pub mod shader;
@@ -222,6 +223,11 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
         decode_objects(map, scnr, &mut scene, &mut materials, &mut stats)?;
     }
     decode_spawns(map, scnr, &mut scene)?;
+    // Gravity lifts and the like (`lift.rs`).
+    scene.lifts = lift::decode(map, scnr).unwrap_or_else(|e| {
+        eprintln!("lifts: {e}");
+        Vec::new()
+    });
     let fog = sky_fog(map, scnr).unwrap_or_else(|e| {
         eprintln!("sky fog: {e}");
         None

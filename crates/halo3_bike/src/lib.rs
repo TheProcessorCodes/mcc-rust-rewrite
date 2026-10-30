@@ -186,6 +186,7 @@ fn ride(
     mut auto: ResMut<AutoStart>,
     input: Option<Res<BikeInput>>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
+    lifts: Option<Res<halo3_core::lifts::Lifts>>,
     fallback: Option<Res<halo3_core::falls::FallbackSpot>>,
     mut rider: ResMut<RiderPose>,
     loaded: Res<LoadedBsps>,
@@ -274,6 +275,16 @@ fn ride(
     };
     let dt = time.delta_secs().min(0.1);
     bike.step(world, controls, dt);
+    // A gravity lift takes the bike too (unless it ignores vehicles): its
+    // push on top of the bike's own physics, and the bike's gravity given
+    // back while the lift switches gravity off.
+    if let Some(p) = lifts.as_deref().and_then(|l| l.push(bike.position, bike.velocity, dt, 0.5, true)) {
+        let mut a = p.acceleration;
+        if p.negates_gravity {
+            a.y += physics::GRAVITY;
+        }
+        bike.velocity += a * dt;
+    }
     if let Some(kill) = kill.as_deref()
         && let Some(volume) = kill.deadly(to_halo(bike.position))
     {

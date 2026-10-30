@@ -2572,6 +2572,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "blam_geometry",
+ "blam_h2",
  "halo3_bike",
  "halo3_core",
  "halo3_swim",
