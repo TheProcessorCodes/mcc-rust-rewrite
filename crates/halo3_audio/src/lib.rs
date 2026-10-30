@@ -4,7 +4,8 @@
 //! (`weapons.rs`).
 //! `docs/format/sound.md` has the data, `docs/viewer.md` "Sound" the rules.
 //!
-//! Keys: M music on / off, Shift+M next track, N alternate loop, K mute,
+//! Music (`music.rs`) follows the map's scripts when they run, and the
+//! keys: M music on / off, Shift+M next track, N alternate loop, K mute,
 //! `-` / `=` volume. `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
 //! mode, where `HALO3_AUDIO_TRACE=1` runs the logic without output and
 //! logs which emitters are active at each view.
@@ -12,6 +13,7 @@
 pub mod halo2;
 mod library;
 mod mixer;
+mod music;
 mod weapons;
 
 use std::collections::HashMap;
@@ -98,10 +100,9 @@ impl HaloAudioPlugin {
                 on: self.trace,
                 ..Default::default()
             })
-            .insert_resource(Music {
-                wanted_at_start: self.music.clone(),
-                ..Default::default()
-            })
+            .insert_resource(music::MusicPlayer::new(self.music.clone()))
+            .init_resource::<music::ClassGains>()
+            .init_resource::<halo3_core::script_sound::ScriptSounds>()
             .init_resource::<Listener>()
             .init_resource::<Ambience>()
             .init_resource::<BoardSounds>()
@@ -118,7 +119,9 @@ impl HaloAudioPlugin {
                     background,
                     details,
                     scenery,
-                    music,
+                    music::script_requests,
+                    music::hand_controls,
+                    music::update,
                     board,
                     weapons::weapon_sounds,
                     volume_keys,
@@ -344,6 +347,7 @@ fn background(
     loaded: Res<LoadedBsps>,
     l: Res<Listener>,
     mixer: Res<Mixer>,
+    gains: Res<music::ClassGains>,
     mut amb: ResMut<Ambience>,
 ) {
     let Some(sounds) = sounds else {
@@ -357,6 +361,8 @@ fn background(
     } else {
         loaded.shown
     };
+    // A script's `sound_class_set_gain amb` (1 otherwise).
+    let class_gain = gains.get("amb");
     let place = place_of(&zones, mask, l.position);
     // Indoors-outdoors changes only when the camera is in some cluster;
     // outside every cluster the last background stays.
@@ -418,7 +424,7 @@ fn background(
                     .sounds
                     .get(&track.looped.unwrap_or(u32::MAX))
                     .map_or(1.0, |s| db(track.gain_db + s.gain_db));
-                mixer.set_gain(id, [g * layer.fade; 2]);
+                mixer.set_gain(id, [g * layer.fade * class_gain; 2]);
             }
         }
         if !layer.wanted && layer.fade <= 0.0 {
@@ -520,6 +526,7 @@ fn scenery(
     loaded: Res<LoadedBsps>,
     l: Res<Listener>,
     mixer: Res<Mixer>,
+    gains: Res<music::ClassGains>,
     mut amb: ResMut<Ambience>,
 ) {
     let Some(sounds) = sounds else {
@@ -595,7 +602,7 @@ fn scenery(
         // sound class gains and mix, which would bring it down, are not
         // decoded.
         const SCENERY_GAIN: f32 = 0.5;
-        let gain = SCENERY_GAIN * db(track.gain_db + snd.gain_db) * attenuation(distance, bounds);
+        let gain = SCENERY_GAIN * db(track.gain_db + snd.gain_db) * attenuation(distance, bounds) * gains.get("amb");
         if distance < bounds.1 + 2.0 {
             if amb.scenery[i].is_none()
                 && let Some(clips) = sounds.clips.all(&snd.permutations)
@@ -619,203 +626,6 @@ fn scenery(
         }
     }
     amb.heard = heard;
-}
-
-#[derive(Resource, Default)]
-struct Music {
-    wanted_at_start: Option<String>,
-    started_once: bool,
-    track: Option<usize>,
-    voice: Option<VoiceId>,
-    /// Waiting for clips to decode before starting.
-    starting: bool,
-    alt: bool,
-    /// Fading out (seconds left) when the track has no outro.
-    fade_out: Option<f32>,
-}
-
-struct MusicClips {
-    intro: Vec<Arc<Clip>>,
-    looped: Vec<Arc<Clip>>,
-    outro: Vec<Arc<Clip>>,
-    alt_loop: Vec<Arc<Clip>>,
-    alt_in: Vec<Arc<Clip>>,
-    alt_out: Vec<Arc<Clip>>,
-    gain: f32,
-    fade_out: f32,
-}
-
-/// Every clip of the track's first layer, once all are decoded.
-fn music_clips(sounds: &Sounds, lsnd: u32) -> Option<MusicClips> {
-    let looping = sounds.data.loops.get(&lsnd)?;
-    let t = looping.tracks.first()?;
-    let get = |s: Option<u32>| -> Option<Vec<Arc<Clip>>> {
-        match s.and_then(|s| sounds.data.sounds.get(&s)) {
-            Some(snd) => sounds.clips.all(&snd.permutations),
-            None => Some(Vec::new()),
-        }
-    };
-    // Ask for all of them at once so they decode together.
-    let parts = [
-        t.intro,
-        t.looped,
-        t.outro,
-        t.alt_loop,
-        t.alt_trans_in,
-        t.alt_out,
-    ]
-    .map(get);
-    let [intro, looped, outro, alt_loop, alt_in, alt_out] = parts;
-    let gain = t
-        .looped
-        .and_then(|s| sounds.data.sounds.get(&s))
-        .map_or(1.0, |s| db(t.gain_db + s.gain_db));
-    Some(MusicClips {
-        intro: intro?,
-        looped: looped?,
-        outro: outro?,
-        alt_loop: alt_loop?,
-        alt_in: alt_in?,
-        alt_out: alt_out?,
-        gain,
-        fade_out: t.fade_out.max(1.0),
-    })
-}
-
-fn pick_one(v: &[Arc<Clip>]) -> Vec<Arc<Clip>> {
-    v.first().cloned().into_iter().collect()
-}
-
-fn music(
-    time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    sounds: Option<Res<Sounds>>,
-    mixer: Res<Mixer>,
-    mut m: ResMut<Music>,
-) {
-    let Some(sounds) = sounds else {
-        return;
-    };
-    let tracks = &sounds.data.map.music;
-    if tracks.is_empty() {
-        return;
-    }
-    if !m.started_once {
-        m.started_once = true;
-        if let Some(w) = m.wanted_at_start.clone() {
-            let found = w
-                .parse::<usize>()
-                .ok()
-                .filter(|n| *n < tracks.len())
-                .or_else(|| tracks.iter().position(|(_, n)| n.ends_with(w.as_str())));
-            match found {
-                Some(n) => {
-                    m.track = Some(n);
-                    m.starting = true;
-                }
-                None => warn!(
-                    "--music {w}: no such track; the map has {:?}",
-                    tracks.iter().map(|t| &t.1).collect::<Vec<_>>()
-                ),
-            }
-        }
-    }
-    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    let playing = m.voice.is_some_and(|v| mixer.is_playing(v));
-    if !playing && m.voice.is_some() {
-        m.voice = None;
-        m.fade_out = None;
-    }
-    // The showpiece: the Warthog run on 120_halo, else the first track.
-    let default_track = tracks
-        .iter()
-        .position(|(_, n)| n.ends_with("120_music_15"))
-        .unwrap_or(0);
-    if keys.just_pressed(KeyCode::KeyM) {
-        if shift {
-            let next = m.track.map_or(default_track, |t| (t + 1) % tracks.len());
-            if let Some(v) = m.voice.take() {
-                mixer.stop(v);
-            }
-            m.track = Some(next);
-            m.starting = true;
-            m.alt = false;
-        } else if m.voice.is_some() || m.starting {
-            m.starting = false;
-            if let Some(v) = m.voice
-                && m.fade_out.is_none()
-                && let Some(c) = m.track.and_then(|t| music_clips(&sounds, tracks[t].0))
-            {
-                let out = if m.alt { &c.alt_out } else { &c.outro };
-                if out.is_empty() {
-                    m.fade_out = Some(c.fade_out);
-                } else {
-                    mixer.set_next(v, pick_one(out), Vec::new());
-                }
-                info!("music: stopping {}", tracks[m.track.unwrap()].1);
-            }
-        } else {
-            m.track = Some(m.track.unwrap_or(default_track));
-            m.starting = true;
-            m.alt = false;
-        }
-    }
-    if keys.just_pressed(KeyCode::KeyN)
-        && let (Some(v), Some(t)) = (m.voice, m.track)
-        && let Some(c) = music_clips(&sounds, tracks[t].0)
-        && !c.alt_loop.is_empty()
-    {
-        m.alt = !m.alt;
-        if m.alt {
-            mixer.set_next(v, pick_one(&c.alt_in), c.alt_loop.clone());
-        } else {
-            mixer.set_next(v, Vec::new(), c.looped.clone());
-        }
-        info!(
-            "music: {} loop next",
-            if m.alt { "alternate" } else { "main" }
-        );
-    }
-    if m.starting
-        && let Some(t) = m.track
-        && let Some(c) = music_clips(&sounds, tracks[t].0)
-    {
-        m.starting = false;
-        if c.looped.is_empty() && c.intro.is_empty() {
-            warn!("music: {} has nothing to play", tracks[t].1);
-        } else {
-            m.voice = Some(mixer.play(Play {
-                queue: pick_one(&c.intro),
-                looping: c.looped.clone(),
-                gain: [c.gain; 2],
-                rate: 1.0,
-            }));
-            info!(
-                "music: {} ({} s intro, {} loop permutations{})",
-                tracks[t].1,
-                c.intro.first().map_or(0.0, |c| c.seconds()).round(),
-                c.looped.len(),
-                if c.alt_loop.is_empty() {
-                    ""
-                } else {
-                    ", N for the alternate loop"
-                }
-            );
-        }
-    }
-    if let (Some(v), Some(left), Some(t)) = (m.voice, m.fade_out, m.track) {
-        let total = music_clips(&sounds, tracks[t].0).map_or(1.0, |c| c.fade_out);
-        let gain = music_clips(&sounds, tracks[t].0).map_or(1.0, |c| c.gain);
-        let left = left - time.delta_secs();
-        if left <= 0.0 {
-            mixer.stop(v);
-            m.voice = None;
-            m.fade_out = None;
-        } else {
-            mixer.set_gain(v, [gain * left / total; 2]);
-            m.fade_out = Some(left);
-        }
-    }
 }
 
 #[derive(Resource, Default)]
@@ -985,7 +795,7 @@ fn trace(
     l: Res<Listener>,
     amb: Res<Ambience>,
     mixer: Res<Mixer>,
-    music: Res<Music>,
+    music: Res<music::MusicPlayer>,
     mut t: ResMut<Trace>,
 ) {
     let Some(sounds) = sounds else {
@@ -1045,7 +855,7 @@ fn trace(
         .collect();
     let (n, mib) = sounds.clips.stats();
     info!(
-        "audio: at ({:.1}, {:.1}, {:.1}) cluster {:?}: background [{}]; scenery {} in range [{}]; details {}; music {:?}; voices {}; clips {} ({:.1} MiB)",
+        "audio: at ({:.1}, {:.1}, {:.1}) cluster {:?}: background [{}]; scenery {} in range [{}]; details {}; music [{}]; voices {}; clips {} ({:.1} MiB)",
         l.position.x,
         l.position.y,
         l.position.z,
@@ -1054,9 +864,7 @@ fn trace(
         heard.len(),
         scen.join("; "),
         amb.details.len(),
-        music
-            .track
-            .map(|t| d.map.music[t].1.rsplit('\\').next().unwrap_or("")),
+        music.describe(),
         mixer.voices(),
         n,
         mib

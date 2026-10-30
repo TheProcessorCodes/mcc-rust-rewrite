@@ -79,7 +79,9 @@ What the game does now:
 - **Sound.**
   - Cluster ambience with its random details, cross-faded as you move.
   - Sound scenery placed in the world and attenuated by distance.
-  - Music by hand: M, or `--music` (the Warthog run on 120_halo).
+  - Music played by Halo 3's rules (intro, looping bars, alternate loop, outro, fades), started
+    by the mission's scripts when they run, or by hand: M, or `--music` (the Warthog run on
+    120_halo).
   - Board roll, grind and landing sounds.
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
 - **Pause menu.** Escape or Start. It has tabs for free roam, dirt bike and skate controls; Q quits.
@@ -197,8 +199,8 @@ the run's plates are its only floor, so before this the whole run had no collisi
 
 Stubs and hooks: AI (`ai_place warthog01` etc.) goes to `AiHooks` (enemies agent), device
 animation (the run's two sinking islands) to `DevicePoser` (animation agent) with a made-up
-sink as the fallback, effects are stand-in flashes, cinematics / sound / HUD are no-ops that log
-once. Without `--insertion` / `--scripts` nothing changes from before except object collision.
+sink as the fallback, effects are stand-in flashes, cinematics / HUD are no-ops that log
+once (sound is played: see "Mission music"). Without `--insertion` / `--scripts` nothing changes from before except object collision.
 Tested headless (`halo3_script/tests/warthog_run.rs` drives the player through the run's
 volumes and checks plates drop); awaiting the user's playtest.
 
@@ -212,6 +214,23 @@ and the run's plate folders are no longer dropped for memory (`object_destroy_fo
 removes script-created objects), so the floor is there wherever you start. Checked headless
 with `HALO3_SCRIPT_TRACE=1` (player position once a second) for the bike, on foot
 (`HALO3_FOOT_WALK=0,1`) and skating, at the start flag and dropped straight onto the plates.
+
+## Mission music (2026-10-30, branch `mission-music`)
+
+The `lsnd` tags are now read in full (`docs/format/sound.md` 5 and 8, probe
+`probe_lsnd.py`, CLI `blam sound 120_halo music`): music time, "not a loop" and "stops music"
+flags, the tracks' fade-in / fade-out / cross-fade-alternate flags and cross-fade time. The
+scripts' `sound_looping_start` / `_stop` / `_stop_immediately` / `_set_alternate`,
+`sound_impulse_start` / `_stop` and `sound_class_set_gain` (music and amb) reach the sound
+through a queue in `halo3_core::script_sound` (the VM's only change: those functions, which used
+to log "not implemented"). `halo3_audio/src/music.rs` plays the pieces: intro, random loop bars
+back to back, the alternate on a bar boundary through its transition or by cross-fade, the
+outro / alternate outro / fade on stop, music time, stops-music. On the Warthog run
+(`--insertion trench_run`) `120_music_15` starts on the first stretch, goes to its alternate on
+leaving the second island and plays its 77 s finale at the last stretch
+(`halo3_script/tests/trench_music.rs`). M / Shift+M / N / `--music` still work on top. Without
+scripts nothing changes. Not done: dialogue (language banks), `lsnd` layers, the music class's
+mix level, cinematic music. Awaiting the user's playtest.
 
 ## Open questions and known gaps
 

@@ -55,13 +55,46 @@ impl Playback {
     }
 }
 
-/// A looping sound (`lsnd`).
+/// A looping sound (`lsnd`, `sound.md` 5).
 #[derive(Clone, Debug, Default)]
 pub struct Looping {
     pub tag: u32,
     pub name: String,
+    /// Header flags (`+0x00`): [`Looping::NOT_A_LOOP`],
+    /// [`Looping::STOPS_MUSIC`], and bits 3-6 seen on engines and
+    /// ambience (not used here).
+    pub flags: u32,
+    /// Seconds a music piece plays before it ends by itself (`+0x04`;
+    /// 0: until a script stops it). Only music sets it.
+    pub music_time: f32,
+    /// (full volume within, silent beyond), world units (`+0x0C`, `+0x10`):
+    /// how far a placed copy carries.
+    pub distance: (f32, f32),
+    /// Sound class (`+0x24`): 32 on every music piece.
+    pub class: i16,
     pub tracks: Vec<Track>,
     pub details: Vec<Detail>,
+}
+
+impl Looping {
+    /// Header bit 1: plays its loop once instead of looping (stingers:
+    /// `120_music_12`, `sound\music\stingers\orch3`).
+    pub const NOT_A_LOOP: u32 = 1 << 1;
+    /// Header bit 2: starting it ends whatever other music is playing
+    /// (`120_music_15`, the Warthog run).
+    pub const STOPS_MUSIC: u32 = 1 << 2;
+    /// The sound class of music (every `lsnd` under a `\music\` folder).
+    pub const MUSIC_CLASS: i16 = 32;
+
+    pub fn not_a_loop(&self) -> bool {
+        self.flags & Self::NOT_A_LOOP != 0
+    }
+    pub fn stops_music(&self) -> bool {
+        self.flags & Self::STOPS_MUSIC != 0
+    }
+    pub fn is_music(&self) -> bool {
+        self.class == Self::MUSIC_CLASS || self.name.to_ascii_lowercase().contains("\\music\\")
+    }
 }
 
 /// One layer of a looping sound: an optional intro, the loop and an
@@ -80,6 +113,45 @@ pub struct Track {
     pub alt_out: Option<u32>,
     pub alt_trans_in: Option<u32>,
     pub alt_trans_out: Option<u32>,
+    /// Seconds to cross-fade between the loop and the alternate loop when
+    /// [`Track::CROSSFADE_ALT`] is set (`+0x88`; 10 on `120_music_13`).
+    pub alt_fade: f32,
+    /// A second time at `+0x8C` (0 on every music track; equal to `+0x88`
+    /// on vehicle skid loops). Not used.
+    pub alt_fade_out: f32,
+}
+
+impl Track {
+    /// Bit 0: fade in over `fade_in` when started.
+    pub const FADE_IN: u32 = 1 << 0;
+    /// Bit 1: fade out over `fade_out` when stopped (music without an outro).
+    pub const FADE_OUT: u32 = 1 << 1;
+    /// Bit 2: switch to and from the alternate loop by cross-fading over
+    /// `alt_fade` at once, instead of at the end of the playing loop.
+    pub const CROSSFADE_ALT: u32 = 1 << 2;
+
+    pub fn fades_in(&self) -> bool {
+        self.flags & Self::FADE_IN != 0 && self.fade_in > 0.0
+    }
+    pub fn fades_out(&self) -> bool {
+        self.flags & Self::FADE_OUT != 0 && self.fade_out > 0.0
+    }
+    pub fn crossfades_alt(&self) -> bool {
+        self.flags & Self::CROSSFADE_ALT != 0 && self.alt_fade > 0.0
+    }
+    /// Every sound the track can play, in slot order (in, loop, out, alt
+    /// loop, alt out, alt transition in, alt transition out).
+    pub fn sounds(&self) -> [Option<u32>; 7] {
+        [
+            self.intro,
+            self.looped,
+            self.outro,
+            self.alt_loop,
+            self.alt_out,
+            self.alt_trans_in,
+            self.alt_trans_out,
+        ]
+    }
 }
 
 /// A one-shot a looping sound scatters around the listener now and then
@@ -146,6 +218,9 @@ pub struct MapSounds {
     /// Looping sounds under a `music` folder, by tag index (scripts start
     /// them; the viewer plays them by hand).
     pub music: Vec<(u32, String)>,
+    /// The `snd!` and `lsnd` tags the scenario's scripts name (its script
+    /// tag references, `scnr + 0x404`; `halo-script.md` 1), by tag index.
+    pub script_sounds: Vec<u32>,
 }
 
 /// Reads sound tags. Holds the gestalt's block headers.
@@ -281,6 +356,8 @@ impl<'a> SoundTags<'a> {
                 alt_out: snd(e + 0x54)?,
                 alt_trans_in: snd(e + 0x68)?,
                 alt_trans_out: snd(e + 0x78)?,
+                alt_fade: c.reader_at(e + 0x88).f32()?,
+                alt_fade_out: c.reader_at(e + 0x8C).f32()?,
             });
         }
         let mut details = Vec::new();
@@ -300,6 +377,10 @@ impl<'a> SoundTags<'a> {
         Ok(Looping {
             tag: index,
             name: t.name().to_string(),
+            flags: c.reader_at(o).u32()?,
+            music_time: c.reader_at(o + 0x04).f32()?,
+            distance: (c.reader_at(o + 0x0C).f32()?, c.reader_at(o + 0x10).f32()?),
+            class: c.reader_at(o + 0x24).i16()?,
             tracks,
             details,
         })
@@ -390,9 +471,23 @@ impl<'a> SoundTags<'a> {
             }
         }
         out.music.sort_by(|a, b| a.1.cmp(&b.1));
+
+        // The scripts' tag references: plain 16-byte references.
+        for e in c.reader_at(s + SCRIPT_REFERENCES).block()?.elements(16) {
+            let r = c.reader_at(e).tag_ref()?;
+            if let Some(i) = r.index
+                && c.tags.get(i).is_some_and(|t| matches!(c.tags.class_of(t).code.as_str(), "snd!" | "lsnd"))
+                && !out.script_sounds.contains(&i)
+            {
+                out.script_sounds.push(i);
+            }
+        }
         Ok(out)
     }
 }
+
+/// The scenario's block of tag references its scripts use.
+const SCRIPT_REFERENCES: usize = 0x404;
 
 /// Size of an object attachment element (`weapon-sounds.md` 6: tag
 /// reference, marker, two function names).

@@ -22,6 +22,7 @@ use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::falls::{FallbackSpot, set_kill_volume_enabled};
 use halo3_core::fly_camera::FlyCamera;
 use halo3_core::objects::{ObjectChunk, ScriptHidden, set_collision_removed};
+use halo3_core::script_sound::ScriptSounds;
 use halo3_core::skate::{Respawn, RiderPose};
 use halo3_core::zones::{LoadedBsps, Zones, load_zone_set};
 
@@ -144,6 +145,16 @@ impl Plugin for ScriptPlugin {
                 Update,
                 (tick.run_if(halo3_core::pause::running), apply_objects, flashes).chain(),
             );
+        app.init_resource::<ScriptSounds>()
+            .add_systems(Update, forward_sounds.after(tick));
+    }
+}
+
+/// Moves the scripts' sound calls on to the sound side (`halo3_audio`).
+fn forward_sounds(scripts: Option<ResMut<Scripts>>, mut queue: ResMut<ScriptSounds>) {
+    let Some(mut scripts) = scripts else { return };
+    for r in scripts.runtime.sounds.drain(..) {
+        queue.push(r);
     }
 }
 

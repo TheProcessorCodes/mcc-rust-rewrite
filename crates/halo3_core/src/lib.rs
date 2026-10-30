@@ -11,6 +11,7 @@ pub mod lifts;
 pub mod fly_camera;
 pub mod objects;
 pub mod pause;
+pub mod script_sound;
 pub mod skate;
 pub mod weapons;
 pub mod zones;

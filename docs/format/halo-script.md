@@ -324,7 +324,9 @@ scenery's `coll`, and "blow up" and "fall away" are damage sections of the plate
   is run for 15 ticks before the first frame so that has happened before anyone can press B, J
   or F. A script teleport also becomes the fallback spot for a fall.
 * **Stubbed:** anything not listed logs once (`script: X is not implemented; does nothing`) and
-  returns its type's default (0, false, no object). Cinematics, sound, HUD, fades, saves.
+  returns its type's default (0, false, no object). Cinematics, HUD, fades, saves. The sound functions
+  (`sound_looping_*`, `sound_impulse_start` / `_stop`, `sound_class_set_gain`) are queued for the
+  sound side as `halo3_core::script_sound::SoundRequest`s (`sound.md` 8).
 * **Objects drawn on their own.** Every scene object a script constant names, every object in a
   folder a script names, and every object that starts absent is `SceneObject::dynamic`: the
   world builds its chunks apart (`ObjectChunk`), so the runtime can hide one (`ScriptHidden`) or
