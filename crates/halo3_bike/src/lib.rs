@@ -43,6 +43,7 @@ use blam_geometry::Collision;
 use blam_geometry::collision::surface_flags;
 
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
+use halo3_core::flag::SessionFlag;
 use halo3_core::fly_camera::FlyCamera;
 use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, Skating, assets_root, bail_pressed};
 use halo3_core::zones::LoadedBsps;
@@ -74,6 +75,7 @@ impl Plugin for BikePlugin {
             .init_resource::<model::BikeMesh>()
             .init_resource::<Dismount>()
             .init_resource::<Mount>()
+            .init_resource::<SessionFlag>()
             .add_plugins(tune::TunePlugin)
             .add_systems(Startup, (setup, model::start))
             .add_systems(
@@ -200,6 +202,7 @@ fn ride(
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
     (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
+    mut flag: ResMut<SessionFlag>,
     input: Option<Res<BikeInput>>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
     lifts: Option<Res<halo3_core::lifts::Lifts>>,
@@ -349,7 +352,14 @@ fn ride(
         can_return: bike.crashed.is_none(),
     };
     match riding.marker.update(buttons, state, dt) {
-        marker::Action::Placed => info!("bike: session marker placed"),
+        marker::Action::Placed => {
+            // The flag goes in the ground under the bike.
+            let ground = world
+                .raycast_far(bike.position + Vec3::Y * 0.5, Vec3::NEG_Y, 10.0)
+                .map_or(bike.position - Vec3::Y * physics::rest_height(), |h| h.point);
+            flag.0 = Some(ground);
+            info!("bike: session marker placed");
+        }
         marker::Action::Refused => info!("bike: session marker refused (not upright on both wheels)"),
         marker::Action::Return(m) => {
             *bike = Bike::dropped(world, m.position, m.heading);
