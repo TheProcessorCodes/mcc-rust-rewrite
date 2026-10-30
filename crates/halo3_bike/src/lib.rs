@@ -77,7 +77,7 @@ impl Plugin for BikePlugin {
             .init_resource::<Mount>()
             .init_resource::<SessionFlag>()
             .add_plugins(tune::TunePlugin)
-            .add_systems(Startup, (setup, model::start))
+            .add_systems(halo3_core::map::MapStartup, (setup, model::start))
             .add_systems(
                 Update,
                 (
@@ -88,7 +88,7 @@ impl Plugin for BikePlugin {
                     model::light,
                     show_status,
                 )
-                    .chain(),
+                    .chain().run_if(halo3_core::map::ready),
             );
     }
 }

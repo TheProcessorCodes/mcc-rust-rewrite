@@ -236,10 +236,10 @@ pub struct RiderPlugin;
 
 impl Plugin for RiderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_rider)
+        app.add_systems(halo3_core::map::MapStartup, spawn_rider)
             .add_systems(
                 PostUpdate,
-                (pose_rider, light_rider).chain().before(TransformSystems::Propagate),
+                (pose_rider, light_rider).chain().before(TransformSystems::Propagate).run_if(halo3_core::map::ready),
             );
     }
 }

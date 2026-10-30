@@ -21,8 +21,8 @@ pub struct SessionFlagPlugin;
 impl Plugin for SessionFlagPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SessionFlag>()
-            .add_systems(Startup, spawn_flag)
-            .add_systems(Update, place_flag);
+            .add_systems(crate::map::MapStartup, spawn_flag)
+            .add_systems(Update, place_flag.run_if(crate::map::ready));
     }
 }
 

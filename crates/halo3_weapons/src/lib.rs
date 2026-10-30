@@ -52,7 +52,7 @@ impl Plugin for WeaponsPlugin {
         app.add_message::<WeaponEvent>()
             .add_message::<WeaponImpact>()
             .init_resource::<Inventory>()
-            .add_systems(Startup, setup)
+            .add_systems(halo3_core::map::MapStartup, setup)
             .add_systems(
                 Update,
                 (
@@ -62,7 +62,7 @@ impl Plugin for WeaponsPlugin {
                     respawn_items.run_if(halo3_core::pause::running),
                 )
                     .chain()
-                    .after(halo3_foot::walk),
+                    .after(halo3_foot::walk).run_if(halo3_core::map::ready),
             )
             .add_plugins((fire::FirePlugin, hud::HudPlugin, enemy::EnemyPlugin, killfeed::KillFeedPlugin));
     }

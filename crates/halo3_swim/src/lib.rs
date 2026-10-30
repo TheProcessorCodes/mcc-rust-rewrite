@@ -210,7 +210,7 @@ impl Plugin for SwimPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SwimState::new())
             .init_resource::<Splashes>()
-            .add_systems(Update, (water_rules.run_if(halo3_core::pause::running), draw_splashes).chain());
+            .add_systems(Update, (water_rules.run_if(halo3_core::pause::running), draw_splashes).chain().run_if(halo3_core::map::ready));
     }
 }
 

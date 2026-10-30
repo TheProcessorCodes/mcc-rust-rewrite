@@ -24,14 +24,14 @@ pub struct FirePlugin;
 impl Plugin for FirePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Shots>()
-            .add_systems(Startup, setup)
+            .add_systems(halo3_core::map::MapStartup, setup)
             .add_systems(
                 Update,
                 (launch, fly, fade)
                     .chain()
                     .run_if(halo3_core::pause::running)
                     .after(super::trigger)
-                    .before(super::place_held),
+                    .before(super::place_held).run_if(halo3_core::map::ready),
             );
     }
 }

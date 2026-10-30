@@ -55,7 +55,7 @@ pub struct CullingPlugin;
 impl Plugin for CullingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PortalView>()
-            .add_systems(PostUpdate, (portal_flood, apply_culling).chain().before(TransformSystems::Propagate));
+            .add_systems(PostUpdate, (portal_flood, apply_culling).chain().before(TransformSystems::Propagate).run_if(halo3_core::map::ready));
     }
 }
 

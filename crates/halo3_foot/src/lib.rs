@@ -68,8 +68,8 @@ impl Plugin for FootPlugin {
             .init_resource::<AutoStart>()
             .init_resource::<Dismount>()
             .init_resource::<Mount>()
-            .add_systems(Startup, setup)
-            .add_systems(Update, (walk.run_if(halo3_core::pause::running), show_status).chain());
+            .add_systems(halo3_core::map::MapStartup, setup)
+            .add_systems(Update, (walk.run_if(halo3_core::pause::running), show_status).chain().run_if(halo3_core::map::ready));
     }
 }
 

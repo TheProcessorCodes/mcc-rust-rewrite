@@ -19,7 +19,7 @@ impl Plugin for ZonesPlugin {
                 Update,
                 (zone_keys.run_if(halo3_core::pause::running), follow_cluster)
                     .chain()
-                    .in_set(ZoneKeys),
+                    .in_set(ZoneKeys).run_if(halo3_core::map::ready),
             );
     }
 }

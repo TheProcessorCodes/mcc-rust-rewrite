@@ -34,8 +34,8 @@ impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Enemy>()
             .add_message::<EnemyKilled>()
-            .add_systems(Startup, setup)
-            .add_systems(Update, (control, tick).chain().run_if(halo3_core::pause::running));
+            .add_systems(halo3_core::map::MapStartup, setup)
+            .add_systems(Update, (control, tick).chain().run_if(halo3_core::pause::running).run_if(halo3_core::map::ready));
     }
 }
 

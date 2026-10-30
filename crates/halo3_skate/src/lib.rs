@@ -51,11 +51,11 @@ impl Plugin for SkatePlugin {
             .init_resource::<Dismount>()
             .init_resource::<Mount>()
             .init_resource::<SessionFlag>()
-            .add_systems(Startup, start_worker)
+            .add_systems(halo3_core::map::MapStartup, start_worker)
             .init_resource::<SkateMotion>()
             .add_systems(
                 Update,
-                (update.run_if(halo3_core::pause::running), publish_motion, draw_rider, show_status).chain(),
+                (update.run_if(halo3_core::pause::running), publish_motion, draw_rider, show_status).chain().run_if(halo3_core::map::ready),
             );
     }
 }

@@ -8,6 +8,7 @@ pub mod coords;
 pub mod falls;
 pub mod flag;
 pub mod lifts;
+pub mod map;
 pub mod fly_camera;
 pub mod pause;
 pub mod skate;

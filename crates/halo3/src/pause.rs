@@ -25,13 +25,13 @@ impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Paused>()
             .init_resource::<ShownTab>()
-            .add_systems(Startup, spawn_menu)
+            .add_systems(halo3_core::map::MapStartup, spawn_menu)
             .add_systems(
                 PreUpdate,
                 (toggle, quit, switch_tab)
                     .chain()
                     .after(InputSystems)
-                    .after(halo3_core::pause::OverlayInput),
+                    .after(halo3_core::pause::OverlayInput).run_if(halo3_core::map::ready),
             );
     }
 }

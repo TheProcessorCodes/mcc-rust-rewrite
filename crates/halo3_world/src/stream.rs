@@ -195,7 +195,7 @@ impl Plugin for StreamPlugin {
             .init_resource::<GpuCache>()
             .add_systems(
                 Update,
-                (switch_test, zone_triggers, stream_units).chain().after(zones::ZoneKeys),
+                (switch_test, zone_triggers, stream_units).chain().after(zones::ZoneKeys).run_if(halo3_core::map::ready),
             );
     }
 }

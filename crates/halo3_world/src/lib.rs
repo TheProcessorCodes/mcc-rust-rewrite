@@ -62,10 +62,10 @@ impl Plugin for WorldPlugin {
             culling::CullingPlugin,
         ))
             .insert_resource(ClearColor(Color::srgb(0.53, 0.70, 0.90)))
-            .add_systems(Startup, spawn_world)
+            .add_systems(halo3_core::map::MapStartup, spawn_world)
             .add_systems(
                 Update,
-                (toggle_collision.run_if(halo3_core::pause::running), spawn_collision_on_demand).chain(),
+                (toggle_collision.run_if(halo3_core::pause::running), spawn_collision_on_demand).chain().run_if(halo3_core::map::ready),
             );
     }
 }

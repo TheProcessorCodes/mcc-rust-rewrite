@@ -387,7 +387,7 @@ impl Plugin for SkyPlugin {
             .init_resource::<WorldHaze>()
             .init_resource::<CameraAir>()
             .init_resource::<PlainFog>()
-            .add_systems(Update, (swap_sky_materials, update_sky_air, add_haze, update_haze).chain());
+            .add_systems(Update, (swap_sky_materials, update_sky_air, add_haze, update_haze).chain().run_if(halo3_core::map::ready));
     }
 }
 

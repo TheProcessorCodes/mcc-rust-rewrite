@@ -356,7 +356,7 @@ impl Plugin for WaterPlugin {
         app.add_plugins(MaterialPlugin::<WaterMaterial>::default())
             .init_resource::<PendingWater>()
             .init_resource::<HasWater>()
-            .add_systems(Update, (swap_water_materials, add_depth_prepass).chain());
+            .add_systems(Update, (swap_water_materials, add_depth_prepass).chain().run_if(halo3_core::map::ready));
     }
 }
 
