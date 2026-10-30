@@ -68,6 +68,10 @@ impl Plugin for WeaponsPlugin {
     }
 }
 
+/// Unlimited ammo: spare rounds never run out (magazines still empty and
+/// reload) and batteries never drain.
+pub const UNLIMITED_AMMO: bool = true;
+
 /// World units to metres.
 const WU: f32 = blam_geometry::WORLD_UNIT_METRES;
 
@@ -461,7 +465,8 @@ fn handle(
         || (!prompt_up && pad.is_some_and(|p| p.just_pressed(B::West) || p.just_pressed(B::RightTrigger)));
     let mag = kind.weapon.magazines.first();
     if let Some(m) = mag {
-        let can = held.reload <= 0.0 && held.ammo.reserve > 0 && held.ammo.loaded < m.rounds_loaded_maximum as i32;
+        let spare = UNLIMITED_AMMO || held.ammo.reserve > 0;
+        let can = held.reload <= 0.0 && spare && held.ammo.loaded < m.rounds_loaded_maximum as i32;
         if can && (wants || held.ammo.loaded == 0) {
             held.reload = reload_time(kind);
             held.zoom = 0;
@@ -477,13 +482,16 @@ fn handle(
             held.reload -= dt;
             if held.reload <= 0.0 {
                 let per = if m.rounds_reloaded > 0 { m.rounds_reloaded as i32 } else { m.rounds_loaded_maximum as i32 };
-                let put = per.min(m.rounds_loaded_maximum as i32 - held.ammo.loaded).min(held.ammo.reserve);
+                let room = per.min(m.rounds_loaded_maximum as i32 - held.ammo.loaded);
+                let put = if UNLIMITED_AMMO { room } else { room.min(held.ammo.reserve) };
                 held.ammo.loaded += put;
-                held.ammo.reserve -= put;
+                if !UNLIMITED_AMMO {
+                    held.ammo.reserve -= put;
+                }
                 // Shells one at a time: carry on while there is room.
                 held.reload = if per < m.rounds_loaded_maximum as i32
                     && held.ammo.loaded < m.rounds_loaded_maximum as i32
-                    && held.ammo.reserve > 0
+                    && (UNLIMITED_AMMO || held.ammo.reserve > 0)
                 {
                     0.5
                 } else {
@@ -591,7 +599,9 @@ fn trigger(
             h.cooldown = 0.3;
             return;
         }
-        if energy {
+        if UNLIMITED_AMMO && energy {
+            // The battery stays full.
+        } else if energy {
             h.ammo.energy = (h.ammo.energy - battery_use(kind, power)).max(0.0);
         } else {
             h.ammo.loaded = (h.ammo.loaded - barrel.rounds_per_shot.max(1) as i32).max(0);
