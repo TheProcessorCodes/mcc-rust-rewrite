@@ -13,6 +13,9 @@
 //! | LT | S | brake |
 //! | A (hold) | Space (hold) | back up, to 10 mph |
 //! | Y | R | stand the bike back up |
+//! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
+//! | LB + d-pad down | | set the session marker (`marker.rs`) |
+//! | LB + d-pad up (hold) | | back to the session marker |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
@@ -22,6 +25,7 @@
 //! couple of seconds, then takes the rider pictures; `HALO3_BIKE_THROTTLE`
 //! sets the throttle it holds meanwhile (default 0.4).
 
+pub mod marker;
 pub mod physics;
 pub mod pose;
 pub mod reflex;
@@ -37,7 +41,7 @@ use blam_geometry::collision::surface_flags;
 
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{RiderPose, Skating, assets_root};
+use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, Skating, assets_root, bail_pressed};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Bike, Controls, World};
@@ -64,6 +68,8 @@ impl Plugin for BikePlugin {
         app.init_resource::<Riding>()
             .init_resource::<AutoStart>()
             .init_resource::<StickPool>()
+            .init_resource::<Dismount>()
+            .init_resource::<Mount>()
             .add_plugins(tune::TunePlugin)
             .add_systems(Startup, setup)
             .add_systems(
@@ -90,6 +96,8 @@ struct Riding {
     /// Chase camera: where it is and the way it looks along the ground.
     eye: Option<Vec3>,
     look: Vec3,
+    /// Kept while off the bike, as the skate's is.
+    marker: marker::SessionMarker,
 }
 
 /// The skate scale `k` the rider is drawn at (`skate.rs`).
@@ -184,6 +192,7 @@ fn ride(
     mut commands: Commands,
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
+    (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
     input: Option<Res<BikeInput>>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
     lifts: Option<Res<halo3_core::lifts::Lifts>>,
@@ -207,7 +216,8 @@ fn ride(
 
     // The world follows the loaded zone set.
     let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
-    let wanted = riding.bike.is_some() || toggle || auto.0.is_some();
+    let mounting = matches!(mount.0, Some((Ride::Bike, _)));
+    let wanted = riding.bike.is_some() || toggle || auto.0.is_some() || mounting;
     if wanted && riding.mask != Some(mask) {
         riding.world = Some(build_world(&input.0, mask));
         riding.mask = Some(mask);
@@ -228,6 +238,32 @@ fn ride(
         rider.skated = 0.0;
         rider.bike = true;
         commands.entity(camera).insert(Skating);
+    } else if mounting {
+        // Straight from walking: the bike under him, with his momentum.
+        let Some((_, bail)) = mount.0.take() else {
+            return;
+        };
+        let flat = Vec3::new(bail.velocity.x, 0.0, bail.velocity.z);
+        let heading = if flat.length() > 1.0 {
+            flat.x.atan2(flat.z)
+        } else {
+            bail.yaw + std::f32::consts::PI
+        };
+        let mut bike = Bike::dropped(world, bail.position + Vec3::Y, heading);
+        // In the air (a jump, a fall): where he is, not on the ground below.
+        if bike.position.y < bail.position.y - 0.5 {
+            bike = Bike::new(bail.position + Vec3::Y * physics::rest_height(), heading);
+        }
+        bike.velocity = bail.velocity;
+        bike.wheel_spin = bail.velocity.dot(bike.forward()) / physics::rear_leg().radius;
+        riding.bike = Some(bike);
+        riding.neutral = None;
+        riding.eye = None;
+        riding.look = Vec3::ZERO;
+        rider.skated = 0.0;
+        rider.bike = true;
+        riding.marker.suspend();
+        commands.entity(camera).insert(Skating);
     } else if toggle {
         if riding.bike.take().is_some() {
             rider.bike = false;
@@ -246,7 +282,10 @@ fn ride(
             return;
         }
         if rider.active {
-            warn!("bike: stop skating or walking first (J / F)");
+            // On foot, B is his to hand over (`Mount`).
+            if !rider.foot {
+                warn!("bike: stop skating first (J), or jump off (G)");
+            }
             return;
         }
         let f = transform.forward().as_vec3();
@@ -256,7 +295,21 @@ fn ride(
         riding.eye = None;
         rider.skated = 0.0;
         rider.bike = true;
+        riding.marker.suspend();
         commands.entity(camera).insert(Skating);
+    }
+    // Jumping off onto foot, keeping the bike's momentum.
+    if riding.neutral.is_none()
+        && bail_pressed(&keys, pad)
+        && let Some(bike) = riding.bike.take()
+    {
+        rider.bike = false;
+        rider.active = false;
+        rider.bones.clear();
+        rider.camera = None;
+        commands.entity(camera).remove::<Skating>();
+        dismount.0 = Some(Bail::new(bike.position, bike.velocity, &transform));
+        return;
     }
     let Some(bike) = riding.bike.as_mut() else {
         return;
@@ -274,6 +327,32 @@ fn ride(
         None => read_controls(pad, &keys),
     };
     let dt = time.delta_secs().min(0.1);
+
+    // The session marker: LB + d-pad, as on the board.
+    let buttons = pad.map_or_else(marker::MarkerButtons::default, |p| marker::MarkerButtons {
+        modifier: p.pressed(B::LeftTrigger),
+        set: p.just_pressed(B::DPadDown),
+        back: p.pressed(B::DPadUp),
+    });
+    let upright = bike.crashed.is_none() && bike.grounded() == 2 && bike.up().y > 0.71;
+    let state = marker::BikeState {
+        position: bike.position,
+        heading: bike.heading(),
+        can_place: upright,
+        can_return: bike.crashed.is_none(),
+    };
+    match riding.marker.update(buttons, state, dt) {
+        marker::Action::Placed => info!("bike: session marker placed"),
+        marker::Action::Refused => info!("bike: session marker refused (not upright on both wheels)"),
+        marker::Action::Return(m) => {
+            *bike = Bike::dropped(world, m.position, m.heading);
+            riding.eye = None;
+            riding.look = Vec3::ZERO;
+            info!("bike: back to the session marker");
+        }
+        marker::Action::None => {}
+    }
+
     bike.step(world, controls, dt);
     // A gravity lift takes the bike too (unless it ignores vehicles): its
     // push on top of the bike's own physics, and the bike's gravity given
@@ -581,6 +660,7 @@ fn show_status(
             if b.grounded() == 1 { "" } else { "s" },
         if b.crashed.is_some() { ", CRASHED" } else { "" },
     );
+    let status = if riding.marker.marker.is_some() { format!("{status}, marker set") } else { status };
     // A line a second in screenshot mode, so a headless ride can be read.
     if riding.neutral.is_some() {
         *logged += time.delta_secs();

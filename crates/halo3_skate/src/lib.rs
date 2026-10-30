@@ -3,7 +3,8 @@
 //! and the controller; it hands back a posed skeleton and a camera.
 //!
 //! J (or both sticks clicked) drops the skater where the camera is and starts
-//! riding; J again goes back to flying. Without a pad the keyboard stands in:
+//! riding; J again goes back to flying. G (or the d-pad's up) jumps off onto
+//! foot, keeping the board's speed (`halo3_foot`). Without a pad the keyboard stands in:
 //! WASD is the left stick, the arrow keys the right stick, Space A, F B,
 //! R X, T Y, Q / E the bumpers, Z / X the triggers.
 //!
@@ -29,6 +30,7 @@ use blam_geometry::{Collision, TriggerVolume, rails};
 use halo3_core::coords::{to_halo_dir, to_render};
 use halo3_core::fly_camera::FlyCamera;
 pub use halo3_core::skate::{Respawn, RiderPose, SkateMotion, Skating, assets_root, scale};
+use halo3_core::skate::{Bail, Dismount, Mount, Ride, bail_pressed};
 use halo3_core::zones::LoadedBsps;
 
 /// The map data the skate world is built from, handed over by `main`: the
@@ -45,6 +47,8 @@ impl Plugin for SkatePlugin {
             .init_resource::<RiderPose>()
             .init_resource::<AutoStart>()
             .init_resource::<Respawn>()
+            .init_resource::<Dismount>()
+            .init_resource::<Mount>()
             .add_systems(Startup, start_worker)
             .init_resource::<SkateMotion>()
             .add_systems(
@@ -109,6 +113,10 @@ struct Host {
     /// Riding with neutral input (screenshot mode).
     neutral: bool,
     speed: f32,
+    /// The skater's feet and velocity in the renderer frame (m, m/s), for
+    /// jumping off onto foot.
+    feet: Vec3,
+    velocity: Vec3,
     state: String,
     status: String,
     /// The BSPs the skate world was last asked to hold.
@@ -129,6 +137,8 @@ impl Default for Host {
             packet: 0,
             neutral: false,
             speed: 0.0,
+            feet: Vec3::ZERO,
+            velocity: Vec3::ZERO,
             state: String::new(),
             status: String::new(),
             world: None,
@@ -437,6 +447,7 @@ fn update(
     mut rider: ResMut<RiderPose>,
     mut auto: ResMut<AutoStart>,
     mut respawn: ResMut<Respawn>,
+    (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
@@ -499,6 +510,8 @@ fn update(
         && let Some(p) = latest
     {
         host.speed = p.velocity.length() / k;
+        host.feet = p.root.w_axis.truncate() / k;
+        host.velocity = p.velocity / k;
         host.state = p.state;
         rider.active = true;
         rider.scale = k;
@@ -567,6 +580,39 @@ fn update(
             return;
         };
         let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+        return;
+    }
+    // Straight from walking onto the board, facing the way he moved or
+    // looked; the engine puts the wheels on the ground below.
+    if let Some((Ride::Board, bail)) = mount.0 {
+        mount.0 = None;
+        if !host.ready || host.active {
+            warn!("skate: not ready yet; {}", host.status);
+            return;
+        }
+        let flat = Vec3::new(bail.velocity.x, 0.0, bail.velocity.z);
+        let look = Quat::from_euler(EulerRot::YXZ, bail.yaw, 0.0, 0.0) * Vec3::NEG_Z;
+        let f = to_halo_dir(if flat.length() > 1.0 { flat } else { look });
+        let heading = f.y.atan2(f.x) + std::f32::consts::FRAC_PI_2;
+        let spawn = ((bail.position + Vec3::Y * 0.3) * k).to_array();
+        host.epoch = host.epoch.wrapping_add(1);
+        host.active = true;
+        host.neutral = false;
+        rider.skated = 0.0;
+        commands.entity(camera).insert(Skating);
+        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+        return;
+    }
+    // Jumping off onto foot, keeping the board's momentum.
+    if host.active && !host.neutral && bail_pressed(&keys, pad) {
+        host.epoch = host.epoch.wrapping_add(1);
+        host.active = false;
+        rider.active = false;
+        rider.bones.clear();
+        rider.camera = None;
+        let _ = send.send(Job::Suspend);
+        commands.entity(camera).remove::<Skating>();
+        dismount.0 = Some(Bail::new(host.feet, host.velocity, &transform));
         return;
     }
     if toggle && host.ready && !rider.bike && !rider.foot {
