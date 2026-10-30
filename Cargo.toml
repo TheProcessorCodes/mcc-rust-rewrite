@@ -20,6 +20,7 @@ members = [
     "crates/halo3_textures",
     "crates/halo3_weapons",
     "crates/halo3_world",
+    "crates/reflex_assets",
 ]
 
 [workspace.package]
@@ -50,6 +51,7 @@ halo3_swim = { path = "crates/halo3_swim" }
 halo3_textures = { path = "crates/halo3_textures" }
 halo3_weapons = { path = "crates/halo3_weapons" }
 halo3_world = { path = "crates/halo3_world" }
+reflex_assets = { path = "crates/reflex_assets" }
 # The same bevy as IW4L and the skate crates (skate-host wants 0.20 with
 # std, multi_threaded and bevy_log), so the skate glue ports over unchanged.
 bevy = { version = "0.20", default-features = false, features = [

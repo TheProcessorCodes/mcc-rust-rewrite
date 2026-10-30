@@ -33,7 +33,8 @@ the format descriptions the code is written from.
 | `crates/halo3_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
 | `crates/halo3_skate` | skating through the Skate 3 engine (`skate-host`) |
 | `crates/halo3_rider` | the Spartan on the board |
-| `crates/halo3_bike` | the dirt bike (MX vs ATV Unleashed's Pro 250) |
+| `crates/halo3_bike` | the dirt bike (MX vs ATV Unleashed's model with Reflex's numbers), drawn as Reflex's Dakumoto 450F in the Cortana kit |
+| `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model (no bevy) |
 | `crates/halo3_foot` | the Spartan on foot |
 | `crates/halo3_weapons` | the map's weapons, carried and fired on foot |
 | `crates/halo3_swim` | water, sinking and splashes |
@@ -135,8 +136,9 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       gait for the skeleton, an over-shoulder or eye camera; he carries the
       map's weapons and fires them with their tags' rates, magazines and
       projectile speeds (`docs/viewer.md` "On foot").
-- [x] Dirt bike (built, awaiting a playtest): B rides a stick-model motocross
-      bike with dual-stick physics (left stick bars, right stick rider, RT gas,
+- [x] Dirt bike (built, awaiting a playtest): B rides a motocross bike, Reflex's
+      Dakumoto 450F in the Cortana kit read from the user's own MX vs ATV Reflex
+      (`docs/format/reflex-bike.md`; a stick model without Reflex), with dual-stick physics (left stick bars, right stick rider, RT gas,
       LT brake), the Spartan standing on it (`docs/viewer.md` "Dirt bike").
 - [x] Guardian (`guardian`; built, awaiting a playtest): 26 clusters,
       471 instances, 258 k triangles, 53 spawns (all on a floor), 14,448 world
