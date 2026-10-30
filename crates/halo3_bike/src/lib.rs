@@ -30,6 +30,7 @@ pub mod pose;
 pub mod reflex;
 pub mod tune;
 pub mod unleashed;
+mod xinput;
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
@@ -89,9 +90,11 @@ impl Plugin for BikePlugin {
 struct TriggerLog {
     file: Option<std::fs::File>,
     started: std::time::Instant,
-    /// The right trigger as bevy last held it, and the throttle made of it.
+    /// The right trigger as last read, and the throttle made of it.
     rt: f32,
     throttle: f32,
+    /// The trigger came from XInput (else from bevy).
+    xinput: bool,
 }
 
 impl Default for TriggerLog {
@@ -108,6 +111,7 @@ impl Default for TriggerLog {
             started: std::time::Instant::now(),
             rt: 0.0,
             throttle: 0.0,
+            xinput: false,
         };
         log.line(&format!("start: {}", exe.map(|p| p.display().to_string()).unwrap_or_default()));
         log
@@ -249,7 +253,14 @@ fn trigger(pad: &Gamepad, button: B, axis: GamepadAxis, rested: &mut bool) -> f3
 /// half trigger is a quarter throttle and the travel spreads over the speeds.
 const THROTTLE_CURVE: f32 = 2.0;
 
-fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mut [bool; 2]) -> Controls {
+/// `xinput`: left and right trigger read from XInput (`xinput.rs`); when
+/// given they are used in place of bevy's.
+fn read_controls(
+    pad: Option<&Gamepad>,
+    xinput: Option<[f32; 2]>,
+    keys: &ButtonInput<KeyCode>,
+    rested: &mut [bool; 2],
+) -> Controls {
     let key = |k: KeyCode| keys.pressed(k) as i32 as f32;
     let mut c = Controls {
         steer: key(KeyCode::KeyD) - key(KeyCode::KeyA),
@@ -266,9 +277,16 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         let r = dead(pad.right_stick(), 0.15);
         c.steer = (c.steer + l.x).clamp(-1.0, 1.0);
         c.lean = (c.lean + r).clamp_length_max(1.0);
-        c.throttle = c.throttle.max(trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]).powf(THROTTLE_CURVE));
-        c.brake = c.brake.max(trigger(pad, B::LeftTrigger2, GamepadAxis::LeftZ, &mut rested[0]));
+        if xinput.is_none() {
+            let rt = trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]);
+            c.throttle = c.throttle.max(rt.powf(THROTTLE_CURVE));
+            c.brake = c.brake.max(trigger(pad, B::LeftTrigger2, GamepadAxis::LeftZ, &mut rested[0]));
+        }
         c.reverse |= pad.pressed(B::South);
+    }
+    if let Some([lt, rt]) = xinput {
+        c.throttle = c.throttle.max(rt.powf(THROTTLE_CURVE));
+        c.brake = c.brake.max(lt);
     }
     c
 }
@@ -362,12 +380,13 @@ fn ride(
     if reset {
         bike.reset_here(world);
     }
+    let xinput = xinput::triggers();
     let controls = match riding.neutral {
         Some(throttle) => Controls {
             throttle,
             ..default()
         },
-        None => read_controls(pad, &keys, &mut riding.trigger_axes),
+        None => read_controls(pad, xinput, &keys, &mut riding.trigger_axes),
     };
     let dt = time.delta_secs().min(0.1);
 
@@ -398,12 +417,14 @@ fn ride(
 
     bike.step(world, controls, dt);
     // Diagnostic for the throttle: what the pad sends and what the bike does.
-    let rt = pad.and_then(|p| p.get(B::RightTrigger2)).unwrap_or(0.0);
+    let rt = xinput.map(|t| t[1]).or_else(|| pad.and_then(|p| p.get(B::RightTrigger2))).unwrap_or(0.0);
     if (controls.throttle - log.throttle).abs() >= 0.01 || (rt - log.rt).abs() >= 0.01 {
         log.rt = rt;
         log.throttle = controls.throttle;
+        log.xinput = xinput.is_some();
         let text = format!(
-            "bike input: RT button {:?}, RZ axis {:?}, throttle {:.2}, {:.0} km/h, gear {}, {:.0} rpm ({} pads)",
+            "bike input: XInput RT {}, bevy RT {:?}, RZ axis {:?}, throttle {:.2}, {:.0} km/h, gear {}, {:.0} rpm ({} pads)",
+            xinput.map_or("none".to_string(), |t| format!("{:.0}/255", t[1] * 255.0)),
             pad.and_then(|p| p.get(B::RightTrigger2)),
             pad.and_then(|p| p.get(GamepadAxis::RightZ)),
             controls.throttle,
@@ -706,9 +727,10 @@ fn show_status(
         return;
     };
     let status = format!(
-            "bike ({}) RT {:.0}% -> gas {:.0}%, {:.0} km/h, gear {}, {:.0} rpm, {} wheel{} down{}",
+            "bike ({}) RT {:.0}% ({}) -> gas {:.0}%, {:.0} km/h, gear {}, {:.0} rpm, {} wheel{} down{}",
             physics::setup().name,
             log.rt * 100.0,
+            if log.xinput { "XInput" } else { "bevy" },
             log.throttle * 100.0,
             b.speed() * 3.6,
             b.engine.gear + 1,
