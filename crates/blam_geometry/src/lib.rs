@@ -6,6 +6,7 @@
 pub mod atmosphere;
 pub mod camera_fx;
 pub mod collision;
+pub mod lift;
 pub mod lightmap;
 pub mod materials;
 pub mod movement;
@@ -22,6 +23,7 @@ pub mod zones;
 
 use std::path::Path;
 
+pub use lift::{LiftPush, LiftShape, LiftVolume};
 pub use movement::Movement;
 pub use rails::RailCensus;
 pub use scene::{

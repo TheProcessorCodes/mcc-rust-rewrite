@@ -74,6 +74,8 @@ const FREE_ROAM: &[[&str; 3]] = &[
 /// On-foot controls (`foot/mod.rs`): keyboard, controller, what it does.
 const FOOT: &[[&str; 3]] = &[
     ["F", "d-pad up", "get on foot / back to flying"],
+    ["B", "View / Back", "back on the dirt bike, keeping your speed"],
+    ["J", "click both sticks", "back on the skateboard"],
     ["W A S D", "left stick", "move"],
     ["mouse", "right stick", "aim"],
     ["Space", "A", "jump"],
@@ -90,6 +92,9 @@ const BIKE: &[[&str; 2]] = &[
     ["left trigger", "brake"],
     ["A (hold)", "back up"],
     ["Y", "stand the bike back up"],
+    ["d-pad up (G)", "jump off on foot, keeping the bike's speed"],
+    ["LB + d-pad down", "set the session marker"],
+    ["LB + d-pad up (hold)", "back to the session marker"],
     ["View / Back", "get off the bike"],
     ["0 (keyboard)", "physics tuning menu"],
     ["Start", "pause"],
@@ -106,8 +111,11 @@ const SKATE: &[[&str; 2]] = &[
     ["RB (hold)", "grab a ledge or coping (hand plants)"],
     ["Y", "step off the board / back on"],
     ["A or X", "get up after a bail"],
+    ["LB + d-pad down", "set the session marker"],
+    ["LB + d-pad up (hold)", "back to the session marker"],
     ["off the board: X", "jump"],
     ["off the board: LT / RT", "drop / throw the board"],
+    ["d-pad up (G)", "jump off on foot, keeping the board's speed"],
     ["click both sticks", "back to flying"],
     ["Start", "pause"],
 ];

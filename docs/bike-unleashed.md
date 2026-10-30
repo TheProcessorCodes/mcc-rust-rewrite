@@ -95,7 +95,10 @@ Reflex's rules (from `D:\reflex-tools\physics`, as the earlier Reflex-style bike
 
 - Reflex's mass (177 kg), inertia, springs (forks 20.2 kN/m, shock 13.9 kN/m), bump / rebound
   dampers, travel (0.40 / 0.37 m), brakes (339 / 475 N·m), torque curve (55 N·m, 11,500 rpm
-  limiter, 1,500 idle), five overall ratios (scaled for our bigger tyre) and ground drag. Gravity 1 g.
+  limiter, 1,500 idle), five overall ratios (scaled for our tyre) and ground drag. Gravity 1 g.
+- The shape of the bike drawn, Reflex's Dakumoto 450F (2026-10-29): its axles (1.46 m wheelbase),
+  tyres (0.345 / 0.335 m), rake (29.2°), grips, pegs and probe spheres. `docs/format/reflex-bike.md`
+  has the measurements and the before / after table.
 - The bars follow Reflex's steering-for-speed curve (30° standing, 9.5° at 50 mph), the stick
   squared and lagged 0.15 s; the rider leaning sideways adds 20 % to the bars.
 - The lean follows Reflex's lean-for-speed curve (5.6° standing to 34° at 80 mph), lagged
@@ -113,6 +116,9 @@ brakes, grip, side stiffness, slide grip, steering lock and lag, lean depth and 
 influence, weight shift, wheelie hold, spring, damping, air rotation, air damping and gravity.
 Each row reads out what the value means on the tuned bike. Closing the menu saves the values to
 `bike-tuning.json` next to the exe; the next start loads them (Delete puts all back to stock).
+Under the sliders are five setup slots, kept in `bike-setups.json` next to the exe: Shift+1 to 5
+(or Ctrl) saves the current setup to a slot and 1 to 5 loads one, or pick the "Save to slot" /
+"Load slot" row, choose a slot with A / D and press Enter (A on a pad), or click a slot.
 
 ## Not done yet
 

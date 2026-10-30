@@ -3,7 +3,8 @@
 //! `fire.rs` for rounds in flight and their marks, `hud.rs` for the
 //! crosshair and ammo count).
 //!
-//! On foot (`halo3_foot`) the Spartan starts with the assault rifle. Walking
+//! On foot (`halo3_foot`) the Spartan starts with the first of
+//! `halo3_foot::STARTING_WEAPONS` the map has: the sniper rifle. Walking
 //! over a weapon he does not carry takes it into a free hand; over one he
 //! carries, takes its ammo. E (X or RB on a pad) swaps the weapon in his
 //! hands for the one at his feet, dropping his own.

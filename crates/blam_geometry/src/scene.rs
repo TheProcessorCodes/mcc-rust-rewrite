@@ -300,6 +300,9 @@ pub struct Scene {
     /// crates, the map's own vehicles), in placement order; their pieces
     /// are in `placements`.
     pub objects: Vec<SceneObject>,
+    /// Volumes that push whoever is in them: gravity lifts, man cannons
+    /// (`lift.rs`).
+    pub lifts: Vec<crate::LiftVolume>,
 }
 
 /// One object the scenario places.

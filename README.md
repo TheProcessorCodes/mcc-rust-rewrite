@@ -34,7 +34,8 @@ the format descriptions the code is written from.
 | `crates/halo3_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
 | `crates/halo3_skate` | skating through the Skate 3 engine (`skate-host`) |
 | `crates/halo3_rider` | the Spartan on the board |
-| `crates/halo3_bike` | the dirt bike (MX vs ATV Unleashed's Pro 250) |
+| `crates/halo3_bike` | the dirt bike (MX vs ATV Unleashed's model with Reflex's numbers), drawn as Reflex's Dakumoto 450F in the Cortana kit |
+| `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model (no bevy) |
 | `crates/halo3_foot` | the Spartan on foot |
 | `crates/halo3_weapons` | the map's weapons, carried and fired on foot |
 | `crates/halo3_script` | runs a map's own scripts: threads at 30 ticks a second, objects created, destroyed, dropped and moved, devices, trigger volumes, insertion points; hooks for the AI and device animation |
@@ -63,10 +64,10 @@ A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
 install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
 `sidewinder` Avalanche, `guardian` Guardian,
-`lockout` Blackout, `chill` Narrows, `armory` Rat's Nest, `shrine` Sandtrap,
+`blackout` Blackout (its file is `lockout.map`), `chill` Narrows, `armory` Rat's Nest, `shrine` Sandtrap,
 `sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
-`halo2\h2_maps_win64_dx11` (`coagulation`; `h2:NAME` when Halo 3 has a map of
-that name, see `docs/viewer.md` "Halo 2 maps").
+`halo2\h2_maps_win64_dx11` (`coagulation`, `lockout` Lockout; `h2:NAME` / `h3:NAME` when
+both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
 
 ## Status
 
@@ -138,8 +139,9 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       gait for the skeleton, an over-shoulder or eye camera; he carries the
       map's weapons and fires them with their tags' rates, magazines and
       projectile speeds (`docs/viewer.md` "On foot").
-- [x] Dirt bike (built, awaiting a playtest): B rides a stick-model motocross
-      bike with dual-stick physics (left stick bars, right stick rider, RT gas,
+- [x] Dirt bike (built, awaiting a playtest): B rides a motocross bike, Reflex's
+      Dakumoto 450F in the Cortana kit read from the user's own MX vs ATV Reflex
+      (`docs/format/reflex-bike.md`; a stick model without Reflex), with dual-stick physics (left stick bars, right stick rider, RT gas,
       LT brake), the Spartan standing on it (`docs/viewer.md` "Dirt bike").
 - [x] Guardian (`guardian`; built, awaiting a playtest): 26 clusters,
       471 instances, 258 k triangles, 53 spawns (all on a floor), 14,448 world
@@ -156,7 +158,7 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       hand (M; the Warthog run on 120_halo); board roll, grind and landing
       sounds while skating. K mutes, `-` / `=` volume, `HALO3_AUDIO=0` off
       (`docs/format/sound.md`, `docs/viewer.md` "Sound").
-- [x] Blackout (`lockout`, DLC; built, awaiting a playtest): 21 clusters,
+- [x] Blackout (`blackout`, file `lockout.map`, DLC; built, awaiting a playtest): 21 clusters,
       447 instances, 442 k triangles, 80 spawns (all on a floor), 19,326
       world and 166,536 instanced collision triangles, about 4,150 rails.
       A night sky: the sky's lit pieces get a tenth of the daylight
@@ -224,10 +226,19 @@ that name, see `docs/viewer.md` "Halo 2 maps").
       scenery 2,324, crates 2); the collision BSP gives 8,586 world and
       4,502 instanced triangles (no broken loops); 123 spawns, all on a
       floor; base and detail textures, the ground's detail blend, foliage,
-      glows drawn. Not yet: Halo 2's lightmaps (default sun and sky) and
-      its sky (a plain blue clear colour). Skating (610 rails), the bike
+      glows drawn. Lit by its own lightmap and fogged by its sky's fog
+      (see Lockout). Not yet: its sky model (the fog colour stands in). Skating (610 rails), the bike
       and the Spartan rider (borrowed from Valhalla) run on it. Pinned by `cargo test`
       (`crates/blam_h2/tests/coagulation.rs`).
+- [x] Halo 2: Lockout (`lockout`; Halo 3's Blackout, also `lockout.map`,
+      is now `blackout`; built, awaiting a playtest): 16 clusters with
+      7,049 triangles, 75 instances 7,414, 15 crates, 5 scenery; 5,570
+      world and 7,312 instanced collision triangles, 66 spawns, 675 rails,
+      all 33 bitmaps decoded. No HaloExportH2 export to check against; our
+      own counts are pinned (`crates/blam_h2/tests/lockout.rs`). Lit by
+      its lightmap (65 pages packed into one atlas, the light fixtures from
+      the nearest surface) and the sky's blue fog (`docs/format/halo2.md`
+      7, 10). Not yet: the sky model; a few small black panels on the boxes.
 - [x] Milestone 3b: collision and rails fed to the skate world (playtested
       on Valhalla).
 - [x] Milestone 4: Skate 3 crates plugged in (path dependency on
