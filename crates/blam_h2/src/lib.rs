@@ -456,6 +456,14 @@ fn model_meshes(map: &Map, mode: u32, scene: &mut Scene, materials: &mut Materia
         .ok_or_else(|| Error::Invalid(format!("{model_name}: no data")))?;
     let shaders: Vec<u32> = r.block(96, 32)?.into_iter().map(|s| s.tag_ref(8)).collect::<Result<_>>()?;
     let sections = r.block(36, 92)?;
+    // Compression bounds (+0x14, 0x38 each; the first one serves every
+    // section): x, y, z then u, v as min/max float pairs. Model positions
+    // and texcoords are stored -1..1 and stretched over these.
+    let bounds = match r.block(0x14, 0x38)?.into_iter().next() {
+        Some(c) => Some((0..10).map(|k| c.f32(4 * k)).collect::<Result<Vec<f32>>>()?),
+        None => None,
+    };
+    let expand = |v: f32, lo: f32, hi: f32| lo + (v + 1.0) * 0.5 * (hi - lo);
     let mut out = Vec::new();
     for region in r.block(28, 16)? {
         let Some(perm) = region.block(8, 16)?.into_iter().next() else { continue };
@@ -474,7 +482,15 @@ fn model_meshes(map: &Map, mode: u32, scene: &mut Scene, materials: &mut Materia
             let shader = usize::try_from(k).ok().and_then(|k| shaders.get(k)).copied().unwrap_or(u32::MAX);
             materials.index(map, scene, shader)
         })?;
-        if let Some(mesh) = mesh {
+        if let Some(mut mesh) = mesh {
+            if let Some(b) = &bounds {
+                for p in &mut mesh.positions {
+                    *p = Vec3::new(expand(p.x, b[0], b[1]), expand(p.y, b[2], b[3]), expand(p.z, b[4], b[5]));
+                }
+                for t in &mut mesh.uvs {
+                    *t = [expand(t[0], b[6], b[7]), expand(t[1], b[8], b[9])];
+                }
+            }
             scene.meshes.push(mesh);
             out.push(scene.meshes.len() as u32 - 1);
         }

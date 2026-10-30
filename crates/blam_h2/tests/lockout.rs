@@ -41,6 +41,21 @@ fn lockout_counts() {
     assert_eq!(tris(Kind::Scenery), (5, 620));
     assert_eq!(tris(Kind::Crate), (15, 1296));
     assert_eq!(tris(Kind::Sky), (7, 234));
+    // Prop sizes: render model positions are stored -1..1 and stretched
+    // over the model's compression bounds. Unstretched, every prop was a
+    // 2 wu cube's worth (giant rocks on the rooftops).
+    let size = |name: &str| {
+        let p = scene.placements.iter().find(|p| p.name.starts_with(name)).expect(name);
+        let m = &scene.meshes[p.mesh as usize];
+        let (lo, hi) = m.positions.iter().fold((glam::Vec3::MAX, glam::Vec3::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        hi - lo
+    };
+    let power = size("power_module");
+    assert!((power.x - 0.256).abs() < 1e-3 && (power.z - 0.8192).abs() < 1e-3, "{power}");
+    let flag = size("flag_base");
+    assert!((flag.x - 0.44).abs() < 1e-3 && (flag.z - 0.05).abs() < 1e-3, "{flag}");
+    // The lift's crate is a 0.2 wu grey marker tucked under the pad.
+    assert!(size("lockout_lift_tube").max_element() < 0.21);
     assert!(loaded.stats.models_failed.is_empty(), "{:?}", loaded.stats.models_failed);
     assert!(loaded.stats.bitmaps_failed.is_empty(), "{:?}", loaded.stats.bitmaps_failed);
     assert_eq!(loaded.bitmaps.len(), 33);
