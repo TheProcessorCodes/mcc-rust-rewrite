@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use glam::{Mat4, Vec2, Vec3};
 use halo3_anim::MachinePoser;
-use halo3_bike::physics::World;
+use halo3_bike::physics::{Bike, Controls, World};
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_script::vm::{Config, WorldApi};
 use halo3_script::{DevicePoser, NoAi, Runtime, setup};
@@ -175,12 +175,37 @@ fn island_and_tunnel_are_ridable() {
         eprintln!("{what}: {} ring points, collision within {worst:.3} wu of the drawn island", ring.len());
     };
     check(&rt, "before");
+    // A bike standing on the island where the player comes on, as it
+    // lurches up: carried with it, not left inside it.
+    let (bx, by) = *ring
+        .iter()
+        .min_by(|a, b| Vec2::new(a.0 - 54.0, a.1 + 225.0).length().total_cmp(&Vec2::new(b.0 - 54.0, b.1 + 225.0).length()))
+        .unwrap();
+    let rest = height(&mesh, bx, by, 0.0).unwrap();
+    let mut bike = Bike::dropped(&world, to_render(Vec3::new(bx, by, rest + 1.0)), 0.0);
+    for _ in 0..60 {
+        bike.step(&world, Controls::default(), 1.0 / 60.0);
+    }
+    let bike_above = |rt: &Runtime, bike: &Bike| {
+        let p = to_halo(bike.position);
+        let motion = rt.objects.state[island].transform * base.inverse();
+        let drawn: Vec<[Vec3; 3]> = mesh.iter().map(|t| t.map(|q| motion.transform_point3(q))).collect();
+        p.z - height(&drawn, p.x, p.y, p.z + 1.0).unwrap_or(f32::NAN)
+    };
+    let sitting = bike_above(&rt, &bike);
     player.at = centre("100_island_trig01");
-    step(&mut rt, &mut player, 30);
-    halo3_script::publish_collision(&rt.objects, &mut solid, &mut posed);
-    check(&rt, "tilting");
-    step(&mut rt, &mut player, 120);
-    halo3_script::publish_collision(&rt.objects, &mut solid, &mut posed);
+    for tick in 0..150 {
+        step(&mut rt, &mut player, 1);
+        halo3_script::publish_collision(&rt.objects, &mut solid, &mut posed);
+        bike.step(&world, Controls::default(), 1.0 / 60.0);
+        bike.step(&world, Controls::default(), 1.0 / 60.0);
+        let above = bike_above(&rt, &bike);
+        assert!((above - sitting).abs() < 0.3, "tick {tick}: the bike sat {sitting:.2} wu above the island, now {above:.2}");
+        if tick == 30 {
+            check(&rt, "tilting");
+        }
+    }
+    eprintln!("bike carried: {sitting:.2} wu above the island before, {:.2} after the lurch", bike_above(&rt, &bike));
     let lifted = rt.objects.state[island].transform.w_axis.z - base.w_axis.z;
     let tilt = rt.objects.state[island].transform * base.inverse();
     assert!(!tilt.abs_diff_eq(Mat4::IDENTITY, 1e-3), "tilt_up moved nothing (lifted {lifted})");

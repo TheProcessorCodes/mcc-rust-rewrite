@@ -378,8 +378,11 @@ Two bugs from the first bike playtest of `--insertion trench_run`:
   at `trench_run_100_trig08`. Fix: solid objects a script moves publish their motion
   (`halo3_core::objects::set_object_pose`, from `halo3_script::publish_collision`); the bike's
   collision world (also the Spartan's, the AI's and the guns') looks their triangles up where
-  they are now, and the skater's collision is rebuilt with them a second after they settle. All
-  four islands (`tilt_up`, `tilt`, `other_tilt`) get this.
+  they are now, and the skater's collision is rebuilt with them a second after they settle. The
+  lurch is too fast for the bike's springs (about 2.5 wu/s up), so the bike and the Spartan are
+  also carried by what they stand on when it moves (`World::moving_ground`). All four islands
+  (`tilt_up`, `tilt`, `other_tilt`) get this. The lift itself is Bungie's animation as read
+  (frames 0-2 of `tilt_up` rise 0.96 -> 3.70 wu, then hold); not compared against the real game.
 - **Invisible wall halfway through the first tunnel.** Not a missed trigger: BSPs 100 and 110
   meet at y = 37.5 in the tunnel and each closes its collision there with a flat cap (one facing
   each way). The game walks through BSP seams; we collided with BSP 100's cap. Fix:
@@ -390,9 +393,12 @@ Two bugs from the first bike playtest of `--insertion trench_run`:
   here, where the game's Warthog would push the crate aside.
 - Checked: `halo3_anim/tests/warthog_run_collision.rs` (scripts headless, the bike's own world:
   95 points round island 1 within 0.07 wu of the drawn island before, during and after the tilt
-  and 20 s riding round; floor and no wall at 1 m steps through the first tunnel at x 52 and
-  58.7; it fails on the seam without the fix), `blam_geometry/tests/objects.rs`
-  (`seam_between_loaded_bsps_is_open`), headless `--bike` runs with `HALO3_SCRIPT_TRACE=1`.
+  and 20 s riding round; a bike standing on it stays 0.22 wu above it through the lurch; floor
+  and no wall at 1 m steps through the first tunnel at x 52 and 58.7; it fails on the seam
+  without the fix), `blam_geometry/tests/objects.rs` (`seam_between_loaded_bsps_is_open`),
+  headless `--bike` runs with `HALO3_SCRIPT_TRACE=1`: through the tunnel the bike crosses
+  y = 37.5 at 100 km/h; onto island 1 it is lifted with the island (z -28.2 -> -23.5) where
+  before the carrying it fell through. Not playtested.
 
 ## Mission music (2026-10-30, branch `mission-music`)
 

@@ -345,6 +345,34 @@ impl World {
         }
     }
 
+    /// The object a script is moving that the ray first hits, and where
+    /// that object is now (its motion from its placement, renderer frame);
+    /// `None` when the ray hits nothing or something that does not move.
+    /// A rider on it is carried along by the change between two calls.
+    pub fn moving_ground(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(u32, Mat4)> {
+        if self.owners.is_empty() {
+            return None;
+        }
+        let mut candidates = Vec::new();
+        let end = origin + dir * max;
+        let mid = (origin + end) * 0.5;
+        let reach = Vec2::new(end.x - origin.x, end.z - origin.z).length() * 0.5 + 0.1;
+        self.gather_along(mid, reach, (origin, end), &mut candidates);
+        let moved = self.moved.read().unwrap_or_else(|e| e.into_inner());
+        if moved.objects.is_empty() {
+            return None;
+        }
+        let hit = self.raycast(&candidates, origin, dir, max)?;
+        // The triangle that was hit: the nearest along the ray at that distance.
+        let owner = candidates.iter().copied().find(|&i| {
+            let t = self.triangle(&moved, i);
+            let n = t.normal;
+            (hit.point - t.a).dot(n).abs() < 1e-3 && closest_point(hit.point, t.a, t.b, t.c).distance_squared(hit.point) < 1e-6
+        })?;
+        let object = self.owners[owner as usize];
+        moved.motion(object).map(|m| (object, *m))
+    }
+
     /// Triangle `i` where it is now (moved with its object).
     fn triangle(&self, moved: &Moved, i: u32) -> Triangle {
         let t = self.triangles[i as usize];
@@ -557,6 +585,9 @@ pub struct Bike {
     safe_clock: f32,
     candidates: Vec<u32>,
     contacts: Vec<(Vec3, f32)>,
+    /// The moving object under the bike and where it was last frame
+    /// (`World::moving_ground`), to carry the bike along with it.
+    platform: Option<(u32, Mat4)>,
 }
 
 /// A rotation that faces the bike along `heading` (radians about +Y, 0 is +Z).
@@ -596,6 +627,7 @@ impl Bike {
             safe: Vec::new(),
             safe_clock: 0.0,
             candidates: Vec::new(),
+            platform: None,
             contacts: Vec::new(),
         }
     }
@@ -661,6 +693,23 @@ impl Bike {
     }
 
     /// Advances by `dt` seconds in fixed sub-steps.
+    /// Moves the bike with what it stands on when a script moves that (a
+    /// Warthog run island lurching up under it): the springs alone would
+    /// let a surface rising metres a second pass through the wheels.
+    fn ride_platform(&mut self, world: &World) {
+        let up = self.up();
+        let ground = world.moving_ground(self.position + up * 0.5, -up, 2.5);
+        if let (Some((object, now)), Some((was_on, then))) = (ground, self.platform)
+            && object == was_on
+        {
+            let delta = now * then.inverse();
+            self.position = delta.transform_point3(self.position);
+            let (_, turn, _) = delta.to_scale_rotation_translation();
+            self.rotation = (turn * self.rotation).normalize();
+        }
+        self.platform = ground;
+    }
+
     pub fn step(&mut self, world: &World, controls: Controls, dt: f32) {
         const SUB: f32 = 1.0 / 240.0;
         // A frame with no time in it (the first frame can be one) would
@@ -669,6 +718,7 @@ impl Bike {
         if dt <= 0.0 || !dt.is_finite() {
             return;
         }
+        self.ride_platform(world);
         let mut controls = controls;
         if let Some(t) = self.crashed.as_mut() {
             *t -= dt;
