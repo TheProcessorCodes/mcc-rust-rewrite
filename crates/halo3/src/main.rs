@@ -1,6 +1,7 @@
 //! `halo3`: open a Halo 3 map and fly around it.
 //!
 //! ```text
+//! halo3                  the map menu: pick a map, Start Game (`menu.rs`)
 //! halo3 <map>            riverworld, or a path to a .map
 //! halo3 --test-scene     a made-up room, for checking the camera
 //!
@@ -36,6 +37,7 @@
 //! `lockout.map`, is `blackout`.
 
 mod halo2;
+mod menu;
 mod pause;
 mod shot;
 
@@ -103,6 +105,11 @@ fn codename(arg: &str) -> (Option<u8>, &str) {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // No map (only options, or nothing): the map menu, which starts the
+    // game again with the chosen map.
+    if args.first().is_none_or(|a| a.starts_with("--") && a != "--help" && a != "--test-scene") {
+        return menu::run(&args);
+    }
     let mut foot_tuning = None;
     let mut arsenal = None;
     let mut plain_fog = None;
@@ -111,6 +118,7 @@ fn main() -> anyhow::Result<()> {
     let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
+  halo3 [--menu-shot FILE [--menu-tab N] [--menu-pick N] [--size WxH]]   the map menu
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 <map> [--foot]
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
