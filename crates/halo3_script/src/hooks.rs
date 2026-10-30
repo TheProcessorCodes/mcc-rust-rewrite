@@ -77,4 +77,11 @@ pub trait DevicePoser: Send + Sync + 'static {
         overlay_track: Option<&str>,
         overlay: f32,
     ) -> Option<Mat4>;
+
+    /// A point of the object (its own frame, world units) whose drop says
+    /// when a falling device has really gone: the animated root node's rest
+    /// position. `None`: the object's origin.
+    fn anchor(&self, _tag: u32) -> Option<glam::Vec3> {
+        None
+    }
 }

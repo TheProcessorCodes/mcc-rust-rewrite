@@ -10,6 +10,10 @@ use crate::hooks::DevicePoser;
 pub const GRAVITY: f32 = 9.81 / 3.048;
 /// A dropped plate falls this long before it is gone.
 pub const FALL_SECONDS: f32 = 6.0;
+/// An animated falling device (a Warthog run island) loses its collision
+/// once its root has dropped this far, world units (about 4.5 m): it stays
+/// a floor while it creaks and tilts.
+pub const DEVICE_DROP: f32 = 1.5;
 
 /// One damage section of an object's model, as the runtime needs it.
 #[derive(Clone, Debug)]
@@ -286,15 +290,21 @@ impl Objects {
                 let pose = scene.and_then(|o| {
                     poser.and_then(|p| p.pose(o, tag?, s.device.track.as_deref(), s.device.position, s.device.overlay_track.as_deref(), s.device.overlay))
                 });
-                let t = match pose {
-                    Some(m) => base * m,
-                    None => fallback_device_pose(base, &s.device),
+                let (t, solid) = match pose {
+                    // Its own animation: solid while it tilts, gone once it
+                    // has dropped (the collision does not move with it).
+                    Some(m) => {
+                        let t = base * m;
+                        let anchor = tag.and_then(|t| poser?.anchor(t)).unwrap_or(Vec3::ZERO);
+                        let drop = base.transform_point3(anchor).z - t.transform_point3(anchor).z;
+                        (t, !(s.device.falls() && drop > DEVICE_DROP))
+                    }
+                    None => (fallback_device_pose(base, &s.device), !(s.device.falls() && s.device.position > 0.02)),
                 };
                 if t != s.transform {
                     s.transform = t;
                     changed = true;
                 }
-                let solid = !(s.device.falls() && s.device.position > 0.02);
                 if solid != s.solid {
                     s.solid = solid;
                     changed = true;

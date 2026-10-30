@@ -10,6 +10,7 @@
 //! Set up by `main`: [`prepare`] marks the objects scripts move (before the
 //! world is built), [`PendingScripts`] carries the runtime in.
 
+pub mod ai_bridge;
 pub mod hooks;
 pub mod objects;
 pub mod setup;
@@ -25,6 +26,7 @@ use halo3_core::objects::{ObjectChunk, ScriptHidden, set_collision_removed};
 use halo3_core::skate::{Respawn, RiderPose};
 use halo3_core::zones::{LoadedBsps, Zones, load_zone_set};
 
+pub use ai_bridge::BridgeAi;
 pub use hooks::{AiHooks, DevicePoser, HookContext, NoAi};
 pub use value::{ObjectRef, Value};
 pub use vm::{Config, Runtime, WorldApi};
