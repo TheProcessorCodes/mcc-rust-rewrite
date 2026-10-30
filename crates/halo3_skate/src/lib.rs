@@ -28,6 +28,7 @@ use skate_host::bridge::{InputFrame, Pose, PreparedCollision, Session};
 use blam_geometry::{Collision, TriggerVolume, rails};
 
 use halo3_core::coords::{to_halo_dir, to_render};
+use halo3_core::flag::SessionFlag;
 use halo3_core::fly_camera::FlyCamera;
 pub use halo3_core::skate::{Respawn, RiderPose, SkateMotion, Skating, assets_root, scale};
 use halo3_core::skate::{Bail, Dismount, Mount, Ride, bail_pressed};
@@ -49,6 +50,7 @@ impl Plugin for SkatePlugin {
             .init_resource::<Respawn>()
             .init_resource::<Dismount>()
             .init_resource::<Mount>()
+            .init_resource::<SessionFlag>()
             .add_systems(Startup, start_worker)
             .init_resource::<SkateMotion>()
             .add_systems(
@@ -98,6 +100,9 @@ enum Reply {
     Swapped(usize, usize),
     Activated(u64, Pose),
     Pose(u64, Pose),
+    /// The engine's session marker moved here (skate space, 0.2 m above
+    /// the deck).
+    Marker(Vec3),
     Error(String),
 }
 
@@ -222,6 +227,8 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                 let mut accumulated = 0.0;
                 // The latest world request, for dropping stale installs.
                 let mut request = 0u64;
+                // The session marker last reported.
+                let mut marker: Option<Vec3> = None;
                 while let Ok(job) = jobs.recv() {
                     let job = match job {
                         Job::World(mask) if session.is_some() => {
@@ -349,6 +356,15 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                                 if publish.send(Reply::Pose(epoch, p)).is_err() {
                                     break;
                                 }
+                                let now = session.session_marker();
+                                if now != marker {
+                                    marker = now;
+                                    if let Some(m) = now
+                                        && publish.send(Reply::Marker(m)).is_err()
+                                    {
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
@@ -454,6 +470,7 @@ fn update(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut cameras: Query<(Entity, &mut Transform, &mut FlyCamera, &mut Projection)>,
     loaded: Res<LoadedBsps>,
+    mut flag: ResMut<SessionFlag>,
 ) {
     let host = &mut *host;
     let Some(receive) = host.receive.as_ref() else {
@@ -491,6 +508,10 @@ fn update(
             }
             Reply::Activated(e, p) | Reply::Pose(e, p) if e == host.epoch => latest = Some(p),
             Reply::Activated(..) | Reply::Pose(..) => {}
+            Reply::Marker(m) => {
+                // The deck rides about 0.1 m up: the flag goes in the ground.
+                flag.0 = Some((m - Vec3::Y * 0.3) / host.scale);
+            }
             Reply::Error(e) => failed = Some(e),
         }
     }

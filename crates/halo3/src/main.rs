@@ -40,7 +40,7 @@ mod shot;
 
 use halo3_audio as audio;
 use halo3_bike as bike;
-use halo3_core::{falls, fly_camera};
+use halo3_core::{falls, flag, fly_camera};
 use halo3_foot as foot;
 use halo3_rider as rider;
 use halo3_skate as skate;
@@ -341,6 +341,7 @@ fn main() -> anyhow::Result<()> {
         .add_plugins((
             pause::PausePlugin,
             fly_camera::FlyCameraPlugin,
+            flag::SessionFlagPlugin,
             world::WorldPlugin,
         ))
         .run();
