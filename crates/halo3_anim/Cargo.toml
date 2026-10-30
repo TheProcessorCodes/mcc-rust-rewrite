@@ -12,3 +12,8 @@ blam_anim = { workspace = true }
 blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
 halo3_core = { workspace = true }
+halo3_script = { workspace = true }
+
+[dev-dependencies]
+blam_script = { workspace = true }
+glam = { workspace = true }

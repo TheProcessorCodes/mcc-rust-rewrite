@@ -31,11 +31,14 @@ use std::sync::Arc;
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 
-use blam_anim::{AnimId, Clip, Graph, Library, Motion, NodeMap, Pose, Skeleton};
+use blam_anim::{Clip, Graph, Library, Motion, NodeMap, Skeleton};
 use blam_cache::{CacheFile, TagEntry};
 use blam_geometry::WORLD_UNIT_METRES;
 
-pub use blam_anim::{AnimKind, FPS};
+pub mod devices;
+
+pub use blam_anim::{AnimId, AnimKind, FPS, Pose, Xform};
+pub use devices::MachinePoser;
 
 /// Halo model space (world units, Z up) to the renderer's frame (metres, Y
 /// up), the same turn the world and the rider use.
@@ -159,6 +162,35 @@ impl AnimModel {
 
     fn map(&self, graph: u32) -> Option<&NodeMap> {
         self.maps.get(&graph)
+    }
+
+    /// How fast an animation's root motion carries the object, world units
+    /// a second over the ground (`move_front`'s walking speed). `None` when
+    /// it has no root motion.
+    pub fn root_speed(&self, id: AnimId) -> Option<f32> {
+        let clip = self.clip(id)?;
+        if clip.movement.is_empty() || clip.duration() <= 0.0 {
+            return None;
+        }
+        let m = clip.motion_until(clip.frame_count.saturating_sub(1) as f32);
+        Some(Vec2::new(m.dx, m.dy).length() / clip.duration())
+    }
+
+    /// A local pose from named animations laid over the rest pose at
+    /// positions 0..1 (first to last frame), in order: a device machine's
+    /// position track, then its overlay track. Names the graph lacks are
+    /// skipped; `None` when none was found.
+    pub fn pose_at(&self, layers: &[(&str, f32)]) -> Option<Pose> {
+        let mut pose = Pose::rest(&self.skeleton);
+        let mut any = false;
+        for &(name, position) in layers {
+            let Some(id) = self.named(name) else { continue };
+            if let (Some(clip), Some(map)) = (self.clip(id), self.map(id.graph)) {
+                pose.apply(clip, blam_anim::frame_at_position(clip, position), map, 1.0);
+                any = true;
+            }
+        }
+        any.then_some(pose)
     }
 }
 
@@ -322,6 +354,12 @@ impl Animator {
     /// The label of the base animation playing.
     pub fn current(&self) -> Option<&str> {
         self.base.as_ref().map(|b| b.label.as_str())
+    }
+
+    /// The base animation's own ground speed (wu/s at speed 1), when it
+    /// has root motion: divide an actor's speed by it for `set_speed`.
+    pub fn base_root_speed(&self) -> Option<f32> {
+        self.model.root_speed(self.base.as_ref()?.id)
     }
 
     /// Adds the stance's overlay `name` (`fire_1`, `melee`, `look`) on top.
