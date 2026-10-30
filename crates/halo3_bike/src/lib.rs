@@ -102,6 +102,8 @@ struct Riding {
     rig: Option<pose::Rig>,
     /// Holding the throttle with the sticks at rest (screenshot mode).
     neutral: Option<f32>,
+    /// Left and right trigger axes seen at rest (see `trigger`).
+    trigger_axes: [bool; 2],
     /// Chase camera: where it is and the way it looks along the ground.
     eye: Option<Vec3>,
     look: Vec3,
@@ -171,7 +173,31 @@ fn dead(v: Vec2, zone: f32) -> Vec2 {
     }
 }
 
-fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>) -> Controls {
+/// How far a trigger is pulled, 0 to 1. XInput pads send the travel on the
+/// trigger button. Pads gilrs only knows by its default mapping (DualShock,
+/// many third-party pads) send the button as on/off and the travel on the
+/// Z axis, -1 at rest to 1 pulled in. bevy reads an axis that has sent
+/// nothing yet as 0, half travel, so the axis only counts once it has been
+/// seen at rest.
+fn trigger(pad: &Gamepad, button: B, axis: GamepadAxis, rested: &mut bool) -> f32 {
+    let pulled = pad.get(button).unwrap_or(if pad.pressed(button) { 1.0 } else { 0.0 });
+    let mut travel = 0.0;
+    if let Some(v) = pad.get(axis) {
+        *rested |= v < -0.9;
+        if *rested {
+            travel = (v + 1.0) * 0.5;
+        }
+    }
+    pulled.max(travel).clamp(0.0, 1.0)
+}
+
+/// The trigger-to-throttle curve. Held throttle settles the bike at a speed,
+/// and a quarter throttle already rides at half the top speed, so a straight
+/// line puts nearly all the control in the first bit of the pull. Squared,
+/// half trigger is a quarter throttle and the travel spreads over the speeds.
+const THROTTLE_CURVE: f32 = 2.0;
+
+fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mut [bool; 2]) -> Controls {
     let key = |k: KeyCode| keys.pressed(k) as i32 as f32;
     let mut c = Controls {
         steer: key(KeyCode::KeyD) - key(KeyCode::KeyA),
@@ -186,11 +212,11 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>) -> Controls
     if let Some(pad) = pad {
         let l = dead(pad.left_stick(), 0.12);
         let r = dead(pad.right_stick(), 0.15);
-        let trigger = |b: B| pad.get(b).unwrap_or(if pad.pressed(b) { 1.0 } else { 0.0 }).clamp(0.0, 1.0);
         c.steer = (c.steer + l.x).clamp(-1.0, 1.0);
         c.lean = (c.lean + r).clamp_length_max(1.0);
-        c.throttle = c.throttle.max(trigger(B::RightTrigger2));
-        c.brake = c.brake.max(trigger(B::LeftTrigger2));
+        let rt = trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]);
+        c.throttle = c.throttle.max(rt.powf(THROTTLE_CURVE));
+        c.brake = c.brake.max(trigger(pad, B::LeftTrigger2, GamepadAxis::LeftZ, &mut rested[0]));
         c.reverse |= pad.pressed(B::South);
     }
     c
@@ -334,7 +360,7 @@ fn ride(
             throttle,
             ..default()
         },
-        None => read_controls(pad, &keys),
+        None => read_controls(pad, &keys, &mut riding.trigger_axes),
     };
     let dt = time.delta_secs().min(0.1);
 
