@@ -15,6 +15,7 @@
 //! | d-pad down | T | first / third person |
 //! | d-pad up | F | on foot / flying |
 //!
+//! The map's gravity lifts (`halo3_core::lifts`) carry him up.
 //! Kill volumes, the bottom of the world (`halo3_core::falls`) and water over his
 //! head put him back where he last stood.
 //!
@@ -144,7 +145,8 @@ pub fn walk(
     mut auto: ResMut<AutoStart>,
     input: Option<Res<halo3_bike::BikeInput>>,
     tuning: Res<FootTuning>,
-    kill: Option<Res<halo3_core::falls::KillZones>>,
+    // Paired: a system takes at most 16 parameters.
+    (kill, lifts): (Option<Res<halo3_core::falls::KillZones>>, Option<Res<halo3_core::lifts::Lifts>>),
     water: Option<Res<halo3_swim::WaterWorld>>,
     fallback: Option<Res<halo3_core::falls::FallbackSpot>>,
     mut rider: ResMut<RiderPose>,
@@ -266,7 +268,10 @@ pub fn walk(
         controls.wish = held;
     }
     controls.heading = foot.yaw + std::f32::consts::PI;
-    spartan.step(world, controls, dt);
+    match lifts.as_deref() {
+        Some(l) => spartan.step_in(world, controls, dt, &|p, v, h, r| l.push(p, v, h, r, false)),
+        None => spartan.step(world, controls, dt),
+    }
 
     // Falling out of the world, or under water over his head.
     let feet = to_halo(spartan.position);

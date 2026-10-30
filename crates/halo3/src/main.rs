@@ -341,6 +341,14 @@ fn main() -> anyhow::Result<()> {
             kill.floor
         );
         app.insert_resource(kill);
+        // Gravity lifts (`halo3_core::lifts`): walking and the bike ride them.
+        if !scene.lifts.is_empty() {
+            eprintln!(
+                "lifts: {}",
+                scene.lifts.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", ")
+            );
+        }
+        app.insert_resource(halo3_core::lifts::Lifts(scene.lifts.clone()));
         let mut water_materials: Vec<u32> = water
             .looks
             .iter()
