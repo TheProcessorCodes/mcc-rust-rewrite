@@ -21,11 +21,14 @@
 //! second, bursts, spread, projectile speeds and ranges, zoom.
 //! Not from the tags (`docs/format/weapons.md` says why): reload times,
 //! the shotgun's pellet count, which rounds fall (grenades), battery use,
-//! the charge times. Nothing takes damage yet.
+//! the charge times. Only the enemy Spartan (`enemy.rs`) takes damage; his
+//! kills show in the kill feed (`killfeed.rs`).
 
 pub mod assets;
+pub mod enemy;
 mod fire;
 mod hud;
+mod killfeed;
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::input::mouse::AccumulatedMouseScroll;
@@ -61,7 +64,7 @@ impl Plugin for WeaponsPlugin {
                     .chain()
                     .after(halo3_foot::walk),
             )
-            .add_plugins((fire::FirePlugin, hud::HudPlugin));
+            .add_plugins((fire::FirePlugin, hud::HudPlugin, enemy::EnemyPlugin, killfeed::KillFeedPlugin));
     }
 }
 
