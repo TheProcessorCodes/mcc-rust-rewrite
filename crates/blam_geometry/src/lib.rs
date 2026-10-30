@@ -3,6 +3,7 @@
 //! The decoders are written from the format notes in `docs/format`. Each
 //! module says which note it follows.
 
+pub mod ai;
 pub mod atmosphere;
 pub mod camera_fx;
 pub mod collision;

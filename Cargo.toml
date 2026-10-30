@@ -13,6 +13,7 @@ members = [
     "crates/blam_texture",
     "crates/halo3",
     "crates/halo3_anim",
+    "crates/halo3_ai",
     "crates/halo3_audio",
     "crates/halo3_bike",
     "crates/halo3_core",
@@ -48,6 +49,7 @@ blam_texture = { path = "crates/blam_texture" }
 blam_sound = { path = "crates/blam_sound" }
 blam_h2 = { path = "crates/blam_h2" }
 halo3_anim = { path = "crates/halo3_anim" }
+halo3_ai = { path = "crates/halo3_ai" }
 halo3_audio = { path = "crates/halo3_audio" }
 halo3_bike = { path = "crates/halo3_bike" }
 halo3_core = { path = "crates/halo3_core" }

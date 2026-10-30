@@ -41,6 +41,8 @@ the format descriptions the code is written from.
 | `crates/halo3_foot` | the Spartan on foot |
 | `crates/halo3_weapons` | the map's weapons, carried and fired on foot |
 | `crates/halo3_script` | runs a map's own scripts: threads at 30 ticks a second, objects created, destroyed, dropped and moved, devices, trigger volumes, insertion points; hooks for the AI and device animation |
+| `crates/halo3_weapons` | the map's weapons, carried and fired on foot; rounds hit actors and the player |
+| `crates/halo3_ai` | the campaign's squads as actors: placed, drawn, hurt and fighting; the player's shields and health |
 | `crates/halo3_swim` | water, sinking and splashes |
 | `docs/format` | the file format, field by field |
 | `docs/` | notes on IW4L and the skate interface |
@@ -58,6 +60,7 @@ target\debug\blam.exe bitmap riverworld 112 --png out\mountains_snow.png
 target\debug\blam.exe textures riverworld
 target\debug\blam.exe sound riverworld list
 target\debug\blam.exe scripts 120_halo --grep trench_timer_100_001
+target\debug\blam.exe ai 120_halo --squads
 target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_music_15"
 target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human"
 target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human" --anim combat:any:any:melee --frame 6
@@ -130,6 +133,19 @@ both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
       environment maps, self-illumination, per-map exposure from the
       camera fx; spawn markers hidden (`docs/viewer.md`).
 - [ ] Real cube-map reflections, parallax.
+- [x] Enemies and AI on 120_halo (2026-10-29; built, awaiting a playtest):
+      the scenario's 262 squads, their cells and starting locations, 11 AI
+      zones with 3,842 firing positions and the 15 characters read and
+      pinned by `cargo test` (`docs/format/ai.md`, `blam ai`). Squads
+      appear as you come within 70 m of them (`--ai nearby`, the stand-in
+      until scripts place them; `--ai zone` places a zone set's all at
+      once), drawn with their units' real models in the bind pose, holding
+      their weapons. They see and hear you, the Flood charge and hit,
+      Sentinels hover and fire their beams, gunmen keep their weapon's
+      range and fire bursts from their firing patterns. Rounds hurt both
+      ways; shields and health come from the tags; you come back at the
+      last quiet spot when you die. No animations yet, no vehicles, no
+      grenades, no pathfinding beyond firing positions and straight lines.
 - [x] Milestone 3a: the game's real collision BSP decoded (the handoff's
       "known gap"): Valhalla gives 30,560 world and 39,678 instanced collision
       triangles with invisible walls, slip and two-sided surfaces flagged.

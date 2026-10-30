@@ -4,6 +4,7 @@
 //! slow-changing: every other `halo3_*` crate depends on it, so an edit here
 //! rebuilds them all.
 
+pub mod ai;
 pub mod coords;
 pub mod falls;
 pub mod flag;

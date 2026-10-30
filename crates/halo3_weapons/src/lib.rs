@@ -21,7 +21,8 @@
 //! second, bursts, spread, projectile speeds and ranges, zoom.
 //! Not from the tags (`docs/format/weapons.md` says why): reload times,
 //! the shotgun's pellet count, which rounds fall (grenades), battery use,
-//! the charge times. Nothing takes damage yet.
+//! the charge times. Rounds damage actors and, fired by actors, the
+//! Spartan (`fire.rs`, `halo3_ai`).
 
 pub mod assets;
 mod fire;
@@ -32,6 +33,7 @@ use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 
 pub use halo3_core::weapons::{WeaponAction, WeaponEvent, WeaponImpact};
+pub use fire::Shots;
 
 use halo3_core::coords::{to_halo, to_render};
 use halo3_core::skate::RiderPose;
@@ -80,6 +82,31 @@ pub struct Armory {
     looks: Vec<Look>,
     /// The kinds a Spartan starts with.
     loadout: Vec<usize>,
+}
+
+impl Armory {
+    /// The kind made from `weap` tag `tag`, if the map's weapons include it
+    /// (`assets::load`'s `extra` adds the AI's).
+    pub fn kind_of_tag(&self, tag: u32) -> Option<usize> {
+        self.kinds.iter().position(|k| k.weapon.tag_index == tag)
+    }
+
+    /// A copy of weapon kind `kind` as a child of `parent`, placed in the
+    /// parent's frame by `grip_to_parent` (grip space, world units, to the
+    /// parent's frame). Its materials come back for lighting
+    /// ([`assets::LookMaterial::lit`]).
+    pub fn spawn_child(
+        &self,
+        commands: &mut Commands,
+        materials: &mut Assets<StandardMaterial>,
+        kind: usize,
+        parent: Entity,
+        grip_to_parent: Mat4,
+    ) -> (Entity, Vec<(Handle<StandardMaterial>, assets::LookMaterial)>) {
+        let (e, mats) = spawn_copy(commands, &self.looks[kind], materials, grip_to_parent, Vec3::ONE);
+        commands.entity(e).insert(ChildOf(parent));
+        (e, mats)
+    }
 }
 
 /// A weapon lying in the world.

@@ -20,12 +20,14 @@
 //! blam anim     <map> <jmad | object> [--anim NAME|N [--frame F] | --action m:c:t:a | --check]
 //!                                               an animation graph, a decoded pose, an action lookup
 //! blam anim     <map> --all                     decode every animation of every graph
+//! blam ai       <map> [--squads] [--zones] [--characters]  squads, AI zones and characters (`docs/format/ai.md`)
 //! ```
 //!
 //! `<map>` is a path, or a bare name such as `riverworld` looked up in
 //! `$HALO3_MAPS` or the default MCC install.
 
 mod anim;
+mod ai;
 mod geometry;
 mod halo2;
 mod sound;
@@ -168,7 +170,7 @@ impl Args {
 
 pub(crate) fn usage() -> ! {
     eprintln!(
-        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n  blam scripts <map> [--grep TEXT | --functions | --summary]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS (default: the MCC install)."
+        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n  blam scripts <map> [--grep TEXT | --functions | --summary]\n  blam anim <map> <jmad | object> [--anim NAME|N [--frame F] | --action m:c:t:a | --check]\n  blam ai <map> [--squads] [--zones] [--characters]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS (default: the MCC install)."
     );
     std::process::exit(2)
 }
@@ -206,6 +208,7 @@ fn main() -> Result<()> {
         "nodes" => nodes(&cache, &args),
         "weapons" => weapons::run(&cache, &args),
         "anim" => anim::run(&cache, &args),
+        "ai" => ai::run(&cache, &args),
         "bitmap" => {
             let Some(what) = args.positional.get(1) else {
                 usage()
