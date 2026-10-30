@@ -335,7 +335,10 @@ scenery's `coll`, and "blow up" and "fall away" are damage sections of the plate
   `CollisionSource::Object`). When an object stops being solid (destroyed, dropped, absent, a
   device on a falling track past 2 %) the runtime tells `halo3_core::objects`; the bike's and
   the Spartan's collision grid skip its triangles at once, and the skater's collision is rebuilt
-  without them a second after the last change (on a helper thread, like a zone-set swap).
+  without them a second after the last change (on a helper thread, like a zone-set swap). A
+  solid object a script moves (a run island tilting under `tilt_up`) collides where it is drawn:
+  `publish_collision` hands its motion to `halo3_core::objects::set_object_pose`, the bike's world
+  looks its triangles up through that motion, the skater's is rebuilt with it.
 * **Starting it.** Off unless asked: `--insertion trench_run` runs `ins_trench_run` as the
   designers did at the console (with the `editor` global on, so `mission_halo` does not run its
   own `start`), `--insertion N` starts at insertion point N, `--scripts` runs from the mission's

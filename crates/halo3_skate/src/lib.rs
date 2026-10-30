@@ -128,8 +128,8 @@ struct Host {
     world: Option<u32>,
     /// A new zone set's collision is being built to swap in.
     swapping: bool,
-    /// The removed-objects generation the skate world was built with
-    /// (`halo3_core::objects`).
+    /// The removed- plus moved-objects generations the skate world was
+    /// built with (`halo3_core::objects`).
     removed: u64,
 }
 
@@ -194,6 +194,16 @@ fn skate_world(
     let removed = halo3_core::objects::removed_objects();
     if !removed.is_empty() {
         loaded.triangles.retain(|t| t.source.object().is_none_or(|o| !removed.contains(&o)));
+    }
+    // Objects a script moved (an island tilting): where they are now.
+    let poses = halo3_core::objects::object_poses();
+    if !poses.is_empty() {
+        let poses: std::collections::HashMap<u32, bevy::math::Mat4> = poses.into_iter().collect();
+        for t in &mut loaded.triangles {
+            if let Some(m) = t.source.object().and_then(|o| poses.get(&o)) {
+                t.points = t.points.map(|p| m.transform_point3(p));
+            }
+        }
     }
     let triangles = skate_triangles(&loaded, k);
     let (found, _) = rails::find_rails(&loaded);
@@ -488,9 +498,13 @@ fn update(
     // Another zone set: rebuild the skate world from its collision.
     let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
     let mut new_world = host.world != Some(mask);
-    // Floor plates a script dropped: rebuild without them once the
-    // changes settle for a second (the build runs beside the ride).
+    // Floor plates a script dropped, objects it moved: rebuild once the
+    // changes settle for a second (the build runs beside the ride). Both
+    // counters only grow, so their sum changes whenever either does.
     let (removed, changed) = halo3_core::objects::removed_generation();
+    let (posed, pose_changed) = halo3_core::objects::pose_generation();
+    let removed = removed + posed;
+    let changed = changed.max(pose_changed);
     if removed != host.removed
         && host.ready
         && !host.swapping

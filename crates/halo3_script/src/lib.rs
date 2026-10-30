@@ -22,7 +22,7 @@ use bevy::prelude::*;
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::falls::{FallbackSpot, set_kill_volume_enabled};
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::objects::{ObjectChunk, ScriptHidden, set_collision_removed};
+use halo3_core::objects::{ObjectChunk, ScriptHidden, set_collision_removed, set_object_pose};
 use halo3_core::script_sound::ScriptSounds;
 use halo3_core::skate::{Respawn, RiderPose};
 use halo3_core::zones::{LoadedBsps, Zones, load_zone_set};
@@ -70,6 +70,9 @@ pub struct Scripts {
     /// Per scene object: whether its collision is in (last told to
     /// `halo3_core::objects`).
     solid: Vec<bool>,
+    /// Per scene object: whether it is told to collide away from where the
+    /// scenario placed it (`halo3_core::objects::set_object_pose`).
+    posed: Vec<bool>,
     /// A teleport waiting for the camera to exist.
     teleport: Option<(Vec3, f32)>,
     /// The last tick traced (`HALO3_SCRIPT_TRACE`).
@@ -181,6 +184,7 @@ fn start(
         accumulator: 0.0,
         applied: 0,
         solid: vec![true; n],
+        posed: vec![false; n],
         teleport: None,
         traced: 0,
     };
@@ -361,19 +365,33 @@ fn apply_objects(
             *transform = t;
         }
     }
-    let changes: Vec<(usize, bool)> = scripts
-        .solid
-        .iter()
-        .enumerate()
-        .filter_map(|(i, was)| {
-            let s = &scripts.runtime.objects.state[i];
-            let now = s.exists && s.solid;
-            (now != *was).then_some((i, now))
-        })
-        .collect();
-    for (i, now) in changes {
-        scripts.solid[i] = now;
-        set_collision_removed(i as u32, !now);
+    let scripts = &mut *scripts;
+    publish_collision(&scripts.runtime.objects, &mut scripts.solid, &mut scripts.posed);
+}
+
+/// Tells the collision users (`halo3_core::objects`) which scene objects
+/// stopped or started colliding, and where solid objects a script moved
+/// are now (an island tilting under the player: its collision goes where
+/// it is drawn). `solid` and `posed` hold, per scene object, what was told
+/// last; start with all `true` and all `false`.
+pub fn publish_collision(objects: &crate::objects::Objects, solid: &mut [bool], posed: &mut [bool]) {
+    for (i, was) in solid.iter_mut().enumerate() {
+        let s = &objects.state[i];
+        let now = s.exists && s.solid;
+        if now != *was {
+            *was = now;
+            set_collision_removed(i as u32, !now);
+        }
+    }
+    for (i, was) in posed.iter_mut().enumerate() {
+        let (info, s) = (&objects.info[i], &objects.state[i]);
+        let moved = s.exists && s.solid && s.transform != info.base;
+        if moved {
+            set_object_pose(i as u32, Some(s.transform * info.base.inverse()));
+        } else if *was {
+            set_object_pose(i as u32, None);
+        }
+        *was = moved;
     }
 }
 

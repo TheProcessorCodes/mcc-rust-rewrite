@@ -141,3 +141,31 @@ fn island_collision_lines_up_with_its_mesh() {
     let (clo, chi) = (lo.min(hi), lo.max(hi));
     assert!(clo.abs_diff_eq(rlo, 0.5) && chi.abs_diff_eq(rhi, 0.5), "collision {clo} .. {chi}, mesh {rlo} .. {rhi}");
 }
+
+/// BSPs 100 and 110 of the Warthog run both close the first tunnel with a
+/// flat cap at y = 37.5, facing away from each other: with both loaded the
+/// caps are a seam and go (it was an invisible wall halfway through the
+/// tunnel); with only BSP 100 loaded its cap stays.
+#[test]
+fn seam_between_loaded_bsps_is_open() {
+    let Some(p) = path("120_halo") else { return };
+    let options = Options {
+        bsps: Some(vec![7, 8]),
+        objects: false,
+        ..Options::default()
+    };
+    let cache = blam_cache::CacheFile::open(&p).unwrap();
+    let mut scene = blam_geometry::Scene::default();
+    blam_geometry::decode_into(&cache, &options, &mut scene).unwrap();
+    let cap = |t: &blam_geometry::CollisionTriangle| {
+        matches!(t.source, CollisionSource::Bsp(_))
+            && t.points.iter().all(|p| (p.y - 37.5).abs() < 0.01)
+            && t.points.iter().any(|p| (p.x - 58.7).abs() < 0.01 && p.z < -70.0)
+    };
+    let all = scene.collision.triangles.iter().filter(|t| cap(t)).count();
+    assert!(all >= 4, "{all} cap triangles in BSPs 100 and 110");
+    let both = scene.collision.of_bsps((1 << 7) | (1 << 8));
+    assert_eq!(both.triangles.iter().filter(|t| cap(t)).count(), 0, "seam left in");
+    let alone = scene.collision.of_bsps(1 << 7);
+    assert!(alone.triangles.iter().any(cap), "BSP 100's own end went");
+}

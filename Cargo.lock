@@ -2583,6 +2583,7 @@ dependencies = [
  "blam_geometry",
  "blam_script",
  "glam",
+ "halo3_bike",
  "halo3_core",
  "halo3_script",
 ]

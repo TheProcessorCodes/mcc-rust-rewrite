@@ -254,9 +254,10 @@ impl CollisionSource {
 }
 
 impl Collision {
-    /// Only the triangles of the BSPs in `mask` (bit `n` for BSP `n`).
+    /// Only the triangles of the BSPs in `mask` (bit `n` for BSP `n`),
+    /// without the seams between loaded BSPs ([`Collision::drop_seams`]).
     pub fn of_bsps(&self, mask: u32) -> Collision {
-        Collision {
+        let mut out = Collision {
             triangles: self
                 .triangles
                 .iter()
@@ -264,7 +265,59 @@ impl Collision {
                 .copied()
                 .collect(),
             materials: self.materials.clone(),
+        };
+        out.drop_seams();
+        out
+    }
+
+    /// Takes out the walls where two structure BSPs meet. Each BSP's
+    /// collision is closed where it ends: across a tunnel or a valley
+    /// where the next BSP takes over there is a flat cap, and the next BSP
+    /// has the same cap facing the other way (the Warthog run's first
+    /// tunnel: BSPs 100 and 110 both close at y = 37.5). The game passes
+    /// through them when both BSPs are loaded; here a pair of BSP triangles
+    /// with the same corners, facing opposite ways, from two different
+    /// BSPs, is such a seam and both go. With only one of the BSPs loaded
+    /// its cap stays, as it is the edge of the world then. Returns how many
+    /// triangles went.
+    pub fn drop_seams(&mut self) -> usize {
+        use std::collections::HashMap;
+        /// Corners to 1/64 world unit, in a fixed order.
+        fn key(points: &[Vec3; 3]) -> [[i32; 3]; 3] {
+            let mut k = points.map(|p| (p * 64.0).round().as_ivec3().to_array());
+            k.sort_unstable();
+            k
         }
+        let mut faces: HashMap<[[i32; 3]; 3], Vec<usize>> = HashMap::new();
+        for (i, t) in self.triangles.iter().enumerate() {
+            if let CollisionSource::Bsp(_) = t.source {
+                faces.entry(key(&t.points)).or_default().push(i);
+            }
+        }
+        let mut seam = vec![false; self.triangles.len()];
+        let mut found = false;
+        for list in faces.values().filter(|l| l.len() > 1) {
+            for (n, &a) in list.iter().enumerate() {
+                for &b in &list[n + 1..] {
+                    let (ta, tb) = (&self.triangles[a], &self.triangles[b]);
+                    if ta.source != tb.source && ta.normal().dot(tb.normal()) < -0.99 {
+                        seam[a] = true;
+                        seam[b] = true;
+                        found = true;
+                    }
+                }
+            }
+        }
+        if !found {
+            return 0;
+        }
+        let before = self.triangles.len();
+        let mut i = 0;
+        self.triangles.retain(|_| {
+            i += 1;
+            !seam[i - 1]
+        });
+        before - self.triangles.len()
     }
 }
 

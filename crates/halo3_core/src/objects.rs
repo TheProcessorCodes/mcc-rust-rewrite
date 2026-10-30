@@ -80,3 +80,77 @@ pub fn removed_generation() -> (u64, Option<Instant>) {
 pub fn removed_objects() -> HashSet<u32> {
     REMOVED.read().unwrap().set.clone()
 }
+
+/// Where solid objects a script moves are now: per object, the motion from
+/// where the scenario placed it to where it is (Halo frame, `now *
+/// placed⁻¹`). A Warthog run island tilting under the player: its
+/// collision goes with it.
+static POSES: LazyLock<RwLock<Poses>> = LazyLock::new(|| RwLock::new(Poses::default()));
+static POSE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct Poses {
+    map: std::collections::HashMap<u32, Mat4>,
+    changed: Option<Instant>,
+}
+
+/// Sets an object's motion from its placement, or clears it (`None`: back
+/// where the scenario put it). Changes under a hundredth of a world unit
+/// are ignored.
+pub fn set_object_pose(object: u32, motion: Option<Mat4>) {
+    let motion = motion.filter(|m| !m.abs_diff_eq(Mat4::IDENTITY, 1e-5));
+    let mut p = POSES.write().unwrap();
+    let changed = match (motion, p.map.get(&object)) {
+        (None, None) => false,
+        (None, Some(_)) => {
+            p.map.remove(&object);
+            true
+        }
+        (Some(m), Some(old)) if m.abs_diff_eq(*old, 1e-4) => false,
+        (Some(m), _) => {
+            p.map.insert(object, m);
+            true
+        }
+    };
+    if changed {
+        p.changed = Some(Instant::now());
+        POSE_GENERATION.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// The pose change counter (zero while nothing ever moved) and when it
+/// last changed.
+pub fn pose_generation() -> (u64, Option<Instant>) {
+    let g = POSE_GENERATION.load(Ordering::Acquire);
+    if g == 0 {
+        return (0, None);
+    }
+    (g, POSES.read().unwrap().changed)
+}
+
+/// A copy of the moved objects' motions (Halo frame).
+pub fn object_poses() -> Vec<(u32, Mat4)> {
+    if POSE_GENERATION.load(Ordering::Acquire) == 0 {
+        return Vec::new();
+    }
+    POSES.read().unwrap().map.iter().map(|(o, m)| (*o, *m)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poses_change_only_when_moved() {
+        let (g0, _) = pose_generation();
+        set_object_pose(9_000_001, Some(Mat4::from_translation(Vec3::Z)));
+        let (g1, _) = pose_generation();
+        assert!(g1 > g0);
+        set_object_pose(9_000_001, Some(Mat4::from_translation(Vec3::Z * 1.000_01)));
+        assert_eq!(pose_generation().0, g1);
+        assert!(object_poses().iter().any(|(o, _)| *o == 9_000_001));
+        set_object_pose(9_000_001, None);
+        assert!(pose_generation().0 > g1);
+        assert!(!object_poses().iter().any(|(o, _)| *o == 9_000_001));
+    }
+}

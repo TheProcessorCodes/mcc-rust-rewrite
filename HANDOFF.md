@@ -355,8 +355,8 @@ they would need re-parenting to the posed hand (one `GlobalTransform` write afte
   for every scripted `mach`: the root node posed by the scripts' position track (`other_fall`,
   `fall`, else `device:position`) with the overlay track (`tilt_up`, `tilt`, `other_tilt`) on top,
   both relative to their first frames, so position 0 leaves the object where the scenario put it.
-  A falling device keeps its collision until its root node has dropped 1.5 wu (`DEVICE_DROP`); the
-  collision itself does not tilt with it (object collision is static). The made-up sink is now only
+  A falling device keeps its collision until its root node has dropped 1.5 wu (`DEVICE_DROP`); until
+  then its collision moves with it (see "Warthog run collision fixes" below). The made-up sink is now only
   the fallback for machines without a graph.
 - Checked: `cargo test -p halo3_script` (bridge), `-p halo3_anim` (`tests/islands.rs`: 100_island01
   tilts while solid, falls 50+ wu and stops being solid), headless `--insertion trench_run` shots
@@ -364,6 +364,35 @@ they would need re-parenting to the posed hand (one `GlobalTransform` write afte
   island tipping mid-fall) and a free-roam `--foot` shot at the crash site. Not playtested.
 - Not done: vehicles (so the Warthog crews), `ai_get_object` / `object_get_ai` (scripts get no
   actor objects), command scripts (`cs_*`), turning and evade animations, frame events.
+
+## Warthog run collision fixes (2026-10-30, branch `halo-script`)
+
+Two bugs from the first bike playtest of `--insertion trench_run`:
+
+- **Dropped through the first island while riding round it.** Its collision was static at the
+  scenario's pose while the drawn island moved: on `100_island_trig01` the scripts play the
+  `tilt_up` overlay, which lifts `100_island01` about 2.7 wu (8 m) and tips it 2 degrees in the
+  first second, so the bike ended up inside the drawn island. Nothing removed its collision early
+  (it falls only on `trench_run_100_trig07`, north of the island, or after 40 s, as in the game),
+  its collision covers the whole top, and the kill volume over it (`kill_100_02a`) only comes on
+  at `trench_run_100_trig08`. Fix: solid objects a script moves publish their motion
+  (`halo3_core::objects::set_object_pose`, from `halo3_script::publish_collision`); the bike's
+  collision world (also the Spartan's, the AI's and the guns') looks their triangles up where
+  they are now, and the skater's collision is rebuilt with them a second after they settle. All
+  four islands (`tilt_up`, `tilt`, `other_tilt`) get this.
+- **Invisible wall halfway through the first tunnel.** Not a missed trigger: BSPs 100 and 110
+  meet at y = 37.5 in the tunnel and each closes its collision there with a flat cap (one facing
+  each way). The game walks through BSP seams; we collided with BSP 100's cap. Fix:
+  `Collision::of_bsps` drops pairs of BSP triangles with the same corners facing opposite ways
+  from two loaded BSPs (`drop_seams`); with only one of the two loaded its cap stays. This opens
+  every seam between loaded BSPs, on every map. Also in that tunnel: a `guard_rail` crate
+  (folder `trench_run_100_crates`) lies across the right half at y = 21; it is drawn and solid
+  here, where the game's Warthog would push the crate aside.
+- Checked: `halo3_anim/tests/warthog_run_collision.rs` (scripts headless, the bike's own world:
+  95 points round island 1 within 0.07 wu of the drawn island before, during and after the tilt
+  and 20 s riding round; floor and no wall at 1 m steps through the first tunnel at x 52 and
+  58.7; it fails on the seam without the fix), `blam_geometry/tests/objects.rs`
+  (`seam_between_loaded_bsps_is_open`), headless `--bike` runs with `HALO3_SCRIPT_TRACE=1`.
 
 ## Mission music (2026-10-30, branch `mission-music`)
 
