@@ -106,6 +106,8 @@ fn main() -> anyhow::Result<()> {
     let mut foot_tuning = None;
     let mut arsenal = None;
     let mut plain_fog = None;
+    // Halo 2: the map's ambience, decoded on the sound plugin's thread.
+    let mut plain_sound = None;
     let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
@@ -129,6 +131,7 @@ fn main() -> anyhow::Result<()> {
             let (scene, textures, fog, h2_arsenal) = halo2::load(&resolve_map(map))?;
             arsenal = h2_arsenal;
             plain_fog = fog;
+            plain_sound = Some(halo2::ambience_loader(&resolve_map(map)));
             // The mean lit surface, for the auto exposure (no camera fx in
             // Halo 2: the exposure stays at `lighting::EXPOSURE`).
             if let Some(mean) = world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps) {
@@ -274,6 +277,7 @@ fn main() -> anyhow::Result<()> {
             output: sound,
             trace: audio::trace_wanted(),
             music: value("--music"),
+            plain: std::sync::Mutex::new(plain_sound),
         });
     }
     let skating = shot.as_ref().is_none_or(|p| p.rides());

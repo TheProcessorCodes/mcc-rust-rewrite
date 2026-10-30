@@ -694,7 +694,7 @@ A bare name is tried as a Halo 3 map first, then in `%HALO2_MAPS%` (default: the
 above); `h2:NAME` / `h3:NAME` ask for one game when both have a map of that file name
 (`h2:zanzibar`). Lockout is the exception: a bare `lockout` is Halo 2's Lockout, and Halo 3's
 Blackout (also `lockout.map`) goes by `blackout`. The header tells the two games apart (`blam_h2::is_halo2`). Only Coagulation
-has been checked. `blam info|tags|strings|geometry|rails|shader|bitmap|textures` work on Halo 2
+has been checked. `blam info|tags|strings|geometry|rails|shader|bitmap|textures|ambience` work on Halo 2
 maps too.
 
 `crates/blam_h2` (`docs/format/halo2.md`) decodes the whole map up front into the same `Scene`
@@ -719,4 +719,14 @@ banners, additive glows and light bands. The rider is Halo 3's Spartan, borrowed
 `riverworld.map` when Halo 3 is installed. Not yet: the sky model (it decodes, but its layers
 need Halo 2's sky blending; drawn as plain translucent meshes they walled the canyon in flat
 blue, so the fog colour stands in), the lightmaps' bump direction (buffer 4) and the sky's
-light, bump and environment maps, water as water (a plain see-through surface), sound.
+light, bump and environment maps, water as water (a plain see-through surface).
+
+Sound (`docs/format/halo2.md` 13): the BSP's background looping sound plays everywhere, not by
+cluster (on Lockout every cluster names the same one). Both its tracks loop at their -3 dB,
+the first permutation first and then the others at random, and the gust detail fires every
+40 to 50 s, placed around the listener. Sound scenery plays at its position: full volume within
+the looping sound's near distance, silent past the far one (Lockout's blowing snow, the canyon
+hawks, two machine hums on the lower level). The samples are Xbox ADPCM from
+`sounds_neutral.dat` beside the map, decoded on a thread at start (0.3 s) and played at 44.1 kHz
+through the 48 kHz mixer by rate. K, `-` and `=` work as on Halo 3 maps. Not yet: reverb (the
+sound environments), in/out and alternate tracks, scales, music.

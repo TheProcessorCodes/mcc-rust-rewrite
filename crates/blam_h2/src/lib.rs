@@ -22,6 +22,7 @@ pub mod lightmap;
 pub mod section;
 pub mod shader;
 pub mod weapons;
+pub mod sound;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

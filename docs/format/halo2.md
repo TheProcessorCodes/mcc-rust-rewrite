@@ -540,3 +540,102 @@ Each step a body touching a volume (within its radius) gets, from each volume it
 Walking (`halo3_foot`) and the dirt bike (`halo3_bike`, unless the volume ignores vehicles) take
 the push through `halo3_core::lifts::Lifts`. The skateboard does not: the Skate 3 engine runs its
 own physics and takes no outside push. Swimming has no lifts.
+
+## 13. Sound (`snd!`, `lsnd`, `ugh!`, `sounds_*.dat`)
+
+Checked on Lockout with `scripts/probe_h2_sound.py` and `blam ambience lockout.map --wav DIR`
+(`blam_h2::sound`). Field offsets were located with Assembly's `Halo2MCC` plugins (`snd!`,
+`ugh!`, `lsnd`, `sbsp`, `scnr`, `ssce`; GPL-3.0, read for offsets only) and confirmed against
+the bytes: every element size below divides its block exactly.
+
+### 13.1 Where a map's ambience is named
+
+- **Structure BSP background sound palette** at sbsp +0xD4 (0x64 each): name char[32] +0x00,
+  background `lsnd` +0x20, inside-cluster `lsnd` +0x28, cutoff distance +0x44, scale flags
+  +0x48. A **cluster** picks its entry with i16 +0x72, and its sound environment (the reverb)
+  with i16 +0x74 into the palette at sbsp +0xDC (0x48 each: `snde` reference at +0x20).
+- **Sound scenery**: scenario +0xD8 (0x50 each: palette index i16 +0x00, position +0x08), its
+  palette at +0xE0 (0x28: `ssce` reference at +0x00). The `ssce` object carries its looping
+  sound as an attachment (object +0x94, 0x18 each: tag reference +0x00).
+
+Lockout: palette `lockout` (13 clusters), `lockout_hallway` (3), `lockout_lower_level` (0),
+**all three naming `sound\ambience\lockout\lockout\lockout`**, no inside sounds; reverbs
+`forest`, `cpaul_small_enclosed`, `cpaul_alley`. Four sound scenery: `particulate_wind`
+(blowing snow), `lockout_offinthecanyon` (distant hawk echoes), `broken_flashy` and
+`green_hum` (small machine sounds heard within 5 wu, by the lower level).
+
+### 13.2 Looping sound (`lsnd`, 0x34)
+
+| offset | meaning |
+|---|---|
+| +0x00 | remastered looping sound (reference; null on Lockout's) |
+| +0x08 | flags |
+| +0x14 | distance bounds: full volume within, silent beyond (world units) |
+| +0x24 | tracks (0x58): name sid +0x00, flags +0x04, **gain dB +0x08**, fade in / out +0x0C / +0x10; `snd!` references in +0x14, **loop +0x1C**, out +0x24, alternate loop +0x2C, alternate out +0x34; output effect u16 +0x3C |
+| +0x2C | details (0x34): name sid +0x00, `snd!` +0x04, **period** min, max (s) +0x0C, **gain dB +0x14** (read from the values: -6 on `particulate_wind`), flags +0x18, yaw bounds +0x1C, pitch bounds +0x24 (radians), distance bounds +0x2C |
+
+Lockout's background has two tracks, `front_speakers` and `rear_speakers` (each -3 dB, each its
+own stereo loop; output effects 1 and 2, the front and rear speaker pairs), and one detail,
+`lockout_monogust`, every 40 to 50 s.
+
+### 13.3 Sound (`snd!`, 0x1C) and the gestalt (`ugh!`, 0x78)
+
+An MCC `snd!` is a handle into the **sound gestalt** of the file that holds it: the map's own
+`ugh!` for local sounds, `shared.map`'s for shared ones.
+
+| `snd!` offset | meaning |
+|---|---|
+| +0x00 | u16 flags: 0x80 pitch range is language (per-language samples), 0x400 legacy only, **0x800 remastered only** |
+| +0x02 | u8 sound class (0x21 ambient nature) |
+| +0x03 | i8 codec index |
+| +0x06 | i16 playback parameters index |
+| +0x08 / +0x0A | i16 first pitch range, i8 count |
+| +0x0B | i8 scale index |
+| +0x10 | i32 maximum play time (ms) |
+
+| `ugh!` block | element | meaning |
+|---|---|---|
+| +0x00 | 3 | codecs: sample rate u8 (0 22,050, 1 44,100, 2 32,000, 3 48,000), encoding u8 (0 mono, 1 stereo, 2 codec, 3 quad), compression u8 (0 PCM big-endian, 1 **Xbox ADPCM**, 2 IMA ADPCM, 3 PCM little-endian, 4 WMA, 5 Opus) |
+| +0x08 | 0x38 | playback parameters: distance min, max +0x00 / +0x04, skip fraction +0x08, **gain base dB +0x10** |
+| +0x10 | 0x14 | scales (not read) |
+| +0x18 | 4 | import names (string ids: permutation names) |
+| +0x28 | 0x0C | pitch ranges: first permutation i16 +0x08, count i16 +0x0A |
+| +0x30 | 0x10 | permutations: name index i16 +0x00, encoded skip fraction i16 +0x02 (/32767; 1 = only ever played first), gain i8 +0x04, chunk info +0x08 (a block of 8-byte entries, **one per language**: PCM bytes u32 +0x00, first chunk i16 +0x04, chunk count i16 +0x06) |
+| +0x60 | 8 | **permutation chunks: one list per language** (nine on these maps, the last empty), each a block of 0x10-byte chunk entries |
+| +0x70 | 0x14C | extra info (lip-sync and the like; not read) |
+
+A chunk entry (0x10): **file offset u32 +0x00; u32 +0x04 whose low 24 bits are the stored size
+and whose top byte is flags (0x20 on a permutation's last chunk); PCM bytes once decoded u32
++0x08**; runtime index -1 at +0x0C. A language-neutral sound lists the same chunks in every
+language; the first (English) list is read.
+
+### 13.4 The sample files
+
+The samples are not in the `.map`. Beside it are `sounds_neutral.dat` (926 MB),
+`sounds_remastered.dat` (1.5 GB), `sounds_en/de/fr/it.dat` (dialogue) and `sounds_sp.dat`. They
+have no header and no wrapper: a chunk is the raw codec stream at its offset, chunks aligned to
+0x80. **Which file** follows from the `snd!` flags: 0x800 (remastered only; exactly the tags
+under `sound_remastered\`) is `sounds_remastered.dat`; every other language-neutral sound is in
+`sounds_neutral.dat`. The chunk flags do not say: `green_hum`'s classic chunk has the same 0xA0
+as remastered ones and sits in `sounds_neutral.dat`. With that rule all 54 Xbox ADPCM chunks of
+Lockout's gestalt and all 1,381 of `shared.map`'s are whole blocks with valid headers, and decode
+to the size the gestalt gives. Per-language sounds (flag 0x80) are not read.
+
+**Xbox ADPCM**, the classic codec of every Lockout ambience sound: IMA ADPCM in blocks of 36
+bytes per channel, 64 samples per channel per block. A block starts with one 4-byte header per
+channel (i16 sample, u8 step index 0..88, u8 zero), then the channels' data in turns of 4 bytes
+(8 samples, low nibble first), 8 turns. The sizes confirm 64 samples per block: the front loop's
+`lockout1` stores 262,080 + 383,040 bytes = 8,960 stereo blocks, and the gestalt says 2,293,760
+PCM bytes = 8,960 x 64 x 2 channels x 2 bytes. We output the header sample, then 63 nibbles (the
+last is dropped). Whether the game outputs the header sample or the 64th nibble instead is not
+known; it is one sample in 64. The remastered set is mostly Opus (codec 5) and is not decoded.
+
+| Lockout sound | codec | permutations | length |
+|---|---|---|---|
+| `lockout\front_speakers\loop` | 44.1 kHz stereo | 6 (`lockout1` first only) | 13.0 + 8.5 + 7.6 + 6.6 + 12.7 + 3.2 = 51.6 s, RMS about 0.012 each |
+| `lockout\rear_speakers\loop` | 44.1 kHz stereo | 6, same lengths | 51.6 s |
+| `lockout\details\lockout_monogust` | 44.1 kHz mono, heard 20..40 wu | 7 | 2.3 to 19.9 s |
+| `particulate_wind\details\particulate_wind` | 44.1 kHz stereo, -15 dB | 6 | 9 to 23 s |
+| `lockout_offinthecanyon\details\...` | 44.1 kHz mono, skip 0.95 | 3 | 4.5 to 5.9 s |
+
+The viewer plays them as `docs/viewer.md` "Halo 2 maps" says.
