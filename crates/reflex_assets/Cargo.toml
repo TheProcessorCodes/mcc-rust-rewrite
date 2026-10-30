@@ -1,0 +1,11 @@
+[package]
+name = "reflex_assets"
+description = "Reads MX vs ATV Reflex's own database/package pairs (the user's install, read-only): meshes, skeletons, textures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+flate2 = { workspace = true }
+lzxd = "0.2"

@@ -31,8 +31,9 @@
 //! ```
 //!
 //! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install; Halo 2
-//! maps (`coagulation`, or `h2:NAME`) in `%HALO2_MAPS%` or MCC's
-//! `halo2\h2_maps_win64_dx11` (`halo2.rs`).
+//! maps (`coagulation`, `lockout`, or `h2:NAME`) in `%HALO2_MAPS%` or MCC's
+//! `halo2\h2_maps_win64_dx11` (`halo2.rs`). Halo 3's Blackout, whose file is
+//! `lockout.map`, is `blackout`.
 
 mod halo2;
 mod pause;
@@ -40,7 +41,7 @@ mod shot;
 
 use halo3_audio as audio;
 use halo3_bike as bike;
-use halo3_core::{falls, fly_camera};
+use halo3_core::{falls, flag, fly_camera};
 use halo3_foot as foot;
 use halo3_rider as rider;
 use halo3_skate as skate;
@@ -62,31 +63,51 @@ pub(crate) const DEFAULT_H2_MAPS: &str =
 
 /// A path, or a bare name: a Halo 3 map in `%HALO3_MAPS%` (or the MCC
 /// install), else a Halo 2 map in `%HALO2_MAPS%` (or the MCC install).
-/// `h2:NAME` picks the Halo 2 map when both games have one by that name
-/// (`lockout`, `zanzibar`).
+/// `h2:NAME` / `h3:NAME` pick the game when both have a map by that file
+/// name (`zanzibar`). Halo 3's Blackout is `lockout.map`, so it goes by
+/// `blackout` and a bare `lockout` is Halo 2's Lockout ([`codename`]).
 fn resolve_map(arg: &str) -> PathBuf {
     let p = PathBuf::from(arg);
     if p.exists() {
         return p;
     }
-    let (h2_only, bare) = match arg.strip_prefix("h2:") {
-        Some(rest) => (true, rest),
-        None => (false, arg),
-    };
-    let mut name = bare.to_string();
-    if !name.ends_with(".map") {
-        name.push_str(".map");
-    }
+    let (game, file) = codename(arg);
+    let name = format!("{file}.map");
     let dir = |var: &str, default: &str| std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default));
     let h3 = dir("HALO3_MAPS", DEFAULT_MAPS).join(&name);
     let h2 = dir("HALO2_MAPS", DEFAULT_H2_MAPS).join(&name);
-    if h2_only || (!h3.exists() && h2.exists()) { h2 } else { h3 }
+    match game {
+        Some(2) => h2,
+        Some(_) => h3,
+        None if !h3.exists() && h2.exists() => h2,
+        None => h3,
+    }
+}
+
+/// A map argument to (game, file name without `.map`): `h2:` / `h3:` force
+/// the game; `blackout` is Halo 3's `lockout`, and a bare `lockout` is Halo
+/// 2's, so the two maps sharing a file name each have a plain name.
+fn codename(arg: &str) -> (Option<u8>, &str) {
+    let (game, bare) = match (arg.strip_prefix("h2:"), arg.strip_prefix("h3:")) {
+        (Some(rest), _) => (Some(2), rest),
+        (_, Some(rest)) => (Some(3), rest),
+        _ => (None, arg),
+    };
+    let bare = bare.strip_suffix(".map").unwrap_or(bare);
+    match (game, bare) {
+        (None | Some(3), "blackout") => (Some(3), "lockout"),
+        (None, "lockout") => (Some(2), "lockout"),
+        _ => (game, bare),
+    }
 }
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut foot_tuning = None;
     let mut arsenal = None;
+    let mut plain_fog = None;
+    // Halo 2: the map's ambience, decoded on the sound plugin's thread.
+    let mut plain_sound = None;
     let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
         None | Some("--help") | Some("-h") => {
             eprintln!("usage:
@@ -107,7 +128,16 @@ fn main() -> anyhow::Result<()> {
         Some(map) if blam_h2::is_halo2(&resolve_map(map)) => {
             // Halo 2: everything decoded up front, no Halo 3 cache file
             // behind it (`halo2.rs`).
-            let (scene, textures) = halo2::load(&resolve_map(map))?;
+            let (scene, textures, fog, h2_arsenal) = halo2::load(&resolve_map(map))?;
+            arsenal = h2_arsenal;
+            plain_fog = fog;
+            plain_sound = Some(halo2::ambience_loader(&resolve_map(map)));
+            // The mean lit surface, for the auto exposure (no camera fx in
+            // Halo 2: the exposure stays at `lighting::EXPOSURE`).
+            if let Some(mean) = world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps) {
+                eprintln!("halo 2 lightmap: mean irradiance {mean:.3}");
+                world::lighting::set_scene_mean(mean);
+            }
             // The rider is Halo 3's Spartan, borrowed from Valhalla when
             // Halo 3 is installed (Halo 2's Master Chief is not decoded).
             let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
@@ -247,6 +277,7 @@ fn main() -> anyhow::Result<()> {
             output: sound,
             trace: audio::trace_wanted(),
             music: value("--music"),
+            plain: std::sync::Mutex::new(plain_sound),
         });
     }
     let skating = shot.as_ref().is_none_or(|p| p.rides());
@@ -315,6 +346,14 @@ fn main() -> anyhow::Result<()> {
             kill.floor
         );
         app.insert_resource(kill);
+        // Gravity lifts (`halo3_core::lifts`): walking and the bike ride them.
+        if !scene.lifts.is_empty() {
+            eprintln!(
+                "lifts: {}",
+                scene.lifts.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", ")
+            );
+        }
+        app.insert_resource(halo3_core::lifts::Lifts(scene.lifts.clone()));
         let mut water_materials: Vec<u32> = water
             .looks
             .iter()
@@ -337,10 +376,12 @@ fn main() -> anyhow::Result<()> {
         .insert_resource(loaded)
         .insert_resource(world::PendingScene(Some(scene), Some(textures), map_file))
         .insert_resource(world::sky::PendingSky(Some(sky)))
+        .insert_resource(world::sky::PlainFog(plain_fog))
         .insert_resource(world::water::PendingWater(Some(water)))
         .add_plugins((
             pause::PausePlugin,
             fly_camera::FlyCameraPlugin,
+            flag::SessionFlagPlugin,
             world::WorldPlugin,
         ))
         .run();

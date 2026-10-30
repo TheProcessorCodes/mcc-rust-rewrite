@@ -14,7 +14,9 @@
 //!   slides at 0.9 of that, instead of Unleashed's curve that keeps climbing
 //!   to 5 x load; the curve is stiffer, so it reaches the cap at small slip;
 //! - Reflex's mass, inertia, springs, dampers, travel, brakes, engine curve,
-//!   gears and drag.
+//!   gears and drag;
+//! - the shape of the bike drawn, Reflex's Dakumoto 450F: where its axles
+//!   sit, how big its tyres are (`DAKUMOTO_450F` below).
 //!
 //! Reflex's numbers come from the stock mx450f as read in
 //! `D:\reflex-tools\physics` (`reflex\docs\fields\lean.md`,
@@ -22,12 +24,30 @@
 //! same ones the earlier Reflex-style bike used
 //! (`backup/bike-physics-reflex-2026-10-28`).
 
+use bevy::math::Vec3;
+
 use super::unleashed::{DEG, MPH, Setup};
 
-/// Reflex's tyre radius, which its gear ratios work through. Our wheels
-/// are Unleashed's (0.366 m), so the ratios are scaled to give the same
-/// road speed at the same rpm.
+/// Reflex's tyre radius, which its gear ratios work through. Our rear
+/// tyre is the drawn one (0.335 m), so the ratios are scaled to give the
+/// same road speed at the same rpm.
 const REFLEX_GEAR_RADIUS: f32 = 0.317;
+
+/// The Dakumoto 450F as Reflex draws it (`MXs` / `HR_MXs`, `NeptuneF`),
+/// measured from its bind pose with `reflex_assets` (`cargo test -p
+/// reflex_assets -- --nocapture` prints it), metres from the model's
+/// origin, which is the centre of gravity: front axle, rear axle, front
+/// and rear tyre radius (to the knobs).
+///
+/// Unleashed's Pro 250 has a 1.57 m wheelbase and 0.366 m tyres; the 450F
+/// is 1.46 m and 0.345 / 0.335 m, with its axles about 2 cm lower. The
+/// ground sits 0.60 m under the centre of gravity on both.
+pub const DAKUMOTO_450F: (Vec3, Vec3, f32, f32) = (
+    Vec3::new(0.0, -0.252, 0.697),
+    Vec3::new(0.0, -0.266, -0.764),
+    0.345,
+    0.335,
+);
 
 /// A curve in (mph, degrees) as (m/s, radians).
 fn mph_deg(curve: &[(f32, f32)]) -> Vec<(f32, f32)> {
@@ -45,8 +65,10 @@ impl Setup {
         // fields are the spring over the bike's weight and the damping as
         // a share of critical (on the whole mass).
         let crit = |k: f32| 2.0 * (k * mass).sqrt();
-        let tyre = |base: super::unleashed::Tyre, k: f32, bump: f32, rebound: f32, travel: f32, brake: f32| {
+        let (front_axle, rear_axle, front_radius, rear_radius) = DAKUMOTO_450F;
+        let tyre = |base: super::unleashed::Tyre, radius: f32, k: f32, bump: f32, rebound: f32, travel: f32, brake: f32| {
             super::unleashed::Tyre {
+                radius,
                 strut: travel,
                 spring: k / weight,
                 // Unleashed's `bounce` damps extension, `rebound` compression.
@@ -72,10 +94,12 @@ impl Setup {
             inertia: bevy::math::Vec3::new(36.0, 32.0, 28.0),
             cofg_travel_back: 0.30,
             cofg_travel_forward: 0.15,
+            front_axle,
+            rear_axle,
             // Forks 20.2 kN/m, 438 / 876 N·s/m, 0.40 m; shock 13.9 kN/m,
             // 584 / 1167 N·s/m, 0.37 m. Brakes 339 / 475 N·m.
-            front: tyre(base.front, 20200.0, 438.0, 876.0, 0.40, 339.0),
-            rear: tyre(base.rear, 13860.0, 584.0, 1167.0, 0.37, 475.0),
+            front: tyre(base.front, front_radius, 20200.0, 438.0, 876.0, 0.40, 339.0),
+            rear: tyre(base.rear, rear_radius, 13860.0, 584.0, 1167.0, 0.37, 475.0),
             steer_curve: mph_deg(&[
                 (0.0, 30.0),
                 (10.0, 29.3),
@@ -112,7 +136,7 @@ impl Setup {
                 (9604.0, 14.8),
                 (11500.0, 0.0),
             ],
-            final_ratio: base.rear.radius / REFLEX_GEAR_RADIUS,
+            final_ratio: rear_radius / REFLEX_GEAR_RADIUS,
             gears,
             min_rpm: 1500.0,
             // 27 N·m of drag at the limiter.
@@ -263,6 +287,23 @@ mod tests {
         let v = 11500.0 / crate::unleashed::RPM / s.ratio(4) * s.rear.radius;
         let reflex = 11500.0 / crate::unleashed::RPM / 9.63 * REFLEX_GEAR_RADIUS;
         assert!((v - reflex).abs() < 0.01, "{v} {reflex}");
+    }
+
+    #[test]
+    fn shaped_like_the_450f() {
+        let s = Setup::reflex_v1();
+        let base = s.front_axle.z - s.rear_axle.z;
+        assert!((base - 1.461).abs() < 0.005, "wheelbase {base}");
+        // Both tyres meet flat ground at the same height, 0.60 m under the
+        // centre of gravity, so the bike drawn sits level.
+        let front = s.front.radius - s.front_axle.y;
+        let rear = s.rear.radius - s.rear_axle.y;
+        assert!((front - rear).abs() < 0.01 && (front - 0.60).abs() < 0.01, "{front} {rear}");
+        // The skid plate probe clears flat ground at rest by about 0.3 m.
+        let ground = -crate::physics::rest_height();
+        let skid = crate::physics::PROBES[0];
+        let clearance = skid.0.y - skid.1 - ground;
+        assert!((0.2..0.35).contains(&clearance), "clearance {clearance}");
     }
 
     #[test]

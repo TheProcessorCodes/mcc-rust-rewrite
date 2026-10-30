@@ -273,6 +273,9 @@ pub struct Scene {
     pub trigger_volumes: Vec<TriggerVolume>,
     /// Trigger volumes that begin or commit a zone-set switch.
     pub zone_switches: Vec<ZoneSwitch>,
+    /// Volumes that push whoever is in them: gravity lifts, man cannons
+    /// (`lift.rs`).
+    pub lifts: Vec<crate::LiftVolume>,
 }
 
 /// A structure BSP that decoded.

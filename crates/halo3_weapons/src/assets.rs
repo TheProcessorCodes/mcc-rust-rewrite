@@ -20,10 +20,8 @@ use blam_geometry::weapons::{ItemPlacement, Weapon};
 use halo3_textures::MaterialTextures;
 
 /// Weapons every Spartan may start with, besides those placed on the map.
-const LOADOUT: [&str; 2] = [
-    r"objects\weapons\rifle\assault_rifle\assault_rifle",
-    r"objects\weapons\pistol\magnum\magnum",
-];
+/// The Spartan's crate owns the list.
+const LOADOUT: [&str; 3] = halo3_foot::STARTING_WEAPONS;
 
 /// One weapon kind's mesh piece: grip-space triangles of one material.
 pub struct Piece {
@@ -103,7 +101,6 @@ pub fn load(cache: &CacheFile) -> Option<Arsenal> {
     let mut materials = blam_geometry::materials::MaterialTable::default();
     let mut scene = Scene::default();
     let mut kinds: Vec<Kind> = Vec::new();
-    let mut by_tag: HashMap<u32, usize> = HashMap::new();
     let wanted = |w: &Weapon| {
         LOADOUT.contains(&w.tag_path.as_str()) || placements.iter().any(|p| p.tag == Some(w.tag_index))
     };
@@ -119,54 +116,13 @@ pub fn load(cache: &CacheFile) -> Option<Arsenal> {
                 continue;
             }
         };
-        let grip = weapon.grip().map_or(Vec3::ZERO, |m| m.model.w_axis.truncate());
-        let to_grip = Mat4::from_translation(-grip);
-        let mut pieces = Vec::new();
-        for piece in &parts.pieces {
-            let Some(mesh) = scene.meshes.get(piece.mesh as usize) else {
-                continue;
-            };
-            if (piece.mesh as usize) < first {
-                continue;
-            }
-            let m = to_grip * piece.transform;
-            let n = mesh.positions.len();
-            let positions: Vec<[f32; 3]> = mesh.positions.iter().map(|p| m.transform_point3(*p).to_array()).collect();
-            let normals = (mesh.normals.len() == n).then(|| {
-                mesh.normals.iter().map(|v| m.transform_vector3(*v).normalize_or_zero().to_array()).collect::<Vec<_>>()
-            });
-            let uvs = if mesh.uvs.len() == n { mesh.uvs.clone() } else { vec![[0.0; 2]; n] };
-            for part in &mesh.parts {
-                let mut indices = part.indices.clone();
-                if piece.mirrored {
-                    for t in indices.chunks_exact_mut(3) {
-                        t.swap(1, 2);
-                    }
-                }
-                pieces.push(Piece {
-                    positions: positions.clone(),
-                    normals: normals.clone(),
-                    uvs: uvs.clone(),
-                    indices,
-                    material: part.material,
-                });
-            }
-        }
-        let muzzle = weapon
-            .muzzle()
-            .map_or(Mat4::from_translation(Vec3::X * 0.3), |m| to_grip * m.model);
-        let left_hand = weapon
-            .marker(blam_geometry::weapons::LEFT_HAND_MARKER)
-            .or_else(|| weapon.marker("left_hand_cyborg"))
-            .map_or(Vec3::new(0.12, 0.0, 0.0), |m| to_grip.transform_point3(m.model.w_axis.truncate()));
-        by_tag.insert(weapon.tag_index, kinds.len());
-        kinds.push(Kind {
-            weapon,
-            pieces,
-            to_grip,
-            muzzle,
-            left_hand,
-        });
+        let pieces = parts
+            .pieces
+            .iter()
+            .filter(|p| p.mesh as usize >= first)
+            .map(|p| (p.mesh, p.transform, p.mirrored));
+        let kind = make_kind(weapon, &scene, pieces);
+        kinds.push(kind);
     }
     drop(resources);
     if kinds.is_empty() {
@@ -177,13 +133,72 @@ pub fn load(cache: &CacheFile) -> Option<Arsenal> {
     if let Ok(r) = cache.resources() {
         r.clear_page_cache();
     }
+    let loadout = LOADOUT.iter().filter_map(|path| kinds.iter().position(|k| k.weapon.tag_path == *path)).collect();
+    Some(finish(kinds, placements, loadout, textures, started))
+}
+
+/// One kind from its weapon tag and its model's pieces in `scene` (mesh,
+/// model transform, mirrored), moved into grip space.
+fn make_kind(weapon: Weapon, scene: &Scene, parts: impl Iterator<Item = (u32, Mat4, bool)>) -> Kind {
+    let grip = weapon.grip().map_or(Vec3::ZERO, |m| m.model.w_axis.truncate());
+    let to_grip = Mat4::from_translation(-grip);
+    let mut pieces = Vec::new();
+    for (mesh, transform, mirrored) in parts {
+        let Some(mesh) = scene.meshes.get(mesh as usize) else {
+            continue;
+        };
+        let m = to_grip * transform;
+        let n = mesh.positions.len();
+        let positions: Vec<[f32; 3]> = mesh.positions.iter().map(|p| m.transform_point3(*p).to_array()).collect();
+        let normals = (mesh.normals.len() == n).then(|| {
+            mesh.normals.iter().map(|v| m.transform_vector3(*v).normalize_or_zero().to_array()).collect::<Vec<_>>()
+        });
+        let uvs = if mesh.uvs.len() == n { mesh.uvs.clone() } else { vec![[0.0; 2]; n] };
+        for part in &mesh.parts {
+            let mut indices = part.indices.clone();
+            if mirrored {
+                for t in indices.chunks_exact_mut(3) {
+                    t.swap(1, 2);
+                }
+            }
+            pieces.push(Piece {
+                positions: positions.clone(),
+                normals: normals.clone(),
+                uvs: uvs.clone(),
+                indices,
+                material: part.material,
+            });
+        }
+    }
+    let muzzle = weapon
+        .muzzle()
+        .map_or(Mat4::from_translation(Vec3::X * 0.3), |m| to_grip * m.model);
+    let left_hand = weapon
+        .marker(blam_geometry::weapons::LEFT_HAND_MARKER)
+        .or_else(|| weapon.marker("left_hand_cyborg"))
+        .map_or(Vec3::new(0.12, 0.0, 0.0), |m| to_grip.transform_point3(m.model.w_axis.truncate()));
+    Kind {
+        weapon,
+        pieces,
+        to_grip,
+        muzzle,
+        left_hand,
+    }
+}
+
+/// The arsenal from its kinds: placements matched to kinds by tag, the
+/// loadout, and a log line.
+fn finish(
+    kinds: Vec<Kind>,
+    placements: Vec<ItemPlacement>,
+    loadout: Vec<usize>,
+    textures: MaterialTextures,
+    started: std::time::Instant,
+) -> Arsenal {
+    let by_tag: HashMap<u32, usize> = kinds.iter().enumerate().map(|(i, k)| (k.weapon.tag_index, i)).collect();
     let placed: Vec<(usize, ItemPlacement)> = placements
         .into_iter()
         .filter_map(|p| Some((*by_tag.get(&p.tag?)?, p)))
-        .collect();
-    let loadout = LOADOUT
-        .iter()
-        .filter_map(|path| kinds.iter().position(|k| k.weapon.tag_path == *path))
         .collect();
     eprintln!(
         "weapons: {} kinds ({}), {} placed, in {:.1} s",
@@ -192,12 +207,40 @@ pub fn load(cache: &CacheFile) -> Option<Arsenal> {
         placed.len(),
         started.elapsed().as_secs_f32()
     );
-    Some(Arsenal {
+    Arsenal {
         kinds,
         placed,
         loadout,
         textures,
-    })
+    }
+}
+
+/// The arsenal of a map read some other way (Halo 2, `blam_h2`): each
+/// weapon with its meshes in `scene` (model space), the placements, the
+/// loadout as weapon tag indices, and the looks of `scene`'s materials.
+/// `None` when no weapon has a model.
+pub fn from_scene(
+    weapons: Vec<(Weapon, Vec<u32>)>,
+    scene: &Scene,
+    placements: Vec<ItemPlacement>,
+    loadout: &[u32],
+    textures: MaterialTextures,
+) -> Option<Arsenal> {
+    let started = std::time::Instant::now();
+    let kinds: Vec<Kind> = weapons
+        .into_iter()
+        .filter(|(_, meshes)| !meshes.is_empty())
+        .map(|(w, meshes)| make_kind(w, scene, meshes.into_iter().map(|m| (m, Mat4::IDENTITY, false))))
+        .collect();
+    if kinds.is_empty() {
+        eprintln!("weapons: none on this map");
+        return None;
+    }
+    let loadout = loadout
+        .iter()
+        .filter_map(|t| kinds.iter().position(|k| k.weapon.tag_index == *t))
+        .collect();
+    Some(finish(kinds, placements, loadout, textures, started))
 }
 
 /// One kind's meshes on the GPU: a mesh and the material's unlit colour

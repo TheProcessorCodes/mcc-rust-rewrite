@@ -2553,6 +2553,9 @@ dependencies = [
  "bevy",
  "blam_geometry",
  "halo3_core",
+ "halo3_rider",
+ "halo3_world",
+ "reflex_assets",
  "serde",
  "serde_json",
 ]
@@ -2572,6 +2575,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "blam_geometry",
+ "blam_h2",
  "halo3_bike",
  "halo3_core",
  "halo3_swim",
@@ -3247,6 +3251,12 @@ checksum = "52d3a9855747c17eaf4383823f135220716ab49bea5fbea7dd42cc9a92f8aa31"
 dependencies = [
  "logos-codegen",
 ]
+
+[[package]]
+name = "lzxd"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c17f346186eccb574ba5581acefc514f0c70a642db4f96e245034a0a158a7168"
 
 [[package]]
 name = "mach2"
@@ -4186,6 +4196,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
 dependencies = [
  "bitflags 2.13.2",
+]
+
+[[package]]
+name = "reflex_assets"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "lzxd",
 ]
 
 [[package]]

@@ -76,8 +76,13 @@ pub struct Leg {
     pub width: f32,
 }
 
-/// The rake of the forks: the steering axis leans back this far from vertical.
-pub const RAKE: f32 = 0.47;
+/// The rake of the forks: the steering axis leans back this far from
+/// vertical (29.2°, the 450F's steering head).
+pub const RAKE: f32 = 0.51;
+
+/// Where the steering axis runs through, bike frame: the 450F's top
+/// triple clamp (`OBJ_UPR_Forks`).
+pub const STEER_PIVOT: Vec3 = Vec3::new(0.0, 0.194, 0.338);
 
 pub fn steering_axis() -> Vec3 {
     Vec3::new(0.0, RAKE.cos(), -RAKE.sin())
@@ -108,11 +113,12 @@ pub fn front_leg() -> Leg {
 const RAY_HEADROOM: f32 = 0.6;
 
 /// Where the rider stands, bike frame (render metres): footpegs (left;
-/// mirror X for the right), the middle of the bars at rest, half the bar
-/// width, and the hips in the attack position.
-pub const PEG: Vec3 = Vec3::new(0.19, -0.25, -0.12);
-pub const BAR_HALF_WIDTH: f32 = 0.40;
-pub const HIPS: Vec3 = Vec3::new(0.0, 0.55, -0.30);
+/// mirror X for the right), half the bar width, and the hips in the attack
+/// position. Pegs and grips are the 450F's (`NDE_*_Foot`, `NDE_*_Hand`);
+/// the hips keep their old place over the pegs.
+pub const PEG: Vec3 = Vec3::new(0.183, -0.285, -0.211);
+pub const BAR_HALF_WIDTH: f32 = 0.29;
+pub const HIPS: Vec3 = Vec3::new(0.0, 0.515, -0.39);
 
 /// Where the forks are drawn from: the front axle at full extension, so
 /// the bars and the triple clamp stay put whatever the spring.
@@ -120,20 +126,21 @@ pub fn fork_base() -> Vec3 {
     front_leg().extended
 }
 
-/// The middle of the bars: on the steering axis, above the fork top.
+/// The middle of the bars with them straight: between the 450F's grips.
 pub fn bar_centre() -> Vec3 {
-    fork_base() + steering_axis() * 1.02 - Vec3::Z * 0.02
+    Vec3::new(0.0, 0.46, 0.172)
 }
 
 /// Probe spheres on the frame and the rider: bike frame centre, radius,
 /// and whether touching anything with it is a crash.
+/// Placed on the 450F: 0.30 m of ground clearance under the skid plate.
 pub const PROBES: [(Vec3, f32, bool); 6] = [
-    (Vec3::new(0.0, -0.40, 0.05), 0.14, false), // skid plate
-    (Vec3::new(0.0, 0.05, -1.08), 0.12, false), // rear fender
-    (Vec3::new(0.0, 0.10, 0.98), 0.12, false),  // front fender
-    (Vec3::new(0.0, 0.18, -0.30), 0.16, false), // seat
-    (Vec3::new(0.0, 0.62, 0.40), 0.16, true),   // bars and hands
-    (Vec3::new(0.0, 1.30, 0.20), 0.24, true),   // the rider's head
+    (Vec3::new(0.0, -0.30, 0.0), 0.14, false),  // skid plate
+    (Vec3::new(0.0, 0.17, -0.98), 0.12, false), // rear fender
+    (Vec3::new(0.0, 0.10, 0.85), 0.12, false),  // front fender
+    (Vec3::new(0.0, 0.25, -0.30), 0.16, false), // seat
+    (Vec3::new(0.0, 0.47, 0.20), 0.16, true),   // bars and hands
+    (Vec3::new(0.0, 1.18, 0.20), 0.22, true),   // the rider's head, at RIDER_SIZE
 ];
 
 const PROBE_SPRING: f32 = 90000.0;
@@ -520,11 +527,12 @@ impl Bike {
         Quat::from_axis_angle(steering_axis(), self.steer)
     }
 
-    /// The grips (left, right) in the bike frame, turned with the bars.
+    /// The grips (left, right) in the bike frame, turned with the bars
+    /// about the steering axis.
     pub fn grips(&self) -> [Vec3; 2] {
-        let centre = bar_centre();
-        let left = self.bar_rotation() * Vec3::X * BAR_HALF_WIDTH;
-        [centre + left, centre - left]
+        let turn = |p: Vec3| STEER_PIVOT + self.bar_rotation() * (p - STEER_PIVOT);
+        let side = Vec3::X * BAR_HALF_WIDTH;
+        [turn(bar_centre() + side), turn(bar_centre() - side)]
     }
 
     /// Advances by `dt` seconds in fixed sub-steps.

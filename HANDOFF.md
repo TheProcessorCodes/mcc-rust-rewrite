@@ -60,7 +60,7 @@ What the game does now:
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
 - **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great".
-- **Dirt bike.** B rides it, with Master Chief on it (`halo3_bike`). Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`); 0 while riding opens the physics tuning menu (`tune.rs`), which also switches back to plain Unleashed (see "Dirt bike" below).
+- **Dirt bike.** B rides it, with Master Chief on it (`halo3_bike`). It is drawn as Reflex's Dakumoto 450F in the user's Cortana graphics kit, read from their own MX vs ATV Reflex install (`reflex_assets`, `docs/format/reflex-bike.md`); without Reflex it is the old stick model. Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`); 0 while riding opens the physics tuning menu (`tune.rs`), which also switches back to plain Unleashed (see "Dirt bike" below).
 - **On foot.** F walks the Spartan (`foot/`): the map's own movement numbers (`blam movement`,
   `docs/format/movement.md`), a capsule on the collision, a made-up gait on the skate skeleton,
   shoulder and eye cameras. He carries the map's weapons (`weapons/`, `blam weapons`,
@@ -92,7 +92,7 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Guardian | `guardian` | built, tests pass, not playtested |
 | Last Resort | `zanzibar` | built, tests pass, not playtested |
 | High Ground | `deadlock` | built, tests pass, not playtested; seam where the cove's water meets the sky's sea |
-| Blackout | `lockout` | built, tests pass, not playtested |
+| Blackout | `lockout` (run as `blackout`) | built, tests pass, not playtested |
 | Sandbox | `sandbox` | written and pinned in tests, not built yet; Forge pieces have no collision |
 | Halo (final mission) | `120_halo` | built with streaming, not playtested |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
@@ -165,6 +165,14 @@ towards Reflex. "Reflex v1" (`crates/halo3_bike/src/reflex.rs`) keeps Unleashed'
 Reflex's numbers and steering, lean and grip rules, and is the default; the tuning menu (0) is
 back, with Unleashed as a switch. Awaiting the user's playtest; the doc's "Reflex v1" section has
 the details.
+
+2026-10-29 (later): the stick bike is replaced by Reflex's Dakumoto 450F with the Cortana kit
+(the user's own design, `D:\reflex-tools\physics\reflex\master-chief-skin`), read at start-up
+from the user's Reflex install; its forks, swingarm and wheels follow the physics. Reflex v1 took
+the 450F's shape: 1.46 m wheelbase (was 1.57), 0.345 / 0.335 m tyres (0.366), 29.2° rake (26.9°),
+the model's grips, pegs and probe spheres (`docs/format/reflex-bike.md`). Reflex becomes a third,
+optional game for the public release: the first-run setup should find and save it like MCC and
+Skate 3 (`reflex_assets::find_reflex` is the stand-in until that lands). Awaiting the playtest.
 
 ## Open questions and known gaps
 

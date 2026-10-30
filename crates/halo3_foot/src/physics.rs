@@ -14,6 +14,13 @@
 use bevy::math::{Vec2, Vec3};
 
 use halo3_bike::physics::{Hit, World};
+use halo3_core::lifts::Push;
+
+/// What pushes the body besides gravity and its own legs: the map's lifts
+/// (`halo3_core::lifts`). Called each sub-step with the body's centre and
+/// velocity (renderer metres, m/s), the sub-step's length and the body's
+/// radius.
+pub type Field<'a> = &'a dyn Fn(Vec3, Vec3, f32, f32) -> Option<Push>;
 
 /// Halo world units to metres.
 const WU: f32 = blam_geometry::WORLD_UNIT_METRES;
@@ -213,17 +220,23 @@ impl Spartan {
     }
 
     pub fn step(&mut self, world: &World, controls: Controls, dt: f32) {
+        self.step_in(world, controls, dt, &|_, _, _, _| None);
+    }
+
+    /// A step with `field` pushing too (a gravity lift).
+    pub fn step_in(&mut self, world: &World, controls: Controls, dt: f32, field: Field<'_>) {
         if dt <= 0.0 {
             return;
         }
-        let reach = self.tuning.stand_height + self.speed() * dt + 1.0;
+        // Lifts move him fast upwards too: gather for his whole speed.
+        let reach = self.tuning.stand_height + self.velocity.length() * dt + 1.0;
         let mut candidates = std::mem::take(&mut self.candidates);
         world.gather(self.position, reach, &mut candidates);
         let n = (dt / MAX_STEP_DT).ceil().max(1.0);
         let h = dt / n;
         let mut jump = controls.jump;
         for _ in 0..n as usize {
-            self.sub_step(world, &candidates, controls, jump, h);
+            self.sub_step(world, &candidates, controls, jump, h, field);
             jump = false;
         }
         self.candidates = candidates;
@@ -243,7 +256,7 @@ impl Spartan {
         }
     }
 
-    fn sub_step(&mut self, world: &World, candidates: &[u32], c: Controls, jump: bool, dt: f32) {
+    fn sub_step(&mut self, world: &World, candidates: &[u32], c: Controls, jump: bool, dt: f32, field: Field<'_>) {
         let t = self.tuning;
         self.heading = c.heading;
 
@@ -271,6 +284,15 @@ impl Spartan {
         let change = (target - flat).clamp_length_max(accel * dt);
         // In the air, letting go of the stick keeps his momentum.
         let change = if self.grounded || wish != Vec2::ZERO { change } else { Vec3::ZERO };
+        // Faster than he runs (off a board or a bike): the stick steers the
+        // momentum but only brakes it when pulled against it.
+        let speed = flat.length();
+        let change = if !self.grounded && speed > t.forward && target.dot(flat) >= 0.0 {
+            let new = flat + change;
+            new.normalize_or(flat / speed) * new.length().max(speed) - flat
+        } else {
+            change
+        };
         self.velocity.x += change.x;
         self.velocity.z += change.z;
 
@@ -279,12 +301,21 @@ impl Spartan {
             self.grounded = false;
             self.jumped = true;
         }
+        // A lift: its push, and off the ground when it pushes up.
+        let push = field(self.position + Vec3::Y * self.height() * 0.5, self.velocity, dt, t.radius);
+        let lifted = push.is_some_and(|p| p.acceleration.y > 0.0);
+        if lifted {
+            self.grounded = false;
+        }
         if self.grounded {
             // Along the ground, so running downhill does not bounce.
             let n = self.ground_normal;
             self.velocity -= n * self.velocity.dot(n);
-        } else {
+        } else if !push.is_some_and(|p| p.negates_gravity) {
             self.velocity.y -= t.gravity * dt;
+        }
+        if let Some(p) = push {
+            self.velocity += p.acceleration * dt;
         }
         self.position += self.velocity * dt;
 
@@ -322,7 +353,7 @@ impl Spartan {
         }
 
         // The ground under the feet.
-        let rising = self.velocity.y > 0.5;
+        let rising = self.velocity.y > 0.5 || lifted;
         let reach_up = t.step + t.radius;
         let snap = if self.grounded { t.step } else { 0.0 } + (-self.velocity.y).max(0.0) * dt;
         let ground = if rising { None } else { self.ground(world, candidates, reach_up, reach_up + snap) };
@@ -576,6 +607,80 @@ mod tests {
         run(&w, &mut s, Controls::default(), 0.5);
         assert!(s.crouch > 0.99);
         assert!(s.position.y.abs() < 1e-3);
+    }
+
+    /// A lift like Lockout's lower box over a floor: 10 wu/s^2 up to
+    /// 4 wu/s with gravity off, 4.5 wu tall. Standing in it carries him up
+    /// the shaft at its top speed and out of the top.
+    #[test]
+    fn a_lift_carries_him_up() {
+        use blam_geometry::{LiftPush, LiftShape, LiftVolume};
+        let w = floor();
+        let lifts = halo3_core::lifts::Lifts(vec![LiftVolume {
+            name: "lift".into(),
+            shape: LiftShape::Box {
+                centre: Vec3::new(0.0, 0.0, 2.25),
+                axes: [Vec3::X, Vec3::Y, Vec3::Z],
+                half: Vec3::new(0.6, 0.6, 2.25),
+            },
+            origin: Vec3::ZERO,
+            direction: Vec3::Z,
+            push: LiftPush {
+                direction: (10.0, 4.0),
+                axis: (10.0, 10.0),
+                negates_gravity: true,
+                ..Default::default()
+            },
+        }]);
+        let field = |p: Vec3, v: Vec3, dt: f32, r: f32| lifts.push(p, v, dt, r, false);
+        let mut s = Spartan::dropped(&w, Vec3::new(0.5, 1.0, 0.5), 0.0);
+        let dt = 1.0 / 60.0;
+        let mut peak: f32 = 0.0;
+        let mut top_speed: f32 = 0.0;
+        for _ in 0..(1.0 / dt) as usize {
+            s.step_in(&w, Controls::default(), dt, &field);
+            peak = peak.max(s.position.y);
+            top_speed = top_speed.max(s.velocity.y);
+        }
+        assert!(!s.grounded);
+        assert!((top_speed - 4.0 * WU).abs() < 0.05, "{top_speed}");
+        // Pulled to the middle of the shaft.
+        assert!(Vec2::new(s.position.x, s.position.z).length() < 0.1, "{:?}", s.position);
+        // Out of the top (4.5 wu, minus his half height for the centre),
+        // then up on his speed and back down to the floor.
+        for _ in 0..(4.0 / dt) as usize {
+            s.step_in(&w, Controls::default(), dt, &field);
+            peak = peak.max(s.position.y);
+        }
+        assert!(peak > 4.5 * WU - s.height() * 0.5, "peak {peak}");
+        // Over the pad again: he lands in the lift and goes back up, so
+        // just check he never fell through.
+        assert!(s.position.y > -0.01);
+    }
+
+    #[test]
+    fn keeps_a_rides_momentum_in_the_air() {
+        let w = floor();
+        // Off a bike at 20 m/s along +Z, 10 m up, pushing the stick forward.
+        let mut s = Spartan::new(Vec3::new(0.0, 10.0, 0.0), 0.0);
+        s.velocity = Vec3::new(0.0, 0.0, 20.0);
+        let c = Controls {
+            wish: Vec2::Y,
+            ..default()
+        };
+        run(&w, &mut s, c, 0.5);
+        assert!(!s.grounded);
+        assert!(s.speed() >= 20.0 - 1e-3, "{}", s.speed());
+        // Pulling back brakes it.
+        let c = Controls {
+            wish: -Vec2::Y,
+            ..default()
+        };
+        run(&w, &mut s, c, 0.5);
+        assert!(s.speed() < 19.0, "{}", s.speed());
+        // On the ground he slows to a run.
+        run(&w, &mut s, Controls::default(), 3.0);
+        assert!(s.grounded && s.speed() < 0.1, "{}", s.speed());
     }
 
     #[test]

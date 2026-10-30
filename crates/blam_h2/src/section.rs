@@ -65,6 +65,18 @@ fn f32_at(b: &[u8], o: usize) -> f32 {
 /// Decodes the section at `section`; `material` turns a part's material
 /// index into a scene material. `None` for a section with no geometry.
 pub fn decode(section: Reader<'_>, layout: Layout, name: &str, material: &mut dyn FnMut(i16) -> u32) -> Result<Option<Mesh>> {
+    Ok(decode_lit(section, layout, name, material)?.map(|(mesh, _)| mesh))
+}
+
+/// [`decode`], plus the lightmap texcoords of BSP sections (vertex buffer 3,
+/// two floats per vertex, 0..1 over the section's own lightmap page; empty
+/// when the section has none: light fixtures, render models).
+pub fn decode_lit(
+    section: Reader<'_>,
+    layout: Layout,
+    name: &str,
+    material: &mut dyn FnMut(i16) -> u32,
+) -> Result<Option<(Mesh, Vec<[f32; 2]>)>> {
     let vertex_count = section.u16(layout.vertices)? as usize;
     let face_count = section.u16(layout.faces)? as usize;
     if vertex_count == 0 {
@@ -122,6 +134,13 @@ pub fn decode(section: Reader<'_>, layout: Layout, name: &str, material: &mut dy
         let b = bytes_of(r)?;
         if b.len() >= vertex_count * 8 {
             mesh.uvs = (0..vertex_count).map(|i| [f32_at(b, i * 8), f32_at(b, i * 8 + 4)]).collect();
+        }
+    }
+    let mut lightmap_uvs = Vec::new();
+    if let Some(r) = find(VERTEX_BUFFER, BUFFERS, Some(3)) {
+        let b = bytes_of(r)?;
+        if b.len() >= vertex_count * 8 {
+            lightmap_uvs = (0..vertex_count).map(|i| [f32_at(b, i * 8), f32_at(b, i * 8 + 4)]).collect();
         }
     }
     // Normal, binormal, tangent: nine floats per vertex.
@@ -186,5 +205,5 @@ pub fn decode(section: Reader<'_>, layout: Layout, name: &str, material: &mut dy
             });
         }
     }
-    Ok(Some(mesh))
+    Ok(Some((mesh, lightmap_uvs)))
 }
