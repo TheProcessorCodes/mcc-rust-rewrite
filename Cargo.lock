@@ -2563,6 +2563,7 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "halo3_anim",
  "halo3_bike",
  "halo3_core",
  "halo3_foot",
@@ -2580,7 +2581,10 @@ dependencies = [
  "blam_anim",
  "blam_cache",
  "blam_geometry",
+ "blam_script",
+ "glam",
  "halo3_core",
+ "halo3_script",
 ]
 
 [[package]]

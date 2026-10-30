@@ -122,7 +122,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut foot_tuning = None;
     let mut arsenal = None;
-    let mut scripts: Option<halo3_script::PendingScripts> = None;
+    let mut scripts: Option<(halo3_script::PendingScripts, halo3_anim::MachinePoser)> = None;
     let mut plain_fog = None;
     // Halo 2: the map's ambience, decoded on the sound plugin's thread.
     let mut plain_sound = None;
@@ -428,14 +428,27 @@ fn main() -> anyhow::Result<()> {
         app.insert_resource(pending).add_plugins(anim_test::AnimTestPlugin);
     }
     app.insert_resource(weapons::PendingArsenal(arsenal));
-    if let Some(s) = scripts {
-        app.insert_resource(s).add_plugins(halo3_script::ScriptPlugin);
+    let scripted = scripts.is_some();
+    if let Some((s, devices)) = scripts {
+        // The scripts' `ai_*` calls go to the enemies through the bridge
+        // the AI plugin reads; the islands and pillars move by their own
+        // animations.
+        if ai_assets.is_some() {
+            let bridge = ai::AiBridge::default();
+            app.insert_resource(halo3_script::ScriptAi::new(halo3_script::BridgeAi::new(bridge.clone())))
+                .insert_resource(bridge);
+        }
+        app.insert_resource(halo3_script::ScriptAnimation::new(devices))
+            .insert_resource(s)
+            .add_plugins(halo3_script::ScriptPlugin);
     }
     if ai_assets.is_some() {
         // `--ai nearby` (default): squads appear as you come near them;
         // `--ai zone`: every squad of the loaded zone set at once; `--ai
-        // off`: only scripts place them; `--ai none`: no AI at all.
+        // off`: only scripts place them; `--ai none`: no AI at all. While
+        // the map's scripts run they place the squads.
         let mode = match value_of(&args, "--ai").as_deref() {
+            _ if scripted => ai::AutoPlace::Off,
             Some("zone") => ai::AutoPlace::ZoneSet,
             Some("off") => ai::AutoPlace::Off,
             _ => ai::AutoPlace::default(),
@@ -468,7 +481,7 @@ fn scripts_for(
     args: &[String],
     cache: &blam_cache::CacheFile,
     scene: &mut blam_geometry::Scene,
-) -> Option<halo3_script::PendingScripts> {
+) -> Option<(halo3_script::PendingScripts, halo3_anim::MachinePoser)> {
     let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
     let insertion = value("--insertion");
     if insertion.is_none() && !args.iter().any(|a| a == "--scripts") {
@@ -502,7 +515,12 @@ fn scripts_for(
         None => {}
     }
     let runtime = halo3_script::setup::runtime(cache, scene, data, config);
-    Some(halo3_script::PendingScripts(Some(runtime), console))
+    // The animations of the machines scripts move (doors, the Warthog
+    // run's islands and pillars).
+    let started = std::time::Instant::now();
+    let devices = halo3_anim::MachinePoser::load(cache, runtime.objects.info.iter().filter(|o| o.scene.is_some()).filter_map(|o| o.tag));
+    eprintln!("scripts: {} machine animations in {:.1} s", devices.len(), started.elapsed().as_secs_f32());
+    Some((halo3_script::PendingScripts(Some(runtime), console), devices))
 }
 
 /// The value after `flag`, if given.

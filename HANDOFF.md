@@ -326,6 +326,43 @@ map `ActorActivity` to `set_stance` / `play` / `play_once("melee")` / `aim`; `ta
 can replace `ActorKind::speed`. Weapons hang off the joint entities' propagated (bind) frames, so
 they would need re-parenting to the posed hand (one `GlobalTransform` write after `AnimSystems`).
 
+## Scripts, AI and animation connected (2026-10-30, branch `halo-script`)
+
+- **Scripts -> AI**: `halo3_script::BridgeAi` (`ai_bridge.rs`) implements `AiHooks` over
+  `halo3_core::ai::AiBridge`: `ai_place` (with count), `ai_erase`, `ai_kill`, `ai_allegiance(_remove)`
+  (teams by name or enum index), `ai_living_count`, `ai_spawn_count`; `None` for the rest. `main`
+  installs it whenever scripts and the AI both run, and sets `AutoPlace::Off` while scripts run.
+  `--insertion trench_run` places `arbiter_trench/trench` (the Arbiter) at once, then the run's
+  Flood and Sentinels as the player passes their triggers (`trench_infection_100*`,
+  `trench_sentinel_100_*`, `trench_carrier_100_01`, `trench_combat_forms01..04`, ...). Vehicle crews
+  (`warthog01`, `chopper*`, `secret_egg*`) have no character and place nobody (`ai: placed warthog01
+  (0 actors)`). Without `--insertion` / `--scripts` the free-roam `AutoPlace` works as before.
+- **Animation -> actors** (`halo3_ai/src/animate.rs`): every actor whose unit has a graph with the
+  drawn skeleton (all 15 characters on 120_halo) gets an `Animator`. Instead of the child entity +
+  `AnimJoints` sketched above, the pose's local node transforms are written into the
+  `ActorSkeleton` joints' own `Transform`s (same frame as a `jmad` frame), so the skinned meshes,
+  the gun on the right hand and the head hit sphere follow through normal propagation; nothing is
+  re-parented. Stance: `combat` with the class/type the graph has for the actor's weapon (`rifle/ar`
+  becomes `pistol/ar` for Flood combat forms, `any` for the Flood elite, `unarmed` without a gun);
+  `idle`, `move_front/back/left/right` by velocity, played at actor speed / root-motion speed so the
+  feet do not slide; `play_once("melee")` on a swing; `h_kill` / `s_kill` / `landing_dead` deaths
+  (the AI then no longer tips the body over); the aim overlay towards `ActorActivity::aim`;
+  `fire_1` every 0.25 s while firing. Walkers' run speed (`ActorKind::speed`) is now their
+  `move_front` root-motion speed. Sentinels and the monitor hover with `idle` + aim.
+- **Animation -> devices** (`halo3_anim/src/devices.rs`): `MachinePoser` implements `DevicePoser`
+  for every scripted `mach`: the root node posed by the scripts' position track (`other_fall`,
+  `fall`, else `device:position`) with the overlay track (`tilt_up`, `tilt`, `other_tilt`) on top,
+  both relative to their first frames, so position 0 leaves the object where the scenario put it.
+  A falling device keeps its collision until its root node has dropped 1.5 wu (`DEVICE_DROP`); the
+  collision itself does not tilt with it (object collision is static). The made-up sink is now only
+  the fallback for machines without a graph.
+- Checked: `cargo test -p halo3_script` (bridge), `-p halo3_anim` (`tests/islands.rs`: 100_island01
+  tilts while solid, falls 50+ wu and stops being solid), headless `--insertion trench_run` shots
+  walking the camera through the run's triggers (squads placed, posed Flood and Sentinels, the
+  island tipping mid-fall) and a free-roam `--foot` shot at the crash site. Not playtested.
+- Not done: vehicles (so the Warthog crews), `ai_get_object` / `object_get_ai` (scripts get no
+  actor objects), command scripts (`cs_*`), turning and evade animations, frame events.
+
 ## Open questions and known gaps
 
 - **Object rotation order.** Yaw/pitch/roll are composed as Blam's intrinsic yaw, then pitch,
