@@ -20,7 +20,7 @@ use blam_sound::tags::{Looping, Track, distance_gain};
 use halo3_core::script_sound::{ScriptSounds, SoundRequest};
 
 use super::mixer::{Clip, Mixer, Play, VoiceId};
-use super::{Listener, Sounds, attenuation, db};
+use super::{Listener, Sounds, attenuation, bus_of_class, db};
 
 /// The clips of one track, once all are decoded.
 struct TrackClips {
@@ -299,6 +299,7 @@ impl MusicPlayer {
                 continue;
             }
             let id = mixer.play(Play {
+                bus: bus_of_class(looping.class as i32),
                 queue,
                 looping: looped,
                 gain: [0.0; 2],
@@ -430,6 +431,7 @@ impl MusicPlayer {
                     f.end_at_zero = true;
                 }
                 let id = mixer.play(Play {
+                    bus: bus_of_class(looping.class as i32),
                     queue,
                     looping: next.clone(),
                     gain: [0.0; 2],
@@ -675,6 +677,7 @@ pub(crate) fn update(
         };
         let gain = db(info.gain_db) * p.scale * amb_gain;
         let id = mixer.play(Play {
+            bus: bus_of_class(info.class as i32),
             queue: vec![clip],
             looping: Vec::new(),
             gain: [0.0; 2],

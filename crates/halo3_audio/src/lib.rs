@@ -6,11 +6,14 @@
 //!
 //! Music (`music.rs`) follows the map's scripts when they run, and the
 //! keys: M music on / off, Shift+M next track, N alternate loop, K mute,
-//! `-` / `=` volume. `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
+//! `-` / `=` master volume; the pause menu's Sound tab sets the master,
+//! music, effects, ambience and dialogue volumes (`levels.rs`, saved next
+//! to the exe). `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
 //! mode, where `HALO3_AUDIO_TRACE=1` runs the logic without output and
 //! logs which emitters are active at each view.
 
 pub mod halo2;
+mod levels;
 mod library;
 mod mixer;
 mod music;
@@ -28,7 +31,9 @@ use blam_cache::CacheFile;
 use halo3_core::fly_camera::FlyCamera;
 use halo3_core::zones::{LoadedBsps, Zones};
 use library::{Clips, Loaded, SoundData};
-use mixer::{Clip, Mixer, MixerAsset, Play, VoiceId};
+use mixer::{Bus, Clip, Mixer, MixerAsset, Play, VoiceId};
+
+pub use levels::{Channel, SoundLevels};
 
 pub struct HaloAudioPlugin {
     pub cache: Option<&'static CacheFile>,
@@ -59,17 +64,12 @@ impl Plugin for HaloAudioPlugin {
         if self.cache.is_none() && plain.is_none() {
             return;
         }
-        let volume = std::env::var("HALO3_VOLUME")
-            .ok()
-            .and_then(|v| v.parse::<f32>().ok())
-            .unwrap_or(0.8)
-            .clamp(0.0, 2.0);
-        let mixer = Mixer::default();
-        mixer.set_master(volume);
-        app.insert_resource(mixer).insert_resource(Volume {
-            level: volume,
-            muted: false,
-        });
+        let levels = SoundLevels::load();
+        info!("sound: volumes {}", levels.describe());
+        app.insert_resource(Mixer::default())
+            .insert_resource(levels)
+            .init_resource::<levels::SaveDelay>()
+            .add_systems(Update, levels::apply.after(volume_keys));
         if let Some(cache) = self.cache {
             self.build_halo3(app, cache);
         } else if let Some(loader) = plain {
@@ -88,7 +88,7 @@ impl Plugin for HaloAudioPlugin {
                 wav: std::env::var_os("HALO3_AUDIO_WAV").map(std::path::PathBuf::from),
                 ..Default::default()
             })
-            .add_systems(Update, headless_mix.after(volume_keys));
+            .add_systems(Update, headless_mix.after(levels::apply));
         }
     }
 }
@@ -126,6 +126,7 @@ impl HaloAudioPlugin {
                     weapons::weapon_sounds,
                     volume_keys,
                     trace,
+                    trace_levels,
                 )
                     .chain()
                     .after(halo3_core::zones::ZoneKeys),
@@ -186,12 +187,6 @@ struct Sounds {
     clips: Arc<Clips>,
 }
 
-#[derive(Resource)]
-struct Volume {
-    level: f32,
-    muted: bool,
-}
-
 /// Where the ears are, in Halo world units (Z up).
 #[derive(Resource, Default, Clone, Copy)]
 struct Listener {
@@ -236,6 +231,21 @@ fn attenuation(distance: f32, (near, far): (f32, f32)) -> f32 {
 
 fn db(d: f32) -> f32 {
     10f32.powf(d / 20.0)
+}
+
+/// The bus a sound of this class plays on: music (32, and 38, cinematic
+/// music), dialogue (19 unit dialogue, 46 to 48 mission and cinematic
+/// lines), ambience (33, 34: ambient loops, machinery, terminals), else
+/// effects (by the sounds that use each class on 120_halo, `sound.md` 9).
+/// Backgrounds, their details and sound scenery are on the ambience bus
+/// whatever their class.
+fn bus_of_class(class: i32) -> Bus {
+    match class {
+        32 | 38 => Bus::Music,
+        19 | 46..=48 => Bus::Dialogue,
+        33 | 34 => Bus::Ambience,
+        _ => Bus::Effects,
+    }
 }
 
 fn receive(mut commands: Commands, loader: Res<Loader>, sounds: Option<Res<Sounds>>) {
@@ -412,6 +422,7 @@ fn background(
                 && !clips.is_empty()
             {
                 layer.voices[t] = Some(mixer.play(Play {
+                    bus: Bus::Ambience,
                     queue: Vec::new(),
                     looping: clips,
                     gain: [0.0; 2],
@@ -494,6 +505,7 @@ fn details(
                     let at = (clip.channels == 1).then(|| l.position + dir * dist);
                     let g = at.map_or([gain; 2], |p| l.pan(p, gain));
                     let id = mixer.play(Play {
+                        bus: Bus::Ambience,
                         queue: vec![clip],
                         looping: Vec::new(),
                         gain: g,
@@ -597,11 +609,13 @@ fn scenery(
             at.z = l.position.z.clamp(at.z, at.z + s.height);
         }
         let distance = at.distance(l.position);
-        // Sound scenery 6 dB down: some of it is authored hot (120_halo's
-        // falling plates are -7 dBFS RMS at 0 dB track gain) and the game's
-        // sound class gains and mix, which would bring it down, are not
-        // decoded.
-        const SCENERY_GAIN: f32 = 0.5;
+        // Sound scenery 9 dB below its class level (`gain_db` already has
+        // the class's -12 dB): 120_halo's falling plates are authored hot
+        // (-7 dBFS RMS loops at 0 dB track gain), and at the class level
+        // alone two of them sit within 3 dB of the Warthog run's music,
+        // which in the game plays clearly over them. Our own choice, with
+        // Halo's distance curve and voice limits still unknown.
+        const SCENERY_GAIN: f32 = 0.35;
         let gain = SCENERY_GAIN * db(track.gain_db + snd.gain_db) * attenuation(distance, bounds) * gains.get("amb");
         if distance < bounds.1 + 2.0 {
             if amb.scenery[i].is_none()
@@ -609,6 +623,7 @@ fn scenery(
                 && !clips.is_empty()
             {
                 amb.scenery[i] = Some(mixer.play(Play {
+                    bus: Bus::Ambience,
                     queue: Vec::new(),
                     looping: clips,
                     gain: [0.0; 2],
@@ -675,6 +690,7 @@ fn board(
                 && !clips.is_empty()
             {
                 b.roll = Some(mixer.play(Play {
+                    bus: Bus::Effects,
                     queue: Vec::new(),
                     looping: clips,
                     gain: [0.0; 2],
@@ -701,6 +717,7 @@ fn board(
                 && !clips.is_empty()
             {
                 b.grind = Some(mixer.play(Play {
+                    bus: Bus::Effects,
                     queue: Vec::new(),
                     looping: clips,
                     gain: [grind_gain; 2],
@@ -732,6 +749,7 @@ fn board(
                 let jitter = ((b.rng >> 8) & 0xff) as f32 / 255.0 * 0.15 - 0.075;
                 if let Some(clip) = sounds.clips.get(pick) {
                     mixer.play(Play {
+                        bus: Bus::Effects,
                         queue: vec![clip],
                         looping: Vec::new(),
                         gain: [gain * level; 2],
@@ -754,27 +772,30 @@ fn board(
     }
 }
 
-fn volume_keys(keys: Res<ButtonInput<KeyCode>>, mixer: Res<Mixer>, mut v: ResMut<Volume>) {
+/// K mutes, `-` / `=` step the master volume by 10 % (the pause menu's
+/// Master slider shows the same value).
+fn volume_keys(keys: Res<ButtonInput<KeyCode>>, mut v: ResMut<SoundLevels>) {
     let mut changed = false;
     if keys.just_pressed(KeyCode::KeyK) {
         v.muted = !v.muted;
         changed = true;
     }
-    if keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract) {
-        v.level = (v.level - 0.1).max(0.0);
-        v.muted = false;
-        changed = true;
-    }
-    if keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd) {
-        v.level = (v.level + 0.1).min(2.0);
-        v.muted = false;
+    let step = if keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract) {
+        -0.1
+    } else if keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd) {
+        0.1
+    } else {
+        0.0
+    };
+    if step != 0.0 {
+        let m = v.master + step;
+        v.set(Channel::Master, m);
         changed = true;
     }
     if changed {
-        mixer.set_master(if v.muted { 0.0 } else { v.level });
         info!(
             "sound: volume {:.0} %{}",
-            v.level * 100.0,
+            v.master * 100.0,
             if v.muted { " (muted)" } else { "" }
         );
     }
@@ -786,6 +807,45 @@ struct Trace {
     last: Option<Vec3>,
     since: f32,
     logged: bool,
+    /// Real seconds since the last level report.
+    levels_since: f32,
+}
+
+/// `HALO3_AUDIO_TRACE=1`: every 5 s, each bus's level over that time (RMS
+/// dBFS before the master volume), the volumes, and the scripts' class
+/// gains.
+fn trace_levels(
+    time: Res<Time<Real>>,
+    mixer: Res<Mixer>,
+    levels: Res<SoundLevels>,
+    gains: Res<music::ClassGains>,
+    music: Res<music::MusicPlayer>,
+    mut t: ResMut<Trace>,
+) {
+    if !t.on {
+        return;
+    }
+    t.levels_since += time.delta_secs();
+    if t.levels_since < 5.0 {
+        return;
+    }
+    t.levels_since = 0.0;
+    let measured = mixer.take_levels();
+    let buses: Vec<String> = Bus::ALL
+        .iter()
+        .map(|b| match measured[b.index()] {
+            Some(db) => format!("{} {db:.1} dBFS", b.name()),
+            None => format!("{} silent", b.name()),
+        })
+        .collect();
+    info!(
+        "audio levels: {}; volumes {}; script class gains music {:.2}, amb {:.2}; music [{}]",
+        buses.join(", "),
+        levels.describe(),
+        gains.get("music"),
+        gains.get("amb"),
+        music.describe()
+    );
 }
 
 /// `HALO3_AUDIO_TRACE=1`: what is heard, each time the camera has moved.

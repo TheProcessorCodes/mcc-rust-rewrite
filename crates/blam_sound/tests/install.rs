@@ -182,3 +182,23 @@ fn halo_music_pieces() {
     assert_eq!(lsnds, 16);
     assert_eq!(m.script_sounds.len(), 46);
 }
+
+/// The sound classes' gain ranges (`sound.md` 9): music plays at 0 dB,
+/// dialogue at -3, weapons, ambience and vehicles 12 to 15 dB down.
+#[test]
+fn halo_class_gains() {
+    let Some(maps) = maps() else { return };
+    let Ok(cache) = CacheFile::open(maps.join("120_halo.map")) else {
+        return;
+    };
+    let classes = SoundTags::new(&cache).unwrap().classes().unwrap();
+    assert_eq!(classes.len(), 54);
+    let gain = |i: usize| classes[i].gain_bounds_db;
+    assert_eq!(gain(32), [0.0, 0.0]); // music
+    assert_eq!(gain(19), [-3.0, -3.0]); // unit dialogue
+    assert_eq!(gain(47), [-3.0, -3.0]); // mission dialogue
+    assert_eq!(gain(4), [-12.0, -12.0]); // weapon fire
+    assert_eq!(gain(33), [-12.0, -12.0]); // ambience (the run's plates)
+    assert_eq!(gain(23), [-15.0, -15.0]); // vehicle engines
+    assert_eq!(gain(13), [-30.0, -12.0]); // physics impacts: a range
+}

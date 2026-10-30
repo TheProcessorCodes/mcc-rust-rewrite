@@ -317,16 +317,56 @@ Pinned by `halo3_script/tests/trench_music.rs`, which drives the player through 
 * Pieces overlap freely, so one piece's outro or fade runs under the next one's intro: that is
   the cross-fade between pieces.
 * `sound_class_set_gain` ramps the `music` and `amb` classes (music pieces; ambience, sound
-  scenery and one-shots); other classes are logged and left alone. The mix level of class 32 is
-  not decoded; music plays at its tag gains.
+  scenery and one-shots); other classes are logged and left alone. On top of that every sound
+  plays at its class's gain (section 9: music 0 dB, effects and ambience 12 to 15 dB down) and
+  the player's volume for its bus (pause menu, Sound tab).
 * `sound_impulse_start` plays one permutation of a `snd!` once, at the object when one is named
   (by its distances), else at the listener. Dialogue is in the language banks, which are not
   read: those calls log once and play nothing.
 
-## 9. Not decoded
+## 9. Sound class gains: why music sits on top
+
+The `sncl` tag (`sound\sound_classes`, 54 classes of 152 bytes; limits and default distances in
+`weapon-sounds.md` 7) also holds each class's level. Read 2026-10-30 from 120_halo by dumping
+every class's non-zero words and naming the classes by the sounds that use them (the `snd!`
+class byte, `lsnd + 0x24`; probe `python -I probe_sound_classes.py [map]`). No plugin XML or GPL
+code was used; the meanings are inferred.
+
+| offset | type | what (inferred) | evidence |
+|---|---|---|---|
+| `0x10` | f32 | dB, -64 = none; probably the reverb send | -64 on music (32) and the ambient loops (33 to 35), -3 to -9 on weapons, impacts, footsteps; music is dry in the game |
+| `0x20`, `0x30` | f32 | dB, mostly 0 or -64 | not used |
+| `0x34` | 4 x f32 | default distances | `weapon-sounds.md` 7 |
+| **`0x44`, `0x48`** | f32 x2 | **gain range, dB (lower, upper)** | 0 / 0 on music (32); -3 / -3 on dialogue (19 unit, 47 mission, 48 cinematic) and cinematic music (38); -12 / -12 on weapon fire (4), reloads, ambient loops and sound scenery (33 to 35, 37 upper); -15 on vehicle engines (23), ready sounds, flybys; -10 footsteps (18); ranges only on physics impacts (13: -30 / -12), particles (14: -22 / -14), crashes (22: -24 / -12) |
+| `0x4C`, `0x50`..`0x58` | f32, 3 x f32 | a ducking level, dB, with fade-in / sustain / fade-out times (0.5 s): probably while cutscenes play | -6 on effects and ambience, **0 on music** |
+| `0x5C`, `0x60`.. | f32, times | a second ducking, probably under scripted dialogue | -6 effects, -3 music |
+| `0x6C`, `0x70`.. | f32, times | a third ducking | -12 effects, -3 music |
+| `0x7C`, `0x80` | f32 | 15 and 1 on most classes | not used |
+
+So in Halo 3 the music is mixed at 0 dB and nearly everything else 12 to 15 dB below it (dialogue
+3 dB below). The bank's samples are normalised alike (the Warthog run's loops are -14 to -17 dBFS
+RMS, an assault rifle shot -16, a falling-plate loop -7), so without the class gains our effects
+and ambience played 9 to 12 dB too loud against the music: by the plates on the run, about 8 dB
+over the music (user report 2026-10-30). `SoundClass::gain_bounds_db`; the viewer adds the upper
+end to every sound's gain (`SoundInfo::gain_db`). Pinned in `blam_sound/tests/install.rs`
+(`halo_class_gains`).
+
+The sound mix tag (`snmx`, `sound\sound_mix`, one per map) is not decoded: a few dB values
+(`0x04` -2, `0x10` -2, `0x24`..`0x34` -6 / -9, `0x40` -10, `0x48` 4) and a `snd!` reference at
+`0x94`; probably the first-person and speaker mix.
+
+**Our mix on top** (`halo3_audio`): music at 0 dB class gain as tagged. Sound scenery a further
+-9 dB and weapons +6 dB over their class (`SCENERY_GAIN`, `WEAPON_GAIN`: our choices, see the
+code). Every voice is on a bus (music: classes 32, 38; dialogue: 19, 46 to 48; ambience:
+backgrounds, details, sound scenery, classes 33 and 34; effects: the rest, weapons, board sounds)
+whose volume is the player's slider. Measured headless on the Warthog run (`HALO3_AUDIO_TRACE=1`,
+`audio levels` lines, RMS before the master volume): music -18 dBFS, ambience next to two plates
+-25 dBFS (before: about -11).
+
+## 10. Not decoded
 
 Dialogue banks; `lsnd` layers (`sound_looping_activate_layer`, unused on 120_halo) and the header
-flag bits 3-6; the music class's mix level; pitch ranges past the first; `snde` reverb; cone gains; sound class gains and the
-mix (`snmx`) (the classes' limits and default distances, and a reading of all four distances, are
-in `weapon-sounds.md` 7); the per-sound `ugh! + 0xBC`
+flag bits 3-6; pitch ranges past the first; `snde` reverb; cone gains; the classes' ducking and
+the mix (`snmx`) (section 9; the classes' limits and default distances, and a reading of all four
+distances, are in `weapon-sounds.md` 7); the per-sound `ugh! + 0xBC`
 block; the 8 DLL setup rows that do not rebuild (unused by the bank).

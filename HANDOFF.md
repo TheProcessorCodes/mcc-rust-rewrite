@@ -86,7 +86,7 @@ What the game does now:
     120_halo).
   - Board roll, grind and landing sounds.
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
-- **Pause menu.** Escape or Start. It has tabs for free roam, dirt bike and skate controls; Q quits.
+- **Pause menu.** Escape or Start. It has tabs for free roam, on foot, dirt bike and skate controls, and a Sound tab with volume sliders; Q quits.
 - **Headless screenshots.** `halo3.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits. Claude may run this on its own to check visuals; it never opens a window.
 
 Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has numbers):
@@ -381,6 +381,22 @@ leaving the second island and plays its 77 s finale at the last stretch
 (`halo3_script/tests/trench_music.rs`). M / Shift+M / N / `--music` still work on top. Without
 scripts nothing changes. Not done: dialogue (language banks), `lsnd` layers, the music class's
 mix level, cinematic music. Awaiting the user's playtest.
+
+## Music volume and the Sound tab (2026-10-30, branch `music-volume`)
+
+User playtest: the run's music was buried under the effects. Cause: Halo 3 mixes by sound class
+(`sncl + 0x44/0x48`, a gain range in dB, `docs/format/sound.md` 9, probe
+`probe_sound_classes.py`): music 0 dB, dialogue -3, weapons, ambience, sound scenery and most
+effects -12 to -15. We were not reading it, so effects and ambience played 9 to 12 dB too loud
+(the falling-plate loops by the run about 8 dB over the music). Now every sound gets its class
+gain (`SoundInfo::gain_db`); sound scenery a further -9 dB, weapons +6 dB (our choices,
+commented). Headless on the run: music -18 dBFS, ambience next to two plates -25 (was about
+-11). The mixer has buses (music, ambience, effects, dialogue) with per-bus volumes and level
+meters; `HALO3_AUDIO_TRACE=1` logs `audio levels` every 5 s. The pause menu has a fifth tab,
+**Sound**: Master, Music, Effects, Ambience, Dialogue sliders, 0-200 % (100 % = the game's
+mix), keyboard / pad / mouse, saved to `sound-levels.json` next to the exe
+(`halo3_audio/src/levels.rs`); `-` / `=` / K drive the same Master value. A slider multiplies
+on top of the scripts' `sound_class_set_gain` (music, amb). Awaiting the user's playtest.
 
 ## Open questions and known gaps
 

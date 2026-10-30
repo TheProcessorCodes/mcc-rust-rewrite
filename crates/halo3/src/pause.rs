@@ -1,8 +1,10 @@
 //! The pause menu: Escape, or Start on a pad, stops the game and lists the
 //! controls on four tabs: free roam and on foot (keyboard and controller), the dirt bike
-//! and skating (controller only). Click a tab, or change tab with LB / RB,
-//! the d-pad, A / D or the arrow keys. The same button carries on; Q, or View (Back) on a pad, quits the
-//! game.
+//! and skating (controller only); a fifth, Sound, has the volume sliders
+//! (`sound_tab`). Click a tab, or change tab with LB / RB, the d-pad, A / D
+//! or the arrow keys (on the Sound tab the arrows and the d-pad move the
+//! sliders; LB / RB and A / D still change tab). The same button carries
+//! on; Q, or View (Back) on a pad, quits the game.
 //!
 //! Pausing stops virtual time, and the systems that read input or move
 //! things run only `while running`, so nothing reacts to keys behind the
@@ -17,6 +19,7 @@ use bevy::prelude::*;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use halo3_audio::{Channel, SoundLevels};
 use halo3_core::pause::Paused;
 
 pub struct PausePlugin;
@@ -25,10 +28,11 @@ impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Paused>()
             .init_resource::<ShownTab>()
+            .init_resource::<SliderInput>()
             .add_systems(Startup, spawn_menu)
             .add_systems(
                 PreUpdate,
-                (toggle, quit, switch_tab)
+                (toggle, quit, switch_tab, sound_tab)
                     .chain()
                     .after(InputSystems)
                     .after(halo3_core::pause::OverlayInput),
@@ -51,7 +55,10 @@ struct TabPage(usize);
 #[derive(Component)]
 struct TabLabel(usize);
 
-const TABS: [&str; 4] = ["Free roam", "On foot", "Dirt bike", "Skate"];
+const TABS: [&str; 5] = ["Free roam", "On foot", "Dirt bike", "Skate", "Sound"];
+
+/// The Sound tab's index in `TABS`.
+const SOUND_TAB: usize = 4;
 
 /// Free-roam controls: keyboard, controller, what it does.
 const FREE_ROAM: &[[&str; 3]] = &[
@@ -167,7 +174,7 @@ fn page<const N: usize>(
         });
 }
 
-fn spawn_menu(mut commands: Commands) {
+fn spawn_menu(mut commands: Commands, levels: Option<Res<SoundLevels>>) {
     commands
         .spawn((
             PauseMenu,
@@ -234,8 +241,273 @@ fn spawn_menu(mut commands: Commands) {
                 );
                 page(panel, 2, ["Controller", ""], [260.0, 520.0], BIKE);
                 page(panel, 3, ["Controller", ""], [260.0, 520.0], SKATE);
+                sound_page(panel, levels.as_deref());
             });
         });
+}
+
+/// Width of a slider's bar, px.
+const BAR: f32 = 340.0;
+
+/// A slider's name.
+#[derive(Component)]
+struct SliderLabel(Channel);
+/// A slider's bar (clicked and dragged).
+#[derive(Component)]
+struct SliderTrack(Channel);
+/// The filled part of a slider's bar.
+#[derive(Component)]
+struct SliderFill(Channel);
+/// A slider's value, `80 %`.
+#[derive(Component)]
+struct SliderValue(Channel);
+
+/// The Sound tab: a slider per volume, then how to use them.
+fn sound_page(panel: &mut ChildSpawnerCommands, levels: Option<&SoundLevels>) {
+    panel
+        .spawn((
+            TabPage(SOUND_TAB),
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(10.0),
+                display: Display::None,
+                ..default()
+            },
+        ))
+        .with_children(|p| {
+            let Some(levels) = levels else {
+                p.spawn(text("Sound is off (HALO3_AUDIO=0, or this map has no sound).", 18.0, DIM));
+                return;
+            };
+            for (i, c) in Channel::ALL.into_iter().enumerate() {
+                p.spawn(Node {
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(14.0),
+                    ..default()
+                })
+                .with_children(|r| {
+                    r.spawn((
+                        Node {
+                            width: Val::Px(110.0),
+                            ..default()
+                        },
+                        SliderLabel(c),
+                        text(c.label(), 20.0, if i == 0 { LIT } else { Color::WHITE }),
+                    ));
+                    // The bar: a dark track, the fill, and a tick at 100 %.
+                    r.spawn((
+                        SliderTrack(c),
+                        Node {
+                            width: Val::Px(BAR),
+                            height: Val::Px(16.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.12)),
+                    ))
+                    .with_children(|bar| {
+                        bar.spawn((
+                            SliderFill(c),
+                            Node {
+                                width: Val::Percent(levels.get(c) / SoundLevels::MAX * 100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(LIT.with_alpha(0.85)),
+                        ));
+                        bar.spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(100.0 / SoundLevels::MAX),
+                                width: Val::Px(2.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::WHITE.with_alpha(0.6)),
+                        ));
+                    });
+                    r.spawn((
+                        Node {
+                            width: Val::Px(100.0),
+                            ..default()
+                        },
+                        SliderValue(c),
+                        text(&value_text(levels, c), 20.0, Color::WHITE),
+                    ));
+                    r.spawn(text(c.about(), 15.0, DIM));
+                });
+            }
+            p.spawn(Node {
+                height: Val::Px(8.0),
+                ..default()
+            });
+            for line in [
+                "Up / down (W / S, d-pad, left stick): pick a slider. Left / right (arrow keys, d-pad, left stick): move it.",
+                "Or click and drag a bar with the mouse. The tick marks 100 %, the game's own mix.",
+                "K mutes and - / = change the master at any time. Saved next to the game, in sound-levels.json.",
+                "LB / RB or A / D: the other tabs.",
+            ] {
+                p.spawn(text(line, 15.0, DIM));
+            }
+        });
+}
+
+fn value_text(levels: &SoundLevels, c: Channel) -> String {
+    let muted = c == Channel::Master && levels.muted;
+    format!("{:.0} %{}", levels.get(c) * 100.0, if muted { " muted" } else { "" })
+}
+
+/// The Sound tab's input state.
+#[derive(Resource, Default)]
+struct SliderInput {
+    /// The picked slider, an index into `Channel::ALL`.
+    selected: usize,
+    /// The slider the mouse is dragging.
+    dragging: Option<Channel>,
+    /// The direction held (-1, 0, 1) and seconds until it repeats.
+    held: (i32, f32),
+    /// The stick is already up or down (one pick per push).
+    stick_y: bool,
+    /// The tab was up last frame (the key that opened it does not count).
+    was_active: bool,
+}
+
+/// The Sound tab: picks and moves the sliders by keyboard, pad and mouse,
+/// and draws their values (also when K or - / = changed them behind the
+/// menu).
+#[allow(clippy::too_many_arguments)]
+fn sound_tab(
+    paused: Res<Paused>,
+    shown: Res<ShownTab>,
+    time: Res<Time<Real>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    levels: Option<ResMut<SoundLevels>>,
+    mut input: ResMut<SliderInput>,
+    tracks: Query<(&SliderTrack, &ComputedNode, &UiGlobalTransform)>,
+    mut fills: Query<(&SliderFill, &mut Node)>,
+    mut values: Query<(&SliderValue, &mut Text)>,
+    mut labels: Query<(&SliderLabel, &mut TextColor)>,
+) {
+    let Some(mut levels) = levels else { return };
+    let active = paused.0 && shown.0 == SOUND_TAB;
+    let fresh = active && !input.was_active;
+    if input.was_active != active {
+        input.was_active = active;
+    }
+    if !active || fresh {
+        if input.dragging.is_some() || input.held != (0, 0.0) {
+            input.dragging = None;
+            input.held = (0, 0.0);
+        }
+    } else {
+        let n = Channel::ALL.len();
+        let pressed = |k: [KeyCode; 2]| k.iter().any(|k| keys.just_pressed(*k));
+        let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
+        let stick = gamepads
+            .iter()
+            .map(|p| p.left_stick())
+            .find(|v| v.length() > 0.5)
+            .unwrap_or(Vec2::ZERO);
+        // Picking a slider: one step per press or per push of the stick.
+        let stick_y = stick.y.abs() > 0.6 && stick.y.abs() > stick.x.abs();
+        let push = stick_y && !input.stick_y;
+        if input.stick_y != stick_y {
+            input.stick_y = stick_y;
+        }
+        if pressed([KeyCode::ArrowUp, KeyCode::KeyW]) || pad(GamepadButton::DPadUp) || (push && stick.y > 0.0) {
+            input.selected = (input.selected + n - 1) % n;
+        }
+        if pressed([KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) || (push && stick.y < 0.0) {
+            input.selected = (input.selected + 1) % n;
+        }
+        // Moving it: a step on the press, then repeating while held.
+        let stick_x = stick.x.abs() > 0.5 && stick.x.abs() > stick.y.abs();
+        let left = keys.pressed(KeyCode::ArrowLeft)
+            || gamepads.iter().any(|p| p.pressed(GamepadButton::DPadLeft))
+            || (stick_x && stick.x < 0.0);
+        let right = keys.pressed(KeyCode::ArrowRight)
+            || gamepads.iter().any(|p| p.pressed(GamepadButton::DPadRight))
+            || (stick_x && stick.x > 0.0);
+        let dir = right as i32 - left as i32;
+        let mut step = 0;
+        if dir == 0 {
+            if input.held != (0, 0.0) {
+                input.held = (0, 0.0);
+            }
+        } else if input.held.0 != dir {
+            input.held = (dir, 0.4);
+            step = dir;
+        } else {
+            input.held.1 -= time.delta_secs();
+            if input.held.1 <= 0.0 {
+                input.held.1 = 0.06;
+                step = dir;
+            }
+        }
+        if step != 0 {
+            let c = Channel::ALL[input.selected];
+            let v = levels.get(c) + step as f32 * SoundLevels::STEP;
+            levels.set(c, v);
+        }
+        // The mouse: press on a bar to pick and set it, drag to move it
+        // (node sizes and the cursor are in physical pixels).
+        let cursor = windows.single().ok().and_then(Window::physical_cursor_position);
+        if mouse.just_pressed(MouseButton::Left) {
+            input.dragging = cursor.and_then(|at| {
+                tracks
+                    .iter()
+                    .find(|(_, node, tf)| node.contains_point(**tf, at))
+                    .map(|(t, ..)| t.0)
+            });
+        }
+        if !mouse.pressed(MouseButton::Left) && input.dragging.is_some() {
+            input.dragging = None;
+        }
+        if let (Some(c), Some(at)) = (input.dragging, cursor)
+            && let Some((_, node, tf)) = tracks.iter().find(|(t, ..)| t.0 == c)
+        {
+            let i = Channel::ALL.iter().position(|x| *x == c).unwrap_or(0);
+            if input.selected != i {
+                input.selected = i;
+            }
+            let width = node.size().x.max(1.0);
+            let x0 = tf.translation.x - width / 2.0;
+            let v = ((at.x - x0) / width).clamp(0.0, 1.0) * SoundLevels::MAX;
+            // Whole 5 % steps, and 100 % snaps from close by.
+            let v = if (v - 1.0).abs() < 0.03 {
+                1.0
+            } else {
+                (v / SoundLevels::STEP).round() * SoundLevels::STEP
+            };
+            if (levels.get(c) - v).abs() > 1e-4 {
+                levels.set(c, v);
+            }
+        }
+    }
+    if !(levels.is_changed() || input.is_changed()) {
+        return;
+    }
+    let selected = Channel::ALL[input.selected];
+    for (f, mut node) in &mut fills {
+        let w = Val::Percent(levels.get(f.0) / SoundLevels::MAX * 100.0);
+        if node.width != w {
+            node.width = w;
+        }
+    }
+    for (v, mut t) in &mut values {
+        let s = value_text(&levels, v.0);
+        if t.0 != s {
+            t.0 = s;
+        }
+    }
+    for (l, mut colour) in &mut labels {
+        let want = if l.0 == selected { LIT } else { Color::WHITE };
+        if colour.0 != want {
+            colour.0 = want;
+        }
+    }
 }
 
 fn toggle(
@@ -311,14 +583,17 @@ fn switch_tab(
             .map(|(label, ..)| label.0)
     });
     let clicked = hovered.filter(|_| mouse.just_pressed(MouseButton::Left));
+    // On the Sound tab the arrow keys and the d-pad move the sliders, so
+    // only LB / RB and A / D change tab there.
+    let sliders = shown.0 == SOUND_TAB;
     let wanted = if let Some(tab) = clicked {
         tab
-    } else if key(KeyCode::KeyD, KeyCode::ArrowRight)
-        || pad(GamepadButton::RightTrigger, GamepadButton::DPadRight)
+    } else if key(KeyCode::KeyD, if sliders { KeyCode::KeyD } else { KeyCode::ArrowRight })
+        || pad(GamepadButton::RightTrigger, if sliders { GamepadButton::RightTrigger } else { GamepadButton::DPadRight })
     {
         (shown.0 + 1) % TABS.len()
-    } else if key(KeyCode::KeyA, KeyCode::ArrowLeft)
-        || pad(GamepadButton::LeftTrigger, GamepadButton::DPadLeft)
+    } else if key(KeyCode::KeyA, if sliders { KeyCode::KeyA } else { KeyCode::ArrowLeft })
+        || pad(GamepadButton::LeftTrigger, if sliders { GamepadButton::LeftTrigger } else { GamepadButton::DPadLeft })
     {
         (shown.0 + TABS.len() - 1) % TABS.len()
     } else {
