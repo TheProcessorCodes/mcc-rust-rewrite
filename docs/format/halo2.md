@@ -155,7 +155,18 @@ with a `rsrc` marker. Each resource entry:
   floats; buffer 2 normal, binormal, tangent, nine floats (36 bytes); buffer 3 the lightmap
   texcoord, two floats, 0..1 over the section's own lightmap page (section 10); buffer 4 three
   floats per vertex, not read (a direction, presumably the incident light's for bump mapping).
-  Light fixtures' instanced definitions have no buffer 3. Positions are not compressed on PC.
+  Light fixtures' instanced definitions have no buffer 3. BSP cluster and instance positions
+  are plain world floats on PC; **render model** positions and texcoords are not (below).
+- **Render model compression** (+0x14, one 0x38-byte element): ten floats as min/max pairs,
+  x, y, z, u, v (then four more, a second texcoord's, zero on Lockout). Every render model
+  section (scenery, crates, skies) stores its positions and texcoords -1..1; the real value is
+  `min + (v + 1) / 2 * (max - min)`. Found on Lockout (2026-10-30), where reading them raw drew
+  every prop as a 2 wu blob: the five `flag_base` plates (really 0.44 wu across, 0.05 tall)
+  as large round plates, the fourteen `power_module` canisters (0.26 x 0.26 x 0.82 wu) as
+  giant dark rocks, and the lift's `lockout_lift_tube` crate (a 0.2 wu `generic_grey`
+  octahedron marker under the pad) as a pyramid on the gravity lift. Same on Coagulation (its
+  teleporter, flag bases and sky); the triangle counts never showed it. The skies decode to
+  about 150 wu in radius, the size `SKY_SCALE` assumes.
 - Render model regions (+0x1C, 16 bytes: name sid, permutations block +0x08 of 16 bytes: name
   sid, then six i16 section indices from the lowest level of detail to the highest). We take the
   first permutation's highest present level. Shaders block at +0x60 (0x20 each, shader
