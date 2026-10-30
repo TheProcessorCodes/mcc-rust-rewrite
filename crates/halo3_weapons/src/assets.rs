@@ -20,10 +20,8 @@ use blam_geometry::weapons::{ItemPlacement, Weapon};
 use halo3_textures::MaterialTextures;
 
 /// Weapons every Spartan may start with, besides those placed on the map.
-const LOADOUT: [&str; 2] = [
-    r"objects\weapons\rifle\assault_rifle\assault_rifle",
-    r"objects\weapons\pistol\magnum\magnum",
-];
+/// The Spartan's crate owns the list.
+const LOADOUT: [&str; 3] = halo3_foot::STARTING_WEAPONS;
 
 /// One weapon kind's mesh piece: grip-space triangles of one material.
 pub struct Piece {

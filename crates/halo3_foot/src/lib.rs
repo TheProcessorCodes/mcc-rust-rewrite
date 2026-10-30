@@ -72,6 +72,14 @@ impl Plugin for FootPlugin {
     }
 }
 
+/// The weapon tags the Spartan may start with on every map, best first:
+/// he gets the first one the map has (`halo3_weapons` hands it over).
+pub const STARTING_WEAPONS: [&str; 3] = [
+    r"objects\weapons\rifle\sniper_rifle\sniper_rifle",
+    r"objects\weapons\rifle\assault_rifle\assault_rifle",
+    r"objects\weapons\pistol\magnum\magnum",
+];
+
 /// Field of view (vertical) in the eyes and over the shoulder.
 const FIRST_FOV: f32 = 55.0;
 const THIRD_FOV: f32 = 60.0;
