@@ -10,11 +10,11 @@ use bevy::prelude::*;
 #[derive(Resource, Default)]
 pub struct SessionFlag(pub Option<Vec3>);
 
-const POLE_HEIGHT: f32 = 1.6;
-const POLE_RADIUS: f32 = 0.02;
+const POLE_HEIGHT: f32 = 0.48;
+const POLE_RADIUS: f32 = 0.008;
 /// Pole below the ground, hiding a small error in where the ground is.
 const POLE_SUNK: f32 = 0.15;
-const FLAG_SIZE: Vec2 = Vec2::new(0.5, 0.32);
+const FLAG_SIZE: Vec2 = Vec2::new(0.15, 0.096);
 
 pub struct SessionFlagPlugin;
 
