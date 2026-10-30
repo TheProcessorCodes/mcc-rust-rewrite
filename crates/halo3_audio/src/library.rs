@@ -19,7 +19,11 @@ pub struct SoundInfo {
     pub permutations: Vec<u32>,
     /// (full-volume distance, silent distance), world units.
     pub bounds: (f32, f32),
+    /// The sound's own gain plus its class's (`SoundClass::gain_db`: music
+    /// 0 dB, dialogue -3, effects and ambience -12 to -15), dB.
     pub gain_db: f32,
+    /// Its sound class (the `sncl` index).
+    pub class: u8,
     /// The four distances in effect (the sound's own, else its class's):
     /// `blam_sound::tags::distance_gain`.
     pub distances: [f32; 4],
@@ -38,7 +42,8 @@ impl SoundInfo {
                 .filter(|id| library.sample(*id).is_some())
                 .collect(),
             bounds: snd.playback.bounds(),
-            gain_db: snd.playback.gain_db,
+            gain_db: snd.playback.gain_db + class.map_or(0.0, SoundClass::gain_db),
+            class: snd.class,
             distances: snd.playback.distances_with(class),
             per_object: class.map_or(1, |c| c.max_per_object.max(1) as usize),
         }

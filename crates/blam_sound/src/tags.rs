@@ -504,6 +504,22 @@ pub struct SoundClass {
     pub max_per_object: i16,
     /// The four default distances, world units (see [`Playback::distances`]).
     pub distances: [f32; 4],
+    /// The class's gain range, dB (`+0x44` lower, `+0x48` upper; inferred
+    /// from the values, `sound.md` 9): 0 on music, -3 on dialogue, -12 to
+    /// -15 on weapons, impacts, footsteps, vehicles and ambience. Most
+    /// classes give one value twice.
+    pub gain_bounds_db: [f32; 2],
+}
+
+impl SoundClass {
+    /// Music's class (`lsnd + 0x24` on every music piece).
+    pub const MUSIC: u8 = 32;
+
+    /// The level the class plays its sounds at, dB: the upper end of its
+    /// gain range.
+    pub fn gain_db(&self) -> f32 {
+        self.gain_bounds_db[1]
+    }
 }
 
 impl Playback {
@@ -562,10 +578,12 @@ impl SoundTags<'_> {
             let mut r = c.reader_at(e);
             let max_per_tag = r.i16()?;
             let max_per_object = r.i16()?;
+            let mut g = c.reader_at(e + 0x44);
             out.push(SoundClass {
                 max_per_tag,
                 max_per_object,
                 distances: c.reader_at(e + 0x34).f32x4()?,
+                gain_bounds_db: [g.f32()?, g.f32()?],
             });
         }
         Ok(out)

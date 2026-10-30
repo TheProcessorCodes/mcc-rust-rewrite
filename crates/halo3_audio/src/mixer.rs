@@ -48,7 +48,35 @@ impl Clip {
 
 pub type VoiceId = u64;
 
+/// The group a voice is mixed in: each has its own volume (the pause menu's
+/// sliders) on top of the voice's gain, and its own level meter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Bus {
+    Music,
+    Ambience,
+    Effects,
+    Dialogue,
+}
+
+impl Bus {
+    pub const ALL: [Bus; 4] = [Bus::Music, Bus::Ambience, Bus::Effects, Bus::Dialogue];
+    pub fn index(self) -> usize {
+        self as usize
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Bus::Music => "music",
+            Bus::Ambience => "ambience",
+            Bus::Effects => "effects",
+            Bus::Dialogue => "dialogue",
+        }
+    }
+}
+
+pub const BUSES: usize = Bus::ALL.len();
+
 struct Voice {
+    bus: Bus,
     queue: VecDeque<Arc<Clip>>,
     looping: Vec<Arc<Clip>>,
     current: Option<Arc<Clip>>,
@@ -92,6 +120,16 @@ struct State {
     voices: HashMap<VoiceId, Voice>,
     next_id: VoiceId,
     master: f32,
+    /// Each bus's volume, and what it was at the end of the last block (a
+    /// change ramps over one block).
+    bus_gain: [f32; BUSES],
+    bus_was: [f32; BUSES],
+    /// Per bus, the sum of squares of its mix (both channels, before the
+    /// master volume), and the frames summed, since `take_levels`.
+    meter: [f64; BUSES],
+    metered: usize,
+    /// Per-bus mixing space for one block.
+    scratch: Vec<[f32; BUSES * 2]>,
 }
 
 /// The handle the main thread uses.
@@ -103,6 +141,8 @@ impl Default for Mixer {
         Mixer(Arc::new(Mutex::new(State {
             master: 1.0,
             next_id: 1,
+            bus_gain: [1.0; BUSES],
+            bus_was: [1.0; BUSES],
             ..Default::default()
         })))
     }
@@ -110,6 +150,7 @@ impl Default for Mixer {
 
 /// What to start a voice with.
 pub struct Play {
+    pub bus: Bus,
     pub queue: Vec<Arc<Clip>>,
     pub looping: Vec<Arc<Clip>>,
     /// Starting gains (left, right); ramps from zero to them.
@@ -125,6 +166,7 @@ impl Mixer {
         s.voices.insert(
             id,
             Voice {
+                bus: p.bus,
                 queue: p.queue.into(),
                 looping: p.looping,
                 current: None,
@@ -181,13 +223,33 @@ impl Mixer {
         self.0.lock().unwrap().master = gain;
     }
 
+    /// Sets a bus's volume; it ramps there over one block.
+    pub fn set_bus(&self, bus: Bus, gain: f32) {
+        self.0.lock().unwrap().bus_gain[bus.index()] = gain.max(0.0);
+    }
+
+    /// Each bus's RMS level in dBFS (both channels, after the bus volume,
+    /// before the master volume) since the last call; `None` for a bus
+    /// that was silent.
+    pub fn take_levels(&self) -> [Option<f32>; BUSES] {
+        let mut s = self.0.lock().unwrap();
+        let n = (s.metered * 2).max(1) as f64;
+        let out = s.meter.map(|sq| (sq > 0.0).then(|| (10.0 * (sq / n).log10()) as f32));
+        s.meter = [0.0; BUSES];
+        s.metered = 0;
+        out
+    }
+
     /// Mixes `out.len() / 2` stereo frames (the audio thread's job; called
     /// directly when there is no sound device, `--shot` trace mode).
     pub fn render(&self, out: &mut [f32]) {
         out.fill(0.0);
         let frames = out.len() / 2;
-        let mut s = self.0.lock().unwrap();
+        let mut guard = self.0.lock().unwrap();
+        let s = &mut *guard;
         let master = s.master;
+        s.scratch.clear();
+        s.scratch.resize(frames, [0.0; BUSES * 2]);
         let mut done = Vec::new();
         for (id, v) in s.voices.iter_mut() {
             let start = v.gain;
@@ -195,6 +257,7 @@ impl Mixer {
                 (v.target[0] - start[0]) / frames as f32,
                 (v.target[1] - start[1]) / frames as f32,
             ];
+            let b = v.bus.index();
             let mut f = 0;
             while f < frames {
                 if v.current.is_none() {
@@ -217,8 +280,9 @@ impl Mixer {
                     let (a1, b1) = clip.frame(i + 1);
                     let gl = start[0] + step[0] * f as f32;
                     let gr = start[1] + step[1] * f as f32;
-                    out[2 * f] += (a0 + (a1 - a0) * t) * gl;
-                    out[2 * f + 1] += (b0 + (b1 - b0) * t) * gr;
+                    let cell = &mut s.scratch[f];
+                    cell[2 * b] += (a0 + (a1 - a0) * t) * gl;
+                    cell[2 * b + 1] += (b0 + (b1 - b0) * t) * gr;
                     v.pos += v.rate as f64;
                     f += 1;
                 }
@@ -232,6 +296,21 @@ impl Mixer {
         for id in done {
             s.voices.remove(&id);
         }
+        // The buses into the output, each at its volume (ramped from the
+        // last block's).
+        let (was, now) = (s.bus_was, s.bus_gain);
+        for (f, cell) in s.scratch.iter().enumerate() {
+            let t = (f + 1) as f32 / frames as f32;
+            for b in 0..BUSES {
+                let g = was[b] + (now[b] - was[b]) * t;
+                let (l, r) = (cell[2 * b] * g, cell[2 * b + 1] * g);
+                s.meter[b] += (l * l + r * r) as f64;
+                out[2 * f] += l;
+                out[2 * f + 1] += r;
+            }
+        }
+        s.bus_was = now;
+        s.metered += frames;
         for x in out.iter_mut() {
             // A soft limit instead of hard clipping when many voices pile up.
             let y = *x * master;
@@ -309,6 +388,7 @@ mod tests {
     fn queue_then_loop_then_stop() {
         let m = Mixer::default();
         let id = m.play(Play {
+            bus: Bus::Effects,
             queue: vec![clip(100, 16384)],
             looping: vec![clip(50, 8192)],
             gain: [1.0, 0.5],
@@ -331,6 +411,7 @@ mod tests {
     fn one_shot_ends() {
         let m = Mixer::default();
         let id = m.play(Play {
+            bus: Bus::Effects,
             queue: vec![clip(10, 1000)],
             looping: Vec::new(),
             gain: [1.0; 2],
@@ -339,5 +420,32 @@ mod tests {
         let mut out = vec![0.0; BLOCK * 2];
         m.render(&mut out);
         assert!(!m.is_playing(id));
+    }
+
+    #[test]
+    fn bus_volume_and_meter() {
+        let m = Mixer::default();
+        m.play(Play {
+            bus: Bus::Music,
+            queue: Vec::new(),
+            looping: vec![clip(4096, 16384)],
+            gain: [1.0; 2],
+            rate: 1.0,
+        });
+        let mut out = vec![0.0; BLOCK * 2];
+        m.render(&mut out);
+        let _ = m.take_levels();
+        m.render(&mut out);
+        assert!((out[0] - 0.5).abs() < 1e-3, "{}", out[0]);
+        let levels = m.take_levels();
+        // Half scale is -6 dBFS.
+        let music = levels[Bus::Music.index()].unwrap();
+        assert!((music + 6.02).abs() < 0.05, "{music}");
+        assert_eq!(levels[Bus::Effects.index()], None);
+        // Half the bus volume: -6 dB more, after a one-block ramp.
+        m.set_bus(Bus::Music, 0.5);
+        m.render(&mut out);
+        m.render(&mut out);
+        assert!((out[0] - 0.25).abs() < 1e-3, "{}", out[0]);
     }
 }
