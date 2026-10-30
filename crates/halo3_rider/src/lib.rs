@@ -89,12 +89,17 @@ pub struct ChiefModel {
     /// Colour maps with the armour colour baked in, by scene material:
     /// width, height, sRGB RGBA8.
     tinted: HashMap<u32, (u32, u32, Vec<u8>)>,
+    /// The same in the red team's colours, for the enemy Spartan.
+    tinted_red: HashMap<u32, (u32, u32, Vec<u8>)>,
 }
 
 /// Master Chief's olive drab, the primary and secondary change colours
 /// (sRGB). `HALO3_RIDER_COLOUR=r,g,b` overrides the primary.
 const PRIMARY: [f32; 3] = [0.34, 0.40, 0.21];
 const SECONDARY: [f32; 3] = [0.27, 0.31, 0.17];
+
+/// The red team's primary and secondary colours (sRGB): the enemy Spartan.
+const RED: [[f32; 3]; 2] = [[0.62, 0.07, 0.06], [0.36, 0.05, 0.04]];
 
 fn primary_colour() -> [f32; 3] {
     std::env::var("HALO3_RIDER_COLOUR")
@@ -114,6 +119,7 @@ fn bake_change_colour(
     resources: &blam_cache::Resources,
     shader_tag: u32,
     base: &Texture,
+    [primary, secondary]: [[f32; 3]; 2],
 ) -> Option<(u32, u32, Vec<u8>)> {
     let s = blam_texture::shader::resolve(cache, shader_tag).ok()?;
     let albedo = s.options.iter().find(|(k, _)| k == "albedo")?;
@@ -125,7 +131,6 @@ fn bake_change_colour(
     let cc_px = rgba::decode_level(cc.format, cc.width, cc.height, cc.level(0, 0)?).ok()?;
     let mut px = rgba::decode_level(base.format, base.width, base.height, base.level(0, 0)?).ok()?;
     let (w, h) = (base.width, base.height);
-    let (primary, secondary) = (primary_colour(), SECONDARY);
     for y in 0..h {
         for x in 0..w {
             let cx = (x as u64 * cc.width as u64 / w as u64) as usize;
@@ -193,15 +198,19 @@ pub fn load_chief(cache: &CacheFile) -> Option<ChiefModel> {
     let textures = halo3_textures::load(cache, &scene);
     scene.materials = all;
     let mut tinted = HashMap::new();
+    let mut tinted_red = HashMap::new();
     if let Ok(resources) = cache.resources() {
         for &i in &used {
             let base = textures.looks.get(i as usize).and_then(Option::as_ref).and_then(|l| l.texture);
             let shader = scene.materials.get(i as usize).and_then(|m| m.shader_tag);
             if let (Some(base), Some(shader)) = (base, shader)
                 && let Some(t) = textures.bitmaps.get(&base)
-                && let Some(baked) = bake_change_colour(cache, &resources, shader, t)
+                && let Some(baked) = bake_change_colour(cache, &resources, shader, t, [primary_colour(), SECONDARY])
             {
                 tinted.insert(i, baked);
+                if let Some(red) = bake_change_colour(cache, &resources, shader, t, RED) {
+                    tinted_red.insert(i, red);
+                }
             }
         }
         resources.clear_page_cache();
@@ -219,6 +228,7 @@ pub fn load_chief(cache: &CacheFile) -> Option<ChiefModel> {
         parts,
         textures,
         tinted,
+        tinted_red,
     })
 }
 
@@ -391,6 +401,10 @@ fn spawn_rider(
     mut pose: ResMut<RiderPose>,
 ) {
     let chief = pending.and_then(|mut p| p.0.take());
+    if let Some(chief) = &chief {
+        let statue = build_statue(chief, &mut meshes, &mut materials, &mut images);
+        commands.insert_resource(statue);
+    }
     let root = assets_root();
     let rig: Vec<RigBone> = match read_json(&root.join("rig.json")) {
         Ok(r) => r,
@@ -646,64 +660,11 @@ fn spawn_chief(
         });
         let uvs = if mesh.uvs.len() == n { mesh.uvs.clone() } else { vec![[0.0; 2]; n] };
         for part in &mesh.parts {
-            let look = chief.textures.looks.get(part.material as usize).and_then(Option::as_ref);
-            // The personal decals and emblem are overlays coloured by the
-            // player's emblem choice; drawn plain they are bright blue
-            // patches (their colour map is a change-colour mask).
-            let overlay = chief.scene.materials.get(part.material as usize).is_some_and(|m| {
-                m.tag_path.ends_with("mp_personal_decals") || m.tag_path.ends_with("mc_emblem")
-            });
-            if overlay || look.is_some_and(|l| l.hidden) {
+            let Some((material, base_color)) =
+                chief_material(chief, part.material, &chief.tinted, images, materials, &mut image_handles)
+            else {
                 continue;
-            }
-            let baked = chief.tinted.get(&part.material).map(|(w, h, px)| {
-                let mut image = Image::new(
-                    Extent3d {
-                        width: *w,
-                        height: *h,
-                        depth_or_array_layers: 1,
-                    },
-                    TextureDimension::D2,
-                    px.clone(),
-                    TextureFormat::Rgba8UnormSrgb,
-                    RenderAssetUsages::RENDER_WORLD,
-                );
-                image.sampler = sampler(true);
-                images.add(image)
-            });
-            let texture = baked.or_else(|| look.and_then(|l| l.texture).and_then(|b| {
-                image_handles
-                    .entry(b)
-                    .or_insert_with(|| {
-                        chief.textures.bitmaps.get(&b).and_then(halo_image).map(|i| images.add(i))
-                    })
-                    .clone()
-            }));
-            let base_color = match (texture.is_some(), look.and_then(|l| l.colour)) {
-                (_, Some(c)) => Color::srgb(c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0)),
-                (true, None) => Color::WHITE,
-                // Mark VI olive when the shader gave nothing usable.
-                (false, None) => Color::srgb(0.33, 0.37, 0.22),
             };
-            let uv_transform = look.map_or(Affine2::IDENTITY, |l| Affine2 {
-                matrix2: Mat2::from_diagonal(Vec2::from(l.xform.scale)),
-                translation: Vec2::from(l.xform.offset),
-            });
-            let alpha_mode = if look.is_some_and(|l| l.alpha_test) {
-                AlphaMode::Mask(0.5)
-            } else {
-                AlphaMode::Opaque
-            };
-            // Unlit: the world has no bevy lights, only baked ones;
-            // `light_rider` scales the colour by the light at the rider.
-            let material = materials.add(StandardMaterial {
-                base_color,
-                base_color_texture: texture,
-                uv_transform,
-                alpha_mode,
-                unlit: true,
-                ..default()
-            });
             rider.materials.push((material.clone(), base_color.to_linear()));
             let used: Vec<u32> = part.indices.clone();
             let e = commands
@@ -730,6 +691,138 @@ fn spawn_chief(
         }
     }
     Ok(())
+}
+
+/// A Spartan material, its colour map tinted from `tinted` where it has a
+/// change colour. `None` for the parts not drawn (emblem overlays, hidden).
+fn chief_material(
+    chief: &ChiefModel,
+    material: u32,
+    tinted: &HashMap<u32, (u32, u32, Vec<u8>)>,
+    images: &mut Assets<Image>,
+    materials: &mut Assets<StandardMaterial>,
+    image_handles: &mut HashMap<u32, Option<Handle<Image>>>,
+) -> Option<(Handle<StandardMaterial>, Color)> {
+    let look = chief.textures.looks.get(material as usize).and_then(Option::as_ref);
+    // The personal decals and emblem are overlays coloured by the
+    // player's emblem choice; drawn plain they are bright blue
+    // patches (their colour map is a change-colour mask).
+    let overlay = chief.scene.materials.get(material as usize).is_some_and(|m| {
+        m.tag_path.ends_with("mp_personal_decals") || m.tag_path.ends_with("mc_emblem")
+    });
+    if overlay || look.is_some_and(|l| l.hidden) {
+        return None;
+    }
+    let baked = tinted.get(&material).map(|(w, h, px)| {
+        let mut image = Image::new(
+            Extent3d {
+                width: *w,
+                height: *h,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            px.clone(),
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        image.sampler = sampler(true);
+        images.add(image)
+    });
+    let texture = baked.or_else(|| look.and_then(|l| l.texture).and_then(|b| {
+        image_handles
+            .entry(b)
+            .or_insert_with(|| {
+                chief.textures.bitmaps.get(&b).and_then(halo_image).map(|i| images.add(i))
+            })
+            .clone()
+    }));
+    let base_color = match (texture.is_some(), look.and_then(|l| l.colour)) {
+        (_, Some(c)) => Color::srgb(c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0)),
+        (true, None) => Color::WHITE,
+        // Mark VI olive when the shader gave nothing usable.
+        (false, None) => Color::srgb(0.33, 0.37, 0.22),
+    };
+    let uv_transform = look.map_or(Affine2::IDENTITY, |l| Affine2 {
+        matrix2: Mat2::from_diagonal(Vec2::from(l.xform.scale)),
+        translation: Vec2::from(l.xform.offset),
+    });
+    let alpha_mode = if look.is_some_and(|l| l.alpha_test) {
+        AlphaMode::Mask(0.5)
+    } else {
+        AlphaMode::Opaque
+    };
+    // Unlit: the world has no bevy lights, only baked ones;
+    // `light_rider` scales the colour by the light at the rider.
+    let handle = materials.add(StandardMaterial {
+        base_color,
+        base_color_texture: texture,
+        uv_transform,
+        alpha_mode,
+        unlit: true,
+        ..default()
+    });
+    Some((handle, base_color))
+}
+
+/// The Spartan in red, standing still in his bind pose (arms forward, ready):
+/// static meshes in renderer metres, Y up, feet at the origin, facing +X.
+/// Spawned and lit by `halo3_weapons::enemy`.
+#[derive(Resource)]
+pub struct SpartanStatue {
+    /// Each mesh with its material and the material's unlit colour.
+    pub parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>, LinearRgba)>,
+    /// Top of the helmet over the soles, metres.
+    pub height: f32,
+}
+
+fn build_statue(
+    chief: &ChiefModel,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+) -> SpartanStatue {
+    // Halo model units, Z up, to renderer metres, Y up (facing stays +X).
+    let to_render = Mat4::from_scale(Vec3::splat(WORLD_UNIT_METRES))
+        * Mat4::from_cols(Vec4::X, Vec4::NEG_Z, Vec4::Y, Vec4::W);
+    let mut image_handles = HashMap::new();
+    let mut parts = Vec::new();
+    let mut top = 0.0f32;
+    for piece in &chief.parts.pieces {
+        let Some(mesh) = chief.scene.meshes.get(piece.mesh as usize) else {
+            continue;
+        };
+        let m = to_render * piece.transform;
+        let n = mesh.positions.len();
+        let positions: Vec<[f32; 3]> = mesh.positions.iter().map(|p| m.transform_point3(*p).to_array()).collect();
+        top = positions.iter().fold(top, |t, p| t.max(p[1]));
+        let normals = (mesh.normals.len() == n).then(|| {
+            mesh.normals
+                .iter()
+                .map(|v| m.transform_vector3(*v).normalize_or_zero().to_array())
+                .collect::<Vec<_>>()
+        });
+        let uvs = if mesh.uvs.len() == n { mesh.uvs.clone() } else { vec![[0.0; 2]; n] };
+        for part in &mesh.parts {
+            let Some((material, base_color)) =
+                chief_material(chief, part.material, &chief.tinted_red, images, materials, &mut image_handles)
+            else {
+                continue;
+            };
+            let mut out = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+            out.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions.clone());
+            out.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs.clone());
+            out.insert_indices(Indices::U32(part.indices.clone()));
+            match &normals {
+                Some(v) => out.insert_attribute(Mesh::ATTRIBUTE_NORMAL, v.clone()),
+                None => out.compute_normals(),
+            }
+            parts.push((meshes.add(out), material, base_color.to_linear()));
+        }
+    }
+    SpartanStatue {
+        parts,
+        height: if top > 0.5 { top } else { 0.70 * WORLD_UNIT_METRES },
+    }
 }
 
 /// Moves the joints to the latest pose and shows or hides the rider.
