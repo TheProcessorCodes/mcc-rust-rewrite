@@ -1,6 +1,6 @@
 # IW4L notes: the bootstrap, render and camera pattern worth copying
 
-Written 2026-10-27 from `D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2-skate-3-src\src\mashup\`
+Written 2026-10-27 from the MW2 Skate 3 mashup's sources (<https://github.com/chasmlol/2010-rust-rewrite-mashup>)
 (the newest tree; Apache-2.0, upstream github.com/vladtrc/iw4L) and, for the Halo and noclip
 parts, `...\src\mashup-halo3-valhalla\`. Paths below are relative to the `mashup` tree unless
 written in full. Nothing here was run; it is what the code says.
@@ -243,7 +243,7 @@ the first is 90 lines.
 ### Noclip (only in `mashup-halo3-valhalla`)
 
 The newer `mashup` tree has no noclip; the valhalla tree does, and the user's install keeps
-those builds as `...\mw2 skate 3\iw4l-old-noclip.exe` and `noclip exe backup\iw4l.exe`
+those builds as `<MW2 Skate 3>\iw4l-old-noclip.exe` and `noclip exe backup\iw4l.exe`
 (Oct 21). Pieces:
 
 - Console command `noclip` (alias `ufo`), `crates/console/src/debug_move.rs` lines 69-75 and
@@ -347,12 +347,12 @@ Reads one export into what the mashup needs, "in IW4 map units, Z up":
 
 The table `MAPS: [&HaloMap; 2] = [&VALHALLA, &THE_PIT]`, each
 `HaloMap { zone: "halo3:valhalla", label, export_env: "IW4L_HALO3_VALHALLA", default_export:
-r"D:\reflex-tools\halo-3-maps\halo-3-valhalla", layout, team_axis, pictures: "valhalla" }`
-(The Pit: `IW4L_HALO3_THE_PIT`, `D:\reflex-tools\halo-exports\cyberdyne`, anchor
+r"<export folder>", layout, team_axis, pictures: "valhalla" }`
+(The Pit: `IW4L_HALO3_THE_PIT`, `<HaloExport output>\cyberdyne`, anchor
 `[0, -0.9, 0]`; Valhalla anchor `[236, 0, 302]`, both 16 spawns on the maps' own respawn
 markers). `find_scene(dir)` accepts `dir\scene.gltf` or the newest
 `dir\build\*\halo_prep\scene.gltf`. Pictures `{stem}_loading.png` (1920x1080) and
-`{stem}_preview.png` (668x292) from `D:\reflex-tools\halo-exports\previews` (env
+`{stem}_preview.png` (668x292) from `<HaloExport output>\previews` (env
 `IW4L_HALO3_PICTURES`), pulled from MCC's `Data\UI\texturepacks`.
 
 `stand_in(zone, prepared)` turns a walk of the proxy map `iw4:mp_rust` into the Halo map:
@@ -390,4 +390,4 @@ To replace the glTF step and feed the same consumers (and the skate glue), per B
    intermission camera (today hand-written per map), plus bounds.
 5. The gametype/Forge marker objects to **hide** (the 34 names), the sky (today a gradient),
    and the loading/preview pictures, which already exist for Valhalla and The Pit under
-   `D:\reflex-tools\halo-exports\previews`.
+   `<HaloExport output>\previews`.

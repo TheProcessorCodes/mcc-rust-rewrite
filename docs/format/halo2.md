@@ -7,7 +7,7 @@ checked against the user's files with the read-only probes in `docs/format/scrip
 `probe_h2_shaders.py`, `probe_h2_templates.py`, `probe_h2_bitmaps.py`; run them with `python -I`).
 
 Sources for where to look: Reclaimer's Halo 2 classes and HaloExportH2's `README-H2.md` (both
-GPL-3.0, `D:\reflex-tools\halo-tools`), and Assembly's `Halo2MCC` / `Halo2` plugin XMLs
+GPL-3.0, <https://github.com/Gravemind2401/Reclaimer>), and Assembly's `Halo2MCC` / `Halo2` plugin XMLs
 (GPL-3.0, fetched to `.research-cache/assembly-h2`). Only offsets, sizes and meanings were
 taken; no code was copied. Where they disagreed with the bytes, the bytes won (noted below).
 

@@ -1,10 +1,10 @@
 # Read-only probe of a structure BSP's cluster portals (docs/format/sbsp-portals.md).
 # Run:  python -I probe_sbsp_portals.py <map> root|cluster|dump|portals <bsp> [arg]
 # Never writes anything. The header and tag-index code is the same as probe_scnr_blocks.py.
-import mmap, struct, sys, math
+import os, mmap, struct, sys, math
 
 MAP = sys.argv[1] if len(sys.argv) > 1 else (
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps\riverworld.map")
+    os.path.join(os.environ["HALO3_MAPS"], "riverworld.map"))
 
 f = open(MAP, "rb")
 m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)

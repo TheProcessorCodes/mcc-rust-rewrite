@@ -3,7 +3,7 @@
 Decode spec for turning a `scenario_structure_bsp` tag of an MCC Halo 3 `.map`
 (build `Dec 21 2023 22:31:37`, Reclaimer `CacheType.MccHalo3U13`) into a list of
 `(material, world-space triangles)`. Written 2026-10-27 from Reclaimer commit `36224d7`
-(`D:\reflex-tools\halo-tools\Reclaimer`, GPL-3.0; **format facts only, no code copied**) and
+(<https://github.com/Gravemind2401/Reclaimer>, GPL-3.0; **format facts only, no code copied**) and
 verified on `riverworld.map` (Valhalla) with `scripts\probe_sbsp_geometry.py` (read-only,
 run with `python -I`). Every offset is given as hex (decimal). "Section" and "mesh" mean
 the same thing here (Reclaimer: `SectionBlock`, Halo: `mesh`).
@@ -669,7 +669,7 @@ checked, but must not panic).
 | Reclaimer RMF scene writer | writes the segment with material index `-1` (`LazyList.AddIfNew(null)` returns -1 instead of adding) | `Reclaimer.Core\Geometry\Utilities\SceneWriter.cs` line 443, `LazyList.cs` `AddIfNew` |
 | Reclaimer material list | `Model.EnumerateMaterials` filters nulls out of the *material pool*, not out of the geometry | `Reclaimer.Core\Geometry\Model.cs` lines 55-61 |
 | (Halo 1 Anniversary Saber3D only) | a permutation is skipped only when **all** its segments have a null material; Halo 3 code has no such rule | `Blam\Saber3D\Halo1X\Scene.cs` line 60 |
-| **HaloExport** (ours) | `foreach (var seg in mesh.Segments) { if (seg.Material == null) continue; ... }` — the triangles never reach the glTF, the sidecar does not count them | `D:\reflex-tools\halo-tools\HaloExport\Program.cs` line 490 (`BuildMesh`) |
+| **HaloExport** (ours) | `foreach (var seg in mesh.Segments) { if (seg.Material == null) continue; ... }` — the triangles never reach the glTF, the sidecar does not count them | `HaloExport\Program.cs` line 490 (`BuildMesh`) |
 
 HaloExport's drop is therefore the odd one out, and the Rust reader should **not** copy it.
 
@@ -795,10 +795,10 @@ What each consumer must do:
 
 ### Evidence
 
-1. **HaloExport's measurement.** `D:\reflex-tools\halo-tools\HaloExport\Program.cs` `FixNormals`
+1. **HaloExport's measurement.** `HaloExport\Program.cs` `FixNormals`
    (lines 567-590) counts, for every exported triangle with a non-zero face normal and non-zero summed
    vertex normal, whether `dot(cross(pb - pa, pc - pa), na + nb + nc) > 0`, and writes the ratio as
-   `winding_agrees_with_normals` (line 1058). `D:\reflex-tools\halo-exports\riverworld\halo_export.json`
+   `winding_agrees_with_normals` (line 1058). `<HaloExport output>\riverworld\halo_export.json`
    line 21: **1**; `...\cyberdyne\halo_export.json` line 21: **0.9996**. HaloExport measures in glTF
    space after `ToG(x, y, z) = 3.048 * (x, z, -y)` (line 465), a proper rotation, so the sign is the
    same as in Halo space; its instance meshes have already had the `det < 0` swap applied (none

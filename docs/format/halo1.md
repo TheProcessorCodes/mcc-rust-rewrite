@@ -10,7 +10,7 @@ was checked against the user's files with the read-only probes in `docs/format/s
 Where to look came from general knowledge of the classic Halo PC layout (the HEK tag
 definitions as the community documents them); offsets, sizes and meanings were then confirmed
 on the bytes. No code from Reclaimer, HaloExport, Invader or any other project was copied.
-HaloExportH1's exports (`D:\reflex-tools\halo-exports\h1-*`) gave the counts to check against.
+HaloExportH1's exports (`<HaloExport output>\h1-*`) gave the counts to check against.
 
 All numbers little-endian, offsets hex. "Block" = 12 bytes: element count (u32), an address
 (u32, section 2), one unused u32. "Tag reference" = 16 bytes: class fourcc, name address, name

@@ -11,19 +11,19 @@ the exact lookup algorithm, resolved to the one cache version we read.
   `MccHalo3U12 21`, `MccHalo3U13 22`, `Halo3ODST 23`). Reclaimer's
   `[Offset(x, MinVersion=A, MaxVersion=B)]` is inclusive A, exclusive B. Every value below is
   already resolved to U13.
-- Sources: Gravemind2401's Reclaimer, clone at `D:\reflex-tools\halo-tools\Reclaimer`
+- Sources: Gravemind2401's Reclaimer, <https://github.com/Gravemind2401/Reclaimer>
   (GPL-3.0; **format facts only, no code copied**): `Reclaimer.Blam\Blam\Halo3\ShaderTag.cs`,
   `Halo3\RenderMethodTemplateTag.cs`, `Halo3\RenderMethodDefinitionTag.cs`,
   `Halo3\Halo3Common.cs` (`GetMaterials`), `Common\Gen3\Gen3MaterialHelper.cs`,
   `Common\Gen3\Gen3Constants.cs`, `Reclaimer.Core\Geometry\Material.cs` (enum values). The
-  category rules come from HaloExport (`D:\reflex-tools\halo-tools\HaloExport\Program.cs`,
+  category rules come from HaloExport (`HaloExport\Program.cs`,
   methods `Analyse` and `MaterialIndex`, described not copied) and the material table in
-  `D:\reflex-tools\halo-tools\README.md`.
+  `halo-tools\README.md`.
 - Verified on `riverworld.map` (Valhalla) with `docs\format\scripts\probe_shaders.py`
   (read-only, run with `python -I`; modes: default = the five sample shaders, `--survey` =
   every render-method tag in the map, `--rmdf` / `--rmdf-detail` = the ten definitions,
   `--rmt2` = the five templates). Cross-checked against HaloExport's independent output for the
-  same map (`D:\reflex-tools\halo-exports\riverworld\scene.gltf`, `materials[].extras.halo`):
+  same map (`<HaloExport output>\riverworld\scene.gltf`, `materials[].extras.halo`):
   every bitmap, xform, option and category below agrees.
 - Container reminders (`container.md`): tag-data 32-bit pointers are stored `>> 2`;
   TagBlock = 12 bytes `{i32 count, u32 shifted ptr, 4 pad}`; TagReference = 16 bytes

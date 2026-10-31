@@ -16,7 +16,7 @@ import struct
 import sys
 import zlib
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps"
+MAPS = os.environ.get("HALO3_MAPS", "")
 _positional = [a for i, a in enumerate(sys.argv[1:], 1) if not a.startswith("--") and sys.argv[i - 1] != "--detail"]
 path = _positional[0] if _positional else os.path.join(MAPS, "riverworld.map")
 d = open(path, "rb").read()

@@ -4,7 +4,7 @@
 # Run:  python -I mode_resource_decode.py [tag index ...]     (default 173 and the mp_masterchief model)
 import mmap, struct, sys, os, zlib, math
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps"
+MAPS = os.environ.get("HALO3_MAPS", "")
 MAP = os.path.join(MAPS, "riverworld.map")
 WANT = [int(a) for a in sys.argv[1:]]
 

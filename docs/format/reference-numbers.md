@@ -7,11 +7,11 @@ Every number below comes from one of three places, marked in the tables:
 * **map** = read straight from the `.map` bytes with the scripts in `docs/format/scripts/`
   (`check_scnr_sbsp_counts.py`, `check_lbsp_resource.py`, `check_triangle_sums.py`, `check_placement_matrix.py`;
   run as `python -I <script> <map path> [...]`, read-only). These are the authoritative values.
-* **sidecar** = `D:\reflex-tools\halo-exports\<map>\halo_export.json` written by HaloExport.
+* **sidecar** = `<HaloExport output>\<map>\halo_export.json` written by HaloExport.
 * **gltf** = computed with python from `scene.gltf` + `scene.bin` next to the sidecar.
 
 Where a number appears in more than one source they agree exactly unless a note says otherwise.
-Maps: `C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps\{riverworld,cyberdyne}.map`
+Maps: `<MCC>\halo3\maps\{riverworld,cyberdyne}.map`
 (read-only). Units: Halo world units (wu) unless marked m (metres); 1 wu = 3.048 m; glTF (x, y, z) = 3.048 * Halo (x, z, -y),
 so Halo (x, y, z) = (gx, -gz, gy) / 3.048.
 
@@ -612,7 +612,7 @@ Columns: glTF material name | shader class | category | technique_set | triangle
   clear_m 8, slope_deg 1.7, ground_m 4.27, row 679, col 259}; `suggest` {box [131, 341, 113, 493],
   mesh_box_args, playable_half_width_ft 623, whole_map_args}. Useful only as a pipeline reference.
 * `textures/` holds the 62 PNGs (`<bitmap>-<tagid>.png` / `_rgb.png`).
-* `D:\reflex-tools\halo-exports\riverworld-sky\` is the same export with `--sky`: nodes world 1 + sky 1;
+* `<HaloExport output>\riverworld-sky\` is the same export with `--sky`: nodes world 1 + sky 1;
   sky 8,462 triangles, 5,040 vertices, 13 primitives (materials `skydome`, `clouds_hazy_wisps`,
   `clouds_cumulus`, `clouds_fore_frontlit`, `mountains_snow`, `mountains_terrain`, `clouds_patchy`,
   `clouds_horizon`, `matte_waypoint_reverse`, `sun_halves`, `sun_ring`, `sun_lines`, `sundisk`); sky bounds
@@ -678,7 +678,7 @@ scenery 132 nodes 139,652 / 224,356, crates 131 nodes 50,382 / 68,739, machines 
 
 ## 9. Last Resort (`zanzibar`), added 2026-10-28
 
-HaloExport sidecar `D:\reflex-tools\halo-exports\zanzibar\halo_export.json` (same build, `MccHalo3U13`)
+HaloExport sidecar `<HaloExport output>\zanzibar\halo_export.json` (same build, `MccHalo3U13`)
 against `blam geometry zanzibar`. Every count matches exactly; `last_resort_matches_haloexport` in
 `crates/blam_geometry/tests/maps.rs` pins them.
 
@@ -718,7 +718,7 @@ signs, `light_volume_a`), `levels\solo\020_base\...`, `levels\solo\010_jungle\..
 
 ## 10. High Ground (`deadlock`), added 2026-10-28
 
-HaloExport sidecar `D:\reflex-tools\halo-exports\deadlock\halo_export.json` (same build, `MccHalo3U13`)
+HaloExport sidecar `<HaloExport output>\deadlock\halo_export.json` (same build, `MccHalo3U13`)
 against `blam geometry deadlock`. Every count matches exactly; `high_ground_matches_haloexport` in
 `crates/blam_geometry/tests/maps.rs` pins them.
 
@@ -761,7 +761,7 @@ same way; `medical_decals` is a `rmd ` with `blend_mode multiply`.
 
 ## 11. Isolation (`isolation`), added 2026-10-29
 
-HaloExport sidecar `D:\reflex-tools\halo-exports\isolation\halo_export.json` (same build, `MccHalo3U13`)
+HaloExport sidecar `<HaloExport output>\isolation\halo_export.json` (same build, `MccHalo3U13`)
 against `blam geometry isolation`. Every count matches exactly; `isolation_matches_haloexport` in
 `crates/blam_geometry/tests/maps.rs` pins them.
 

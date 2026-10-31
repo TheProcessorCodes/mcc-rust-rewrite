@@ -2,7 +2,7 @@
 # the .map is inflated in memory (section 1), nothing is written next to it.
 import os, struct, zlib
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11"
+MAPS = os.environ.get("HALO2_MAPS", "")
 
 
 def inflate(raw):

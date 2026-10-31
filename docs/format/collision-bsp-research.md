@@ -16,7 +16,7 @@ Sources (all read today; URLs in section 17):
 - **Assembly** (XboxChaos/Assembly, `master`, GPL-3.0): plugin XMLs under
   `src/Assembly/Plugins/Halo3MCC/` (`sbsp.xml`, `zone.xml`, `play.xml`) and the 360 plugins
   under `Plugins/Halo3/` for comparison.
-- **Reclaimer** (local clone `D:\reflex-tools\halo-tools\Reclaimer`, commit `36224d7`, GPL-3.0):
+- **Reclaimer** (<https://github.com/Gravemind2401/Reclaimer>, commit `36224d7`, GPL-3.0):
   the parts it does have (resource gestalt, layout table, page reading, sbsp resource pointers).
 
 Container facts (header, tag index, `>>2` pointer expansion, StringId layout, section address
@@ -543,7 +543,7 @@ for i, surface in enumerate(surfaces):
 6: 89, 7: 15, 8: 11} -> **30,560 triangles**; 120_halo bsp_000: 19,378 loops -> 21,844
 triangles. Instance definitions: riverworld 76 defs -> 13,902 triangles before instancing
 (262 placements), 120_halo bsp_000 17 defs -> 4,600 (99 placements). Compare the render mesh:
-`D:\reflex-tools\halo-tools\README.md` (120_halo notes) counts 4.1 M drawn triangles for the
+`halo-tools\README.md` (120_halo notes) counts 4.1 M drawn triangles for the
 whole level (3.1 M of them instanced geometry, 0.83 M foliage cards), so the collision mesh is
 one to two orders of magnitude lighter than the render geometry and has no foliage at all.
 
@@ -634,9 +634,9 @@ exactly as in sections 2, 4, 5 (plus `coll.xml` for the `collision_model` tag of
 read here). Nothing in the repository tree (3,940 paths listed via the GitHub API) describes
 `structure_bsp_tag_resources`; the plugin format has no concept of resource definition data.
 
-**HaloExport** (`D:\reflex-tools\halo-exports\riverworld\halo_export.json`): top-level key
+**HaloExport** (`<HaloExport output>\riverworld\halo_export.json`): top-level key
 `"collision_bsp": "not exported (render geometry only); see README gaps"`, written by
-`D:\reflex-tools\halo-tools\HaloExport\Program.cs` line 1085. `D:\reflex-tools\halo-tools\README.md`
+`HaloExport\Program.cs` line 1085. `halo-tools\README.md`
 "Gaps": "Collision BSP not exported. In MCC Halo 3 the collision BSP lives in the sbsp's tag
 resource (structure_bsp_tag_resources), and Reclaimer has no definition for it. The pipeline
 builds collision from render triangles anyway. Invisible walls and soft-kill volumes are
@@ -739,11 +739,11 @@ Assembly (github.com/XboxChaos/Assembly, branch `master`):
 
 Local (read-only):
 
-- `D:\reflex-tools\halo-tools\Reclaimer\Reclaimer.Core\IO\Dynamic\Extensions.cs`, `...\IO\Annotations.cs`, `...\IO\Dynamic\StructureDefinition.cs`
-- `D:\reflex-tools\halo-tools\Reclaimer\Reclaimer.Blam\Blam\Common\Enums.cs`, `BlamConstants.cs`, `StringIdTranslator.cs`, `TagBlock.cs`, `CacheMetadata.cs`
-- `D:\reflex-tools\halo-tools\Reclaimer\Reclaimer.Blam\Blam\Halo3\ScenarioStructureBspTag.cs`, `Config\ScenarioStructureBspTag.config.cs`, `CacheFileResourceGestaltTag.cs`, `Config\CacheFileResourceGestaltTag.config.cs`, `CacheFileResourceLayoutTableTag.cs`, `ResourceIdentifier.cs`, `Halo3Common.cs`, `ModelTag.cs`, `ObjectTag.cs`
-- `D:\reflex-tools\halo-tools\Reclaimer\Reclaimer.Blam\Blam\MccHalo3\PointerExpander.cs`
-- `D:\reflex-tools\halo-tools\README.md` (Gaps), `D:\reflex-tools\halo-tools\HaloExport\Program.cs` line 1085, `D:\reflex-tools\halo-exports\riverworld\halo_export.json`
-- Map files read: `C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps\riverworld.map` (0x952C000 bytes), `...\120_halo.map` (0x1A251000 bytes)
+- `Reclaimer\Reclaimer.Core\IO\Dynamic\Extensions.cs`, `...\IO\Annotations.cs`, `...\IO\Dynamic\StructureDefinition.cs`
+- `Reclaimer\Reclaimer.Blam\Blam\Common\Enums.cs`, `BlamConstants.cs`, `StringIdTranslator.cs`, `TagBlock.cs`, `CacheMetadata.cs`
+- `Reclaimer\Reclaimer.Blam\Blam\Halo3\ScenarioStructureBspTag.cs`, `Config\ScenarioStructureBspTag.config.cs`, `CacheFileResourceGestaltTag.cs`, `Config\CacheFileResourceGestaltTag.config.cs`, `CacheFileResourceLayoutTableTag.cs`, `ResourceIdentifier.cs`, `Halo3Common.cs`, `ModelTag.cs`, `ObjectTag.cs`
+- `Reclaimer\Reclaimer.Blam\Blam\MccHalo3\PointerExpander.cs`
+- `halo-tools\README.md` (Gaps), `HaloExport\Program.cs` line 1085, `<HaloExport output>\riverworld\halo_export.json`
+- Map files read: `<MCC>\halo3\maps\riverworld.map` (0x952C000 bytes), `...\120_halo.map` (0x1A251000 bytes)
 - Downloaded source copies kept for re-checking under
-  `D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\.research-cache\{tagtool,assembly}\` (GPL-3.0 reference material, not part of our code).
+  `.research-cache\{tagtool,assembly}\` (GPL-3.0 reference material, not part of our code).

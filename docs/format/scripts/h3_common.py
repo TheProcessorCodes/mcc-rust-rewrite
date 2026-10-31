@@ -6,7 +6,7 @@ import mmap
 import os
 import struct
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps"
+MAPS = os.environ.get("HALO3_MAPS", "")
 
 
 class Map:

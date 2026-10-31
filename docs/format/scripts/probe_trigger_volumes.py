@@ -2,10 +2,10 @@
 # each: name string id, then forward, up, corner position and extents at +0x0C).
 # Read-only. Run:  python -I probe_trigger_volumes.py [path\to\map]
 # Default target is riverworld.map (Valhalla).
-import mmap, struct, sys
+import os, mmap, struct, sys
 
 MAP = sys.argv[1] if len(sys.argv) > 1 else (
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps\riverworld.map")
+    os.path.join(os.environ["HALO3_MAPS"], "riverworld.map"))
 
 f = open(MAP, "rb")
 m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
