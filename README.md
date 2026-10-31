@@ -26,6 +26,7 @@ the format descriptions the code is written from.
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
+| `crates/blam_reach` | MCC Halo: Reach maps: BSPs from the lightmap BSP data, instances from their resource, collision, objects, sky, spawns and lightmap texcoords into the same `Scene`; the cache file, shaders and bitmaps go through `blam_cache` / `blam_texture`, which tell Reach by its header (`docs/format/reach.md`) |
 | `crates/halo3` | the `halo3` binary: the map menu (`menu.rs`), wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
 | `crates/halo3_core` | what the runtime crates share: the map phase (`map.rs`: a map loaded, started and unloaded inside the running app), coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
 | `crates/halo3_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
@@ -78,6 +79,9 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
 `halo2\h2_maps_win64_dx11` (`coagulation`, `lockout` Lockout; `h2:NAME` / `h3:NAME` when
 both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
+Reach maps go by `hr:NAME` (`%HALOREACH_MAPS%` or MCC's `haloreach\maps`): `hr:20_sword_slayer`
+Sword Base, `hr:cex_timberland` Timberland, `hr:70_boneyard` Boneyard, ... (the menu's Reach tab
+lists all 20).
 
 ## Status
 
@@ -249,6 +253,15 @@ both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
       its lightmap (65 pages packed into one atlas, the light fixtures from
       the nearest surface) and the sky's blue fog (`docs/format/halo2.md`
       7, 10). Not yet: the sky model; a few small black panels on the boxes.
+- [x] Halo: Reach, the 20 multiplayer maps (`hr:NAME`, the menu's Reach tab; built, awaiting
+      a playtest): our own `blam_reach` crate (`docs/format/reach.md`) on the Halo 3 path:
+      textured BSPs, instances, scenery, crates, machines, controls and the sky model;
+      the collision BSP and instance collision (skating and walking checked headlessly on
+      Sword Base and Beaver Creek); 164 to 396 spawn points per map (Forge World 19). Lit
+      by Reach's lightmaps read as a direction-free light; instances lit per vertex or by
+      probe in Reach use the nearest-surface fallback. Not yet: the lightmaps' directions,
+      fog and atmosphere, camera fx, sound, weapons, Forge World's Forge objects. Counts
+      pinned by `cargo test -p blam_reach`.
 - [x] Milestone 3b: collision and rails fed to the skate world (playtested
       on Valhalla).
 - [x] Milestone 4: Skate 3 crates plugged in (path dependency on
