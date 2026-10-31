@@ -155,9 +155,8 @@ pub struct Controls {
     /// Right stick: X -1 left / +1 right, Y -1 back / +1 forward.
     pub lean: Vec2,
     pub throttle: f32,
+    /// Held from a standstill with both wheels down, backs the bike up instead.
     pub brake: f32,
-    /// Held: back up instead of driving forward.
-    pub reverse: bool,
 }
 
 /// A ray or probe hit on the world.
@@ -426,6 +425,8 @@ pub struct Bike {
     /// The wheelie and stoppie holds' integral, N·m, and whether a stoppie is on.
     pitch_integral: f32,
     stoppie: bool,
+    /// Backing up: the brake was pulled at a standstill and is still held.
+    reversing: bool,
     /// Where to come back after a crash: position and heading, recorded
     /// while both wheels are down, the oldest about two seconds back.
     safe: Vec<(Vec3, f32)>,
@@ -433,6 +434,9 @@ pub struct Bike {
     candidates: Vec<u32>,
     contacts: Vec<(Vec3, f32)>,
 }
+
+/// Slower than this along the frame, m/s, is a standstill for backing up.
+const STOPPED: f32 = 0.15;
 
 /// A rotation that faces the bike along `heading` (radians about +Y, 0 is +Z).
 pub fn heading_rotation(heading: f32) -> Quat {
@@ -468,6 +472,7 @@ impl Bike {
             cog: Vec3::NEG_Y * FRAME_LIFT,
             pitch_integral: 0.0,
             stoppie: false,
+            reversing: false,
             safe: Vec::new(),
             safe_clock: 0.0,
             candidates: Vec::new(),
@@ -505,6 +510,11 @@ impl Bike {
 
     pub fn speed(&self) -> f32 {
         self.velocity.dot(self.forward())
+    }
+
+    /// The gas the engine gets this step, after the pedal's rate limit.
+    pub fn gas(&self) -> f32 {
+        self.held.gas
     }
 
     pub fn grounded(&self) -> usize {
@@ -661,13 +671,18 @@ impl Bike {
         let r = Mat3::from_quat(self.rotation);
         let (side, up, fwd) = (r.x_axis, r.y_axis, r.z_axis);
 
+        // The brake pulled at a standstill backs up instead, until it is let go.
+        let stopped = self.velocity.dot(fwd).abs() < STOPPED && self.wheels.iter().all(|w| w.contact.is_some());
+        self.reversing = c.brake > 0.5 && (self.reversing || stopped);
+        let brake = if self.reversing { 0.0 } else { c.brake };
+
         // The controls, through the bike's rate limits.
         let mut held = self.held;
         held.steer = toward(held.steer, c.steer.clamp(-1.0, 1.0), s.steer_rate, dt);
         held.back = toward(held.back, (-c.lean.y).clamp(-1.0, 1.0), s.lean_rate, dt);
-        let gas = if c.reverse { 0.0 } else { c.throttle.clamp(0.0, 1.0) };
+        let gas = if self.reversing { 0.0 } else { c.throttle.clamp(0.0, 1.0) };
         held.gas = toward(held.gas, gas, s.pedal_rate, dt);
-        held.brake = toward(held.brake, c.brake.clamp(0.0, 1.0), s.pedal_rate, dt);
+        held.brake = toward(held.brake, brake.clamp(0.0, 1.0), s.pedal_rate, dt);
         self.held = held;
         self.lean = Vec2::new(toward(self.lean.x, c.lean.x.clamp(-1.0, 1.0), s.lean_rate, dt), -held.back);
 
@@ -808,6 +823,10 @@ impl Bike {
                 } else {
                     v_long / tyre.radius
                 };
+                // The brake locks the wheel, never turns it against the way it rolls.
+                if held.brake > 0.0 && self.wheel_spin * v_long < 0.0 {
+                    self.wheel_spin = 0.0;
+                }
             }
             self.wheels[i] = WheelState {
                 compression: depth.max(before - tyre.max_decompression_rate * dt),
@@ -860,7 +879,7 @@ impl Bike {
         }
 
         // Backing up: a push towards walking pace backwards.
-        if c.reverse && rear_down && speed < 1.0 {
+        if self.reversing && rear_down && speed < 1.0 {
             force += fwd * (s.reverse_speed - speed) * s.reverse_gain;
         }
         // Air drag.
@@ -1125,15 +1144,7 @@ mod tests {
         let w = floor();
         let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, 0.0), 0.0);
         ride(&w, &mut bike, Controls::default(), 0.5);
-        ride(
-            &w,
-            &mut bike,
-            Controls {
-                reverse: true,
-                ..default()
-            },
-            5.0,
-        );
+        ride(&w, &mut bike, Controls { brake: 1.0, ..default() }, 5.0);
         let v = bike.speed();
         assert!((v - setup().reverse_speed).abs() < 0.5, "reversing at {v} m/s");
         assert!(bike.crashed.is_none());
@@ -1147,17 +1158,45 @@ mod tests {
         ride(&w, &mut bike, Controls::default(), 0.5);
         ride(&w, &mut bike, gas(1.0), 2.5);
         assert!(bike.speed() > 10.0);
-        ride(
-            &w,
-            &mut bike,
-            Controls {
-                brake: 1.0,
-                ..default()
-            },
-            4.0,
-        );
-        assert!(bike.speed().abs() < 0.5, "still at {} m/s", bike.speed());
+        // Held on past the stop it backs up, so watch for the stop itself.
+        let brake = Controls { brake: 1.0, ..default() };
+        let mut frames = 0;
+        while bike.speed() > 0.0 && frames < 240 {
+            bike.step(&w, brake, 1.0 / 60.0);
+            frames += 1;
+        }
+        assert!(frames < 240, "still at {} m/s", bike.speed());
         assert!(bike.crashed.is_none());
+    }
+
+    #[test]
+    fn braking_never_spins_the_rear_backwards() {
+        let w = floor();
+        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -350.0), 0.0);
+        ride(&w, &mut bike, Controls::default(), 0.5);
+        ride(&w, &mut bike, gas(1.0), 2.5);
+        let brake = Controls { brake: 1.0, ..default() };
+        while bike.speed() > 0.0 {
+            bike.step(&w, brake, 1.0 / 60.0);
+            assert!(bike.wheel_spin >= 0.0, "rear at {} rad/s, {} m/s", bike.wheel_spin, bike.speed());
+        }
+    }
+
+    #[test]
+    fn brake_held_through_the_stop_backs_up() {
+        let w = floor();
+        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -350.0), 0.0);
+        ride(&w, &mut bike, Controls::default(), 0.5);
+        ride(&w, &mut bike, gas(1.0), 1.5);
+        let brake = Controls { brake: 1.0, ..default() };
+        ride(&w, &mut bike, brake, 0.5);
+        assert!(bike.speed() > 1.0, "backing up before it stopped: {} m/s", bike.speed());
+        ride(&w, &mut bike, brake, 6.0);
+        let v = bike.speed();
+        assert!((v - setup().reverse_speed).abs() < 0.5, "reversing at {v} m/s");
+        // Let go and it only coasts, slowing down.
+        ride(&w, &mut bike, Controls::default(), 1.0);
+        assert!(bike.speed() > v + 0.3, "still backing up at {} m/s", bike.speed());
     }
 
     #[test]

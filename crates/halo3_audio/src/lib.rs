@@ -1,14 +1,15 @@
 //! Halo 3's own sound in the viewer: the map's ambience (each cluster's
 //! background sound with its random details, sound scenery placed in the
-//! world), its music by hand, board sounds while skating, and weapon sounds
-//! (`weapons.rs`).
+//! world), its music by hand, board sounds while skating, weapon sounds
+//! (`weapons.rs`) and the dirt bike's engine (`engine.rs`).
 //! `docs/format/sound.md` has the data, `docs/viewer.md` "Sound" the rules.
 //!
 //! Keys: M music on / off, Shift+M next track, N alternate loop, K mute,
-//! `-` / `=` volume. `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
+//! `-` / `=` volume, H the bike's engine sound (Reflex, synth, off). `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
 //! mode, where `HALO3_AUDIO_TRACE=1` runs the logic without output and
 //! logs which emitters are active at each view.
 
+pub mod engine;
 pub mod halo2;
 mod library;
 mod mixer;
@@ -82,6 +83,11 @@ impl Plugin for HaloAudioPlugin {
             level: volume,
             muted: false,
         });
+        // The dirt bike's engine (`engine.rs`).
+        app.init_map_resource::<engine::EngineSound>().add_systems(
+            Update,
+            engine::bike_engine.before(volume_keys).run_if(halo3_core::map::ready),
+        );
         // A map's sounds go when it is unloaded (`halo3_core::map`).
         app.remove_on_map_unload::<Loader>()
             .remove_on_map_unload::<Sounds>()

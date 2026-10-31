@@ -12,12 +12,12 @@
 //! | left stick X | A / D | handlebars |
 //! | right stick | arrow keys | rider: forward, back, left, right |
 //! | RT | W | throttle |
-//! | LT | S | brake |
-//! | A (hold) | Space (hold) | back up, to 10 mph |
+//! | LT | S | brake; held at a standstill, back up to 10 mph |
 //! | Y | R | stand the bike back up |
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`) |
 //! | LB + d-pad up (hold) | | back to the session marker |
+//! | left stick click | H | engine sound: Reflex's 450F, synth, off (`halo3_audio::engine`) |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
@@ -77,6 +77,7 @@ impl Plugin for BikePlugin {
             .init_map_resource::<Dismount>()
             .init_map_resource::<Mount>()
             .init_map_resource::<SessionFlag>()
+            .init_map_resource::<halo3_core::bike::BikeMotion>()
             .add_plugins(tune::TunePlugin)
             .add_systems(halo3_core::map::MapStartup, (setup, model::start))
             .add_systems(
@@ -88,6 +89,7 @@ impl Plugin for BikePlugin {
                     model::place,
                     model::light,
                     show_status,
+                    publish_motion,
                 )
                     .chain().run_if(halo3_core::map::ready),
             );
@@ -110,6 +112,30 @@ struct Riding {
     look: Vec3,
     /// Kept while off the bike, as the skate's is.
     marker: marker::SessionMarker,
+}
+
+/// The bike's state for the engine sound (`halo3_audio`).
+fn publish_motion(riding: Res<Riding>, mut motion: ResMut<halo3_core::bike::BikeMotion>) {
+    let m = match riding.bike.as_ref() {
+        Some(b) => {
+            let s = physics::setup();
+            halo3_core::bike::BikeMotion {
+                riding: true,
+                rpm: b.engine.rpm,
+                min_rpm: s.min_rpm,
+                max_rpm: s.max_rpm(),
+                throttle: b.gas(),
+                speed: b.velocity.length(),
+                gear: b.engine.gear,
+                grounded: b.grounded(),
+                crashed: b.crashed.is_some(),
+                clutch_slipping: !b.engine.locked,
+                rear_sliding: b.wheels[0].sliding && b.wheels[0].contact.is_some(),
+            }
+        }
+        None => halo3_core::bike::BikeMotion::default(),
+    };
+    *motion = m;
 }
 
 /// The skate scale `k` the rider is drawn at (`skate.rs`).
@@ -208,7 +234,6 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         ),
         throttle: key(KeyCode::KeyW),
         brake: key(KeyCode::KeyS),
-        reverse: keys.pressed(KeyCode::Space),
     };
     if let Some(pad) = pad {
         let l = dead(pad.left_stick(), 0.12);
@@ -218,7 +243,6 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         let rt = trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]);
         c.throttle = c.throttle.max(rt.powf(THROTTLE_CURVE));
         c.brake = c.brake.max(trigger(pad, B::LeftTrigger2, GamepadAxis::LeftZ, &mut rested[0]));
-        c.reverse |= pad.pressed(B::South);
     }
     c
 }
