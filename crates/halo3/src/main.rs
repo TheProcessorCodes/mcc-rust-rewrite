@@ -1,6 +1,7 @@
 //! `halo3`: open a Halo 3 map and fly around it.
 //!
 //! ```text
+//! halo3                  the map menu: pick a map, Start Game (`menu.rs`)
 //! halo3 <map>            riverworld, or a path to a .map
 //! halo3 --test-scene     a made-up room, for checking the camera
 //!
@@ -36,6 +37,7 @@
 //! `lockout.map`, is `blackout`.
 
 mod halo2;
+mod menu;
 mod pause;
 mod shot;
 
@@ -103,136 +105,185 @@ fn codename(arg: &str) -> (Option<u8>, &str) {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut foot_tuning = None;
-    let mut arsenal = None;
-    let mut plain_fog = None;
-    // Halo 2: the map's ambience, decoded on the sound plugin's thread.
-    let mut plain_sound = None;
-    let (scene, textures, chief, sky, water, map_file) = match args.first().map(String::as_str) {
-        None | Some("--help") | Some("-h") => {
+    match args.first().map(String::as_str) {
+        Some("--help") | Some("-h") => {
             eprintln!("usage:
+  halo3 [--foot]                                             the map menu
+  halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading] [--size WxH]
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 <map> [--foot]
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
   halo3 --test-scene");
             std::process::exit(2);
         }
-        Some("--test-scene") => (
-            world::test_scene(),
-            textures::MaterialTextures::default(),
-            None,
-            world::sky::SkyData::default(),
-            world::water::WaterData::default(),
-            None,
-        ),
-        Some(map) if blam_h2::is_halo2(&resolve_map(map)) => {
-            // Halo 2: everything decoded up front, no Halo 3 cache file
-            // behind it (`halo2.rs`).
-            let (scene, textures, fog, h2_arsenal) = halo2::load(&resolve_map(map))?;
-            arsenal = h2_arsenal;
-            plain_fog = fog;
-            plain_sound = Some(halo2::ambience_loader(&resolve_map(map)));
-            // The mean lit surface, for the auto exposure (no camera fx in
-            // Halo 2: the exposure stays at `lighting::EXPOSURE`).
-            if let Some(mean) = world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps) {
-                eprintln!("halo 2 lightmap: mean irradiance {mean:.3}");
-                world::lighting::set_scene_mean(mean);
-            }
-            // The rider is Halo 3's Spartan, borrowed from Valhalla when
-            // Halo 3 is installed (Halo 2's Master Chief is not decoded).
-            let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
-                .ok()
-                .and_then(|c| rider::load_chief(&c));
-            (
-                scene,
-                textures,
-                chief,
-                world::sky::SkyData::default(),
-                world::water::WaterData::default(),
-                None,
-            )
-        }
+        // No map (only options, or nothing): the map menu, which loads the
+        // chosen map into the same window (`menu.rs`).
+        None => run(&args, None),
+        Some(a) if a.starts_with("--") && a != "--test-scene" => run(&args, None),
         Some(map) => {
-            let path = resolve_map(map);
-            let started = std::time::Instant::now();
-            // Kept open for the whole run: zone sets decode their textures
-            // from it when they load (`world/stream.rs`).
-            let cache: &'static blam_cache::CacheFile = Box::leak(Box::new(blam_cache::CacheFile::open(&path)?));
-            let mut scene = blam_geometry::Scene {
-                name: cache.header.map_name.clone(),
-                ..Default::default()
-            };
-            blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
+            let map = load(map)?;
+            run(&args, Some(map))
+        }
+    }
+}
+
+/// A map decoded and ready to go into the app. Made up front for
+/// `halo3 <map>`, or on the menu's loading thread.
+pub(crate) struct LoadedMap {
+    scene: blam_geometry::Scene,
+    textures: textures::MaterialTextures,
+    chief: Option<rider::ChiefModel>,
+    sky: world::sky::SkyData,
+    water: world::water::WaterData,
+    /// Kept open for the whole run: zone sets decode their textures from it
+    /// when they load (`world/stream.rs`).
+    map_file: Option<&'static blam_cache::CacheFile>,
+    arsenal: Option<weapons::assets::Arsenal>,
+    foot_tuning: Option<foot::physics::Tuning>,
+    plain_fog: Option<world::sky::PlainFogSetting>,
+    /// Halo 2: the map's ambience, decoded on the sound plugin's thread.
+    plain_sound: Option<audio::halo2::PlainLoader>,
+}
+
+impl LoadedMap {
+    pub(crate) fn scene_name(&self) -> &str {
+        &self.scene.name
+    }
+}
+
+/// Decodes a map (a name or a path, see [`resolve_map`]), or the test scene.
+pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
+    if map == "--test-scene" {
+        return Ok(LoadedMap {
+            scene: world::test_scene(),
+            textures: textures::MaterialTextures::default(),
+            chief: None,
+            sky: world::sky::SkyData::default(),
+            water: world::water::WaterData::default(),
+            map_file: None,
+            arsenal: None,
+            foot_tuning: None,
+            plain_fog: None,
+            plain_sound: None,
+        });
+    }
+    let path = resolve_map(map);
+    if blam_h2::is_halo2(&path) {
+        // Halo 2: everything decoded up front, no Halo 3 cache file
+        // behind it (`halo2.rs`).
+        let (scene, textures, fog, arsenal) = halo2::load(&path)?;
+        // The mean lit surface, for the auto exposure (no camera fx in
+        // Halo 2: the exposure stays at `lighting::EXPOSURE`).
+        if let Some(mean) = world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps) {
+            eprintln!("halo 2 lightmap: mean irradiance {mean:.3}");
+            world::lighting::set_scene_mean(mean);
+        }
+        // The rider is Halo 3's Spartan, borrowed from Valhalla when
+        // Halo 3 is installed (Halo 2's Master Chief is not decoded).
+        let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
+            .ok()
+            .and_then(|c| rider::load_chief(&c));
+        return Ok(LoadedMap {
+            scene,
+            textures,
+            chief,
+            sky: world::sky::SkyData::default(),
+            water: world::water::WaterData::default(),
+            map_file: None,
+            arsenal,
+            foot_tuning: None,
+            plain_fog: fog,
+            plain_sound: Some(halo2::ambience_loader(&path)),
+        });
+    }
+    let started = std::time::Instant::now();
+    let cache: &'static blam_cache::CacheFile = Box::leak(Box::new(blam_cache::CacheFile::open(&path)?));
+    let mut scene = blam_geometry::Scene {
+        name: cache.header.map_name.clone(),
+        ..Default::default()
+    };
+    blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
+    eprintln!(
+        "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
+        scene.name,
+        scene.meshes.len(),
+        scene.placements.len(),
+        scene.triangle_count(),
+        started.elapsed().as_secs_f32()
+    );
+    let started = std::time::Instant::now();
+    let textures = textures::load_with(cache, &scene, false);
+    let bytes: usize = textures.lightmaps.iter().flatten().map(|t| t.coefficients.byte_len() + t.intensity.byte_len()).sum();
+    eprintln!(
+        "textures: {} materials resolved (their bitmaps load with their zone set), lightmaps {:.1} MiB, in {:.1} s",
+        scene.materials.len(),
+        bytes as f64 / (1 << 20) as f64,
+        started.elapsed().as_secs_f32()
+    );
+    let mean = world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps);
+    if let Some(mean) = mean {
+        world::lighting::set_scene_mean(mean);
+    }
+    match blam_geometry::camera_fx::read(cache) {
+        Ok(Some(fx)) => {
+            world::lighting::set_map_exposure(fx.exposure);
+            world::lighting::set_auto_range(fx.auto_range);
             eprintln!(
-                "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
-                scene.name,
-                scene.meshes.len(),
-                scene.placements.len(),
-                scene.triangle_count(),
-                started.elapsed().as_secs_f32()
+                "camera fx {}: exposure {:.2} stops (auto range {:?}), mean irradiance {:.3} -> x{:.2}",
+                fx.tag,
+                fx.exposure,
+                fx.auto_range,
+                mean.unwrap_or(0.0),
+                world::lighting::exposure()
             );
-            let started = std::time::Instant::now();
-            let textures = textures::load_with(cache, &scene, false);
-            let bytes: usize = textures.lightmaps.iter().flatten().map(|t| t.coefficients.byte_len() + t.intensity.byte_len()).sum();
+        }
+        Ok(None) => eprintln!("no camera fx: exposure x{}", world::lighting::exposure()),
+        Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
+    }
+    let chief = rider::load_chief(cache);
+    let arsenal = weapons::assets::load(cache);
+    let foot_tuning = match blam_geometry::movement::read(cache) {
+        Ok(m) => {
             eprintln!(
-                "textures: {} materials resolved (their bitmaps load with their zone set), lightmaps {:.1} MiB, in {:.1} s",
-                scene.materials.len(),
-                bytes as f64 / (1 << 20) as f64,
-                started.elapsed().as_secs_f32()
+                "on foot: {} runs {:.2} wu/s, jumps {:.2} wu/s ({:.2} wu high)",
+                m.biped,
+                m.run_forward,
+                m.jump_velocity,
+                m.jump_height()
             );
-            let mean = world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps);
-            if let Some(mean) = mean {
-                world::lighting::set_scene_mean(mean);
-            }
-            match blam_geometry::camera_fx::read(cache) {
-                Ok(Some(fx)) => {
-                    world::lighting::set_map_exposure(fx.exposure);
-                    world::lighting::set_auto_range(fx.auto_range);
-                    eprintln!(
-                        "camera fx {}: exposure {:.2} stops (auto range {:?}), mean irradiance {:.3} -> x{:.2}",
-                        fx.tag,
-                        fx.exposure,
-                        fx.auto_range,
-                        mean.unwrap_or(0.0),
-                        world::lighting::exposure()
-                    );
-                }
-                Ok(None) => eprintln!("no camera fx: exposure x{}", world::lighting::exposure()),
-                Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
-            }
-            let chief = rider::load_chief(cache);
-            arsenal = weapons::assets::load(cache);
-            match blam_geometry::movement::read(cache) {
-                Ok(m) => {
-                    eprintln!(
-                        "on foot: {} runs {:.2} wu/s, jumps {:.2} wu/s ({:.2} wu high)",
-                        m.biped,
-                        m.run_forward,
-                        m.jump_velocity,
-                        m.jump_height()
-                    );
-                    foot_tuning = Some(foot::physics::Tuning::from_movement(&m));
-                }
-                Err(e) => eprintln!("on foot: no player numbers ({e}); using Valhalla's"),
-            }
-            let sky = world::sky::load(cache, &scene);
-            let water = world::water::load(cache, &scene);
-            (scene, textures, chief, sky, water, Some(cache))
+            Some(foot::physics::Tuning::from_movement(&m))
+        }
+        Err(e) => {
+            eprintln!("on foot: no player numbers ({e}); using Valhalla's");
+            None
         }
     };
-    let shot = shot_plan(&args, &scene)?;
-    let zones = world::zones::Zones::of(&scene);
-    let loaded = world::zones::initial(&args, &zones)?;
-    if !zones.layout.zone_sets.is_empty() {
-        eprintln!(
-            "{} zone sets, {} BSPs, {} player starting locations; loaded: {}",
-            zones.layout.zone_sets.len(),
-            zones.layout.bsps.len(),
-            zones.layout.starts.len(),
-            zones.describe(loaded.mask)
-        );
-    }
-    let title = format!("Halo 3 - {}", scene.name);
+    let sky = world::sky::load(cache, &scene);
+    let water = world::water::load(cache, &scene);
+    Ok(LoadedMap {
+        scene,
+        textures,
+        chief,
+        sky,
+        water,
+        map_file: Some(cache),
+        arsenal,
+        foot_tuning,
+        plain_fog: None,
+        plain_sound: None,
+    })
+}
+
+/// Builds and runs the app: on `map`, or on the map menu when there is none.
+fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
+    let shot = match &map {
+        Some(map) => shot_plan(args, &map.scene)?,
+        None => None,
+    };
+    let title = match &map {
+        Some(map) => format!("Halo 3 - {}", map.scene.name),
+        None => "Halo 3".to_string(),
+    };
     // Sound plays only in a window (`audio/`); `--shot` never opens the
     // sound device.
     let sound = audio::wanted(shot.is_some());
@@ -252,6 +303,7 @@ fn main() -> anyhow::Result<()> {
         .add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
             std::time::Duration::from_millis(1),
         )),
+        None if menu::headless(args) => menu::add_headless_plugins(&mut app),
         None => {
             let plugins = DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
@@ -270,121 +322,155 @@ fn main() -> anyhow::Result<()> {
             }
         }
     };
+    let sound = sound && !menu::headless(args);
     if sound || audio::trace_wanted() {
         let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
         app.add_plugins(audio::HaloAudioPlugin {
-            cache: map_file,
             output: sound,
             trace: audio::trace_wanted(),
             music: value("--music"),
-            plain: std::sync::Mutex::new(plain_sound),
         });
     }
     let skating = shot.as_ref().is_none_or(|p| p.rides());
-    let collision = scene.collision.clone();
-    let shot_mode = shot.is_some();
+    // Off the menu every map gets every mode; a map named on the command
+    // line without collision has no bike, feet or weapons.
+    let grounded = map.as_ref().is_none_or(|m| !m.scene.collision.triangles.is_empty());
     if let Some(plan) = shot {
-        if plan.rides() {
-            // Ride from the first view, or the start spawn.
-            let start = match plan.views.first() {
-                Some(v) => Some((v.position, v.yaw_deg.to_radians())),
-                None => scene
-                    .spawns
-                    .first()
-                    .map(|s| (s.position, s.yaw))
-                    .or_else(|| scene.starts.first().map(|s| (s.position, s.yaw))),
-            };
-            match start {
-                Some((position, yaw)) if plan.bike => {
-                    app.insert_resource(bike::AutoStart::at(position, yaw));
-                }
-                Some((position, yaw)) if plan.foot => {
-                    app.insert_resource(foot::AutoStart::at(position, yaw));
-                }
-                Some((position, yaw)) => {
-                    app.insert_resource(skate::AutoStart::at(position, yaw));
-                }
-                None => {}
-            }
-        }
         app.add_plugins(shot::ShotPlugin(plan));
     }
     if skating {
-        app.insert_resource(skate::SkateInput(
-            (!scene.collision.triangles.is_empty()).then(|| scene.collision.clone()),
-            scene.trigger_volumes.clone(),
-            scene.water_triangles(),
-        ))
-        .insert_resource(rider::PendingChief(chief))
-        .add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
-        if !collision.triangles.is_empty() {
-            app.insert_resource(bike::BikeInput(collision))
-                .add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin));
-            if let Some(t) = foot_tuning {
-                app.insert_resource(foot::FootTuning(t));
-            }
-            // `--foot`: start on foot at the start spawn.
-            if !shot_mode
-                && args.iter().any(|a| a == "--foot")
-                && let Some((position, yaw)) = scene
-                    .spawns
-                    .first()
-                    .map(|s| (s.position, s.yaw))
-                    .or_else(|| scene.starts.first().map(|s| (s.position, s.yaw)))
-            {
-                app.insert_resource(foot::AutoStart::at(position, yaw));
-            }
-        }
-        // Kill volumes and the bottom of the world (`falls.rs`), water
-        // surfaces and the ground under them, for sinking, falling and
-        // respawning (`swim.rs`).
-        let kill = falls::KillZones::new(&scene.trigger_volumes, &scene.collision);
-        eprintln!(
-            "kill volumes: {}; Guardian watch volumes: {}; out of the world below z {:.1} wu",
-            kill.volumes.len(),
-            kill.guard_count(),
-            kill.floor
-        );
-        app.insert_resource(kill);
-        // Gravity lifts (`halo3_core::lifts`): walking and the bike ride them.
-        if !scene.lifts.is_empty() {
-            eprintln!(
-                "lifts: {}",
-                scene.lifts.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", ")
-            );
-        }
-        app.insert_resource(halo3_core::lifts::Lifts(scene.lifts.clone()));
-        let mut water_materials: Vec<u32> = water
-            .looks
-            .iter()
-            .filter(|(_, l)| matches!(l, world::water::WaterLook::Water(_)))
-            .map(|(m, _)| *m)
-            .collect();
-        water_materials.sort_unstable();
-        if !scene.collision.triangles.is_empty() {
-            app.insert_resource(swim::WaterWorld::build(&scene, &water_materials));
-        }
-        if let Some(s) = scene.spawns.first() {
-            app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
-        } else if let Some(s) = scene.starts.first() {
-            app.insert_resource(swim::FallbackSpot(s.position, s.yaw));
+        app.add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
+        if grounded {
+            app.add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin));
         }
     }
-    app.insert_resource(weapons::PendingArsenal(arsenal));
-    app.insert_resource(zones)
-        .insert_resource(world::stream::ZoneTriggers::new(shot_mode))
-        .insert_resource(loaded)
-        .insert_resource(world::PendingScene(Some(scene), Some(textures), map_file))
-        .insert_resource(world::sky::PendingSky(Some(sky)))
-        .insert_resource(world::sky::PlainFog(plain_fog))
-        .insert_resource(world::water::PendingWater(Some(water)))
-        .add_plugins((
-            pause::PausePlugin,
-            fly_camera::FlyCameraPlugin,
-            flag::SessionFlagPlugin,
-            world::WorldPlugin,
-        ))
-        .run();
+    app.add_plugins((
+        halo3_core::map::MapPhasePlugin,
+        pause::PausePlugin,
+        fly_camera::FlyCameraPlugin,
+        flag::SessionFlagPlugin,
+        world::WorldPlugin,
+    ));
+    match map {
+        Some(map) => install(app.world_mut(), map, args)?,
+        None => {
+            app.add_plugins(menu::MenuPlugin::new(args));
+        }
+    }
+    app.run();
+    Ok(())
+}
+
+/// Puts a loaded map's resources into the world and marks it installed;
+/// its start-up runs on the next frame (`halo3_core::map`).
+pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow::Result<()> {
+    let LoadedMap {
+        scene,
+        textures,
+        chief,
+        sky,
+        water,
+        map_file,
+        arsenal,
+        foot_tuning,
+        plain_fog,
+        plain_sound,
+    } = map;
+    let shot = w.get_resource::<shot::ShotPlan>().cloned();
+    let shot_mode = shot.is_some();
+    let zones = world::zones::Zones::of(&scene);
+    let loaded = world::zones::initial(args, &zones)?;
+    if !zones.layout.zone_sets.is_empty() {
+        eprintln!(
+            "{} zone sets, {} BSPs, {} player starting locations; loaded: {}",
+            zones.layout.zone_sets.len(),
+            zones.layout.bsps.len(),
+            zones.layout.starts.len(),
+            zones.describe(loaded.mask)
+        );
+    }
+    match (map_file, plain_sound) {
+        (Some(cache), _) => audio::install(w, audio::MapSound::Halo3(cache)),
+        (None, Some(loader)) => audio::install(w, audio::MapSound::Plain(loader)),
+        (None, None) => {}
+    }
+    let start_spot = scene
+        .spawns
+        .first()
+        .map(|s| (s.position, s.yaw))
+        .or_else(|| scene.starts.first().map(|s| (s.position, s.yaw)));
+    if let Some(plan) = shot.as_ref().filter(|p| p.rides()) {
+        // Ride from the first view, or the start spawn.
+        let start = match plan.views.first() {
+            Some(v) => Some((v.position, v.yaw_deg.to_radians())),
+            None => start_spot,
+        };
+        match start {
+            Some((position, yaw)) if plan.bike => w.insert_resource(bike::AutoStart::at(position, yaw)),
+            Some((position, yaw)) if plan.foot => w.insert_resource(foot::AutoStart::at(position, yaw)),
+            Some((position, yaw)) => w.insert_resource(skate::AutoStart::at(position, yaw)),
+            None => {}
+        }
+    }
+    w.insert_resource(skate::SkateInput(
+        (!scene.collision.triangles.is_empty()).then(|| scene.collision.clone()),
+        scene.trigger_volumes.clone(),
+        scene.water_triangles(),
+    ));
+    w.insert_resource(rider::PendingChief(chief));
+    w.insert_resource(bike::BikeInput(scene.collision.clone()));
+    if let Some(t) = foot_tuning {
+        w.insert_resource(foot::FootTuning(t));
+    }
+    // `--foot`: start on foot at the start spawn.
+    if !shot_mode
+        && args.iter().any(|a| a == "--foot")
+        && !scene.collision.triangles.is_empty()
+        && let Some((position, yaw)) = start_spot
+    {
+        w.insert_resource(foot::AutoStart::at(position, yaw));
+    }
+    // Kill volumes and the bottom of the world (`falls.rs`), water
+    // surfaces and the ground under them, for sinking, falling and
+    // respawning (`swim.rs`).
+    let kill = falls::KillZones::new(&scene.trigger_volumes, &scene.collision);
+    eprintln!(
+        "kill volumes: {}; Guardian watch volumes: {}; out of the world below z {:.1} wu",
+        kill.volumes.len(),
+        kill.guard_count(),
+        kill.floor
+    );
+    w.insert_resource(kill);
+    // Gravity lifts (`halo3_core::lifts`): walking and the bike ride them.
+    if !scene.lifts.is_empty() {
+        eprintln!(
+            "lifts: {}",
+            scene.lifts.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", ")
+        );
+    }
+    w.insert_resource(halo3_core::lifts::Lifts(scene.lifts.clone()));
+    let mut water_materials: Vec<u32> = water
+        .looks
+        .iter()
+        .filter(|(_, l)| matches!(l, world::water::WaterLook::Water(_)))
+        .map(|(m, _)| *m)
+        .collect();
+    water_materials.sort_unstable();
+    if !scene.collision.triangles.is_empty() {
+        w.insert_resource(swim::WaterWorld::build(&scene, &water_materials));
+    }
+    if let Some((position, yaw)) = start_spot {
+        w.insert_resource(swim::FallbackSpot(position, yaw));
+    }
+    w.insert_resource(weapons::PendingArsenal(arsenal));
+    w.insert_resource(zones);
+    w.insert_resource(world::stream::ZoneTriggers::new(shot_mode));
+    w.insert_resource(loaded);
+    w.insert_resource(world::PendingScene(Some(scene), Some(textures), map_file));
+    w.insert_resource(world::sky::PendingSky(Some(sky)));
+    w.insert_resource(world::sky::PlainFog(plain_fog));
+    w.insert_resource(world::water::PendingWater(Some(water)));
+    w.insert_resource(halo3_core::map::MapInstalled);
     Ok(())
 }
 

@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use bevy::asset::embedded_asset;
 use bevy::pbr::{DistanceFog, ExtendedMaterial, FogFalloff, MaterialExtension};
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 
@@ -383,11 +384,11 @@ impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/sky.wesl");
         app.add_plugins(MaterialPlugin::<SkyMaterial>::default())
-            .init_resource::<PendingSky>()
-            .init_resource::<WorldHaze>()
-            .init_resource::<CameraAir>()
-            .init_resource::<PlainFog>()
-            .add_systems(Update, (swap_sky_materials, update_sky_air, add_haze, update_haze).chain());
+            .init_map_resource::<PendingSky>()
+            .init_map_resource::<WorldHaze>()
+            .init_map_resource::<CameraAir>()
+            .init_map_resource::<PlainFog>()
+            .add_systems(Update, (swap_sky_materials, update_sky_air, add_haze, update_haze).chain().run_if(halo3_core::map::ready));
     }
 }
 

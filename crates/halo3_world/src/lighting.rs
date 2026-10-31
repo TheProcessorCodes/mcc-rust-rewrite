@@ -401,7 +401,7 @@ impl Plugin for LightingPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/lightmap.wesl");
         app.add_plugins(MaterialPlugin::<HaloMaterial>::default())
-            .add_systems(Update, auto_exposure);
+            .add_systems(Update, auto_exposure.run_if(halo3_core::map::ready));
     }
 }
 
