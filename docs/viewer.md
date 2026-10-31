@@ -664,10 +664,14 @@ this repo. `HALO3_AUDIO=0` turns sound off; `--shot` never opens the sound devic
   distance (the placement's own bounds, else the sound's playback distances): full volume
   inside the near distance, falling as the square of the remaining fraction to silence at
   the far one, equal-power panned by the camera's right vector. Valhalla has 77 (the
-  waterfall, the creek and brook along the river, the lake shore). Two stand-ins for
-  the game's undecoded sound classes and mix: only the 2 loudest placements of one
-  looping sound play at a time, and sound scenery is mixed 6 dB down (120_halo's eight
-  falling-plate loops along the Warthog run otherwise summed to -5 dBFS).
+  waterfall, the creek and brook along the river, the lake shore). Only the 2 loudest
+  placements of one looping sound play at a time (120_halo's eight falling-plate loops along
+  the Warthog run otherwise summed to -5 dBFS), and sound scenery is mixed 9 dB under its
+  class level so the run's music stays on top.
+- **Class gains** (`sound.md` 9): every sound plays at its tag gain plus its sound class's
+  gain from the map's `sncl`: music 0 dB, dialogue -3, weapons, ambience and most effects
+  -12 to -15. That is why music sits over the effects in Halo 3; before this was read the
+  effects played 9 to 12 dB too loud.
 - **Music** is started by HaloScript in the game; here M plays the map's showpiece (on
   120_halo `120_music_15`, the Warthog run's `halo3_trench`: 92 s intro, then its four loop
   permutations), Shift+M the next `lsnd` under a `music` folder, `--music NAME|N` one at
@@ -684,11 +688,19 @@ this repo. `HALO3_AUDIO=0` turns sound off; `--shot` never opens the sound devic
   360 dump (`data\audio\wheels.big`, `grains.big`, `audiofiles.big`, EA "EB" v3 archives)
   but nothing reads it yet. The skate engine's state names
   (`PhysicsGround`, `PhysicsAir`, `GrindFiftyFifty`, ...) come through `skate::SkateMotion`.
-- **Volume**: `HALO3_VOLUME` (default 0.8) sets the start level, `-` / `=` change it, K mutes.
+- **Volume**: the pause menu's Sound tab has Master, Music, Effects, Ambience and Dialogue
+  sliders, 0 to 200 % (100 % = the game's own mix; master 80 % by default): up / down picks
+  one, left / right (arrow keys, d-pad, left stick) moves it, or click and drag with the mouse.
+  Each scales its bus in the mixer, on top of the tag and class gains and the scripts'
+  `sound_class_set_gain`. They are saved to `sound-levels.json` next to the exe and read at
+  start. `-` / `=` change the master and K mutes, anywhere, and the sliders follow.
+  `HALO3_VOLUME` overrides the saved master (developer override).
 
 Headless check: `HALO3_AUDIO_TRACE=1` with `--shot` runs all of this without a sound device
 and logs, 0.3 s after each view, the cluster, background layers and their fade, the sound
-scenery in range with distance and gain, and the decoded clips:
+scenery in range with distance and gain, and the decoded clips; and every 5 s an `audio
+levels` line: each bus's RMS level (dBFS, before the master), the volumes and the scripts'
+class gains:
 
 ```
 $env:HALO3_AUDIO_TRACE="1"

@@ -3,6 +3,8 @@
 //! ```text
 //! halo3                  the map menu: pick a map, Start Game (`menu.rs`)
 //! halo3 <map>            riverworld, or a path to a .map
+//! halo3 warthog_run      a mission (`MISSIONS`): Halo 3's last mission
+//!                        from the Warthog run on, on the dirt bike, timed
 //! halo3 --test-scene     a made-up room, for checking the camera
 //!
 //! halo3 <map> --shot <dir> [--view x,y,z,yaw,pitch]... [--size WxH]
@@ -25,6 +27,27 @@
 //!
 //! `--foot` starts on foot at the start spawn (`foot/mod.rs`; F toggles).
 //!
+//! halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary]
+//!                        run the map's own scripts (`halo3_script`): NAME
+//!                        runs the insertion script `ins_NAME` as the
+//!                        designers did at the console (120_halo:
+//!                        `trench_run`, the Warthog run); N starts the
+//!                        mission at insertion point N. `--scripts` runs
+//!                        them from the mission's own start. 120_halo
+//!                        also has `trench_end` (ours): the run's last
+//!                        straight, before the jump into the frigate. A
+//!                        named insertion starts you on the dirt bike
+//!                        (`--foot`: on foot); when the scripts win the
+//!                        mission a completion screen shows the run's
+//!                        time (`finish.rs`).
+//! halo3 <map> --anim-test flood=move_front,sentinel=aim,... [--anim-at x,y,z,yaw]
+//!                        a row of the map's bipeds playing Halo 3's own
+//!                        animations (`anim_test.rs`); with `--shot` for
+//!                        pictures
+//! `--ai nearby|zone|off|none`: how the campaign's squads are placed while
+//! scripts do not place them (`halo3_ai`; default `nearby`: a squad appears
+//! when you come within 70 m of it).
+//!
 //! In a map, J switches between flying and skating (see `skate.rs`), B
 //! between flying and the dirt bike (`bike/mod.rs`), PageDown / PageUp step
 //! through the zone sets, Home loads every BSP. Escape or Start pauses and
@@ -36,6 +59,8 @@
 //! `halo2\h2_maps_win64_dx11` (`halo2.rs`). Halo 3's Blackout, whose file is
 //! `lockout.map`, is `blackout`.
 
+mod anim_test;
+mod finish;
 mod halo1;
 mod halo2;
 mod menu;
@@ -43,6 +68,7 @@ mod reach;
 mod pause;
 mod shot;
 
+use halo3_ai as ai;
 use halo3_audio as audio;
 use halo3_bike as bike;
 use halo3_core::{falls, flag, fly_camera};
@@ -139,7 +165,9 @@ fn main() -> anyhow::Result<()> {
   halo3 [--foot]                                             the map menu
   halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading] [--size WxH]
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
-  halo3 <map> [--foot]
+  halo3 warthog_run [--foot] [--difficulty ...]             the Warthog run of 120_halo, timed
+  halo3 <map> [--foot] [--ai nearby|zone|off|none]
+  halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary] [--foot]   e.g. 120_halo --insertion trench_run (or trench_end)
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
   halo3 --test-scene");
             std::process::exit(2);
@@ -149,7 +177,7 @@ fn main() -> anyhow::Result<()> {
         None => run(&args, None),
         Some(a) if a.starts_with("--") && a != "--test-scene" => run(&args, None),
         Some(map) => {
-            let map = load(map)?;
+            let map = load(map, &args)?;
             run(&args, Some(map))
         }
     }
@@ -171,6 +199,24 @@ pub(crate) struct LoadedMap {
     plain_fog: Option<world::sky::PlainFogSetting>,
     /// Halo 2: the map's ambience, decoded on the sound plugin's thread.
     plain_sound: Option<audio::halo2::PlainLoader>,
+    /// Halo 3 only: scripts, AI, the mission's zone sets.
+    extras: MapExtras,
+}
+
+/// What a Halo 3 map brings beyond the world.
+#[derive(Default)]
+pub(crate) struct MapExtras {
+    /// The name it was loaded by (a map or a [`Mission`]), for restarting.
+    arg: String,
+    /// The mission's own arguments (`--insertion trench_run`, ...), added
+    /// to the command line's.
+    mission_args: Vec<String>,
+    /// The map's scripts, when asked for (`--insertion`, `--scripts`).
+    scripts: Option<ScriptStart>,
+    /// The campaign's squads and the weapons they carry.
+    ai: Option<ai::AiAssets>,
+    /// A mission's zone sets: the world never switches to any other.
+    zone_sets: Option<Vec<usize>>,
 }
 
 impl LoadedMap {
@@ -179,8 +225,59 @@ impl LoadedMap {
     }
 }
 
+/// A mission: one of the maps, started a set way. Offered on the map menu
+/// (`menu.rs`) and by its name on the command line.
+pub(crate) struct Mission {
+    /// `halo3 <name>`.
+    pub(crate) name: &'static str,
+    /// The map it plays on.
+    pub(crate) map: &'static str,
+    /// What it starts with, as if given on the command line.
+    pub(crate) args: &'static [&'static str],
+    /// Only these zone sets: only their BSPs are decoded, and the world
+    /// never switches to another (so nothing before the mission streams
+    /// back in).
+    pub(crate) zone_sets: &'static [&'static str],
+}
+
+/// The missions.
+pub(crate) const MISSIONS: &[Mission] = &[Mission {
+    // Halo 3's last mission from the Warthog run on: the run's insertion
+    // (`ins_trench_run`) on the dirt bike, the run's zone sets (BSPs 040,
+    // 100, 110, 120), the clock and the completion screen (`finish.rs`).
+    name: "warthog_run",
+    map: "h3:120_halo",
+    args: &["--insertion", "trench_run", "--zone", "120_04_100_110"],
+    zone_sets: &["120_04_100_110", "120_100_110", "120_110_120"],
+}];
+
+/// The mission called `name`, if it is one.
+pub(crate) fn mission(name: &str) -> Option<&'static Mission> {
+    MISSIONS.iter().find(|m| m.name == name)
+}
+
+/// Whether the user's install has a map (or a mission's map).
+pub(crate) fn map_exists(arg: &str) -> bool {
+    resolve_map(mission(arg).map_or(arg, |m| m.map)).exists()
+}
+
+/// Decodes a map or a [`Mission`] (by name), with the command line's
+/// arguments (`args`, which a mission adds its own to).
+pub(crate) fn load(arg: &str, args: &[String]) -> anyhow::Result<LoadedMap> {
+    let found = mission(arg);
+    let mission_args: Vec<String> = found.map_or_else(Vec::new, |m| m.args.iter().map(|a| a.to_string()).collect());
+    let all: Vec<String> = args.iter().cloned().chain(mission_args.iter().cloned()).collect();
+    if let Some(m) = found {
+        eprintln!("mission {}: {} {}", m.name, m.map, m.args.join(" "));
+    }
+    let mut map = load_map(found.map_or(arg, |m| m.map), &all, found)?;
+    map.extras.arg = arg.to_string();
+    map.extras.mission_args = mission_args;
+    Ok(map)
+}
+
 /// Decodes a map (a name or a path, see [`resolve_map`]), or the test scene.
-pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
+fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Result<LoadedMap> {
     if map == "--test-scene" {
         return Ok(LoadedMap {
             scene: world::test_scene(),
@@ -193,6 +290,7 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
             foot_tuning: None,
             plain_fog: None,
             plain_sound: None,
+            extras: MapExtras::default(),
         });
     }
     let path = resolve_map(map);
@@ -221,6 +319,7 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
             foot_tuning: None,
             plain_fog: h1.fog,
             plain_sound: None,
+            extras: MapExtras::default(),
         });
     }
     if blam_h2::is_halo2(&path) {
@@ -249,6 +348,7 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
             foot_tuning: None,
             plain_fog: fog,
             plain_sound: Some(halo2::ambience_loader(&path)),
+            extras: MapExtras::default(),
         });
     }
     let started = std::time::Instant::now();
@@ -260,10 +360,33 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
     // Reach: the same cache file, resources, shaders and bitmaps as Halo 3,
     // its own tag layouts (`blam_reach`, `reach.rs`).
     let reach = cache.engine() == blam_cache::Engine::Reach;
+    let mut extras = MapExtras::default();
     if reach {
         reach::decode(cache, &mut scene)?;
     } else {
-        blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
+        // A mission decodes only its zone sets' BSPs.
+        let mut options = blam_geometry::Options::default();
+        if let Some(m) = mission.filter(|m| !m.zone_sets.is_empty()) {
+            let (sets, bsps) = mission_zone_sets(cache, m)?;
+            eprintln!("mission {}: zone sets {:?}, BSPs {:?} only", m.name, m.zone_sets, bsps);
+            options.bsps = Some(bsps);
+            extras.zone_sets = Some(sets);
+        }
+        blam_geometry::decode_into(cache, &options, &mut scene)?;
+        // Machines stand where their own animation puts them at rest
+        // (120_halo's frigate faces the run with its hangar open).
+        let posed = halo3_anim::devices::place_machines(cache, &mut scene);
+        if posed > 0 {
+            eprintln!("machines: {posed} posed by their animations");
+        }
+        // Objects collide (`HALO3_OBJECT_COLLISION=0`: not): crates,
+        // rocks, and the Warthog run's floor plates, which are its
+        // only floor.
+        if !std::env::var("HALO3_OBJECT_COLLISION").is_ok_and(|v| v == "0") {
+            let n = blam_geometry::objects::add_collision(cache, &mut scene);
+            eprintln!("object collision: {n} triangles");
+        }
+        extras.scripts = scripts_for(args, cache, &mut scene);
     }
     eprintln!(
         "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
@@ -306,7 +429,12 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
         return Ok(reach::finish(cache, scene, textures));
     }
     let chief = rider::load_chief(cache);
-    let arsenal = weapons::assets::load(cache);
+    // The scenario's squads, and the weapons they carry.
+    if value_of(args, "--ai").as_deref() != Some("none") {
+        extras.ai = ai::load(cache);
+    }
+    let extra = extras.ai.as_ref().map(ai::AiAssets::weapon_tags).unwrap_or_default();
+    let arsenal = weapons::assets::load_with(cache, &extra);
     let foot_tuning = match blam_geometry::movement::read(cache) {
         Ok(m) => {
             eprintln!(
@@ -336,7 +464,26 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
         foot_tuning,
         plain_fog: None,
         plain_sound: None,
+        extras,
     })
+}
+
+/// A mission's zone sets (indices in the scenario) and the BSPs they use.
+fn mission_zone_sets(cache: &blam_cache::CacheFile, m: &Mission) -> anyhow::Result<(Vec<usize>, Vec<u32>)> {
+    let mut layout = blam_geometry::Scene::default();
+    blam_geometry::zones::decode(cache, &mut layout)?;
+    let mut sets = Vec::new();
+    let mut mask = 0u32;
+    for name in m.zone_sets {
+        let n = layout
+            .zone_sets
+            .iter()
+            .position(|z| z.name == *name)
+            .ok_or_else(|| anyhow::anyhow!("mission {}: {} has no zone set {name}", m.name, m.map))?;
+        sets.push(n);
+        mask |= layout.zone_sets[n].bsps;
+    }
+    Ok((sets, (0..32).filter(|b| mask & (1 << b) != 0).collect()))
 }
 
 /// Builds and runs the app: on `map`, or on the map menu when there is none.
@@ -406,12 +553,19 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
     if skating {
         app.add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
         if grounded {
-            app.add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin));
+            // The campaign's squads (only maps with AI bring any).
+            app.add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin, ai::AiPlugin));
         }
+    }
+    if args.iter().any(|a| a == "--anim-test") {
+        app.add_plugins(anim_test::AnimTestPlugin);
     }
     app.add_plugins((
         halo3_core::map::MapPhasePlugin,
         pause::PausePlugin,
+        // The map's scripts, and the completion screen when they win.
+        halo3_script::ScriptPlugin,
+        finish::FinishPlugin,
         fly_camera::FlyCameraPlugin,
         flag::SessionFlagPlugin,
         world::WorldPlugin,
@@ -440,10 +594,20 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         foot_tuning,
         plain_fog,
         plain_sound,
+        extras,
     } = map;
+    // What Restart on the completion screen loads again (`finish.rs`).
+    w.insert_resource(finish::CurrentMap {
+        arg: extras.arg.clone(),
+        args: args.to_vec(),
+    });
+    // A mission's own arguments after the command line's.
+    let args: Vec<String> = args.iter().cloned().chain(extras.mission_args.iter().cloned()).collect();
+    let args = &args[..];
     let shot = w.get_resource::<shot::ShotPlan>().cloned();
     let shot_mode = shot.is_some();
-    let zones = world::zones::Zones::of(&scene);
+    let mut zones = world::zones::Zones::of(&scene);
+    zones.allowed = extras.zone_sets;
     let loaded = world::zones::initial(args, &zones)?;
     if !zones.layout.zone_sets.is_empty() {
         eprintln!(
@@ -467,10 +631,11 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         .map(|s| (s.position, s.yaw))
         .or_else(|| scene.starts.first().map(|s| (s.position, s.yaw)));
     if let Some(plan) = shot.as_ref().filter(|p| p.rides()) {
-        // Ride from the first view, or the start spawn.
+        // Ride from the first view, or where an insertion starts, or the
+        // start spawn.
         let start = match plan.views.first() {
             Some(v) => Some((v.position, v.yaw_deg.to_radians())),
-            None => start_spot,
+            None => extras.scripts.as_ref().and_then(|s| s.start).or(start_spot),
         };
         match start {
             Some((position, yaw)) if plan.bike => w.insert_resource(bike::AutoStart::at(position, yaw)),
@@ -489,13 +654,40 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
     if let Some(t) = foot_tuning {
         w.insert_resource(foot::FootTuning(t));
     }
-    // `--foot`: start on foot at the start spawn.
-    if !shot_mode
-        && args.iter().any(|a| a == "--foot")
-        && !scene.collision.triangles.is_empty()
-        && let Some((position, yaw)) = start_spot
-    {
-        w.insert_resource(foot::AutoStart::at(position, yaw));
+    // An insertion starts the run on the bike where it puts the player
+    // (on foot with `--foot`); `--foot` alone starts on foot at the start
+    // spawn.
+    let foot_wanted = args.iter().any(|a| a == "--foot");
+    let insertion_start = extras.scripts.as_ref().and_then(|s| s.start);
+    if !shot_mode && !scene.collision.triangles.is_empty() {
+        match insertion_start {
+            Some((position, yaw)) if foot_wanted => w.insert_resource(foot::AutoStart::at(position, yaw)),
+            Some((position, yaw)) => w.insert_resource(bike::AutoStart::player(position, yaw)),
+            None if foot_wanted && let Some((position, yaw)) = start_spot => {
+                w.insert_resource(foot::AutoStart::at(position, yaw))
+            }
+            None => {}
+        }
+    }
+    // `--anim-test`: Halo 3's own animations on a row of the map's bipeds.
+    if let Some(spec) = value_of(args, "--anim-test") {
+        let Some(cache) = map_file else {
+            anyhow::bail!("--anim-test needs a Halo 3 map");
+        };
+        // Three world units in front of the first view (or the start), on
+        // the ground, facing back at it.
+        let (eye, yaw, eye_height) = match shot.as_ref().and_then(|p| p.views.first()) {
+            Some(v) => (v.position, v.yaw_deg.to_radians(), 0.6),
+            None => scene
+                .starts
+                .first()
+                .map(|s| (s.position, s.yaw, 0.0))
+                .or_else(|| scene.spawns.first().map(|s| (s.position, s.yaw, 0.0)))
+                .unwrap_or((Vec3::ZERO, 0.0, 0.0)),
+        };
+        let ahead = Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 3.0;
+        let fallback = (eye + ahead - Vec3::Z * eye_height, yaw + std::f32::consts::PI);
+        w.insert_resource(anim_test::load(cache, &spec, value_of(args, "--anim-at").as_deref(), fallback)?);
     }
     // Kill volumes and the bottom of the world (`falls.rs`), water
     // surfaces and the ground under them, for sinking, falling and
@@ -530,6 +722,33 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         w.insert_resource(swim::FallbackSpot(position, yaw));
     }
     w.insert_resource(weapons::PendingArsenal(arsenal));
+    let scripted = extras.scripts.is_some();
+    if let Some(ScriptStart { pending: s, devices, .. }) = extras.scripts {
+        // The scripts' `ai_*` calls go to the enemies through the bridge
+        // the AI plugin reads; the islands and pillars move by their own
+        // animations.
+        if extras.ai.is_some() {
+            let bridge = ai::AiBridge::default();
+            w.insert_resource(halo3_script::ScriptAi::new(halo3_script::BridgeAi::new(bridge.clone())));
+            w.insert_resource(bridge);
+        }
+        w.insert_resource(halo3_script::ScriptAnimation::new(devices));
+        w.insert_resource(s);
+    }
+    if extras.ai.is_some() {
+        // `--ai nearby` (default): squads appear as you come near them;
+        // `--ai zone`: every squad of the loaded zone set at once; `--ai
+        // off`: only scripts place them; `--ai none`: no AI at all. While
+        // the map's scripts run they place the squads.
+        let mode = match value_of(args, "--ai").as_deref() {
+            _ if scripted => ai::AutoPlace::Off,
+            Some("zone") => ai::AutoPlace::ZoneSet,
+            Some("off") => ai::AutoPlace::Off,
+            _ => ai::AutoPlace::default(),
+        };
+        w.insert_resource(mode);
+        w.insert_resource(ai::PendingAi(extras.ai));
+    }
     w.insert_resource(zones);
     w.insert_resource(world::stream::ZoneTriggers::new(shot_mode));
     w.insert_resource(loaded);
@@ -539,6 +758,82 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
     w.insert_resource(world::water::PendingWater(Some(water)));
     w.insert_resource(halo3_core::map::MapInstalled);
     Ok(())
+}
+
+/// The map's scripts, when asked for: `--insertion NAME|N` or `--scripts`
+/// (`halo3_script`). Marks the objects they move before the world is
+/// built from the scene.
+fn scripts_for(
+    args: &[String],
+    cache: &blam_cache::CacheFile,
+    scene: &mut blam_geometry::Scene,
+) -> Option<ScriptStart> {
+    let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
+    let insertion = value("--insertion");
+    if insertion.is_none() && !args.iter().any(|a| a == "--scripts") {
+        return None;
+    }
+    let data = halo3_script::prepare(cache, scene)?;
+    let mut config = halo3_script::Config::default();
+    if let Some(d) = value("--difficulty") {
+        config.difficulty = match d.as_str() {
+            "easy" => 0,
+            "heroic" => 2,
+            "legendary" => 3,
+            _ => 1,
+        };
+    }
+    let mut console = None;
+    let mut start = None;
+    let mut start_override = None;
+    match insertion.as_deref().map(|i| (i, i.parse::<i16>())) {
+        Some((_, Ok(n))) => config.insertion_point = n,
+        Some((name, Err(_))) => match halo3_script::setup::insertion(&data, scene, name) {
+            Some(ins) => {
+                // As at the console in the editor: the mission's own
+                // `start` stays out of the way.
+                config.editor = true;
+                console = Some(ins.script);
+                start = ins.start;
+                start_override = ins.start_override;
+                if let Some((at, yaw)) = start {
+                    eprintln!("scripts: insertion {name} starts at halo [{:.2}, {:.2}, {:.2}] facing {:.0} degrees", at.x, at.y, at.z, yaw.to_degrees());
+                }
+            }
+            None => {
+                let mut known: Vec<&str> = data.scripts.iter().map(|s| s.name.as_str()).filter(|n| n.starts_with("ins_")).collect();
+                if data.script_index("ins_trench_run").is_some() {
+                    known.push(halo3_script::setup::TRENCH_END);
+                }
+                eprintln!("scripts: no insertion {name}; this map has {known:?}");
+            }
+        },
+        None => {}
+    }
+    let runtime = halo3_script::setup::runtime(cache, scene, data, config);
+    // The animations of the machines scripts move (doors, the Warthog
+    // run's islands and pillars).
+    let started = std::time::Instant::now();
+    let devices = halo3_anim::MachinePoser::load(cache, runtime.objects.info.iter().filter(|o| o.scene.is_some()).filter_map(|o| o.tag));
+    eprintln!("scripts: {} machine animations in {:.1} s", devices.len(), started.elapsed().as_secs_f32());
+    Some(ScriptStart {
+        pending: halo3_script::PendingScripts(Some(runtime), console, start_override),
+        devices,
+        start,
+    })
+}
+
+/// The map's scripts, ready to run, and where the insertion starts the
+/// player (on the bike) when known.
+struct ScriptStart {
+    pending: halo3_script::PendingScripts,
+    devices: halo3_anim::MachinePoser,
+    start: Option<(Vec3, f32)>,
+}
+
+/// The value after `flag`, if given.
+fn value_of(args: &[String], flag: &str) -> Option<String> {
+    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
 }
 
 /// `--shot <dir>` with its `--view` and `--size` options, if given.

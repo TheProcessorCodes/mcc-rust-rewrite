@@ -110,3 +110,95 @@ fn halo_music_and_quad_ambience() {
     assert_eq!(pcm.channels, 4);
     assert_eq!(pcm.frames(), 320_832 + 1);
 }
+
+/// 120_halo's music pieces as `sound.md` 8 lists them: the header and
+/// track fields, which slots each piece has, and the sounds its scripts
+/// name.
+#[test]
+fn halo_music_pieces() {
+    let Some(maps) = maps() else { return };
+    let Ok(cache) = CacheFile::open(maps.join("120_halo.map")) else {
+        return;
+    };
+    let tags = SoundTags::new(&cache).unwrap();
+    let m = tags.map_sounds().unwrap();
+    assert_eq!(m.music.len(), 16);
+    let piece = |n: &str| {
+        let (t, _) = m.music.iter().find(|(_, name)| name.ends_with(n)).unwrap();
+        tags.looping(*t).unwrap()
+    };
+    // (piece, header flags, music time s, track flags, fade out s,
+    //  slots in / loop / out / alt loop / alt out / alt trans in / out)
+    let expected: [(&str, u32, f32, u32, f32, &str); 16] = [
+        ("120_music_01", 0, 180.0, 0x0, 0.0, "111...."),
+        ("120_music_02", 0, 300.0, 0x2, 30.0, "11....."),
+        ("120_music_03", 0, 300.0, 0x2, 15.0, "11.1..."),
+        ("120_music_04", 0, 120.0, 0x0, 0.0, "111...."),
+        ("120_music_045", 0, 180.0, 0x2, 10.0, ".1....."),
+        ("120_music_05", 0, 300.0, 0x0, 0.0, "111...."),
+        ("120_music_06", 0, 300.0, 0x2, 15.0, "11....."),
+        ("120_music_07", 0, 300.0, 0x2, 15.0, "11....."),
+        ("120_music_08", 0, 300.0, 0x2, 10.0, ".1....."),
+        ("120_music_09", 0, 300.0, 0x2, 10.0, "11....."),
+        ("120_music_10", 0, 300.0, 0x2, 10.0, "11....."),
+        ("120_music_11", 0, 300.0, 0x2, 6.0, "11....."),
+        ("120_music_12", 2, 0.0, 0x0, 6.0, ".1....."),
+        ("120_music_13", 0, 300.0, 0x6, 10.0, "11.1..."),
+        ("120_music_14", 0, 180.0, 0x0, 0.0, "111...."),
+        ("120_music_15", 4, 0.0, 0x2, 10.0, "11.111."),
+    ];
+    for (name, flags, time, track_flags, fade_out, slots) in expected {
+        let l = piece(name);
+        assert_eq!(l.tracks.len(), 1, "{name}");
+        assert!(l.details.is_empty(), "{name}");
+        assert_eq!((l.flags, l.music_time, l.class), (flags, time, 32), "{name}");
+        assert!(l.is_music());
+        let t = &l.tracks[0];
+        assert_eq!(t.name, "track1");
+        assert_eq!((t.flags, t.fade_in, t.fade_out), (track_flags, 0.0, fade_out), "{name}");
+        let got: String = t.sounds().iter().map(|s| if s.is_some() { '1' } else { '.' }).collect();
+        assert_eq!(got, slots, "{name}");
+    }
+    let stinger = piece("120_music_12");
+    assert!(stinger.not_a_loop() && !stinger.stops_music());
+    let run = piece("120_music_15");
+    assert!(run.stops_music() && !run.not_a_loop());
+    assert!(run.tracks[0].fades_out() && !run.tracks[0].crossfades_alt());
+    assert_eq!(run.tracks[0].gain_db, -3.0);
+    let thirteen = piece("120_music_13");
+    assert!(thirteen.tracks[0].crossfades_alt());
+    assert_eq!(thirteen.tracks[0].alt_fade, 10.0);
+    // Its permutations: the Warthog run's intro, four loops, three
+    // alternate loops, the 15 s transition and the 77 s finale.
+    let perms = |s: Option<u32>| tags.sound(s.unwrap()).unwrap().permutations.len();
+    let t = &run.tracks[0];
+    assert_eq!(
+        [perms(t.intro), perms(t.looped), perms(t.alt_loop), perms(t.alt_out), perms(t.alt_trans_in)],
+        [1, 4, 3, 1, 1]
+    );
+    // The scripts' tag references hold all 16 pieces and 30 `snd!`s
+    // (dialogue, sparks, the run's island creaks and tower crash).
+    let lsnds = m.script_sounds.iter().filter(|t| m.music.iter().any(|(i, _)| i == *t)).count();
+    assert_eq!(lsnds, 16);
+    assert_eq!(m.script_sounds.len(), 46);
+}
+
+/// The sound classes' gain ranges (`sound.md` 9): music plays at 0 dB,
+/// dialogue at -3, weapons, ambience and vehicles 12 to 15 dB down.
+#[test]
+fn halo_class_gains() {
+    let Some(maps) = maps() else { return };
+    let Ok(cache) = CacheFile::open(maps.join("120_halo.map")) else {
+        return;
+    };
+    let classes = SoundTags::new(&cache).unwrap().classes().unwrap();
+    assert_eq!(classes.len(), 54);
+    let gain = |i: usize| classes[i].gain_bounds_db;
+    assert_eq!(gain(32), [0.0, 0.0]); // music
+    assert_eq!(gain(19), [-3.0, -3.0]); // unit dialogue
+    assert_eq!(gain(47), [-3.0, -3.0]); // mission dialogue
+    assert_eq!(gain(4), [-12.0, -12.0]); // weapon fire
+    assert_eq!(gain(33), [-12.0, -12.0]); // ambience (the run's plates)
+    assert_eq!(gain(23), [-15.0, -15.0]); // vehicle engines
+    assert_eq!(gain(13), [-30.0, -12.0]); // physics impacts: a range
+}

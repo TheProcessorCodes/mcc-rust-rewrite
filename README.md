@@ -21,10 +21,12 @@ the format descriptions the code is written from.
 
 | path | what |
 |---|---|
+| `crates/blam_anim` | Halo 3 animation graphs (`jmad`): skeleton, animation list, the mode / weapon class / weapon type / action tree, every codec of the animation data; poses sampled, blended and turned into skinning matrices (`docs/format/animation.md`) |
 | `crates/blam_cache` | opens a `.map`: header, sections, tag index, tag names, string ids, a cursor for tag data, resource pages |
 | `crates/blam_geometry` | decodes structure BSPs (clusters and instances) into plain meshes with materials |
 | `crates/blam_h1` | MCC Halo CE maps: tags, BSP lightmap meshes, collision, gbxmodels, shaders, bitmaps (`bitmaps.map`), spawns and sky decoded into the same `Scene` (`docs/format/halo1.md`) |
 | `crates/blam_h2` | MCC Halo 2 maps: inflated in memory, tags, `shared.map` and `textures.dat` read, BSP, collision, objects, spawns, shaders and bitmaps decoded into the same `Scene` (`docs/format/halo2.md`) |
+| `crates/blam_script` | reads the HaloScript compiled into a scenario (scripts, globals, the expression table, the names scripts use) and prints it as source (`docs/format/halo-script.md`) |
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
@@ -33,6 +35,7 @@ the format descriptions the code is written from.
 | `crates/halo3_core` | what the runtime crates share: the map phase (`map.rs`: a map loaded, started and unloaded inside the running app), coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
 | `crates/halo3_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
 | `crates/halo3_world` | the world on the GPU: BSP streaming, culling, lightmaps, sky, water, zone keys |
+| `crates/halo3_anim` | Halo's own animations on objects: `AnimModel` (one per object type) and the `Animator` component (actions with fallbacks, cross-fades, overlays, aiming, device positions, root motion) posing skinned joints |
 | `crates/halo3_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
 | `crates/halo3_skate` | skating through the Skate 3 engine (`skate-host`) |
 | `third_party/skate-engine` | the Skate 3 engine crates, vendored (GPL-3.0; its README says where from and what we changed) |
@@ -41,6 +44,9 @@ the format descriptions the code is written from.
 | `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model (no bevy) |
 | `crates/halo3_foot` | the Spartan on foot |
 | `crates/halo3_weapons` | the map's weapons, carried and fired on foot |
+| `crates/halo3_script` | runs a map's own scripts: threads at 30 ticks a second, objects created, destroyed, dropped and moved, devices, trigger volumes, insertion points; hooks for the AI and device animation |
+| `crates/halo3_weapons` | the map's weapons, carried and fired on foot; rounds hit actors and the player |
+| `crates/halo3_ai` | the campaign's squads as actors: placed, drawn, hurt and fighting; the player's shields and health |
 | `crates/halo3_swim` | water, sinking and splashes |
 | `docs/format` | the file format, field by field |
 | `docs/` | notes on IW4L and the skate interface |
@@ -57,9 +63,15 @@ target\debug\blam.exe shader riverworld 11454
 target\debug\blam.exe bitmap riverworld 112 --png out\mountains_snow.png
 target\debug\blam.exe textures riverworld
 target\debug\blam.exe sound riverworld list
+target\debug\blam.exe scripts 120_halo --grep trench_timer_100_001
+target\debug\blam.exe ai 120_halo --squads
 target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_music_15"
+target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human"
+target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human" --anim combat:any:any:melee --frame 6
+target\debug\blam.exe anim 120_halo --all
 & "target\debug\halo3.exe"
 & "target\debug\halo3.exe" riverworld
+& "target\debug\halo3.exe" warthog_run
 ```
 
 `halo3.exe` with no map opens the map menu: Halo 3, Halo 2 and Campaign tabs
@@ -144,6 +156,19 @@ lists all 20).
       environment maps, self-illumination, per-map exposure from the
       camera fx; spawn markers hidden (`docs/viewer.md`).
 - [ ] Real cube-map reflections, parallax.
+- [x] Enemies and AI on 120_halo (2026-10-29; built, awaiting a playtest):
+      the scenario's 262 squads, their cells and starting locations, 11 AI
+      zones with 3,842 firing positions and the 15 characters read and
+      pinned by `cargo test` (`docs/format/ai.md`, `blam ai`). Squads
+      appear as you come within 70 m of them (`--ai nearby`, the stand-in
+      until scripts place them; `--ai zone` places a zone set's all at
+      once), drawn with their units' real models in the bind pose, holding
+      their weapons. They see and hear you, the Flood charge and hit,
+      Sentinels hover and fire their beams, gunmen keep their weapon's
+      range and fire bursts from their firing patterns. Rounds hurt both
+      ways; shields and health come from the tags; you come back at the
+      last quiet spot when you die. No animations yet, no vehicles, no
+      grenades, no pathfinding beyond firing positions and straight lines.
 - [x] Milestone 3a: the game's real collision BSP decoded (the handoff's
       "known gap"): Valhalla gives 30,560 world and 39,678 instanced collision
       triangles with invisible walls, slip and two-sided surfaces flagged.
@@ -151,6 +176,13 @@ lists all 20).
 - [x] Grind rails from the collision (IW4L's lip detector, ported): 2,904 on
       Valhalla, edge-of-world rims dropped. `blam rails <map> --obj PATH`.
 - [x] Spawn points (107 on Valhalla); the viewer starts on one.
+- [x] Halo 3 animation (2026-10-29; checked by tests and headless shots, not
+      playtested): `jmad` graphs and every codec in the maps decode (`blam
+      anim`; 5881 of 120_halo's 5996 animations, the rest have no data in
+      that map). `halo3_anim` plays them on the Flood, Sentinels, Master
+      Chief and device machines; `halo3 120_halo --anim-test ...` shows a row
+      of animated bipeds. Not yet wired into the enemies or the on-foot
+      Spartan (`docs/format/animation.md`).
 - [x] Spartan skeleton and skin weights decode (`blam nodes`); bone mapping
       to the skater in `docs/rider.md`.
 - [x] On foot (built, awaiting a playtest): F walks the Spartan with Halo 3's
@@ -293,6 +325,18 @@ lists all 20).
       skate collision swapped in without stopping the ride
       (`docs/viewer.md` "Streaming and culling", `--bench N`). Other campaign maps load the same way but are not checked yet
       (`docs/viewer.md` "Zone sets", `docs/format/zone-sets.md`).
+- [x] HaloScript (2026-10-29; built and tested headless, awaiting a
+      playtest): `blam scripts <map>` prints a map's scripts as source
+      (120_halo: 731 scripts, 113 globals, 281 functions); the game runs
+      them with `--insertion NAME|N` or `--scripts` (`halo3_script`).
+      120_halo's Warthog run plays its own collapse: `--insertion
+      trench_run` switches to the run's zone set and puts you at its start
+      flag, the floor plates appear stretch by stretch, then drop away
+      behind and around you row by row (or blow up ahead), and their
+      collision goes with them so the bike, the Spartan or the skater
+      falls. Placed objects now collide (`coll` models; the run's plates
+      are its only floor). AI, cinematics, sound and real effects are
+      stubs or hooks (`docs/format/halo-script.md` 10).
 
 ## Licence
 

@@ -500,7 +500,8 @@ rest all come out (0, 0, 1) that way.
 
 The lift is the crate `scenarios\objects\multi\lockout\lockout_lift_tube` (crate 0) at
 **(-1.5, 12.53, -12.2)**, angles (yaw -1.571, pitch 0, roll 0.122): its column leans 7 degrees
-towards -X. The render model is the pale blue light column (8 triangles, shader `grav_lift`). The
+towards -Y, the way it throws you (towards -X before 2026-10-30, when the angles were composed about
+the object's own axes; `scenario-and-tag-reading.md` 2.3). The render model is the pale blue light column (8 triangles, shader `grav_lift`). The
 physics model has two polyhedra, both boxes 1.21 x 1.21 wu across:
 
 | shape | local z | phantom type | marker | push |
@@ -509,7 +510,7 @@ physics model has two polyhedra, both boxes 1.21 x 1.21 wu across:
 | `upper_lift` | 4.5 .. 6.5 | 1, no flags | `upper_lift_direction` at (0.01, 0, 4.5), (0.866, 0, -0.5) | direction 10 / 4 |
 
 So the lower box carries a player up the shaft at 4 wu/s (12.2 m/s) with gravity off, held on
-the middle; the upper box shoves him out over the top towards world -Y (into the map) and 30
+the middle; the upper box shoves him out over the top towards world -Y (into the map) and 37
 degrees down, which kills most of the upward speed and puts him on the upper floor.
 `crates/blam_h2/tests/lockout.rs` (`lockout_lift`) pins both boxes.
 

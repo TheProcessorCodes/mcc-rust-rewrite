@@ -112,6 +112,9 @@ pub struct BuiltChunk {
     pub mesh: Mesh,
     pub triangles: u32,
     pub cull: Cull,
+    /// The scene object it draws alone (`SceneObject::dynamic`), for
+    /// scripts to move and hide (`halo3_core::objects::ObjectChunk`).
+    pub object: Option<u32>,
 }
 
 pub struct BuiltUnit {
@@ -138,6 +141,8 @@ struct ChunkKey {
     class: u8,
     /// The instances' fade-out size in pixels (0: none).
     fade: u16,
+    /// A scripted object drawn on its own.
+    object: Option<u32>,
 }
 
 #[derive(Default)]
@@ -203,7 +208,16 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
     let mut hi = Vec3::splat(f32::NEG_INFINITY);
     let mut lit_counts: HashMap<&'static str, usize> = HashMap::new();
     let mut editor_only = 0usize;
-    for placement in scene.placements.iter().filter(|p| Unit::of(p) == unit) {
+    // Scripted objects get chunks of their own (`SceneObject::dynamic`).
+    let dynamic: HashMap<u32, u32> = scene
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(_, o)| o.dynamic)
+        .flat_map(|(i, o)| o.placements.clone().map(move |p| (p, i as u32)))
+        .collect();
+    for (index, placement) in scene.placements.iter().enumerate().filter(|(_, p)| Unit::of(p) == unit) {
+        let object = dynamic.get(&(index as u32)).copied();
         if is_editor_only(&placement.name) {
             editor_only += 1;
             continue;
@@ -332,6 +346,7 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
                 cell,
                 class,
                 fade,
+                object,
             };
             // Re-index this part's vertices into each chunk, winding
             // mirrored placements the other way round.
@@ -466,6 +481,7 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
                 detail: batch.detail,
                 fade_pixels: key.fade as f32,
             },
+            object: key.object,
         });
     }
     let mut lit_counts: Vec<_> = lit_counts.into_iter().collect();

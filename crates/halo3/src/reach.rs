@@ -76,5 +76,6 @@ pub fn finish(
         foot_tuning: None,
         plain_fog: None,
         plain_sound: None,
+        extras: Default::default(),
     }
 }

@@ -153,6 +153,8 @@ const CAMPAIGN: &[Entry] = &[
     ("h3:100_citadel", "The Covenant", Some("H3_C08_THECOVENANT")),
     ("h3:110_hc", "Cortana", Some("H3_C09_CORTANA")),
     ("h3:120_halo", "Halo", Some("H3_C10_HALO3")),
+    // A mission of ours (`main.rs` `MISSIONS`): Halo from the Warthog run on.
+    ("warthog_run", "The Warthog Run", Some("H3_C10_HALO3")),
     ("h3:130_epilogue", "Epilogue", Some("H3_C11_EPILOGUE")),
 ];
 
@@ -400,7 +402,7 @@ impl Plugin for MenuPlugin {
         let tabs = [HALO3, HALO2, HALO1, REACH, CAMPAIGN].map(|entries| {
             entries
                 .iter()
-                .filter(|(arg, ..)| crate::resolve_map(arg).exists())
+                .filter(|(arg, ..)| crate::map_exists(arg))
                 .map(|&(arg, name, texture)| Map {
                     arg,
                     name,
@@ -830,18 +832,25 @@ fn act(
 /// Starts decoding the chosen map on a thread; the loading screen shows
 /// until it is in.
 fn start(commands: &mut Commands, menu: &mut Menu) {
-    let Some(map) = menu.selected() else {
-        return;
-    };
+    if let Some(loading) = begin(menu) {
+        commands.insert_resource(loading);
+    }
+}
+
+/// Starts decoding the picked map on its thread and shows the loading
+/// screen.
+fn begin(menu: &mut Menu) -> Option<Loading> {
+    let map = menu.selected()?;
     let arg = map.arg;
     eprintln!("menu: loading {} ({arg})", map.name);
     let (send, receive) = std::sync::mpsc::channel();
+    let args = menu.args.clone();
     std::thread::spawn(move || {
-        let _ = send.send(crate::load(arg));
+        let _ = send.send(crate::load(arg, &args));
     });
-    commands.insert_resource(Loading(Mutex::new(receive)));
     menu.phase = Phase::Loading;
     menu.error = None;
+    Some(Loading(Mutex::new(receive)))
 }
 
 /// Q in the pause menu (`pause.rs`): unload the map and show the menu again.
@@ -866,6 +875,26 @@ fn back_to_menu(world: &mut World) {
     menu.click = None;
     if let Err(e) = world.run_system_cached(spawn) {
         error!("menu: cannot show the menu again: {e}");
+    }
+}
+
+/// Restart on the completion screen (`finish.rs`): the map goes and the
+/// menu's loading screen shows while `arg` (the map or mission it came
+/// from) loads again.
+pub(crate) fn reload(world: &mut World, arg: &str) {
+    halo3_core::map::unload(world);
+    let mut menu = world.resource_mut::<Menu>();
+    // The tile it came from (still picked unless that was another tab's).
+    if let Some((t, i)) = (0..TABS.len()).find_map(|t| Some((t, menu.tabs[t].iter().position(|m| m.arg == arg)?))) {
+        menu.tab = t;
+        menu.pick[t] = i;
+    }
+    menu.click = None;
+    if let Err(e) = world.run_system_cached(spawn) {
+        error!("menu: cannot show the loading screen: {e}");
+    }
+    if let Some(loading) = begin(&mut world.resource_mut::<Menu>()) {
+        world.insert_resource(loading);
     }
 }
 

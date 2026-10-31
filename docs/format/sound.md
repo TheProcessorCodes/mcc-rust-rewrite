@@ -165,22 +165,70 @@ takes the last two as full volume within / silent beyond (not checked against th
 
 ## 5. Looping sounds (`lsnd`)
 
-| offset | what |
-|---|---|
-| `0x00` | u32 flags |
-| `0x24` | i16 sound class |
-| `0x28` | block of **tracks**, 144 bytes |
-| `0x34` | block of **detail sounds**, 60 bytes |
+Probe: `python -I docs/format/scripts/probe_lsnd.py <map> [name filter] [--raw]` (header words,
+each track's 144 bytes, every slot's permutations with their lengths from `sfx.fsb.info`).
+The meanings below come from surveying every `lsnd` in every installed map (about 6,500) and
+matching the values against what the sounds are: a field that is only ever set where its
+meaning would matter is taken to mean that.
 
-**Track**: `0x00` string id name, `0x04` u32 flags, `0x08` f32 gain dB (halo_ext -13), `0x0C` /
-`0x10` f32 fade in / out s, tag references (`snd!`) **`0x14` in, `0x24` loop, `0x34` out, `0x44`
-alt loop, `0x54` alt out, `0x68` alt transition in, `0x78` alt transition out**. Pinned by
-120_halo's `120_music_15` whose references are named `track1\in`, `loop`, `alt_loop`, `alt_out`,
-`alt_trans_in`.
+**Header**
+
+| offset | type | what | evidence |
+|---|---|---|---|
+| `0x00` | u32 | flags (below) | |
+| `0x04` | f32 | **music time**, s: a piece ends by itself after this long (inferred) | non-zero only on music: 120, 180 or 300 on most of 120_halo's pieces, 0 on the Warthog run and the stinger |
+| `0x08` | u32 | 0 everywhere | |
+| `0x0C`, `0x10` | f32 x2 | **distance**: full volume within, silent beyond (world units) | `smg_loop` 3 / 55 and `smg_lod_far` 35 / 70, the same pairs as the gun's near and far `snd!` layers (`weapon-sounds.md` 7); engine LODs 40 / 75 and 70 / 110; music 0.9 / 5 (unused: music is not placed) |
+| `0x14`, `0x20` | i32 | -1 everywhere | |
+| `0x24` | i16 | **sound class**: 32 on every music piece | |
+| `0x28` | block | **tracks**, 144 bytes | |
+| `0x34` | block | **detail sounds**, 60 bytes | |
+
+Header flags seen: 2, 4, 8, 16, 24, 48, 50, 64, 112.
+
+| bit | meaning | evidence |
+|---|---|---|
+| 1 (2) | **not a loop**: the loop sound plays once | `120_music_12`, whose only sound is `sound\music\stingers\orch3`; `020_music_10`; one cinematic glue sound |
+| 2 (4) | **stops music**: starting it ends the other music | the Warthog run (`120_music_15`) and 29 other pieces across the campaign; never on non-music |
+| 3-6 | on vehicle engines, weapon projectiles, multi-track ambience, stereo winds | not used here |
+
+**Track**, 144 bytes:
+
+| offset | type | what |
+|---|---|---|
+| `0x00` | string id | name (`track1` on every music track) |
+| `0x04` | u32 | flags (below) |
+| `0x08` | f32 | gain dB (halo_ext -13; the Warthog run -3) |
+| `0x0C`, `0x10` | f32 | fade in, fade out, s |
+| `0x14` | tag ref | **in** (intro) |
+| `0x24` | tag ref | **loop** |
+| `0x34` | tag ref | **out** (outro) |
+| `0x44` | tag ref | **alt loop** |
+| `0x54` | tag ref | **alt out** |
+| `0x64` | u32 | 0 everywhere |
+| `0x68` | tag ref | **alt trans in** |
+| `0x78` | tag ref | **alt trans out** |
+| `0x88` | f32 | **alternate cross-fade time**, s (10 on `120_music_13`, `020_music_06`) |
+| `0x8C` | f32 | a second time: 0 on all music, equal to `0x88` on vehicle skid loops; not used |
+
+Track flags seen: 0x0-0x7, 0x14, 0x17.
+
+| bit | meaning | evidence |
+|---|---|---|
+| 0 (1) | **fade in** over `0x0C` when started | set exactly where the fade-in time is non-zero (577 + 366 + 324 tracks with 0.1-2 s) |
+| 1 (2) | **fade out** over `0x10` when stopped | set exactly where the fade-out time is non-zero; on music, set on the pieces with no outro (`120_music_02`: 30 s, the Warthog run: 10 s) |
+| 2 (4) | **cross-fade to the alternate loop** over `0x88` | set on `120_music_13` (alt loop, no transitions, `0x88` = 10) and on material loops with an alt loop (`0x88` 0.1-0.5) |
+| 4 (16) | with both `0x88` and `0x8C` set (skids, water); not used | |
+
+Slot references pinned by `120_music_15`, whose sounds are named `track1\in`, `loop`, `alt_loop`,
+`alt_out`, `alt_trans_in`. A slot is a whole `snd!` with its permutations; the loop's
+permutations are the bars the game picks from at random (the Warthog run: 4 loops of 31-35 s),
+and each loop permutation's sample has its loop end in the bank's `.info` (frames - 1 on music),
+so they join back to back without gaps.
 
 **Detail**: `0x00` string id, `0x04` `snd!` reference, `0x14` f32 x2 random period s (weird_bird
 20-45), `0x1C` f32 gain dB, `0x20` u32 flags, `0x24` yaw bounds, `0x2C` pitch bounds (radians,
--pi..pi and -pi/2..pi/2), `0x34` distance bounds wu (15-20).
+-pi..pi and -pi/2..pi/2), `0x34` distance bounds wu (15-20). No music piece on 120_halo has any.
 
 ## 6. Sound scenery
 
@@ -208,15 +256,117 @@ over the clusters (not decoded).
 
 ## 8. Music
 
-Music is `lsnd` tags started by HaloScript (`sound_looping_start`), not placed anywhere. The
-script strings name them: 120_halo has globals `g_music_120_01` .. `g_music_120_15` and lsnd tags
-`levels\solo\120_halo\music\120_music_NN`; **`120_music_15` is `sound\music\misc\halo3_trench`**,
-the Warthog run (in 92 s, four loop permutations of 31-35 s, alt loop, alt out 77 s). The viewer
-lists every `lsnd` under a `\music\` folder and plays them by hand.
+Music is `lsnd` tags started by HaloScript, not placed anywhere. The scenario's script tag
+references (`scnr + 0x404`, `halo-script.md` 1) list every sound the scripts use: on 120_halo all
+16 music pieces and 30 `snd!`s (dialogue, sparks, the run's island creaks and tower crash;
+`MapSounds::script_sounds`). `blam sound 120_halo music` prints each piece with its rules, its
+slots' permutations and lengths, and the script lines that drive it. Pinned in
+`blam_sound/tests/install.rs` (`halo_music_pieces`).
 
-## 9. Not decoded
+**120_halo's pieces** (one track each, sound class 32, no details):
 
-Dialogue banks; pitch ranges past the first; `snde` reverb; cone gains; sound class gains and the
-mix (`snmx`) (the classes' limits and default distances, and a reading of all four distances, are
-in `weapon-sounds.md` 7); the per-sound `ugh! + 0xBC`
+| piece | sound | slots | rules |
+|---|---|---|---|
+| `120_music_01` | `amb\pad\d_low` | in, loop, out | 180 s |
+| `120_music_02` | `amb\glue\d_glue_hi` | in, loop | fade out 30 s; 300 s |
+| `120_music_03` | `amb\tech\d_tech_lowperc` | in, loop, alt loop | fade out 15 s; 300 s |
+| `120_music_04` | `amb\pad\d_hi` | in, loop, out | 120 s |
+| `120_music_045` | `amb\spooky\a_spook_fx` | loop | fade out 10 s; 180 s |
+| `120_music_05` | `numbers\14perc` | in, loop, out | 300 s |
+| `120_music_06` / `07` | `amb\pulse\d_orch_amb` / `amb\glue\d_glue` | in, loop | fade out 15 s; 300 s |
+| `120_music_08` | `amb\spooky\a_spook_fx` | loop | fade out 10 s; 300 s |
+| `120_music_09` / `10` / `11` | `spook_tran_fx` / `more_spook_pulse` / `atonal_glue_voxlo` | in, loop | fade out 10 / 10 / 6 s; 300 s |
+| `120_music_12` | `stingers\orch3` | loop | not a loop (a stinger); no script starts it |
+| `120_music_13` | `amb\spooky\amb_rhythm` | in, loop, alt loop | fade out 10 s; cross-fade 10 s to the alternate; 300 s |
+| `120_music_14` | `amb\pad\e_low` | in, loop, out | 180 s |
+| `120_music_15` | `misc\halo3_trench` | in (92 s), loop (4), alt loop (3), alt out (77 s), alt trans in (15 s) | stops music; fade out 10 s |
+
+**How the scripts drive them.** Each piece has a dormant script `120_music_NN` that waits for
+the global `g_music_120_NN`, `(sound_looping_start <piece> none 1.0)`, waits for the global to go
+false, then `(sound_looping_stop <piece>)`. The mission's chapter scripts `wake` those and set and
+clear the globals; three places switch a piece to its alternate loop
+(`sound_looping_set_alternate`: `120_music_03` in `sentinel_encounter`, `120_music_13` in
+`120vc_arbiter_revives`, `120_music_15` in `trench04_navpoint_deactive`). The Warthog run:
+
+1. `120_08_trench_run` wakes `120_music_15` and, once the player is in
+   `120_08_trench_encounter_100` (the first stretch), sets `g_music_120_15`: the piece starts
+   (intro, then its loops).
+2. `trench04_navpoint_deactive`, on leaving the second island (`110_island02_trig_exit`), sets the
+   alternate: after the playing loop, the 15 s transition, then the alternate loops.
+3. `120_trench_run_timer_04`, at the last stretch (`trench_run_120_trig12`, then `..._trig12x` or
+   10 s), clears `g_music_120_15`: the piece stops, which on the alternate loop plays the 77 s
+   alternate outro (the finale) after the playing loop.
+
+Pinned by `halo3_script/tests/trench_music.rs`, which drives the player through those volumes.
+
+**How we play a piece** (`halo3_audio/src/music.rs`):
+
+* Start: each track plays its intro, then picks loop permutations at random (never the same one
+  twice running) with no gap. A track with the fade-in flag ramps up over its fade-in time. A
+  "not a loop" piece plays one loop permutation and ends. A "stops music" piece ends every other
+  music piece (by their own stop rules) when it starts.
+* Alternate on: with the cross-fade flag, the alternate loop starts at once and fades in over
+  `0x88` while the loop fades out; otherwise, when the playing permutation ends, the alt
+  transition in (if any) plays, then the alternate loops. Off: the same back, through alt trans
+  out.
+* Stop: when the playing permutation ends, the alt out (on the alternate loop) or the out plays and
+  the piece is over; with neither, a track with the fade-out flag fades over its fade-out time;
+  else the playing permutation is the last. `sound_looping_stop_immediately` cuts it.
+* Music time: a piece that has played that long stops itself (as `sound_looping_stop`). Inferred
+  from the field only being set on music; not checked against the game.
+* Pieces overlap freely, so one piece's outro or fade runs under the next one's intro: that is
+  the cross-fade between pieces.
+* `sound_class_set_gain` ramps the `music` and `amb` classes (music pieces; ambience, sound
+  scenery and one-shots); other classes are logged and left alone. On top of that every sound
+  plays at its class's gain (section 9: music 0 dB, effects and ambience 12 to 15 dB down) and
+  the player's volume for its bus (pause menu, Sound tab).
+* `sound_impulse_start` plays one permutation of a `snd!` once, at the object when one is named
+  (by its distances), else at the listener. Dialogue is in the language banks, which are not
+  read: those calls log once and play nothing.
+
+## 9. Sound class gains: why music sits on top
+
+The `sncl` tag (`sound\sound_classes`, 54 classes of 152 bytes; limits and default distances in
+`weapon-sounds.md` 7) also holds each class's level. Read 2026-10-30 from 120_halo by dumping
+every class's non-zero words and naming the classes by the sounds that use them (the `snd!`
+class byte, `lsnd + 0x24`; probe `python -I probe_sound_classes.py [map]`). No plugin XML or GPL
+code was used; the meanings are inferred.
+
+| offset | type | what (inferred) | evidence |
+|---|---|---|---|
+| `0x10` | f32 | dB, -64 = none; probably the reverb send | -64 on music (32) and the ambient loops (33 to 35), -3 to -9 on weapons, impacts, footsteps; music is dry in the game |
+| `0x20`, `0x30` | f32 | dB, mostly 0 or -64 | not used |
+| `0x34` | 4 x f32 | default distances | `weapon-sounds.md` 7 |
+| **`0x44`, `0x48`** | f32 x2 | **gain range, dB (lower, upper)** | 0 / 0 on music (32); -3 / -3 on dialogue (19 unit, 47 mission, 48 cinematic) and cinematic music (38); -12 / -12 on weapon fire (4), reloads, ambient loops and sound scenery (33 to 35, 37 upper); -15 on vehicle engines (23), ready sounds, flybys; -10 footsteps (18); ranges only on physics impacts (13: -30 / -12), particles (14: -22 / -14), crashes (22: -24 / -12) |
+| `0x4C`, `0x50`..`0x58` | f32, 3 x f32 | a ducking level, dB, with fade-in / sustain / fade-out times (0.5 s): probably while cutscenes play | -6 on effects and ambience, **0 on music** |
+| `0x5C`, `0x60`.. | f32, times | a second ducking, probably under scripted dialogue | -6 effects, -3 music |
+| `0x6C`, `0x70`.. | f32, times | a third ducking | -12 effects, -3 music |
+| `0x7C`, `0x80` | f32 | 15 and 1 on most classes | not used |
+
+So in Halo 3 the music is mixed at 0 dB and nearly everything else 12 to 15 dB below it (dialogue
+3 dB below). The bank's samples are normalised alike (the Warthog run's loops are -14 to -17 dBFS
+RMS, an assault rifle shot -16, a falling-plate loop -7), so without the class gains our effects
+and ambience played 9 to 12 dB too loud against the music: by the plates on the run, about 8 dB
+over the music (user report 2026-10-30). `SoundClass::gain_bounds_db`; the viewer adds the upper
+end to every sound's gain (`SoundInfo::gain_db`). Pinned in `blam_sound/tests/install.rs`
+(`halo_class_gains`).
+
+The sound mix tag (`snmx`, `sound\sound_mix`, one per map) is not decoded: a few dB values
+(`0x04` -2, `0x10` -2, `0x24`..`0x34` -6 / -9, `0x40` -10, `0x48` 4) and a `snd!` reference at
+`0x94`; probably the first-person and speaker mix.
+
+**Our mix on top** (`halo3_audio`): music at 0 dB class gain as tagged. Sound scenery a further
+-9 dB and weapons +6 dB over their class (`SCENERY_GAIN`, `WEAPON_GAIN`: our choices, see the
+code). Every voice is on a bus (music: classes 32, 38; dialogue: 19, 46 to 48; ambience:
+backgrounds, details, sound scenery, classes 33 and 34; effects: the rest, weapons, board sounds)
+whose volume is the player's slider. Measured headless on the Warthog run (`HALO3_AUDIO_TRACE=1`,
+`audio levels` lines, RMS before the master volume): music -18 dBFS, ambience next to two plates
+-25 dBFS (before: about -11).
+
+## 10. Not decoded
+
+Dialogue banks; `lsnd` layers (`sound_looping_activate_layer`, unused on 120_halo) and the header
+flag bits 3-6; pitch ranges past the first; `snde` reverb; cone gains; the classes' ducking and
+the mix (`snmx`) (section 9; the classes' limits and default distances, and a reading of all four
+distances, are in `weapon-sounds.md` 7); the per-sound `ugh! + 0xBC`
 block; the 8 DLL setup rows that do not rebuild (unused by the bank).

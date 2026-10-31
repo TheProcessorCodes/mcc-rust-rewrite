@@ -4,6 +4,7 @@
 //! slow-changing: every other `halo3_*` crate depends on it, so an edit here
 //! rebuilds them all.
 
+pub mod ai;
 pub mod bike;
 pub mod coords;
 pub mod falls;
@@ -11,7 +12,9 @@ pub mod flag;
 pub mod lifts;
 pub mod map;
 pub mod fly_camera;
+pub mod objects;
 pub mod pause;
+pub mod script_sound;
 pub mod skate;
 pub mod weapons;
 pub mod zones;

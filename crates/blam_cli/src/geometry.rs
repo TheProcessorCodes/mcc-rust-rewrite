@@ -103,7 +103,7 @@ pub fn report(scene: &Scene, obj: Option<&Path>) -> Result<()> {
         for t in &col.triangles {
             match t.source {
                 blam_geometry::CollisionSource::Bsp(_) => bsp += 1,
-                blam_geometry::CollisionSource::Instance(_) => inst += 1,
+                blam_geometry::CollisionSource::Instance(_) | blam_geometry::CollisionSource::Object { .. } => inst += 1,
             }
             for p in t.points {
                 clo = clo.min(p);
