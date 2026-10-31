@@ -1679,6 +1679,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blam_reach"
+version = "0.1.0"
+dependencies = [
+ "blam_cache",
+ "blam_geometry",
+ "glam",
+]
+
+[[package]]
 name = "blam_sound"
 version = "0.1.0"
 dependencies = [
