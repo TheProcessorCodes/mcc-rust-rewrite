@@ -1,8 +1,10 @@
 //! `bitm` tags and their pixel data: tag -> bitmap block -> resource ->
 //! definition -> one or two pages -> mip levels. Follows
-//! `docs/format/bitmap.md` (sections 2 to 7).
+//! `docs/format/bitmap.md` (sections 2 to 7). MCC Reach's tags and
+//! definitions sit at other offsets (`docs/format/reach.md` 8); the cache
+//! file's [`Engine`] picks them.
 
-use blam_cache::{CacheFile, ResourceEntry, ResourceId, Resources};
+use blam_cache::{CacheFile, Engine, ResourceEntry, ResourceId, Resources};
 
 use crate::format::{Format, max_levels};
 use crate::{Error, Result};
@@ -13,6 +15,19 @@ pub const BITMAP_RESOURCE_TYPE: &str = "bitmap_texture_interop_resource";
 
 const BITMAP_BLOCK_SIZE: usize = 56;
 const DEFINITION_SIZE: usize = 56;
+/// Reach's definition: Halo 3's with four more bytes before the DXGI format.
+const REACH_DEFINITION_SIZE: usize = 72;
+
+/// Reach's numbering of the bitmap formats, as Halo 3's: the same up to
+/// 32, then five more before DXN (`docs/format/reach.md` 8.2).
+pub fn reach_format_as_halo3(value: u16) -> u16 {
+    match value {
+        36 => 31, // DXT5a (BC4), DXGI 80
+        38 | 44 => 33, // DXN, DXN mono alpha (BC5), DXGI 84 / 83
+        v if v > 32 => 0xFFFF,
+        v => v,
+    }
+}
 
 /// What a bitmap is: a flat image, a volume, a cube map or a stack of
 /// flat images.
@@ -61,6 +76,8 @@ pub struct BitmapTag {
     /// One resource per bitmap, same index.
     pub resources: Vec<ResourceId>,
     pub interleaved_count: u32,
+    /// Which game's definition layout the resources use.
+    pub engine: Engine,
 }
 
 /// The texture description at the start of a bitmap resource's
@@ -88,9 +105,20 @@ pub struct Definition {
 
 impl Definition {
     pub fn parse(bytes: &[u8]) -> Result<Definition> {
-        if bytes.len() < DEFINITION_SIZE {
+        Definition::parse_for(bytes, Engine::Halo3)
+    }
+
+    /// [`Definition::parse`] for a game's layout; Reach's DXGI format,
+    /// Halo format and curve are four bytes further on, and its format is
+    /// renumbered as Halo 3's ([`reach_format_as_halo3`]).
+    pub fn parse_for(bytes: &[u8], engine: Engine) -> Result<Definition> {
+        let (size, shift) = match engine {
+            Engine::Halo3 => (DEFINITION_SIZE, 0),
+            Engine::Reach => (REACH_DEFINITION_SIZE, 4),
+        };
+        if bytes.len() < size {
             return Err(Error::Invalid(format!(
-                "bitmap definition is {} bytes, want at least {DEFINITION_SIZE}",
+                "bitmap definition is {} bytes, want at least {size}",
                 bytes.len()
             )));
         }
@@ -105,9 +133,12 @@ impl Definition {
             levels: bytes[0x2D],
             kind: bytes[0x2E],
             flags: bytes[0x2F],
-            dxgi: u32_at(0x30) as i32,
-            format: bytes[0x34],
-            curve: bytes[0x35],
+            dxgi: u32_at(0x30 + shift) as i32,
+            format: match engine {
+                Engine::Halo3 => bytes[0x34],
+                Engine::Reach => reach_format_as_halo3(bytes[0x38] as u16).min(255) as u8,
+            },
+            curve: bytes[0x35 + shift],
         })
     }
 
@@ -196,24 +227,36 @@ pub fn read_tag(cache: &CacheFile, tag_index: u32) -> Result<BitmapTag> {
     }
     let tag = cache.tags.get(tag_index).expect("checked above");
     let base = cache.tag_offset(tag)?;
-    let mut r = cache.reader_at(base + 0x60);
+    let engine = cache.engine();
+    // Block offsets, and where a bitmap entry's fields start: Reach's
+    // entries have no leading class code and a one-byte type.
+    let (bitmaps_at, resources_at, interleaved_at, field) = match engine {
+        Engine::Halo3 => (0x60, 0x8C, 0x98, 4),
+        Engine::Reach => (0x7C, 0xA8, 0xB4, 0),
+    };
+    let mut r = cache.reader_at(base + bitmaps_at);
     let bitmaps_block = r.block()?;
-    let resources_block = r.at(base + 0x8C).block()?;
-    let interleaved = r.at(base + 0x98).block()?;
+    let resources_block = r.at(base + resources_at).block()?;
+    let interleaved = r.at(base + interleaved_at).block()?;
 
     let bitmaps = bitmaps_block
         .elements(BITMAP_BLOCK_SIZE)
         .map(|o| {
-            let mut r = cache.reader_at(o + 4);
+            let mut r = cache.reader_at(o + field);
+            let (width, height, depth, flags) = (r.u16()?, r.u16()?, r.u8()?, r.u8()?);
+            let (kind, format) = match engine {
+                Engine::Halo3 => (r.u16()?, r.u16()?),
+                Engine::Reach => (r.u8()? as u16, reach_format_as_halo3(r.at(o + 8).u16()?)),
+            };
             Ok(BitmapHeader {
-                width: r.u16()?,
-                height: r.u16()?,
-                depth: r.u8()?,
-                flags: r.u8()?,
-                kind: r.u16()?,
-                format: r.u16()?,
-                mipmap_count: r.at(o + 0x14).u8()?,
-                curve: r.at(o + 0x15).u8()?,
+                width,
+                height,
+                depth,
+                flags,
+                kind,
+                format,
+                mipmap_count: r.at(o + field + 0x10).u8()?,
+                curve: r.at(o + field + 0x11).u8()?,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -227,6 +270,7 @@ pub fn read_tag(cache: &CacheFile, tag_index: u32) -> Result<BitmapTag> {
         bitmaps,
         resources,
         interleaved_count: interleaved.count,
+        engine,
     })
 }
 
@@ -298,7 +342,7 @@ pub fn locate(resources: &Resources, tag: &BitmapTag, index: u32) -> Result<Loca
         ))
     })?;
     let entry = bitmap_entry(resources, id)?;
-    let definition = Definition::parse(resources.definition(&entry)?)?;
+    let definition = Definition::parse_for(resources.definition(&entry)?, tag.engine)?;
     let segment_index = entry
         .segment
         .ok_or_else(|| Error::NoData(format!("{}: resource has no segment", tag.name)))?;

@@ -2,7 +2,7 @@
 //! PC, and nothing searches the disk: the paths come only from
 //!
 //! 1. dev overrides in the environment (`HALO3_MCC`, `HALO3_MAPS`,
-//!    `HALO2_MAPS`, `HALO3_SKATE_ASSETS`, `IW4L_SKATE_ASSETS`,
+//!    `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `HALO3_SKATE_ASSETS`, `IW4L_SKATE_ASSETS`,
 //!    `REFLEX_GAME`);
 //! 2. the folders the player chose in first-run setup (`halo3_setup`),
 //!    saved in `setup.env` under [`settings_dir`]
@@ -129,6 +129,20 @@ pub fn halo2_maps() -> Option<PathBuf> {
     std::env::var_os("HALO2_MAPS")
         .map(PathBuf::from)
         .or_else(|| Some(mcc_root()?.join("halo2").join("h2_maps_win64_dx11")))
+}
+
+/// MCC's Halo: Combat Evolved maps: `%HALO1_MAPS%`, else `halo1\maps` in MCC.
+pub fn halo1_maps() -> Option<PathBuf> {
+    std::env::var_os("HALO1_MAPS")
+        .map(PathBuf::from)
+        .or_else(|| Some(mcc_root()?.join("halo1").join("maps")))
+}
+
+/// MCC's Halo: Reach maps: `%HALOREACH_MAPS%`, else `haloreach\maps` in MCC.
+pub fn reach_maps() -> Option<PathBuf> {
+    std::env::var_os("HALOREACH_MAPS")
+        .map(PathBuf::from)
+        .or_else(|| Some(mcc_root()?.join("haloreach").join("maps")))
 }
 
 /// A Halo 3 map by bare name (`riverworld`), when it is installed. For tests.

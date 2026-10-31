@@ -22,7 +22,7 @@ pub mod tags;
 use std::path::{Path, PathBuf};
 
 pub use error::{Error, Result};
-pub use header::Header;
+pub use header::{Engine, Header};
 pub use reader::{Block, DataRef, Reader, TagRef};
 pub use resources::{
     CacheAddress, Page, ResourceData, ResourceEntry, ResourceId, Resources, Segment,
@@ -48,7 +48,19 @@ pub const KNOWN_BUILDS: &[&str] = &[
     "Dec 21 2023 22:31:37",
     "Jan  3 2024 10:08:58",
     "Jan  3 2024 10:01:45",
+    // MCC Halo: Reach update 13 (`blam_reach`).
+    "Jun 21 2023 15:35:31",
 ];
+
+/// The game a cache file at `path` was written for, from its header alone;
+/// `None` when it is not a Halo 3 / Reach cache file (Halo 2's MCC maps say
+/// `head` 13 too, but have no section table: check those first).
+pub fn engine_of(path: impl AsRef<Path>) -> Option<Engine> {
+    use std::io::Read;
+    let mut b = vec![0u8; header::HEADER_SIZE];
+    std::fs::File::open(path).ok()?.read_exact(&mut b).ok()?;
+    Header::parse(&b).ok().map(|h| h.engine)
+}
 
 pub struct CacheFile {
     path: PathBuf,
@@ -82,6 +94,11 @@ impl CacheFile {
             strings,
             tags,
         })
+    }
+
+    /// Halo 3 or Reach.
+    pub fn engine(&self) -> Engine {
+        self.header.engine
     }
 
     pub fn path(&self) -> &Path {

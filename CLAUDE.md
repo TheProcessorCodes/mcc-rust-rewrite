@@ -37,6 +37,9 @@ far, the paths on disk and the open decision.
   helps into this project; do not change them without asking.
 - **Licenses**: Gravemind2401's Reclaimer is GPL-3.0. Porting its code line by line makes
   that code GPL-3.0. IW4L is Apache-2.0. Raise this with the user before porting Reclaimer.
+  The Skate 3 engine is vendored in `third_party/skate-engine` (GPL-3.0-only, so a released
+  `halo3.exe` is GPL-3.0); the skate crates are built from there, not from `mw2-skate-3-src`.
+  Any change made there goes in the list in its README.
 - **New work goes in a new worktree.** At the start of a thread, before editing
   anything, create a worktree on a new branch from master (under `.claude/worktrees/`)
   and do the work there, not on master. Long threads may need more than one: once a

@@ -1,0 +1,18 @@
+[package]
+name = "blam_h1"
+description = "Reads MCC Halo: Combat Evolved (classic) .map files into the same Scene the Halo 3 readers produce"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_geometry = { workspace = true }
+blam_h2 = { workspace = true }
+blam_texture = { workspace = true }
+glam = { workspace = true }
+memmap2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+game_paths = { workspace = true }

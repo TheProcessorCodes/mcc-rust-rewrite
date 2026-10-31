@@ -40,7 +40,9 @@ A Cargo workspace (`cargo build`, `cargo test`). Crates (`README.md` "Layout" ha
 |---|---|
 | `blam_cache` | opens a `.map` read-only (memory-mapped): header, sections, tag index and names, string ids, a tag data cursor, the resource system (zone gestalt, play layout, deflate pages, shared caches) |
 | `blam_geometry` | structure BSPs, render models, scenario objects, sky, the real collision BSP, lightmaps, atmosphere, camera fx (exposure), zone sets, trigger volumes and cluster portals, into one plain `Scene` |
+| `blam_h1` | MCC Halo CE maps into the same `Scene`: BSP lightmap meshes, collision, gbxmodels, shaders, `bitmaps.map`, spawns, sky (`docs/format/halo1.md`) |
 | `blam_h2` | MCC Halo 2 maps into the same `Scene`: inflated in memory, `shared.map` and `textures.dat`, BSP, collision, lightmaps, lifts, weapons, sound (`docs/format/halo2.md`) |
+| `blam_reach` | MCC Halo: Reach maps into the same `Scene`: BSPs, instances, collision, objects, sky, spawns, lightmap texcoords (`docs/format/reach.md`); `blam_cache` and `blam_texture` read Reach's cache file, shaders and bitmaps |
 | `blam_texture` | bitmap tags to mip chains (BC kept compressed, own CPU decoders) and the shader resolver |
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
 | `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound |
@@ -59,7 +61,7 @@ What the game does now:
   - Docs: `docs/format/lightmaps.md`, `sky-and-atmosphere.md`, `shaders.md`.
 - **Water.** Animated waves from the shader's slope arrays, sky reflection, depth murk, shore fade, foam and waterfalls. Deep water sinks the skater, who respawns at the last dry spot (`docs/format/water.md`, `swim.rs`).
 - **Skating.**
-  - The Skate 3 crates come from `mw2-skate-3-src` as a path dependency and run on a worker thread (`skate.rs`).
+  - The Skate 3 crates are vendored in `third_party/skate-engine` (GPL-3.0, 2026-10-31; its README has their origin and our changes) and run on a worker thread (`skate.rs`).
   - Skate collision is the real collision BSP; grind rails come from IW4L's lip detector.
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
@@ -117,7 +119,9 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Halo (final mission) | `120_halo` | built with streaming, not playtested |
 | Halo 2: Coagulation | `coagulation` (MCC Halo 2) | built, HaloExportH2 counts match, not playtested; no sky model yet |
 | Halo 2: Lockout | `lockout` (MCC Halo 2) | built with lightmaps, fog, gravity lift, weapons, ambient sound; own counts pinned; not playtested |
+| Halo CE: all 19 multiplayer maps | `h1:bloodgulch` ... (MCC `halo1\maps`) | built 2026-10-31, every map drawn in headless shots (textures, lightmaps, sky, spawns); HaloExportH1 counts match on 4 maps; bike, skate and foot stand on Blood Gulch; no weapons or sound yet; not playtested |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
+| Reach: all 20 multiplayer maps | `hr:20_sword_slayer`, `hr:cex_timberland`, ... | built 2026-10-31, counts pinned, each drawn headlessly; not playtested. Lightmaps read without their directions (per-vertex and probe-lit instances use the fallback), no fog, sound or weapons |
 
 Narrows, Isolation and Sandbox were "written, not built yet" when their README entries were
 made; they are on master now and build with the rest. This audit did not re-run their tests.
@@ -200,8 +204,8 @@ Halo) or the look fixes above.
 ## Working rules for agents
 
 - New work goes in a new worktree under `.claude/worktrees/`, on its own branch from master
-  (CLAUDE.md). Each worktree needs a junction `.claude\worktrees\mw2-skate-3-src` pointing at the
-  real `mw2-skate-3-src` folder so the skate crates' relative path resolves.
+  (CLAUDE.md). The skate crates are in the tree (`third_party/skate-engine`), so a worktree
+  needs nothing outside it.
 - Agents commit their own files by path once verified; never `git add -A` in a shared tree.
 - Worktrees you did not create in this thread, and any locked agent worktree, belong to the
   user's other sessions; leave them alone.

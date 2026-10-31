@@ -13,8 +13,9 @@ the format descriptions the code is written from.
 - No game files live here. The code reads the MCC install read-only.
 - Nothing here launches the game.
 - The format descriptions in `docs/format` were written by reading the files
-  on disk and public format documentation. No code from other projects is
-  copied: Reclaimer is GPL-3.0 and this project is Apache-2.0.
+  on disk and public format documentation. No code from other Halo tools is
+  copied (Reclaimer, TagTool, Assembly). The one outside code base in the
+  tree is the Skate 3 engine in `third_party/skate-engine` (see Licence).
 
 ## Layout
 
@@ -22,11 +23,13 @@ the format descriptions the code is written from.
 |---|---|
 | `crates/blam_cache` | opens a `.map`: header, sections, tag index, tag names, string ids, a cursor for tag data, resource pages |
 | `crates/blam_geometry` | decodes structure BSPs (clusters and instances) into plain meshes with materials |
+| `crates/blam_h1` | MCC Halo CE maps: tags, BSP lightmap meshes, collision, gbxmodels, shaders, bitmaps (`bitmaps.map`), spawns and sky decoded into the same `Scene` (`docs/format/halo1.md`) |
 | `crates/blam_h2` | MCC Halo 2 maps: inflated in memory, tags, `shared.map` and `textures.dat` read, BSP, collision, objects, spawns, shaders and bitmaps decoded into the same `Scene` (`docs/format/halo2.md`) |
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
-| `crates/game_paths` | where the player's games are: the saved setup, dev overrides (`HALO3_MAPS`, ...), Steam's library list. No dependencies; the readers' tests use it |
+| `crates/blam_reach` | MCC Halo: Reach maps: BSPs from the lightmap BSP data, instances from their resource, collision, objects, sky, spawns and lightmap texcoords into the same `Scene`; the cache file, shaders and bitmaps go through `blam_cache` / `blam_texture`, which tell Reach by its header (`docs/format/reach.md`) |
+| `crates/game_paths` | where the player's games are: the saved setup and dev overrides (`HALO3_MAPS`, ...); nothing is searched for. No dependencies; the readers' tests use it |
 | `crates/halo3_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`) and convert it once, take Reflex if the player has it, save the answers |
 | `crates/halo3` | the `halo3` binary: the map menu (`menu.rs`), wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
 | `crates/halo3_core` | what the runtime crates share: the map phase (`map.rs`: a map loaded, started and unloaded inside the running app), coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
@@ -34,6 +37,7 @@ the format descriptions the code is written from.
 | `crates/halo3_world` | the world on the GPU: BSP streaming, culling, lightmaps, sky, water, zone keys |
 | `crates/halo3_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
 | `crates/halo3_skate` | skating through the Skate 3 engine (`skate-host`) |
+| `third_party/skate-engine` | the Skate 3 engine crates, vendored (GPL-3.0; its README says where from and what we changed) |
 | `crates/halo3_rider` | the Spartan on the board |
 | `crates/halo3_bike` | the dirt bike (MX vs ATV Unleashed's model with Reflex's numbers), drawn as Reflex's Dakumoto 450F in the Cortana kit |
 | `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model (no bevy) |
@@ -71,7 +75,7 @@ Headless `--shot` and `--menu-shot` runs never show a dialog or write the setup:
 is saved (or the dev overrides) and stop with a message if anything is missing. So do tests:
 they skip when setup has not run.
 
-Dev overrides: `HALO3_MCC`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO3_SKATE_ASSETS` (or
+Dev overrides: `HALO3_MCC`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `HALO3_SKATE_ASSETS` (or
 `IW4L_SKATE_ASSETS`), `HALO3_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
 Reflex), `HALO3_SETUP_DIR`.
 
@@ -112,6 +116,11 @@ overrides; the `blam` tool also finds MCC through Steam). `riverworld` is Valhal
 `sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in MCC's
 `halo2\h2_maps_win64_dx11` (`coagulation`, `lockout` Lockout; `h2:NAME` / `h3:NAME` when
 both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
+Halo CE maps are only found as `h1:NAME` (`h1:bloodgulch`, ... in `%HALO1_MAPS%` or MCC's
+`halo1\maps`); a map's game is told from its own header, not its file name.
+Reach maps go by `hr:NAME` (`%HALOREACH_MAPS%` or MCC's `haloreach\maps`): `hr:20_sword_slayer`
+Sword Base, `hr:cex_timberland` Timberland, `hr:70_boneyard` Boneyard, ... (the menu's Reach tab
+lists all 20).
 
 ## Status
 
@@ -283,10 +292,31 @@ both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
       its lightmap (65 pages packed into one atlas, the light fixtures from
       the nearest surface) and the sky's blue fog (`docs/format/halo2.md`
       7, 10). Not yet: the sky model; a few small black panels on the boxes.
+- [x] Halo CE: all 19 multiplayer maps (`h1:NAME`, the menu's Halo CE tab;
+      built 2026-10-31, awaiting a playtest), read by our own `blam_h1`
+      (`docs/format/halo1.md`): the BSP's lightmap meshes with their
+      textures (blended ground, alpha-tested foliage, transparent
+      stacks), lit by the map's lightmap pages, scenery and machines, the
+      sky model with its cloud masks, outdoor fog where a cluster sees the
+      sky, the collision BSP (no broken loops) and the player starting
+      locations as spawns. HaloExportH1's lightmap, triangle and scenery
+      counts match on Blood Gulch, Death Island, Sidewinder and Timberland
+      (`crates/blam_h1/tests/maps.rs`). Headless shots of every map; the
+      bike, skating and walking stand on Blood Gulch's collision. Not yet:
+      weapons, sound, teleporters, water animation.
+- [x] Halo: Reach, the 20 multiplayer maps (`hr:NAME`, the menu's Reach tab; built, awaiting
+      a playtest): our own `blam_reach` crate (`docs/format/reach.md`) on the Halo 3 path:
+      textured BSPs, instances, scenery, crates, machines, controls and the sky model;
+      the collision BSP and instance collision (skating and walking checked headlessly on
+      Sword Base and Beaver Creek); 164 to 396 spawn points per map (Forge World 19). Lit
+      by Reach's lightmaps read as a direction-free light; instances lit per vertex or by
+      probe in Reach use the nearest-surface fallback. Not yet: the lightmaps' directions,
+      fog and atmosphere, camera fx, sound, weapons, Forge World's Forge objects. Counts
+      pinned by `cargo test -p blam_reach`.
 - [x] Milestone 3b: collision and rails fed to the skate world (playtested
       on Valhalla).
-- [x] Milestone 4: Skate 3 crates plugged in (path dependency on
-      `mw2-skate-3-src`), Master Chief as the rider (`docs/rider.md`).
+- [x] Milestone 4: Skate 3 crates plugged in (now vendored in
+      `third_party/skate-engine`), Master Chief as the rider (`docs/rider.md`).
 - [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets
       (PageUp / PageDown, `--zone`, and the scenario's switch volumes), the
       player starting location, sky and haze per cluster, skating on the
@@ -297,3 +327,12 @@ both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
       skate collision swapped in without stopping the ride
       (`docs/viewer.md` "Streaming and culling", `--bench N`). Other campaign maps load the same way but are not checked yet
       (`docs/viewer.md` "Zone sets", `docs/format/zone-sets.md`).
+
+## Licence
+
+Our own crates are Apache-2.0 (`LICENSE-APACHE`). `halo3.exe` links the Skate 3 engine in
+`third_party/skate-engine`, which is GPL-3.0-only, so `halo3` and `halo3_skate`, and any
+released `halo3.exe`, are distributed under the GNU General Public License version 3 only
+(`LICENSE`), with this source. Apache-2.0 code may be used in a GPL-3.0 work. A release also
+ships the Skate 3 converter `iw4l-skate-convert.exe` with its own licence files. None of this
+grants rights to any game's code, data, assets or trademarks; the player brings their own copies.

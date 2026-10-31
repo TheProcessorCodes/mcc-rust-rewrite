@@ -21,6 +21,9 @@
 //! | left stick click | H | engine sound: Reflex's 450F, synth, off (`halo3_audio::engine`) |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
+//! A crash shows CRASHED in orange in the lower left until the bike is
+//! put back.
+//!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
 //! abyss) puts the bike back where it last rode well, as a crash does.
 //!
@@ -81,7 +84,7 @@ impl Plugin for BikePlugin {
             .init_map_resource::<SessionFlag>()
             .init_map_resource::<halo3_core::bike::BikeMotion>()
             .add_plugins(tune::TunePlugin)
-            .add_systems(halo3_core::map::MapStartup, (setup, model::start))
+            .add_systems(halo3_core::map::MapStartup, (setup, model::start, spawn_crashed_text))
             .add_systems(
                 Update,
                 (
@@ -91,6 +94,7 @@ impl Plugin for BikePlugin {
                     model::place,
                     model::light,
                     show_status,
+                    show_crashed,
                     publish_motion,
                 )
                     .chain().run_if(halo3_core::map::ready),
@@ -138,6 +142,36 @@ fn publish_motion(riding: Res<Riding>, mut motion: ResMut<halo3_core::bike::Bike
         None => halo3_core::bike::BikeMotion::default(),
     };
     *motion = m;
+}
+
+/// The CRASHED text in the lower left, shown while the bike is down.
+#[derive(Component)]
+struct CrashedText;
+
+const CRASHED_ORANGE: Color = Color::srgb(1.0, 0.55, 0.1);
+
+fn spawn_crashed_text(mut commands: Commands) {
+    commands.spawn((
+        CrashedText,
+        Text::new("CRASHED"),
+        TextFont::from_font_size(32.0),
+        TextColor(CRASHED_ORANGE),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(24.0),
+            bottom: Val::Px(40.0),
+            ..default()
+        },
+        Visibility::Hidden,
+    ));
+}
+
+fn show_crashed(riding: Res<Riding>, mut text: Query<&mut Visibility, With<CrashedText>>) {
+    let crashed = riding.bike.as_ref().is_some_and(|b| b.crashed.is_some());
+    let want = if crashed { Visibility::Inherited } else { Visibility::Hidden };
+    for mut v in &mut text {
+        v.set_if_neq(want);
+    }
 }
 
 /// The skate scale `k` the rider is drawn at (`skate.rs`).

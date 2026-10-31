@@ -1670,6 +1670,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "blam_h1"
+version = "0.1.0"
+dependencies = [
+ "blam_geometry",
+ "blam_h2",
+ "blam_texture",
+ "glam",
+ "memmap2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "blam_h2"
 version = "0.1.0"
 dependencies = [
@@ -1680,6 +1692,16 @@ dependencies = [
  "glam",
  "memmap2",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "blam_reach"
+version = "0.1.0"
+dependencies = [
+ "blam_cache",
+ "blam_geometry",
+ "blam_texture",
+ "glam",
 ]
 
 [[package]]
@@ -2551,7 +2573,9 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "blam_h1",
  "blam_h2",
+ "blam_reach",
  "blam_texture",
  "game_paths",
  "halo3_audio",

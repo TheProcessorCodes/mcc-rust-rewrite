@@ -1,8 +1,10 @@
 //! Shader tags (`rmsh`, `rmtr`, `rmfl`, `rmw `, `rmd `, ...) resolved to the
 //! bitmaps they sample, each with its tiling, plus the options that say how
-//! the surface blends. Follows `docs/format/shaders.md` sections 2 to 7.
+//! the surface blends. Follows `docs/format/shaders.md` sections 2 to 7;
+//! MCC Reach's render methods have the same chain at other offsets
+//! (`docs/format/reach.md` 9), picked by the cache file's [`Engine`].
 
-use blam_cache::{Block, CacheFile, Reader, StringId};
+use blam_cache::{Block, CacheFile, Engine, Reader, StringId};
 
 use crate::{Error, Result};
 
@@ -277,11 +279,17 @@ pub fn resolve(cache: &CacheFile, tag_index: u32) -> Result<Shader> {
     let n = name.as_str();
     let s = cache.tag_offset(tag)?;
     let mut r = cache.reader_at(s);
+    // Where the option list and property block sit, a property's size, a
+    // texture entry's size and its tiling index byte.
+    let (options_at, props_at, prop_size, map_size, tiling_byte) = match cache.engine() {
+        Engine::Halo3 => (0x10, 0x28, 132, 28, 0x16),
+        Engine::Reach => (0x20, 0x38, 0xB4, 24, 0x15),
+    };
 
     // 1. options, named by the definition's categories.
     let rmdf = tag_of(cache, &mut r, "rmdf", n)?;
-    let option_block = bounded(r.at(s + 0x10).block()?, "the option list", n)?;
-    let props = bounded(r.at(s + 0x28).block()?, "the property block", n)?;
+    let option_block = bounded(r.at(s + options_at).block()?, "the option list", n)?;
+    let props = bounded(r.at(s + props_at).block()?, "the property block", n)?;
     let rmdf_off = cache.tag_offset(rmdf)?;
     let categories = bounded(cache.reader_at(rmdf_off + 0x10).block()?, "the category list", n)?;
     let mut options = Vec::new();
@@ -298,7 +306,7 @@ pub fn resolve(cache: &CacheFile, tag_index: u32) -> Result<Shader> {
 
     // 2. the template's usage and argument names.
     let prop = props
-        .element(0, 132)
+        .element(0, prop_size)
         .ok_or_else(|| Error::Invalid(format!("{n}: no shader properties")))?;
     let mut pr = cache.reader_at(prop);
     let rmt2 = tag_of(cache, &mut pr, "rmt2", n)?;
@@ -321,11 +329,11 @@ pub fn resolve(cache: &CacheFile, tag_index: u32) -> Result<Shader> {
     // 3. textures, one per usage, each with its xform.
     let mut maps = Vec::new();
     for (i, usage) in usages.iter().enumerate() {
-        let Some(o) = maps_block.element(i as u32, 28) else { break };
+        let Some(o) = maps_block.element(i as u32, map_size) else { break };
         let reference = cache.reader_at(o).tag_ref()?;
         let bitmap = reference.index.and_then(|b| cache.tags.get(b));
         let bitmap = bitmap.filter(|b| cache.tags.class_of(b).code.as_str() == "bitm");
-        let by_byte = cache.reader_at(o + 0x16).u8()?;
+        let by_byte = cache.reader_at(o + tiling_byte).u8()?;
         let k = if by_byte != 255 && (by_byte as usize) < tiling.len() {
             Some(by_byte as usize)
         } else {

@@ -88,7 +88,7 @@ impl Plugin for HaloAudioPlugin {
         // The dirt bike's engine (`engine.rs`).
         app.init_map_resource::<engine::EngineSound>().add_systems(
             Update,
-            engine::bike_engine.before(volume_keys).run_if(halo3_core::map::ready),
+            engine::bike_engine.before(VolumeKeys).run_if(halo3_core::map::ready),
         );
         // A map's sounds go when it is unloaded (`halo3_core::map`).
         app.remove_on_map_unload::<Loader>()
@@ -123,7 +123,7 @@ impl Plugin for HaloAudioPlugin {
                 music,
                 board,
                 weapons::weapon_sounds,
-                volume_keys,
+                volume_keys.in_set(VolumeKeys),
                 trace,
             )
                 .chain()
@@ -134,7 +134,7 @@ impl Plugin for HaloAudioPlugin {
         // Halo 2: the plain ambience.
         app.add_systems(
             Update,
-            (listener, halo2::receive, halo2::play, volume_keys)
+            (listener, halo2::receive, halo2::play, volume_keys.in_set(VolumeKeys))
                 .chain()
                 .run_if(resource_exists::<halo2::PlainState>)
                 .run_if(halo3_core::map::ready),
@@ -150,7 +150,7 @@ impl Plugin for HaloAudioPlugin {
                 wav: std::env::var_os("HALO3_AUDIO_WAV").map(std::path::PathBuf::from),
                 ..Default::default()
             })
-            .add_systems(Update, headless_mix.after(volume_keys));
+            .add_systems(Update, headless_mix.after(VolumeKeys));
         }
     }
 }
@@ -984,6 +984,12 @@ fn board(
         b.last_state = state.to_string();
     }
 }
+
+/// [`volume_keys`], which runs in both the Halo 3 and the Halo 2 chain: a
+/// system added twice cannot be ordered against by name, so the others
+/// order against this set.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+struct VolumeKeys;
 
 fn volume_keys(keys: Res<ButtonInput<KeyCode>>, mixer: Res<Mixer>, mut v: ResMut<Volume>) {
     let mut changed = false;
