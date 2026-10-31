@@ -7,9 +7,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 fn maps_dir() -> PathBuf {
-    std::env::var_os("HALOREACH_MAPS").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\haloreach\maps")
-    })
+    game_paths::reach_maps().unwrap_or_default()
 }
 
 #[test]

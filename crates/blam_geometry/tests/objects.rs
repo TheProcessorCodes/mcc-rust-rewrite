@@ -8,9 +8,7 @@ use blam_geometry::{CollisionSource, Kind, Options, objects};
 use glam::Vec3;
 
 fn path(name: &str) -> Option<PathBuf> {
-    let dir = std::env::var_os("HALO3_MAPS").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps")
-    });
+    let dir = game_paths::halo3_maps()?;
     let p = dir.join(format!("{name}.map"));
     p.exists().then_some(p)
 }
