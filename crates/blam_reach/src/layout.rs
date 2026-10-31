@@ -68,8 +68,12 @@ pub mod sbsp {
 pub mod lbsp {
     pub const PRIMARY_MAP: usize = 0x1C;
     pub const INTENSITY_MAP: usize = 0x2C;
+    /// Per instance (0xC each): +0 is -1 for instances not lit per pixel.
+    pub const INSTANCE_LIGHTING: usize = 0x60;
     pub const MESHES: usize = 0x7C;
     pub const COMPRESSION: usize = 0x88;
+    /// Per instance (i16): the vertex buffer of its lightmap texcoords.
+    pub const INSTANCE_TEXCOORDS: usize = 0xF4;
     pub const RESOURCE: usize = 0x10C;
 }
 

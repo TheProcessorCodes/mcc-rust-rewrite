@@ -13,7 +13,7 @@ use blam_geometry::collision::{self, CollisionStats};
 use blam_geometry::materials::MaterialTable;
 use blam_geometry::render_model::matrix_from_rows;
 use blam_geometry::scene::{BspInfo, ClusterInfo, Kind, Mesh, Part, Placement, Scene};
-use blam_geometry::{CollisionMaterial, CollisionSource, CollisionTriangle, Error, Lighting, Result};
+use blam_geometry::{CollisionMaterial, CollisionSource, CollisionTriangle, Error, Lighting, Lightmap, Result};
 
 use crate::geometry::{self, GeometryResource};
 use crate::layout::{lbsp, sbsp as off, scnr};
@@ -222,6 +222,37 @@ pub fn decode(
     let bounds = geometry::read_bounds(cache, bounds_block)?;
     let resource = GeometryResource::load(resources, resource)?;
 
+    // The lightmap: its bitmaps (the viewer decodes them, `halo3_textures`
+    // `reach.rs`) and, per instance, whether it is lit per pixel and the
+    // vertex buffer of its texcoords.
+    let mut lightmap: Option<(u32, Block, Block)> = None;
+    if let (true, Some(o)) = (from_lightmap, lbsp_off) {
+        let primary = cache.reader_at(o + lbsp::PRIMARY_MAP).tag_ref()?;
+        let intensity = cache.reader_at(o + lbsp::INTENSITY_MAP).tag_ref()?;
+        if intensity.index.is_some() {
+            lightmap = Some((
+                scene.lightmaps.len() as u32,
+                cache.reader_at(o + lbsp::INSTANCE_LIGHTING).block()?,
+                cache.reader_at(o + lbsp::INSTANCE_TEXCOORDS).block()?,
+            ));
+            scene.lightmaps.push(Lightmap {
+                bsp: bsp.index,
+                coefficients_bitmap: primary.index,
+                intensity_bitmap: intensity.index,
+                scales: [0.0; 5],
+            });
+        }
+    }
+    let per_pixel = |buffer: Option<u16>, count: usize| -> Lighting {
+        let (Some((l, _, _)), Some(b)) = (&lightmap, buffer) else {
+            return Lighting::None;
+        };
+        match resource.texcoords(b, count) {
+            Ok(Some(uvs)) => Lighting::PerPixel { lightmap: *l, uvs },
+            _ => Lighting::None,
+        }
+    };
+
     let mut stats = BspStats {
         meshes: meshes.len() as u32,
         shaders: shaders.count,
@@ -287,13 +318,19 @@ pub fn decode(
         let Some(mesh) = mesh_for(m, m, scene, materials)? else {
             continue;
         };
+        // A cluster's lightmap texcoords are its mesh's own second buffer.
+        let count = scene.meshes[mesh as usize].positions.len();
+        let lighting = per_pixel(meshes[m].buffers[1], count);
+        if !matches!(lighting, Lighting::None) {
+            stats.lightmapped += 1;
+        }
         scene.placements.push(Placement {
             name: format!("bsp{} cluster {c:03}", bsp.index),
             kind: Kind::Cluster,
             mesh,
             transform: Mat4::IDENTITY,
             mirrored: false,
-            lighting: Lighting::None,
+            lighting,
             bsps: 1 << bsp.index,
             sky: None,
             cluster: Some(c as u32),
@@ -323,13 +360,24 @@ pub fn decode(
             .and_then(|o| cache.reader_at(o).string_id().ok())
             .and_then(|id| cache.string(id))
             .map_or_else(|| format!("bsp{} instance {i}", bsp.index), str::to_string);
+        let mut lighting = Lighting::None;
+        if let Some((_, lit, texcoords)) = &lightmap
+            && let (Some(a), Some(b)) = (lit.element(i as u32, 0xC), texcoords.element(i as u32, 2))
+            && cache.reader_at(a).i16()? >= 0
+        {
+            let vb = cache.reader_at(b).i16()?;
+            lighting = per_pixel(u16::try_from(vb).ok(), scene.meshes[mesh as usize].positions.len());
+        }
+        if !matches!(lighting, Lighting::None) {
+            stats.lightmapped += 1;
+        }
         scene.placements.push(Placement {
             name,
             kind: Kind::Instance,
             mesh,
             transform: inst.transform,
             mirrored: inst.mirrored,
-            lighting: Lighting::None,
+            lighting,
             bsps: 1 << bsp.index,
             sky: None,
             cluster: None,

@@ -4,8 +4,10 @@
 //! (`blam_texture`), so materials resolve and zone sets stream their
 //! bitmaps from the open cache file exactly as for a Halo 3 map.
 //!
-//! What Reach does not get yet (`docs/format/reach.md` 10): its lightmaps
-//! (dual vMF, every placement uses the fallback light), camera fx and
+//! Lighting: Reach's dual-vMF lightmaps are read as one light colour per
+//! texel (`halo3_textures::reach`), without their directions. Not read yet
+//! (`docs/format/reach.md` 11): per-vertex and probe lighting (those
+//! instances use the fallback light), camera fx and
 //! atmosphere, its sound, its weapons and movement numbers (the rider is
 //! Halo 3's Spartan borrowed from Valhalla, on Valhalla's movement).
 
@@ -15,13 +17,19 @@ use crate::{rider, textures, world};
 /// Decodes the map's BSPs, collision and objects into `scene`.
 pub fn decode(cache: &blam_cache::CacheFile, scene: &mut blam_geometry::Scene) -> anyhow::Result<()> {
     let stats = blam_reach::decode_into(cache, scene)?;
+    // Reach's lightmaps are written as one c0 range (`halo3_textures`
+    // `reach.rs`).
+    for lm in &mut scene.lightmaps {
+        lm.scales = [textures::reach::range(), 0.0, 0.0, 0.0, 0.0];
+    }
     for (index, name, s) in &stats.bsps {
         eprintln!(
-            "reach bsp {index} {name}: {} clusters ({} drawn), {} instances ({} drawn), {} meshes ({} with geometry), {} shaders",
+            "reach bsp {index} {name}: {} clusters ({} drawn), {} instances ({} drawn), {} lit per pixel, {} meshes ({} with geometry), {} shaders",
             s.clusters,
             s.cluster_placements,
             s.instances,
             s.instance_placements,
+            s.lightmapped,
             s.meshes,
             s.meshes_with_geometry,
             s.shaders
