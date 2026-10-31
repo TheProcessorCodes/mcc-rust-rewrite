@@ -2,7 +2,8 @@
 
 First written 2026-10-27 at the end of a research thread in `mw2-skate-3-src`; last
 rewritten 2026-10-28 after the lighting, rider, campaign, streaming, water, sound and
-multiplayer-map work. `README.md` has the layout and the per-feature status list; `docs/` has
+multiplayer-map work; audited against master on 2026-10-30 (crate split, Halo 2 maps, the
+Cortana bike, analog throttle, the unmerged branches). `README.md` has the layout and the per-feature status list; `docs/` has
 the format notes the code is written from; `docs/viewer.md` has the controls.
 
 ## The goal
@@ -16,7 +17,7 @@ so the user can **skate (Skate 3 physics) on real Halo 3 maps**.
 | 2 | noclip: fly around the maps | done and playtested (keyboard, mouse after Tab, gamepad, Shift for speed) |
 | 3 | skate on multiplayer maps | done and playtested on Valhalla: the Skate 3 crates are linked and Master Chief rides. Guardian, Last Resort, High Ground and Blackout are built and pass tests but are not playtested |
 | 4 | skate on campaign maps | narrowed to the final mission, `120_halo`: zone sets, streaming, culling and skating across zone sets are built, awaiting a playtest. Other missions not checked |
-| later | dirt bike game (MX vs ATV Reflex) in the mix | started: B rides a dirt bike on MX vs ATV Unleashed's Pro 250 model (`docs/bike-unleashed.md`); the user called it the best base so far (2026-10-29) |
+| later | dirt bike game (MX vs ATV Reflex) in the mix | playable and being ridden by the user: B rides Reflex's Dakumoto 450F in the Cortana kit on "Reflex v1" physics (Unleashed's simulation with Reflex's numbers) with analog throttle (see "Dirt bike" below) |
 
 ## The decision (made 2026-10-27)
 
@@ -33,20 +34,22 @@ copied a line of C# or XML; keep it that way, or raise it with the user first.
 
 ## What is done
 
-A Cargo workspace (`cargo build`, `cargo test`, all green). Crates:
+A Cargo workspace (`cargo build`, `cargo test`). Crates (`README.md` "Layout" has one line each):
 
 | crate | what it does |
 |---|---|
 | `blam_cache` | opens a `.map` read-only (memory-mapped): header, sections, tag index and names, string ids, a tag data cursor, the resource system (zone gestalt, play layout, deflate pages, shared caches) |
 | `blam_geometry` | structure BSPs, render models, scenario objects, sky, the real collision BSP, lightmaps, atmosphere, camera fx (exposure), zone sets, trigger volumes and cluster portals, into one plain `Scene` |
+| `blam_h2` | MCC Halo 2 maps into the same `Scene`: inflated in memory, `shared.map` and `textures.dat`, BSP, collision, lightmaps, lifts, weapons, sound (`docs/format/halo2.md`) |
 | `blam_texture` | bitmap tags to mip chains (BC kept compressed, own CPU decoders) and the shader resolver |
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
-| `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound |
+| `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound, scripts, animations |
 | `blam_script` | the scenario's HaloScript: scripts, globals, expression nodes, the names they use; decompiled to source |
 | `halo3_script` | runs a map's scripts in the game (threads, objects, devices, trigger volumes, insertions), with AI and animation hooks |
 | `blam_anim` | animation graphs (`jmad`) and their codec data; poses sampled and blended for skinning |
-| `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound, animations |
-| `halo3` | the game: bevy 0.20, flying, skating, the dirt bike, sound, the pause menu, headless screenshots |
+| `reflex_assets` | reads the user's MX vs ATV Reflex install for the bike model (no bevy) |
+| `halo3` | the game binary (bevy 0.20): wires the runtime crates into an app, the pause menu, headless screenshots |
+| `halo3_core`, `halo3_world`, `halo3_textures`, `halo3_audio`, `halo3_skate`, `halo3_rider`, `halo3_bike`, `halo3_foot`, `halo3_weapons`, `halo3_swim` | the runtime, split out of `halo3` on 2026-10-28 for faster rebuilds |
 
 What the game does now:
 
@@ -69,8 +72,9 @@ What the game does now:
   `docs/format/movement.md`), a capsule on the collision, a made-up gait on the skate skeleton,
   shoulder and eye cameras. He carries the map's weapons (`weapons/`, `blam weapons`,
   `docs/format/weapons.md`): placed where the scenario puts them, picked up, fired with the tags'
-  rates, magazines, bursts, charge and zoom, projectiles traced against the collision. The user
-  has walked, jumped, fired and reloaded in it. Open: the tag's jump looks high (4.5 m); no damage,
+  rates, magazines, bursts, charge and zoom, projectiles traced against the collision. He starts
+  with the sniper rifle on every map (`halo3_foot::STARTING_WEAPONS`). The user has walked,
+  jumped, fired and reloaded in it. Open: the tag's jump looks high (4.5 m); no damage,
   no Halo animations, no first-person arms.
 - **Campaign, 120_halo.** Its 8 zone sets switch by PageUp / PageDown, `--zone`, or the scenario's own switch volumes as you move. You start at the player starting location (`docs/format/zone-sets.md`).
 - **Culling and streaming.**
@@ -86,7 +90,10 @@ What the game does now:
     120_halo).
   - Board roll, grind and landing sounds.
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
+- **Switching modes.** Jumping off the bike or the board lands you on foot with the ride's speed;
+  getting back on from walking keeps it too.
 - **Pause menu.** Escape or Start. It has tabs for free roam, on foot, dirt bike and skate controls, and a Sound tab with volume sliders; Q quits.
+- **Window.** Opens borderless fullscreen.
 - **Headless screenshots.** `halo3.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits. Claude may run this on its own to check visuals; it never opens a window.
 
 Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has numbers):
@@ -99,16 +106,26 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Last Resort | `zanzibar` | built, tests pass, not playtested |
 | High Ground | `deadlock` | built, tests pass, not playtested; seam where the cove's water meets the sky's sea |
 | Blackout | `lockout` (run as `blackout`) | built, tests pass, not playtested |
-| Sandbox | `sandbox` | written and pinned in tests, not built yet; Forge pieces have no collision |
+| Narrows | `chill` | on master, counts pinned in tests, not playtested |
+| Rat's Nest | `armory` | checked by headless shots, counts pinned, not playtested; crates and props have no collision |
+| Sandtrap | `shrine` | checked by headless shots, counts pinned, not playtested; vehicles placed, but the Elephants have no collision |
+| Isolation | `isolation` | on master, counts match HaloExport in tests, not playtested |
+| Sandbox | `sandbox` | on master, counts pinned in tests, not playtested; Forge pieces have no collision |
 | Halo (final mission) | `120_halo` | built with streaming, not playtested |
+| Halo 2: Coagulation | `coagulation` (MCC Halo 2) | built, HaloExportH2 counts match, not playtested; no sky model yet |
+| Halo 2: Lockout | `lockout` (MCC Halo 2) | built with lightmaps, fog, gravity lift, weapons, ambient sound; own counts pinned; not playtested |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
 
-Run it:
+Narrows, Isolation and Sandbox were "written, not built yet" when their README entries were
+made; they are on master now and build with the rest. This audit did not re-run their tests.
+
+Run it (build from the checkout through `.dev\build-shared.ps1`, see CLAUDE.md, then play that
+checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkout built last):
 
 ```
-cargo build
-& "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\target\debug\halo3.exe" riverworld
-& "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\target\debug\halo3.exe" 120_halo --zone 6 --music 120_music_15
+& 'D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\.dev\build-shared.ps1'
+& "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\out\bin\halo3.exe" riverworld
+& "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\out\bin\halo3.exe" 120_halo --zone 6 --music 120_music_15
 ```
 
 ## What is left
@@ -118,7 +135,8 @@ cargo build
 1. 120_halo: streaming and culling on the Warthog run, and skating across zone sets (`--zone 4`).
 2. Sound on Valhalla and 120_halo: anything too loud, too quiet or broken.
 3. The material, water and exposure changes made since the last look at Valhalla.
-4. Guardian, Last Resort, High Ground and Blackout.
+4. Guardian, Last Resort, High Ground, Blackout, Narrows, Rat's Nest, Sandtrap, Isolation,
+   Sandbox, and Halo 2's Coagulation and Lockout.
 
 **Look, still different from real Halo 3:**
 
@@ -136,12 +154,25 @@ cargo build
 - `010_jungle` BSP 11 fails with "segment has no page".
 - Seen from far above the play space, the sky is only the trench haze colour.
 
-**Not started (the big pieces):**
+**Started on branches, not on master yet** (worktrees under `.claude/worktrees/`, scoped to
+120_halo; none merged as of 2026-10-30):
 
-- Halo's own biped animations on the on-foot Spartan (the reader and player exist now, see
-  "Animation" below), first-person arms, grenades, melee, damage and something to shoot at.
-- Vehicles (the Warthog), and objects that move (machines, doors).
-- Joining the AI to the scripts and animation (each is built; see "HaloScript", "Animation" and "Enemies and AI" below).
+- `halo-script` also merges `biped-anim`, `enemies-ai`, `mission-music` and `music-volume`
+  into one build for 120_halo.
+- `biped-anim`: reads `jmad` animation graphs (`blam_anim`, `blam anim`) and plays them
+  (`halo3_anim`, `halo3 --anim-test`). Not yet driving the on-foot Spartan.
+- `enemies-ai`: reads the scenario's AI (squads, cells, starting locations, characters) and puts
+  120_halo's squads in as actors that see, move, fight, hurt and die.
+- `halo-script`: reads HaloScript (`blam_script`, `blam scripts`) and runs the map's own scripts
+  (`halo3_script`); object collision models and damage sections; the Warthog run's floor
+  collapses.
+- `first-run-setup`: the one-time MCC / Skate 3 setup (`game_paths`, `halo3_setup`); Reflex is
+  still to be added to it.
+
+**Not started:**
+
+- First-person arms, thrown grenades, melee.
+- Vehicles (the Warthog), and machines and doors that move.
 - Reflex's real physics data read from the game files. The bike now uses numbers from the
   `D:\reflex-tools\physics` docs.
 
@@ -154,8 +185,8 @@ Halo) or the look fixes above.
   (CLAUDE.md). Each worktree needs a junction `.claude\worktrees\mw2-skate-3-src` pointing at the
   real `mw2-skate-3-src` folder so the skate crates' relative path resolves.
 - Agents commit their own files by path once verified; never `git add -A` in a shared tree.
-- The `bike-*` and `pause-menu` worktrees, and any locked agent worktree, belong to the user's
-  other sessions; leave them alone.
+- Worktrees you did not create in this thread, and any locked agent worktree, belong to the
+  user's other sessions; leave them alone.
 - `.gitattributes` forces LF.
 
 ## Dirt bike (2026-10-28)
@@ -163,14 +194,14 @@ Halo) or the look fixes above.
 The bike now rides on MX vs ATV Unleashed's stock Pro 250 model (`docs/bike-unleashed.md`,
 `crates/halo3_bike/src/unleashed.rs`), read from a decompile of the fan client's `mxacore.dll` and
 the user's own Unleashed `.phy` files. The earlier physics are on `backup/bike-physics-master-2026-10-28`
-and `backup/bike-physics-reflex-2026-10-28`. Awaiting the user's playtest; the doc lists what is
+and `backup/bike-physics-reflex-2026-10-28`. Playtested (see below); the doc lists what is
 not ported (clutch boost, surfaces, tricks, Unleashed's wreck rules).
 
 2026-10-29: the user called the Unleashed bike the best base so far and asked to tweak it back
 towards Reflex. "Reflex v1" (`crates/halo3_bike/src/reflex.rs`) keeps Unleashed's simulation with
 Reflex's numbers and steering, lean and grip rules, and is the default; the tuning menu (0) is
-back, with Unleashed as a switch. Awaiting the user's playtest; the doc's "Reflex v1" section has
-the details.
+back, with Unleashed as a switch. The user has ridden it since (the throttle work below); the
+doc's "Reflex v1" section has the details.
 
 2026-10-29 (later): the stick bike is replaced by Reflex's Dakumoto 450F with the Cortana kit
 (the user's own design, `D:\reflex-tools\physics\reflex\master-chief-skin`), read at start-up
@@ -178,7 +209,14 @@ from the user's Reflex install; its forks, swingarm and wheels follow the physic
 the 450F's shape: 1.46 m wheelbase (was 1.57), 0.345 / 0.335 m tyres (0.366), 29.2° rake (26.9°),
 the model's grips, pegs and probe spheres (`docs/format/reflex-bike.md`). Reflex becomes a third,
 optional game for the public release: the first-run setup should find and save it like MCC and
-Skate 3 (`reflex_assets::find_reflex` is the stand-in until that lands). Awaiting the playtest.
+Skate 3 (`reflex_assets::find_reflex` is the stand-in until that lands). Merged 2026-10-30.
+
+2026-10-29/30, also on master: five saved setup slots in the tuning menu; Skate 3's session
+marker on the bike, with a small red flag on a pole where it is set; analog throttle (the amount
+held reaches the clutch, gearbox, wheelie hold and air brake, on a squared curve; pads that send
+RT as on/off are read from the Z axis). The user has been riding it: the throttle work came from
+their playtests, and RT reading 0 or 1 turned out to be their Elite Series 2's trigger locks, not
+the game.
 
 ## HaloScript and the Warthog run (2026-10-29, branch `halo-script`)
 

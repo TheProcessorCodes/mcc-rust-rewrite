@@ -66,7 +66,7 @@ impl Default for Tuning {
             ground_accel: 9.6 * WU,
             air_accel: 1.05 * WU,
             jump: 3.08 * WU,
-            gravity: blam_geometry::movement::GRAVITY * WU,
+            gravity: FOOT_GRAVITY * WU,
             max_slope: 50f32.to_radians().cos(),
             step: STEP,
             radius: 0.175 * WU,
@@ -80,6 +80,15 @@ impl Default for Tuning {
     }
 }
 
+/// The Spartan's gravity, wu/s^2. Not the 3.21 wu/s^2 recovered from the
+/// falling damage block (`blam_geometry::movement::GRAVITY`): with the
+/// tag's 3.08 wu/s jump that gives 1.92 s in the air and a 1.48 wu apex,
+/// where Halo 3 measures about 1.4 s and 1.05 wu (Bungie.net forum post
+/// 3291870, Halo 3 disc, default traits). 4.5 wu/s^2 gives 1.37 s and
+/// 1.05 wu. Measured by eye, not read from the engine
+/// (`docs/format/movement.md`).
+pub const FOOT_GRAVITY: f32 = 4.5;
+
 /// The tallest ledge walked up without a jump, metres. Halo has no such
 /// number: its capsule's round bottom rides up kerbs and stairs. This is
 /// our own choice (`docs/format/movement.md`).
@@ -90,7 +99,10 @@ impl Tuning {
     /// `HALO3_JUMP=<metres>` sets the jump height instead of the tag's
     /// jump speed.
     pub fn from_movement(m: &blam_geometry::Movement) -> Tuning {
-        let gravity = m.gravity * WU;
+        // The map's derived g (3.21 wu/s^2) is what the falling damage uses;
+        // the Spartan himself falls harder (`FOOT_GRAVITY`), by the same ratio
+        // on any map.
+        let gravity = FOOT_GRAVITY * m.gravity / blam_geometry::movement::GRAVITY * WU;
         let mut jump = m.jump_velocity * WU;
         if let Some(h) = std::env::var("HALO3_JUMP").ok().and_then(|s| s.parse::<f32>().ok()).filter(|h| *h > 0.0) {
             jump = (2.0 * gravity * h).sqrt();

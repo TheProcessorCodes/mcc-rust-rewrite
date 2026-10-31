@@ -76,6 +76,8 @@ const FREE_ROAM: &[[&str; 3]] = &[
     ["Page Down / Page Up", "", "next / previous zone set"],
     ["Home", "", "load every BSP"],
     ["P", "", "print the camera position to the console"],
+    ["Insert", "d-pad left", "spawn the enemy Spartan where you look"],
+    ["Delete", "d-pad right", "remove the enemy Spartan"],
 ];
 
 /// On-foot controls (`foot/mod.rs`): keyboard, controller, what it does.
@@ -88,6 +90,8 @@ const FOOT: &[[&str; 3]] = &[
     ["Space", "A", "jump"],
     ["Ctrl / C (hold)", "left stick click", "crouch"],
     ["T", "d-pad down", "first / third person"],
+    ["Insert", "d-pad left", "spawn the enemy Spartan where you look"],
+    ["Delete", "d-pad right", "remove the enemy Spartan"],
     ["Esc", "Start", "pause"],
 ];
 

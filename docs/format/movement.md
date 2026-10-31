@@ -197,7 +197,8 @@ g = v² / 2h = **3.20866 wu/s²** to six figures.
 | airborne acceleration | 1.05 /s² | 3.20 m/s² |
 | jump velocity | 3.08 /s | 9.39 m/s |
 | gravity (derived) | 3.20866 /s² | 9.780 m/s² |
-| jump apex (derived, v²/2g) | 1.478 | 4.51 m |
+| jump apex (derived, v²/2g) | 1.478 | 4.51 m (too high; see below) |
+| on-foot gravity used (`FOOT_GRAVITY`) | 4.5 /s² | 13.7 m/s² |
 | standing / crouching height | 0.725 / 0.5 | 2.21 / 1.52 m |
 | capsule radius | 0.175 | 0.533 m |
 | standing / crouching eye height | 0.62 / 0.45 | 1.89 / 1.37 m |
@@ -231,8 +232,13 @@ Inferred from the shape of the tag and the values, not proven:
   as above. It matches the figure long documented for Halo 1, 0.0035651 wu per tick² at 30 ticks
   per second (= 3.2086 wu/s²). Game-type traits ("gravity 50%" ...) scale it at run time.
 - **Jump height** 1.478 wu (4.5 m) is v²/2g from the two numbers above, assuming the jump
-  velocity is the whole take-off speed and nothing else scales it. Not measured in game; worth a
-  playtest check against a known ledge.
+  velocity is the whole take-off speed and nothing else scales it. **Too high**: that is 1.92 s in
+  the air, and a 2011 Bungie.net measurement on the Halo 3 disc (forum post 3291870, default
+  traits) gives about 1.4 s, with the feet rising about 1.45 Spartan heights (~1.05 wu). Both fit
+  the tag's 3.08 wu/s jump with g ≈ 4.5 wu/s², so the Spartan's own gravity seems stronger than
+  the falling-damage g. `halo3_foot` uses 4.5 wu/s² on foot (`FOOT_GRAVITY`: 1.37 s, 1.05 wu).
+  The 4.5 is measured by eye, not read from the engine. A frame count of a standing jump in MCC
+  would pin it down: g = 2 × 3.08 / airtime.
 - **Walk speed** at player information `+0x00` (0.512): the field before "run forward" in Halo's
   player globals is the walking speed; Halo 3 players have no walk key, so its use is unclear.
 - The order of the two **landing times** at `0x2CC`/`0x2D0`, and the names of `0x2E0`/`0x2E4`.

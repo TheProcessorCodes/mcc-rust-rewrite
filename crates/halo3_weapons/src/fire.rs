@@ -19,6 +19,7 @@ use bevy::prelude::*;
 use blam_geometry::weapons::Barrel;
 
 use super::assets::Kind;
+use super::enemy::{Enemy, EnemyKilled};
 use super::{WU, WeaponImpact};
 use halo3_core::ai::{Damage, DamageSource, DamageTarget, Targets, ray_capsule};
 use halo3_bike::physics::World;
@@ -123,6 +124,10 @@ struct Pending {
     owner: Option<Entity>,
     /// Damage per hit (min, max) from the projectile's damage effect.
     damage: [f32; 2],
+    /// The enemy Spartan's damage per round (the projectile's; the laser
+    /// kills), and the weapon's tag path for the kill feed (`enemy.rs`).
+    spartan_damage: f32,
+    path: String,
 }
 
 struct Round {
@@ -135,6 +140,8 @@ struct Round {
     travelled: f32,
     explosion: f32,
     power: f32,
+    spartan_damage: f32,
+    path: String,
     tracer: Entity,
     owner: Option<Entity>,
     damage: [f32; 2],
@@ -216,6 +223,11 @@ impl Shots {
             .and_then(|p| p.damage.as_ref())
             .map_or(0.0, |d| d.radius[1])
             .max(if matches!(style, Style::Grenade | Style::Missile) { 1.0 } else { 0.0 });
+        // The tag's damage; beams (the Spartan laser) carry none: it kills.
+        let spartan_damage = projectile
+            .and_then(|p| p.damage.as_ref())
+            .map_or(0.0, |d| d.upper_bound[0].max(d.upper_bound[1]));
+        let spartan_damage = if spartan_damage > 0.0 { spartan_damage } else if style == Style::Laser { 500.0 } else { 10.0 };
         // The shotgun: Halo 3 throws fifteen pellets (not read from the tag).
         let pellets = if kind.weapon.tag_path.contains("shotgun") { 15 } else { 1 };
         // What a round takes off: the damage effect's upper bound (min,
@@ -239,6 +251,8 @@ impl Shots {
             aimed,
             owner,
             damage,
+            spartan_damage,
+            path: kind.weapon.tag_path.clone(),
         });
     }
 
@@ -319,14 +333,29 @@ fn stick(a: Vec3, b: Vec3, thick: f32) -> Transform {
 }
 
 /// Where the crosshair points: the first thing along the camera's ray
-/// beyond the Spartan, or far off.
-fn aim_point(world: &World, view: &Transform, eye: Vec3) -> Vec3 {
+/// beyond the Spartan (the enemy included), or far off.
+fn aim_point(world: &World, enemy: &Enemy, view: &Transform, eye: Vec3) -> Vec3 {
     let f = view.forward().as_vec3();
     // Skip the stretch behind him (third person).
     let start = view.translation + f * (eye - view.translation).dot(f).max(0.0);
-    match world.raycast_far(start, f, 600.0) {
-        Some(hit) => hit.point,
-        None => start + f * 600.0,
+    let far = world.raycast_far(start, f, 600.0).map_or(600.0, |h| h.distance);
+    let far = enemy.raycast(start, f, far).map_or(far, |h| h.distance);
+    start + f * far
+}
+
+/// A round of `damage` from `path` (`weapon` its tag) hitting him; tells
+/// the kill feed if it killed him.
+fn hurt(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32, path: &str, damage: f32, head: bool) {
+    if enemy.damage(damage, head, path) {
+        kills.write(EnemyKilled { weapon, headshot: head });
+    }
+}
+
+/// An explosion's share of its damage on him.
+fn blast(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32, path: &str, damage: f32, at: Vec3, radius: f32) {
+    let share = enemy.splash(at, radius);
+    if share > 0.0 {
+        hurt(enemy, kills, weapon, path, damage * share, false);
     }
 }
 
@@ -404,6 +433,7 @@ fn launch(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut impacts: MessageWriter<WeaponImpact>,
     mut damage: MessageWriter<Damage>,
+    (mut enemy, mut kills): (ResMut<Enemy>, MessageWriter<EnemyKilled>),
 ) {
     let (Some(looks), Some(world), Some(spartan)) = (looks, foot.world(), foot.spartan.as_ref()) else {
         shots.pending.clear();
@@ -415,7 +445,7 @@ fn launch(
         let (from, dir) = match p.aimed {
             Some(aimed) => aimed,
             None => {
-                let target = aim_point(world, &p.view, eye);
+                let target = aim_point(world, &enemy, &p.view, eye);
                 let mut from = p.muzzle.w_axis.truncate();
                 // A muzzle poking through a wall fires from the eye instead.
                 let to_muzzle = from - eye;
@@ -441,8 +471,15 @@ fn launch(
             // A beam, there at once.
             let dir = shots.spread(dir, p.spread);
             let wall = world.raycast_far(from, dir, p.range);
-            let reach = wall.map_or(p.range, |h| h.distance);
+            // The enemy Spartan stands in the way of the player's beams.
+            let spartan_hit = if p.owner.is_none() { enemy.raycast(from, dir, wall.map_or(p.range, |h| h.distance)) } else { None };
+            let reach = spartan_hit.as_ref().map_or(wall.map_or(p.range, |h| h.distance), |b| b.distance);
             let end = match (body_hit(targets.as_deref(), spartan, p.owner, from, dir, reach), wall) {
+                (None, _) if let Some(b) = spartan_hit => {
+                    impact(&mut commands, &looks, &mut shots, &material, b.point, b.normal, 0.0, true);
+                    hurt(&mut enemy, &mut kills, p.kind_tag, &p.path, p.spartan_damage, b.head);
+                    b.point
+                }
                 (Some((who, d, head)), _) => {
                     let at = from + dir * d;
                     let amount = shots.roll(p.damage);
@@ -495,6 +532,8 @@ fn launch(
                 travelled: 0.0,
                 explosion: p.explosion,
                 power: p.power,
+                spartan_damage: p.spartan_damage,
+                path: p.path.clone(),
                 tracer,
                 owner: p.owner,
                 damage: p.damage,
@@ -575,6 +614,7 @@ fn fly(
     mut transforms: Query<&mut Transform>,
     mut impacts: MessageWriter<WeaponImpact>,
     mut damage: MessageWriter<Damage>,
+    (mut enemy, mut kills): (ResMut<Enemy>, MessageWriter<EnemyKilled>),
 ) {
     let (Some(looks), Some(world), Some(spartan)) = (looks, foot.world(), foot.spartan.as_ref()) else {
         return;
@@ -592,8 +632,12 @@ fn fly(
         let from = r.position;
         let unit = step / len.max(1e-6);
         let hit = world.raycast_far(from, unit, len);
-        // A body before the wall takes the round.
-        if let Some((who, d, head)) = body_hit(targets.as_deref(), spartan, r.owner, from, unit, hit.map_or(len, |h| h.distance)) {
+        // The enemy Spartan, if he stands nearer than the wall (the
+        // player's rounds only).
+        let body = if r.owner.is_none() { enemy.raycast(from, unit, hit.map_or(len, |h| h.distance)) } else { None };
+        // An actor before the wall (and the Spartan) takes the round.
+        let reach = body.as_ref().map_or(hit.map_or(len, |h| h.distance), |b| b.distance);
+        if let Some((who, d, head)) = body_hit(targets.as_deref(), spartan, r.owner, from, unit, reach) {
             let at = from + unit * d;
             let amount = shots.roll(r.damage);
             if amount > 0.0 {
@@ -616,6 +660,13 @@ fn fly(
             commands.entity(r.tracer).try_despawn();
             return false;
         }
+        let hit = match body {
+            Some(b) => {
+                hurt(&mut enemy, &mut kills, r.weapon, &r.path, r.spartan_damage, b.head);
+                Some(halo3_bike::physics::Hit { distance: b.distance, point: b.point, normal: b.normal })
+            }
+            None => hit,
+        };
         let end = hit.map_or(from + step, |h| h.point);
         r.travelled += from.distance(end);
         r.position = end;
@@ -638,11 +689,18 @@ fn fly(
             if r.explosion > 0.0 {
                 explode(&mut damage, targets.as_deref(), spartan, r.owner, h.point, r.explosion);
             }
+            // A direct hit on the enemy Spartan took its damage above.
+            if body.is_none() && r.owner.is_none() {
+                blast(&mut enemy, &mut kills, r.weapon, &r.path, r.spartan_damage, h.point, r.explosion);
+            }
         } else if gone && r.explosion > 0.0 {
             // Grenades and missiles go off at the end of their range.
             let glow = materials.get(r.tracer).map(|m| m.0.clone()).unwrap_or_else(|_| looks.spark.clone());
             impact(&mut commands, &looks, &mut shots, &glow, end, Vec3::Y, r.explosion, true);
             explode(&mut damage, targets.as_deref(), spartan, r.owner, end, r.explosion);
+            if r.owner.is_none() {
+                blast(&mut enemy, &mut kills, r.weapon, &r.path, r.spartan_damage, end, r.explosion);
+            }
         }
         if gone {
             commands.entity(r.tracer).try_despawn();
