@@ -53,11 +53,8 @@ length, skipping to the next `FF FB` sync). Then the decoded length matches the 
 
 ## The 450F's takes
 
-The event file names, per event, the takes it picks from (the `/MXB_450F_THROTTLE_MID`
-string, then the `.wav` names under it). Its parameter curves (rpm and load per layer)
-are not decoded, so `engine.rs` does its own mixing from measured pitch: each take's
-firing frequency (the spacing of its harmonics, measured on 0.2 s windows; rpm =
-frequency × 120 for a four-stroke single) gives:
+Measured pitch (the firing frequency, the spacing of its harmonics on 0.2 s windows;
+rpm = frequency × 120 for a four-stroke single):
 
 | takes | rpm | notes |
 |---|---|---|
@@ -73,6 +70,33 @@ frequency × 120 for a four-stroke single) gives:
 | `THROTTLE_LAND_01`..`06` (no `04`) | 6,360 to 7,950 | |
 | `FLOODING_01`..`03`, `CHOKE`, `WRECK` | | `CHOKE` and `WRECK` are the same bytes |
 
+## The event file
+
+`FEV1` (version 0x3A): the bank name, the event categories (`master`, `music`), then one
+record per event (`MXB_450F_IDLE`, `..._THROTTLE_LOW`, ...: name, GUID, volume 0.797 on
+all, priority, max playbacks, 3D settings, one layer playing one sound definition, three
+envelopes (an unnamed one, `FMOD Lowpass Simple`, and a third) with the same points on
+every event, and on the four throttle events a parameter `load`, 0 to 1). Then three
+sound-definition property templates (play mode first; the throttle pools' is 2, random
+without repeats), and the sound definitions, which `reflex_assets::engine_audio::
+sound_defs` reads: a u32 count, then per definition its name (`/MXB_450F_THROTTLE_LOW`,
+u32-length-prefixed with a NUL), the template index, the entry count, and per entry a u32
+kind and a u32 weight (100); a kind-0 entry goes on with the `.wav` name, the bank name,
+its index in the bank and its length in ms (kind 2 plays nothing: `SHIFT`, `DOWNSHIFT`,
+`ACCEL_LIT`, `ACCEL_PWR` are empty). The pools do not follow the take names:
+
+| definition | takes |
+|---|---|
+| `THROTTLE_LOW` | `HIGH_01`, `HIGH_09`, `HIGH_08`, `LOW_03`, `MID_02`, `LOW_01`, `LOW_06` |
+| `THROTTLE_MID` | `LOW_04`, `MID_03`, `MID_01`, `MID_05`, `MID_07`, `HIGH_08`, `POWER_01` |
+| `THROTTLE_HIGH` | `HIGH_02` to `_08`, `HIGH_10`, `POWER_07`, `MID_04`, `MID_06` |
+| `THROTTLE_POWER` | `LOW_02`, `LOW_05`, `POWER_02` to `_06`, `POWER_08`, `POWER_09` |
+| `HALF_ACCEL`, `HALF_THROTTLE` | `HALF_ACCEL`; `HALF_SUSTAINED` |
+| `THROTTLE_LAND`, `REV`, `FLOODING` | their numbered takes |
+
+`EngineState/AudioEngineStates` holds no numbers beyond a level of 1.0 per state; when
+each event plays, and at what pitch, is in the game's code.
+
 ## How Reflex mixes them
 
 From a 13 s recording of the game (the user's, 2026-10-30; riding, two jumps, two
@@ -86,5 +110,12 @@ wrecks), pitch and loudness every 0.1 s:
 - The gas held with the rear wheel free (the wrecks) is the limiter loop, steady at
   11,500, as loud as riding.
 
-Most throttle takes were recorded accelerating, rising 10 to 20 % in pitch through the
-take; `engine.rs` follows each one's pitch through it at load and undoes the rise.
+Matching that recording's pitch track (every 0.05 s) against every take's found the
+takes themselves, at a pitch ratio of 1.000 (within 0.3 %) and from near their start:
+`HIGH_08` at 0.3 s, `LOW_01` at 0.85 s, `POWER_01` at 2.9 s, `HIGH_10` at 6.4 s, `MID_02`
+at 8.65 s, `HIGH_04` at 9.85 s, `MID_07` at 10.7 s, `PANIC_START` at 5.7 s and 12.1 s (the
+wrecks). So Reflex does not pitch the takes to the engine: at each gear change it starts a
+take from the start and lets it run at the pitch and level it was recorded at (the rise
+through a gear is the take's own, 10 to 20 %; the idle is quiet because its recording is,
+12 dB under the throttle takes). Between two gears' takes the level dips for about 0.1 s.
+Which pool each gear uses could not be told from the recording.

@@ -2,18 +2,15 @@
 //! while riding, goes Reflex → synth → off):
 //!
 //! - **Reflex**: the Dakumoto 450F's own recordings, read from the user's
-//!   MX vs ATV Reflex install (`reflex_assets::engine_audio`). Reflex plays
-//!   them through FMOD events (idle, sustained throttle at four loads, decel,
-//!   limiter, landing, wreck) that we cannot read yet, so this does the same
-//!   job by hand: each recording's pitch was measured once (the table
-//!   below, rpm = the firing frequency × 120), and a layer plays the
-//!   recording nearest the bike's rpm and load, crossfading to a closer one
-//!   as the rpm moves. Most takes were recorded accelerating, so their pitch
-//!   climbs inside the take; at load each one's pitch is followed through it
-//!   (`contour`, held near the table's figure so it cannot jump an octave)
-//!   and the playback rate undoes that, so the pitch heard is the one asked
-//!   for. What is asked for follows a recording of Reflex itself (see
-//!   `bike_engine`): a narrow high band on the gas, the idle take off it.
+//!   MX vs ATV Reflex install (`reflex_assets::engine_audio`), played the
+//!   way Reflex plays them. Matching a recording of the game against the
+//!   takes (2026-10-30) showed that Reflex never pitches them: on the gas
+//!   it starts a take from its beginning at each gear change and lets it
+//!   run, at the pitch and level it was recorded at, so the climb through
+//!   a gear is the take's own; when a take ends the next one in the pool
+//!   follows. The pools are the event file's sound definitions (four
+//!   throttle pools, idle, half throttle, the limiter, decel, landing,
+//!   wreck); which pool plays in which gear is ours to choose.
 //! - **Synth**: our own single-cylinder four-stroke, made from nothing: a
 //!   blow-down pulse per firing (every second turn of the crank), each one a
 //!   little different, into two pipe resonators (head pipe, silencer), the
@@ -54,254 +51,380 @@ impl Model {
 /// What the engine is doing, handed to the audio thread each frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Input {
-    /// The rpm the Reflex model plays (see `bike_engine`).
+    /// Smoothed (see `bike_engine`).
     pub rpm: f32,
-    /// The engine's own rpm, smoothed: the synth's.
-    pub engine_rpm: f32,
-    /// On the limiter, 0 to 1.
-    pub limit: f32,
-    /// Counts up at each gear change.
-    pub shifts: u32,
     pub min_rpm: f32,
     pub max_rpm: f32,
     pub throttle: f32,
+    /// 0-based.
+    pub gear: usize,
     /// m/s.
     pub speed: f32,
+    /// In the air for more than a moment.
     pub airborne: bool,
+    pub crashed: bool,
     /// Counts up once per landing and per crash; `land_force` 0 to 1.
     pub landings: u32,
     pub land_force: f32,
     pub wrecks: u32,
 }
 
-/// Which part a recording plays.
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Kind {
+/// The event file's sound definitions the Reflex model plays.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pool {
     Idle,
-    /// Under throttle; the load it was recorded at, 0 to 1.
-    Drive(f32),
-    Decel,
-    Limiter,
+    HalfAccel,
+    Half,
+    Low,
+    Mid,
+    High,
+    Power,
+    DecelHigh,
+    DecelLow,
+    PanicStart,
+    PanicLoop,
+    EnterAir,
     Land,
     Wreck,
-    Unused,
 }
 
-/// The 450F's recordings: name, the rpm they hold (median of 0.2 s windows,
-/// firing frequency × 120), and what they are for.
-const CLIPS_450F: &[(&str, f32, Kind)] = &[
-    ("MXB_450F_IDLE", 3690.0, Kind::Idle),
-    ("MXB_450F_HALF_ACCEL", 3420.0, Kind::Drive(0.3)),
-    ("MXB_450F_HALF_SUSTAINED", 4260.0, Kind::Drive(0.2)),
-    ("MXB_450F_THROTTLE_LOW_01", 9465.0, Kind::Drive(0.35)),
-    ("MXB_450F_THROTTLE_LOW_02", 7050.0, Kind::Drive(0.35)),
-    ("MXB_450F_THROTTLE_LOW_03", 10035.0, Kind::Drive(0.35)),
-    ("MXB_450F_THROTTLE_LOW_04", 8070.0, Kind::Drive(0.35)),
-    ("MXB_450F_THROTTLE_LOW_05", 7140.0, Kind::Drive(0.35)),
-    ("MXB_450F_THROTTLE_LOW_06", 8940.0, Kind::Drive(0.35)),
-    ("MXB_450F_THROTTLE_MID_01", 8850.0, Kind::Drive(0.55)),
-    ("MXB_450F_THROTTLE_MID_02", 9870.0, Kind::Drive(0.55)),
-    ("MXB_450F_THROTTLE_MID_03", 10140.0, Kind::Drive(0.55)),
-    ("MXB_450F_THROTTLE_MID_04", 8520.0, Kind::Drive(0.55)),
-    ("MXB_450F_THROTTLE_MID_05", 9930.0, Kind::Drive(0.55)),
-    ("MXB_450F_THROTTLE_MID_06", 8085.0, Kind::Drive(0.55)),
-    ("MXB_450F_THROTTLE_MID_07", 8340.0, Kind::Drive(0.55)),
-    ("MXB_450F_THROTTLE_HIGH_01", 11010.0, Kind::Drive(0.75)),
-    ("MXB_450F_THROTTLE_HIGH_02", 9870.0, Kind::Drive(0.75)),
-    ("MXB_450F_THROTTLE_HIGH_03", 8940.0, Kind::Drive(0.75)),
-    ("MXB_450F_THROTTLE_HIGH_04", 8640.0, Kind::Drive(0.75)),
-    ("MXB_450F_THROTTLE_HIGH_05", 9030.0, Kind::Drive(0.75)),
-    ("MXB_450F_THROTTLE_HIGH_06", 9285.0, Kind::Drive(0.75)),
-    ("MXB_450F_THROTTLE_HIGH_07", 9360.0, Kind::Drive(0.75)),
-    ("MXB_450F_THROTTLE_HIGH_08", 9360.0, Kind::Drive(0.75)),
-    ("MXB_450F_THROTTLE_HIGH_09", 10110.0, Kind::Drive(0.75)),
-    ("MXB_450F_THROTTLE_HIGH_10", 8820.0, Kind::Drive(0.75)),
-    // The POWER takes wander most (wheelspin, the bike bucking); the
-    // steadier ones only.
-    ("MXB_450F_THROTTLE_POWER_01", 8850.0, Kind::Drive(0.95)),
-    ("MXB_450F_THROTTLE_POWER_06", 6870.0, Kind::Drive(0.95)),
-    ("MXB_450F_THROTTLE_POWER_07", 8850.0, Kind::Drive(0.95)),
-    ("MXB_450F_THROTTLE_POWER_02", 8640.0, Kind::Unused),
-    ("MXB_450F_THROTTLE_POWER_03", 7980.0, Kind::Unused),
-    ("MXB_450F_THROTTLE_POWER_04", 5745.0, Kind::Unused),
-    ("MXB_450F_THROTTLE_POWER_05", 6570.0, Kind::Unused),
-    ("MXB_450F_THROTTLE_POWER_08", 6600.0, Kind::Unused),
-    ("MXB_450F_THROTTLE_POWER_09", 6645.0, Kind::Unused),
-    // Falling sweeps, about 9900 down to 4300 in a second.
-    ("MXB_450F_DECEL_HIGH", 9900.0, Kind::Decel),
-    ("MXB_450F_DECEL_LOW", 9780.0, Kind::Decel),
-    ("MXB_450F_PANIC_LOOP", 11250.0, Kind::Limiter),
-    ("MXB_450F_THROTTLE_LAND_01", 7620.0, Kind::Land),
-    ("MXB_450F_THROTTLE_LAND_02", 7815.0, Kind::Land),
-    ("MXB_450F_THROTTLE_LAND_03", 6360.0, Kind::Land),
-    ("MXB_450F_THROTTLE_LAND_05", 7950.0, Kind::Land),
-    ("MXB_450F_THROTTLE_LAND_06", 6870.0, Kind::Land),
-    ("MXB_450F_WRECK", 2025.0, Kind::Wreck),
+const POOLS: [(Pool, &str); 14] = [
+    (Pool::Idle, "MXB_450F_IDLE"),
+    (Pool::HalfAccel, "MXB_450F_HALF_ACCEL"),
+    (Pool::Half, "MXB_450F_HALF_THROTTLE"),
+    (Pool::Low, "MXB_450F_THROTTLE_LOW"),
+    (Pool::Mid, "MXB_450F_THROTTLE_MID"),
+    (Pool::High, "MXB_450F_THROTTLE_HIGH"),
+    (Pool::Power, "MXB_450F_THROTTLE_POWER"),
+    (Pool::DecelHigh, "MXB_450F_DECEL_HIGH"),
+    (Pool::DecelLow, "MXB_450F_DECEL_LOW"),
+    (Pool::PanicStart, "MXB_450F_PANIC_START"),
+    (Pool::PanicLoop, "MXB_450F_PANIC_LOOP"),
+    (Pool::EnterAir, "MXB_450F_ENTER_AIR"),
+    (Pool::Land, "MXB_450F_THROTTLE_LAND"),
+    (Pool::Wreck, "MXB_450F_WRECK"),
 ];
 
+impl Pool {
+    /// The throttle pool for a gear: pulling hard in first, then up through
+    /// the low, mid and high pools.
+    fn for_gear(gear: usize) -> Pool {
+        match gear {
+            0 => Pool::Power,
+            1 => Pool::Low,
+            2 => Pool::Mid,
+            _ => Pool::High,
+        }
+    }
+
+    /// What follows when a take from this pool ends.
+    fn then(self) -> Pool {
+        match self {
+            Pool::HalfAccel => Pool::Half,
+            Pool::PanicStart | Pool::EnterAir => Pool::PanicLoop,
+            p => p,
+        }
+    }
+}
+
 struct Recording {
-    /// Normalised to the same loudness.
     samples: Vec<f32>,
-    /// Source frames per output frame at the recorded pitch.
+    /// Source frames per output frame.
     step: f64,
-    /// The take's typical rpm (the table's), and its rpm every
-    /// [`CONTOUR_HOP`] samples.
-    rpm: f32,
-    contour: Vec<f32>,
-    kind: Kind,
 }
 
-impl Recording {
-    /// The rpm the take holds at sample `pos`.
-    fn rpm_at(&self, pos: f64) -> f32 {
-        let x = pos / CONTOUR_HOP as f64;
-        let i = x as usize;
-        match (self.contour.get(i), self.contour.get(i + 1)) {
-            (Some(&a), Some(&b)) => a + (b - a) * (x - i as f64) as f32,
-            (Some(&a), None) => a,
-            _ => self.rpm,
-        }
-    }
-}
-
-/// Recorded samples between two points of a contour.
-const CONTOUR_HOP: usize = 4096;
-/// Measured at a quarter of the recorded rate.
-const DECIMATE: usize = 4;
-const FFT: usize = 8192;
-const WINDOW: usize = 2048;
-
-/// In-place radix-2 FFT (`re.len()` a power of two).
-fn fft(re: &mut [f32], im: &mut [f32]) {
-    let n = re.len();
-    let mut j = 0;
-    for i in 1..n {
-        let mut bit = n >> 1;
-        while j & bit != 0 {
-            j ^= bit;
-            bit >>= 1;
-        }
-        j |= bit;
-        if i < j {
-            re.swap(i, j);
-            im.swap(i, j);
-        }
-    }
-    let mut len = 2;
-    while len <= n {
-        let a = -std::f32::consts::TAU / len as f32;
-        let (wr, wi) = (a.cos(), a.sin());
-        for start in (0..n).step_by(len) {
-            let (mut cr, mut ci) = (1.0f32, 0.0f32);
-            for k in 0..len / 2 {
-                let (p, q) = (start + k, start + k + len / 2);
-                let tr = re[q] * cr - im[q] * ci;
-                let ti = re[q] * ci + im[q] * cr;
-                re[q] = re[p] - tr;
-                im[q] = im[p] - ti;
-                re[p] += tr;
-                im[p] += ti;
-                let c = cr * wr - ci * wi;
-                ci = cr * wi + ci * wr;
-                cr = c;
-            }
-        }
-        len <<= 1;
-    }
-}
-
-/// The rpm through a take, every [`CONTOUR_HOP`] samples: for each window,
-/// the firing frequency whose first ten harmonics hold the most energy,
-/// looked for within 0.7 to 1.4 times `anchor`; then a median of five.
-fn contour(samples: &[f32], rate: u32, anchor: f32) -> Vec<f32> {
-    let low: Vec<f32> = samples
-        .chunks(DECIMATE)
-        .map(|c| c.iter().sum::<f32>() / c.len() as f32)
-        .collect();
-    let sr = rate as f32 / DECIMATE as f32;
-    let hop = CONTOUR_HOP / DECIMATE;
-    let hann: Vec<f32> = (0..WINDOW)
-        .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / WINDOW as f32).cos())
-        .collect();
-    let (mut re, mut im) = (vec![0.0; FFT], vec![0.0; FFT]);
-    let base = anchor / 120.0;
-    let mut raw = Vec::new();
-    let mut at = 0;
-    while at < low.len() {
-        // Centred on the point.
-        let start = at as isize - WINDOW as isize / 2;
-        for i in 0..FFT {
-            let j = start + i as isize;
-            re[i] = if i < WINDOW && j >= 0 && (j as usize) < low.len() {
-                low[j as usize] * hann[i]
-            } else {
-                0.0
-            };
-            im[i] = 0.0;
-        }
-        fft(&mut re, &mut im);
-        let mag: Vec<f32> = (0..FFT / 2).map(|i| (re[i] * re[i] + im[i] * im[i] + 1e-12).ln()).collect();
-        let mut best = (f32::MIN, base);
-        let mut f = base * 0.7;
-        while f <= base * 1.4 {
-            let mut sum = 0.0;
-            for h in 1..=10 {
-                let bin = (f * h as f32 * FFT as f32 / sr).round() as usize;
-                let lo = bin.saturating_sub(1);
-                sum += mag[lo..(bin + 2).min(mag.len())].iter().fold(f32::MIN, |m, &v| m.max(v));
-            }
-            if sum > best.0 {
-                best = (sum, f);
-            }
-            f += 0.25;
-        }
-        raw.push(best.1 * 120.0);
-        at += hop;
-    }
-    (0..raw.len())
-        .map(|i| {
-            let mut w: Vec<f32> = raw[i.saturating_sub(2)..(i + 3).min(raw.len())].to_vec();
-            w.sort_by(f32::total_cmp);
-            w[w.len() / 2]
-        })
-        .collect()
-}
-
-/// Reflex's 450F, decoded and sorted.
+/// Reflex's 450F, decoded: the takes at their own level, and the pools.
 pub struct Bank {
     clips: Vec<Recording>,
+    pools: Vec<(Pool, Vec<usize>)>,
 }
 
 impl Bank {
-    pub fn from_reflex(clips: Vec<reflex_assets::engine_audio::EngineClip>) -> Bank {
-        let clips = clips
+    pub fn from_reflex(engine: reflex_assets::engine_audio::Engine) -> Bank {
+        let names: Vec<String> = engine.clips.iter().map(|c| c.name.clone()).collect();
+        let clips = engine
+            .clips
             .into_iter()
-            .filter_map(|c| {
-                let &(_, rpm, kind) = CLIPS_450F.iter().find(|(n, ..)| *n == c.name)?;
-                if kind == Kind::Unused || c.samples.len() < 4096 {
-                    return None;
-                }
-                let rms = (c.samples.iter().map(|v| v * v).sum::<f32>() / c.samples.len() as f32).sqrt();
-                let k = 0.25 / rms.max(1e-4);
-                // The idle and the sweeps are played as they are.
-                let contour = match kind {
-                    Kind::Drive(_) | Kind::Limiter => contour(&c.samples, c.rate, rpm),
-                    _ => Vec::new(),
-                };
-                Some(Recording {
-                    samples: c.samples.iter().map(|v| v * k).collect(),
-                    step: c.rate as f64 / RATE as f64,
-                    rpm,
-                    contour,
-                    kind,
-                })
+            .map(|c| Recording {
+                step: c.rate as f64 / RATE as f64,
+                samples: c.samples,
             })
             .collect();
-        Bank { clips }
+        let pools = POOLS
+            .iter()
+            .map(|&(pool, def)| {
+                let takes = engine.defs.iter().find(|d| d.name == def).map_or(Vec::new(), |d| {
+                    d.takes.iter().filter_map(|t| names.iter().position(|n| n == t)).collect()
+                });
+                (pool, takes)
+            })
+            .collect();
+        Bank { clips, pools }
     }
 
-    fn of(&self, f: impl Fn(Kind) -> bool) -> Vec<usize> {
-        (0..self.clips.len()).filter(|&i| f(self.clips[i].kind)).collect()
+    fn pool(&self, pool: Pool) -> &[usize] {
+        self.pools.iter().find(|p| p.0 == pool).map_or(&[], |p| &p.1)
+    }
+
+    /// A take from `pool`, not `last` when there is another (FMOD's random
+    /// without repeats, the throttle pools' play mode).
+    fn pick(&self, pool: Pool, last: Option<usize>, rng: &mut Rng) -> Option<usize> {
+        let takes = self.pool(pool);
+        let others: Vec<usize> = takes.iter().copied().filter(|&t| Some(t) != last).collect();
+        let from = if others.is_empty() { takes } else { &others[..] };
+        (!from.is_empty()).then(|| from[rng.next() as usize % from.len()])
+    }
+}
+
+/// A take playing.
+struct Voice {
+    clip: usize,
+    pos: f64,
+    /// 0 to 1, equal power.
+    fade: f32,
+    /// Per output frame; negative while fading out.
+    fade_step: f32,
+    gain: f32,
+    /// What its pool is (to chain the next take), `None` for a one-shot.
+    pool: Option<Pool>,
+}
+
+fn fade_step(seconds: f32) -> f32 {
+    1.0 / (seconds.max(0.001) * RATE as f32)
+}
+
+/// Four-point Hermite between `s[i]` and `s[i + 1]` (`s[i + 2]` must exist).
+fn cubic(s: &[f32], i: usize, t: f32) -> f32 {
+    let (y0, y1, y2, y3) = (s[i.saturating_sub(1)], s[i], s[i + 1], s[i + 2]);
+    let c1 = 0.5 * (y2 - y0);
+    let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+    let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+    ((c3 * t + c2) * t + c1) * t + y1
+}
+
+/// What the engine track plays.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum State {
+    Idle,
+    Half,
+    Drive,
+    Limiter,
+}
+
+/// FMOD's event volume on every 450F event.
+const EVENT_VOLUME: f32 = 0.8;
+/// The gap between one gear's take and the next.
+const SHIFT_GAP: f32 = 0.08;
+/// Two takes overlap this long where one runs into the next.
+const CHAIN: f32 = 0.012;
+
+/// The Reflex model.
+pub struct Sampled {
+    bank: Arc<Bank>,
+    shared: Arc<Mutex<Input>>,
+    follow: Option<Follow>,
+    state: State,
+    gear: usize,
+    /// The engine track's takes (the current one last) and one-shots.
+    voices: Vec<Voice>,
+    shots: Vec<Voice>,
+    /// A take to start after a delay: the pool, seconds, fade-in seconds,
+    /// and where in the take (0 to 1).
+    pending: Option<(Pool, f32, f32, f32)>,
+    last: Option<usize>,
+    /// Seconds since the engine track's current take started.
+    since: f32,
+    wind: Wind,
+    rng: Rng,
+    mono: Vec<f32>,
+}
+
+impl Sampled {
+    pub fn new(bank: Arc<Bank>, shared: Arc<Mutex<Input>>) -> Sampled {
+        Sampled {
+            bank,
+            shared,
+            follow: None,
+            state: State::Idle,
+            gear: 0,
+            voices: Vec::new(),
+            shots: Vec::new(),
+            pending: Some((Pool::Idle, 0.0, 0.05, 0.5)),
+            last: None,
+            since: 0.0,
+            wind: Wind { lp: [0.0; 2], rng: Rng(0x2545_f491) },
+            rng: Rng(0x9e37_79b9),
+            mono: Vec::new(),
+        }
+    }
+
+    /// Fades out the engine track over `seconds`, and starts `pool` after
+    /// `delay`.
+    fn switch(&mut self, pool: Pool, seconds: f32, delay: f32, fade_in: f32) {
+        for v in &mut self.voices {
+            v.fade_step = -fade_step(seconds);
+        }
+        self.pending = Some((pool, delay, fade_in, 0.0));
+    }
+
+    fn start(&mut self, pool: Pool, fade_in: f32, at: f32) {
+        let Some(clip) = self.bank.pick(pool, self.last, &mut self.rng) else {
+            return;
+        };
+        self.last = Some(clip);
+        self.since = 0.0;
+        let len = self.bank.clips[clip].samples.len() as f64;
+        self.voices.push(Voice {
+            clip,
+            pos: at as f64 * len,
+            fade: 0.0,
+            fade_step: fade_step(fade_in),
+            gain: EVENT_VOLUME,
+            pool: Some(pool),
+        });
+    }
+
+    fn shot(&mut self, pool: Pool) {
+        if let Some(clip) = self.bank.pick(pool, None, &mut self.rng) {
+            self.shots.push(Voice {
+                clip,
+                pos: 0.0,
+                fade: 1.0,
+                fade_step: 0.0,
+                gain: EVENT_VOLUME,
+                pool: None,
+            });
+        }
+    }
+
+    /// Adds the voices into `out`; a take on the track that ends hands on
+    /// to the next from its pool.
+    fn play(bank: &Bank, voices: &mut Vec<Voice>, out: &mut [f32]) -> Option<Pool> {
+        let mut next = None;
+        let chain = (CHAIN * RATE as f32) as f64;
+        let current = voices.len().wrapping_sub(1);
+        for (k, v) in voices.iter_mut().enumerate() {
+            let c = &bank.clips[v.clip];
+            let n = c.samples.len();
+            for o in out.iter_mut() {
+                let i = v.pos as usize;
+                if i + 2 >= n {
+                    v.fade = 0.0;
+                    v.fade_step = -1.0;
+                    break;
+                }
+                // Near the end: the next take comes in under this one.
+                if k == current && v.fade_step >= 0.0 && v.pool.is_some() && (n as f64 - v.pos) / c.step < chain {
+                    v.fade_step = -fade_step(CHAIN);
+                    next = v.pool.map(Pool::then);
+                }
+                let w = (v.fade * std::f32::consts::FRAC_PI_2).sin();
+                *o += cubic(&c.samples, i, (v.pos - i as f64) as f32) * w * v.gain;
+                v.pos += c.step;
+                v.fade = (v.fade + v.fade_step).clamp(0.0, 1.0);
+            }
+        }
+        voices.retain(|v| v.fade > 0.0 || v.fade_step > 0.0);
+        next
+    }
+}
+
+impl Generator for Sampled {
+    fn render(&mut self, out: &mut [f32]) -> bool {
+        let frames = out.len() / 2;
+        let seconds = frames as f32 / RATE as f32;
+        let follow = self.follow.get_or_insert_with(|| Follow::new(*self.shared.lock().unwrap()));
+        follow.take(&self.shared, seconds);
+        let (i, rpm, t) = (follow.input, follow.rpm, follow.throttle);
+        let landed = i.landings != follow.landings;
+        let wrecked = i.wrecks != follow.wrecks;
+        follow.landings = i.landings;
+        follow.wrecks = i.wrecks;
+        self.since += seconds;
+
+        if wrecked {
+            self.shot(Pool::Wreck);
+        }
+        // Gas held with the rear wheel free (in the air, or the bike down)
+        // runs to the limiter; otherwise idle, half throttle or a gear's
+        // pool, with a little hysteresis between half and full.
+        let gas = t > 0.05;
+        let state = if gas && (i.crashed || i.airborne) && t > 0.5 {
+            State::Limiter
+        } else if !gas || i.crashed {
+            State::Idle
+        } else if t < 0.3 || (t < 0.4 && self.state == State::Half) {
+            State::Half
+        } else {
+            State::Drive
+        };
+        let pool = Pool::for_gear(i.gear);
+        let shifted = i.gear != self.gear;
+        self.gear = i.gear;
+        if state != self.state {
+            match state {
+                State::Idle => {
+                    // Letting go from high up: the falling sweep, and the
+                    // idle comes in under its tail.
+                    if self.state == State::Drive && rpm > 6000.0 && self.since > 0.3 {
+                        self.shot(if rpm > 8500.0 { Pool::DecelHigh } else { Pool::DecelLow });
+                        self.switch(Pool::Idle, 0.06, 0.5, 0.4);
+                    } else {
+                        self.switch(Pool::Idle, 0.08, 0.0, 0.25);
+                    }
+                    if let Some(p) = self.pending.as_mut() {
+                        p.3 = self.rng.unit() * 0.8;
+                    }
+                }
+                State::Half => self.switch(Pool::HalfAccel, 0.05, 0.0, 0.01),
+                State::Drive => self.switch(pool, 0.06, 0.0, 0.01),
+                State::Limiter => {
+                    let first = if i.crashed { Pool::PanicStart } else { Pool::EnterAir };
+                    self.switch(first, 0.05, 0.0, 0.01);
+                }
+            }
+            self.state = state;
+        } else if state == State::Drive && landed && i.land_force > 0.1 {
+            // Back on the ground on the gas: a landing take, then the gear's.
+            self.switch(Pool::Land, 0.04, 0.0, 0.01);
+        } else if state == State::Drive && shifted && self.since > 0.25 {
+            // A gear change: this take stops, the next gear's starts from
+            // its beginning.
+            self.switch(pool, 0.05, SHIFT_GAP, 0.01);
+        }
+
+        self.mono.clear();
+        self.mono.resize(frames, 0.0);
+        let bank = self.bank.clone();
+        // A pending start partway into this block.
+        let mut split = 0;
+        if let Some((p, delay, fade_in, at)) = self.pending {
+            let wait = (delay * RATE as f32) as usize;
+            if wait < frames {
+                split = wait;
+                self.pending = None;
+                Self::play(&bank, &mut self.voices, &mut self.mono[..split]);
+                self.start(p, fade_in, at);
+            } else {
+                self.pending = Some((p, delay - seconds, fade_in, at));
+            }
+        }
+        let next = Self::play(&bank, &mut self.voices, &mut self.mono[split..]);
+        if let Some(p) = next {
+            // The land take hands over to the gear's pool.
+            let p = if p == Pool::Land { pool } else { p };
+            if self.pending.is_none() {
+                self.start(p, CHAIN, 0.0);
+            }
+        }
+        Self::play(&bank, &mut self.shots, &mut self.mono);
+
+        for (f, m) in self.mono.iter().enumerate() {
+            let v = (m * LEVEL + self.wind.sample(i.speed)) * 0.9;
+            out[2 * f] += v;
+            out[2 * f + 1] += v;
+        }
+        true
     }
 }
 
@@ -325,11 +448,6 @@ impl Rng {
     }
 }
 
-fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
-    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
 /// One-pole low-pass coefficient for `hz`.
 fn one_pole(hz: f32) -> f32 {
     1.0 - (-std::f32::consts::TAU * hz / RATE as f32).exp()
@@ -338,8 +456,6 @@ fn one_pole(hz: f32) -> f32 {
 /// Smoothed copies of the inputs, and the edges the models react to.
 struct Follow {
     input: Input,
-    /// Follow `engine_rpm` instead of `rpm` (the synth).
-    engine: bool,
     rpm: f32,
     throttle: f32,
     /// The throttle held in the last half second or so.
@@ -349,11 +465,10 @@ struct Follow {
 }
 
 impl Follow {
-    fn new(input: Input, engine: bool) -> Follow {
+    fn new(input: Input) -> Follow {
         Follow {
             input,
-            engine,
-            rpm: if engine { input.engine_rpm } else { input.rpm },
+            rpm: input.rpm,
             throttle: input.throttle,
             recent: input.throttle,
             landings: input.landings,
@@ -366,8 +481,7 @@ impl Follow {
         let before = (self.rpm, self.throttle);
         // About 40 ms either way; the physics already smooths the pedal.
         let k = (seconds / 0.04).min(1.0);
-        let rpm = if self.engine { self.input.engine_rpm } else { self.input.rpm };
-        self.rpm += (rpm - self.rpm) * k;
+        self.rpm += (self.input.rpm - self.rpm) * k;
         self.throttle += (self.input.throttle - self.throttle) * k;
         self.recent = self.throttle.max(self.recent - seconds * 2.0);
         before
@@ -394,285 +508,6 @@ impl Wind {
     }
 }
 
-/// A recording playing, with its own fade.
-struct Grain {
-    clip: usize,
-    pos: f64,
-    /// 0 to 1, equal power.
-    fade: f32,
-    /// Per output frame; negative while fading out.
-    fade_step: f32,
-}
-
-/// A layer: plays recordings from `pool` one after another, the one
-/// nearest the rpm and load, crossfaded.
-struct Layer {
-    pool: Vec<usize>,
-    grains: Vec<Grain>,
-    since: f32,
-    /// Start somewhere into the recording, not always at its start.
-    random_start: bool,
-}
-
-const XFADE: f32 = 0.09;
-
-impl Layer {
-    fn new(pool: Vec<usize>, random_start: bool) -> Layer {
-        Layer {
-            pool,
-            grains: Vec::new(),
-            since: 0.0,
-            random_start,
-        }
-    }
-
-    /// How far `clip` is from what is wanted: pitch apart (log) and load apart.
-    fn miss(bank: &Bank, clip: usize, rpm: f32, load: f32) -> f32 {
-        let c = &bank.clips[clip];
-        let pitch = (rpm / c.rpm).ln().abs();
-        let l = match c.kind {
-            Kind::Drive(l) => (l - load).abs(),
-            _ => 0.0,
-        };
-        pitch + 0.25 * l
-    }
-
-    fn pick(&self, bank: &Bank, rpm: f32, load: f32, rng: &mut Rng, not: Option<usize>) -> Option<usize> {
-        let mut scored: Vec<(f32, usize)> = self
-            .pool
-            .iter()
-            .filter(|&&c| Some(c) != not || self.pool.len() == 1)
-            .map(|&c| (Self::miss(bank, c, rpm, load), c))
-            .collect();
-        scored.sort_by(|a, b| a.0.total_cmp(&b.0));
-        // One of the nearest few, so it does not loop one take.
-        let near: Vec<usize> = scored
-            .iter()
-            .take_while(|(m, _)| *m <= scored[0].0 + 0.06)
-            .take(3)
-            .map(|&(_, c)| c)
-            .collect();
-        (!near.is_empty()).then(|| near[rng.next() as usize % near.len()])
-    }
-
-    fn start(&mut self, bank: &Bank, clip: usize, rng: &mut Rng) {
-        let fade_step = 1.0 / (XFADE * RATE as f32);
-        for g in &mut self.grains {
-            g.fade_step = -fade_step;
-        }
-        let len = bank.clips[clip].samples.len() as f64;
-        let pos = if self.random_start { rng.unit() as f64 * len * 0.5 } else { 0.0 };
-        self.grains.push(Grain {
-            clip,
-            pos,
-            fade: 0.0,
-            fade_step,
-        });
-        self.since = 0.0;
-    }
-
-    /// Adds `frames` mono frames into `out`, the gain ramping `g0` to `g1`,
-    /// pitched to `rpm` (`rate` overrides: a fixed playback rate).
-    #[allow(clippy::too_many_arguments)]
-    fn render(&mut self, bank: &Bank, out: &mut [f32], rpm: f32, load: f32, g0: f32, g1: f32, rate: Option<f32>, rng: &mut Rng) {
-        let frames = out.len();
-        self.since += frames as f32 / RATE as f32;
-        if g0 < 1e-4 && g1 < 1e-4 {
-            // Silent: let it go, and start fresh when it is wanted again.
-            self.grains.clear();
-            return;
-        }
-        let ratio = |c: &Recording, pos: f64| rate.unwrap_or_else(|| rpm / c.rpm_at(pos)).clamp(0.6, 1.8) as f64 * c.step;
-        let current = self.grains.iter().rev().find(|g| g.fade_step > 0.0 || g.fade >= 1.0).map(|g| g.clip);
-        let wanted = match current {
-            None => true,
-            Some(c) => {
-                let g = self.grains.iter().rev().find(|g| g.clip == c).unwrap();
-                let clip = &bank.clips[c];
-                let left = (clip.samples.len() as f64 - g.pos) / ratio(clip, g.pos);
-                let ending = left < (XFADE * RATE as f32) as f64 + frames as f64;
-                let off = Self::miss(bank, c, rpm, load);
-                let better = self.pick(bank, rpm, load, rng, None).map(|b| Self::miss(bank, b, rpm, load));
-                ending || (self.since > 0.25 && off > 0.17 && better.is_some_and(|b| b < off - 0.08))
-            }
-        };
-        if wanted && let Some(c) = self.pick(bank, rpm, load, rng, current) {
-            self.start(bank, c, rng);
-        }
-        for g in &mut self.grains {
-            let clip = &bank.clips[g.clip];
-            let n = clip.samples.len();
-            for (f, o) in out.iter_mut().enumerate() {
-                let step = ratio(clip, g.pos);
-                let i = g.pos as usize;
-                if i + 2 >= n {
-                    g.fade = 0.0;
-                    g.fade_step = -1.0;
-                    break;
-                }
-                let v = cubic(&clip.samples, i, (g.pos - i as f64) as f32);
-                let w = (g.fade * std::f32::consts::FRAC_PI_2).sin();
-                let gain = g0 + (g1 - g0) * f as f32 / frames as f32;
-                *o += v * w * gain;
-                g.pos += step;
-                g.fade = (g.fade + g.fade_step).clamp(0.0, 1.0);
-            }
-        }
-        self.grains.retain(|g| g.fade > 0.0 || g.fade_step > 0.0);
-    }
-}
-
-/// Four-point Hermite between `s[i]` and `s[i + 1]` (`s[i + 2]` must exist):
-/// cleaner than a straight line when a take is pitched up.
-fn cubic(s: &[f32], i: usize, t: f32) -> f32 {
-    let (y0, y1, y2, y3) = (s[i.saturating_sub(1)], s[i], s[i + 1], s[i + 2]);
-    let c1 = 0.5 * (y2 - y0);
-    let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
-    let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
-    ((c3 * t + c2) * t + c1) * t + y1
-}
-
-/// A recording played once.
-struct OneShot {
-    clip: usize,
-    pos: f64,
-    step: f64,
-    gain: f32,
-}
-
-/// The Reflex model.
-pub struct Sampled {
-    bank: Arc<Bank>,
-    shared: Arc<Mutex<Input>>,
-    follow: Option<Follow>,
-    idle: Layer,
-    drive: Layer,
-    limiter: Layer,
-    shots: Vec<OneShot>,
-    decel_wait: f32,
-    shifts: u32,
-    /// Seconds since the last gear change (the drive layer dips through it).
-    since_shift: f32,
-    gains: [f32; 3],
-    wind: Wind,
-    rng: Rng,
-    mono: Vec<f32>,
-}
-
-impl Sampled {
-    pub fn new(bank: Arc<Bank>, shared: Arc<Mutex<Input>>) -> Sampled {
-        let idle = Layer::new(bank.of(|k| k == Kind::Idle), true);
-        let drive = Layer::new(bank.of(|k| matches!(k, Kind::Drive(_))), true);
-        let limiter = Layer::new(bank.of(|k| k == Kind::Limiter), true);
-        Sampled {
-            bank,
-            shared,
-            follow: None,
-            idle,
-            drive,
-            limiter,
-            shots: Vec::new(),
-            decel_wait: 0.0,
-            shifts: 0,
-            since_shift: 1.0,
-            gains: [0.0; 3],
-            wind: Wind { lp: [0.0; 2], rng: Rng(0x2545_f491) },
-            rng: Rng(0x9e37_79b9),
-            mono: Vec::new(),
-        }
-    }
-
-    fn shot(&mut self, kind: Kind, rpm: Option<f32>, gain: f32) {
-        let pool = self.bank.of(|k| k == kind);
-        if pool.is_empty() {
-            return;
-        }
-        let clip = pool[self.rng.next() as usize % pool.len()];
-        let c = &self.bank.clips[clip];
-        let rate = rpm.map_or(1.0, |r| (r / c.rpm).clamp(0.6, 1.5)) as f64;
-        self.shots.push(OneShot {
-            clip,
-            pos: 0.0,
-            step: rate * c.step,
-            gain,
-        });
-    }
-}
-
-impl Generator for Sampled {
-    fn render(&mut self, out: &mut [f32]) -> bool {
-        let frames = out.len() / 2;
-        let seconds = frames as f32 / RATE as f32;
-        let follow = self.follow.get_or_insert_with(|| Follow::new(*self.shared.lock().unwrap(), false));
-        let (_, t0) = follow.take(&self.shared, seconds);
-        let (i, rpm, t, recent) = (follow.input, follow.rpm, follow.throttle, follow.recent);
-        let landed = i.landings != follow.landings;
-        let wrecked = i.wrecks != follow.wrecks;
-        follow.landings = i.landings;
-        follow.wrecks = i.wrecks;
-
-        // Letting go from high up: the falling sweep, once.
-        self.decel_wait -= seconds;
-        if t < 0.1 && t0 >= 0.1 && recent > 0.5 && rpm > 6500.0 && self.decel_wait <= 0.0 {
-            self.shot(Kind::Decel, Some(rpm * 0.98), 0.5);
-            self.decel_wait = 1.5;
-        }
-        if landed && i.land_force > 0.1 {
-            self.shot(Kind::Land, Some(rpm), 0.35 + 0.45 * i.land_force);
-        }
-        if wrecked {
-            self.shot(Kind::Wreck, None, 0.9);
-        }
-        if i.shifts != self.shifts {
-            self.shifts = i.shifts;
-            self.since_shift = 0.0;
-        }
-        self.since_shift += seconds;
-
-        // As Reflex mixes it (from a recording of the game): on the gas,
-        // the throttle takes; off it, the idle take as recorded, 12 dB
-        // down, whatever the revs; the limiter loop with the wheel free.
-        // A gear change cuts the drive for a tenth of a second.
-        let on = smoothstep(0.02, 0.2, t);
-        let limit = i.limit;
-        let dip = 1.0 - 0.65 * (1.0 - smoothstep(0.08, 0.18, self.since_shift));
-        let target = [
-            (1.0 - on) * 0.3,
-            on * (0.5 + 0.7 * t) * (1.0 - limit) * dip,
-            limit * (0.5 + 0.7 * t),
-        ];
-        let g0 = self.gains;
-        self.gains = target;
-
-        self.mono.clear();
-        self.mono.resize(frames, 0.0);
-        let bank = self.bank.clone();
-        self.idle.render(&bank, &mut self.mono, rpm, 0.0, g0[0], target[0], Some(1.0), &mut self.rng);
-        self.drive.render(&bank, &mut self.mono, rpm, t, g0[1], target[1], None, &mut self.rng);
-        // Reflex holds the loop at the 450F's 11,500.
-        self.limiter.render(&bank, &mut self.mono, 11_500.0, 1.0, g0[2], target[2], None, &mut self.rng);
-        for s in &mut self.shots {
-            let c = &bank.clips[s.clip];
-            for m in self.mono.iter_mut() {
-                let i = s.pos as usize;
-                if i + 1 >= c.samples.len() {
-                    break;
-                }
-                let f = (s.pos - i as f64) as f32;
-                *m += (c.samples[i] + (c.samples[i + 1] - c.samples[i]) * f) * s.gain;
-                s.pos += s.step;
-            }
-        }
-        self.shots.retain(|s| (s.pos as usize) + 1 < bank.clips[s.clip].samples.len());
-
-        for (f, m) in self.mono.iter().enumerate() {
-            let v = (m * LEVEL + self.wind.sample(i.speed)) * 0.9;
-            out[2 * f] += v;
-            out[2 * f + 1] += v;
-        }
-        true
-    }
-}
 
 /// Both models' loudness in the mix (the board's roll is 0.5).
 const LEVEL: f32 = 0.55;
@@ -760,7 +595,7 @@ impl Generator for Synth {
     fn render(&mut self, out: &mut [f32]) -> bool {
         let frames = out.len() / 2;
         let dt = 1.0 / RATE as f32;
-        let follow = self.follow.get_or_insert_with(|| Follow::new(*self.shared.lock().unwrap(), true));
+        let follow = self.follow.get_or_insert_with(|| Follow::new(*self.shared.lock().unwrap()));
         let (rpm0, t0) = follow.take(&self.shared, frames as f32 * dt);
         let (i, rpm1, t1, recent) = (follow.input, follow.rpm, follow.throttle, follow.recent);
         follow.landings = i.landings;
@@ -850,13 +685,8 @@ pub struct EngineSound {
     tried: bool,
     air: f32,
     crashed: bool,
-    /// The engine's rpm, smoothed, and what the Reflex model plays (see
-    /// `bike_engine`).
+    /// The engine's rpm, smoothed (see `bike_engine`).
     rpm: f32,
-    heard: f32,
-    limit: f32,
-    gear: usize,
-    shifts: u32,
     landings: u32,
     wrecks: u32,
 }
@@ -892,8 +722,6 @@ pub fn bike_engine(
         }
         e.air = 0.0;
         e.rpm = 0.0;
-        e.heard = 0.0;
-        e.limit = 0.0;
         return;
     }
     if !e.tried {
@@ -947,12 +775,13 @@ pub fn bike_engine(
         e.wrecks += 1;
     }
     e.crashed = m.crashed;
-    // The rpm heard. Pulling away on a slipping clutch the physics holds the
-    // engine at idle while the bike moves; a real one is revved over the
+    // The synth's rpm. Pulling away on a slipping clutch the physics holds
+    // the engine at idle while the bike moves; a real one is revved over the
     // clutch, so it is heard there. The physics rpm also jumps by thousands
     // in a tenth of a second while the rear tyre spins and grips; a
     // flywheel cannot, so the heard rpm moves at most 30,000 rpm/s and is
-    // smoothed over about 0.1 s.
+    // smoothed over about 0.1 s. (The Reflex model only uses it to pick the
+    // decel take.)
     let mut target = m.rpm;
     if m.clutch_slipping && m.throttle > 0.05 && !m.crashed {
         target = target.max(m.min_rpm + 1200.0 + 5500.0 * m.throttle);
@@ -962,42 +791,17 @@ pub fn bike_engine(
     }
     let smoothed = e.rpm + (target - e.rpm) * (dt / 0.1).min(1.0);
     e.rpm += (smoothed - e.rpm).clamp(-30_000.0 * dt, 30_000.0 * dt);
-    let engine_rpm = e.rpm;
-    // What Reflex plays on the gas sits between about 7,500 and 10,500 rpm
-    // whatever the bike does (measured off a recording of the game: 8,300
-    // pulling away, 1,500 to 2,000 up through each gear, back down at the
-    // shift), so ours is squeezed into that band; off the gas it falls
-    // towards the idle take.
-    let on_gas = m.throttle > 0.05;
-    let band = 7300.0 + 0.35 * (engine_rpm - m.min_rpm).max(0.0);
-    let heard = if on_gas { band.min(10_900.0) } else { 3700.0 };
-    if e.heard <= 0.0 {
-        e.heard = heard;
-    }
-    let k = (dt / 0.08).min(1.0);
-    e.heard += ((heard - e.heard) * k).clamp(-15_000.0 * dt, 40_000.0 * dt);
-    // The limiter: the engine at its top with the gas held, or the bike
-    // down with the gas held (the wheel spins free).
-    let limit_target = if m.throttle > 0.5 && (m.crashed || m.rpm >= m.max_rpm * 0.97) { 1.0 } else { 0.0 };
-    e.limit += (limit_target - e.limit) * (dt / 0.06).min(1.0);
-    if m.gear != e.gear {
-        e.gear = m.gear;
-        if on_gas {
-            e.shifts += 1;
-        }
-    }
     {
-        let (landings, wrecks, air, shifts) = (e.landings, e.wrecks, e.air > 0.0, e.shifts);
+        let (rpm, landings, wrecks, air) = (e.rpm, e.landings, e.wrecks, e.air > 0.25);
         let mut s = e.shared.lock().unwrap();
-        s.rpm = e.heard;
-        s.engine_rpm = engine_rpm;
-        s.limit = e.limit;
-        s.shifts = shifts;
+        s.rpm = rpm;
         s.min_rpm = m.min_rpm;
         s.max_rpm = m.max_rpm;
         s.throttle = m.throttle;
+        s.gear = m.gear;
         s.speed = m.speed;
         s.airborne = air;
+        s.crashed = m.crashed;
         s.landings = landings;
         s.wrecks = wrecks;
     }
@@ -1026,13 +830,13 @@ pub fn bike_engine(
 mod tests {
     use super::*;
 
-    /// A ride for either model: idle, full gas up through the revs, a
-    /// shift, off the gas, the limiter in the air, a landing.
+    /// A ride for either model: idle, full gas up through the revs, two
+    /// shifts, off the gas, the limiter in the air, a landing, half gas.
     fn ride(g: &mut dyn Generator, shared: &Mutex<Input>) -> Vec<f32> {
         let mut out = Vec::new();
         let block = 1024;
         let mut buf = vec![0.0; block * 2];
-        let steps = (8.0 * RATE as f32 / block as f32) as usize;
+        let steps = (9.0 * RATE as f32 / block as f32) as usize;
         for n in 0..steps {
             let t = n as f32 * block as f32 / RATE as f32;
             {
@@ -1046,14 +850,12 @@ mod tests {
                     t if t < 4.5 => (7000.0 + (t - 3.2) * 2000.0, 0.7),
                     t if t < 5.5 => (9600.0 - (t - 4.5) * 5000.0, 0.0),
                     t if t < 7.0 => (11500.0, 1.0),
-                    _ => (8000.0, 0.6),
+                    t if t < 8.0 => (8000.0, 0.6),
+                    _ => (5000.0, 0.2),
                 };
-                // The synth hears the engine; the Reflex model the band
-                // `bike_engine` squeezes it into.
-                s.engine_rpm = rpm;
-                s.rpm = if gas > 0.05 { (7300.0 + 0.35 * (rpm - 1500.0)).min(10_900.0) } else { 3700.0 };
-                s.limit = if rpm >= 11_500.0 { 1.0 } else { 0.0 };
-                s.shifts = u32::from(t >= 3.0);
+                s.rpm = rpm;
+                s.gear = usize::from(t >= 2.2) + usize::from(t >= 3.0);
+                s.airborne = (5.5..7.0).contains(&t);
                 s.throttle = gas;
                 s.speed = (t * 4.0).min(20.0);
                 if (7.0..7.03).contains(&t) {
@@ -1096,7 +898,9 @@ mod tests {
             return;
         };
         let bank = Arc::new(Bank::from_reflex(reflex_assets::engine_audio::load_450f(&root).unwrap()));
-        assert_eq!(bank.clips.len(), CLIPS_450F.iter().filter(|c| c.2 != Kind::Unused).count());
+        for (pool, def) in POOLS {
+            assert!(!bank.pool(pool).is_empty(), "{def}");
+        }
         let shared = Arc::new(Mutex::new(Input::default()));
         let mut s = Sampled::new(bank, shared.clone());
         let out = ride(&mut s, &shared);

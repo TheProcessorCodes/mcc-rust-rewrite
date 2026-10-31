@@ -11,6 +11,10 @@
 //! end, mode, rate, ... The data follows the headers, one sample after the
 //! other. The 450F's 54 are all mono 44.1 kHz MPEG layer III (mode
 //! 0x100220), 96 kbit/s, with zero bytes padding between the frames.
+//!
+//! The event file's sound definitions say which recordings each event
+//! picks from (`sound_defs`): the four throttle events each draw from a
+//! pool of seven to eleven takes, played whole, one after another.
 
 use std::path::Path;
 
@@ -33,11 +37,80 @@ pub struct EngineClip {
     pub samples: Vec<f32>,
 }
 
-/// The Dakumoto 450F's engine: every clip in `MX_450F_bank01`.
-pub fn load_450f(root: &Path) -> Result<Vec<EngineClip>, Error> {
+/// One of the event file's sound definitions: what an event plays.
+pub struct SoundDef {
+    /// Without the leading `/`: `MXB_450F_THROTTLE_LOW`.
+    pub name: String,
+    /// The recordings it picks from, as [`EngineClip::name`]s; empty for
+    /// the ones that play nothing (`MXB_450F_SHIFT`).
+    pub takes: Vec<String>,
+}
+
+/// The Dakumoto 450F's engine: every clip in `MX_450F_bank01`, and the
+/// sound definitions of `MX_450F_01`.
+pub struct Engine {
+    pub clips: Vec<EngineClip>,
+    pub defs: Vec<SoundDef>,
+}
+
+pub fn load_450f(root: &Path) -> Result<Engine, Error> {
     let pkg = Package::open(&root.join("Database"), "VehicleEngineAudio")?;
     let bank = pkg.get("MXVehicleEngineSize_MX450f", "MX_450F_bank01", "soundbnk")?;
-    read_bank(&bank)
+    let fev = pkg.get("MXVehicleEngineSize_MX450f", "MX_450F_01", "sound")?;
+    Ok(Engine {
+        clips: read_bank(&bank)?,
+        defs: sound_defs(&fev)?,
+    })
+}
+
+/// A u32-length-prefixed, NUL-terminated string at `p`, and the offset after it.
+fn str_at(b: &[u8], p: usize) -> Result<(String, usize), Error> {
+    let n = u32_at(b, p)? as usize;
+    let raw = b
+        .get(p + 4..p + 4 + n)
+        .ok_or_else(|| Error::Format(format!("FEV string at {p}")))?;
+    let text = String::from_utf8_lossy(raw.split(|&c| c == 0).next().unwrap_or_default()).into_owned();
+    Ok((text, p + 4 + n))
+}
+
+/// The sound definitions in an FMOD Designer event file (`FEV1`, as
+/// Reflex 1 ships it). They follow the events, as a u32 count and then,
+/// per definition: its name (`/MXB_450F_THROTTLE_LOW`), the index of its
+/// property template, the entry count, and per entry a u32 kind and a u32
+/// weight; a kind-0 entry (a recording) goes on with the file name, the
+/// bank name, the index in the bank and the length in ms.
+pub fn sound_defs(fev: &[u8]) -> Result<Vec<SoundDef>, Error> {
+    // The first name starting with '/' is the first definition's.
+    let first = (4..fev.len().saturating_sub(5))
+        .find(|&p| {
+            fev[p + 4] == b'/'
+                && u32_at(fev, p).is_ok_and(|n| (3..128).contains(&n) && fev.get(p + 3 + n as usize) == Some(&0))
+        })
+        .ok_or_else(|| Error::Format("FEV: no sound definitions".into()))?;
+    let count = u32_at(fev, first - 4)? as usize;
+    let mut p = first;
+    let mut defs = Vec::with_capacity(count);
+    for _ in 0..count {
+        let (name, next) = str_at(fev, p)?;
+        let entries = u32_at(fev, next + 4)? as usize;
+        p = next + 8;
+        let mut takes = Vec::new();
+        for _ in 0..entries {
+            let kind = u32_at(fev, p)?;
+            p += 8;
+            if kind == 0 {
+                let (file, next) = str_at(fev, p)?;
+                let (_bank, next) = str_at(fev, next)?;
+                p = next + 8;
+                takes.push(file.trim_end_matches(".wav").to_string());
+            }
+        }
+        defs.push(SoundDef {
+            name: name.trim_start_matches('/').to_string(),
+            takes,
+        });
+    }
+    Ok(defs)
 }
 
 fn u32_at(b: &[u8], p: usize) -> Result<u32, Error> {

@@ -613,19 +613,21 @@ Engine sound (`crates/halo3_audio/src/engine.rs`), two models to compare; H or a
 click of the left stick goes Reflex → synth → off, and the log says which:
 
 - **Reflex**: the Dakumoto 450F's own 54 recordings, read from the user's Reflex install
-  (`docs/format/reflex-engine-audio.md`), mixed the way a recording of Reflex itself shows
-  (2026-10-30): on the gas the throttle takes, the pitch held between about 7,300 and
-  10,900 rpm (our engine's rpm squeezed into that band; Reflex never plays low revs under
-  throttle), a short cut at each gear change; off the gas the idle take as recorded, 12 dB
-  down, whatever the revs; the limiter loop with the gas held and the rear wheel free (in
-  the air, or the bike down); once-off decel sweeps, landings and wrecks.
+  (`docs/format/reflex-engine-audio.md`), played the way Reflex plays them, which a
+  recording of the game showed (2026-10-30): never pitched, always at the level they were
+  recorded at. On the gas, each gear change starts a take from the gear's pool (the event
+  file's: power in first, then the low, mid and high pools) from its beginning, so the
+  climb through a gear is the take's own; when a take ends the next one in the pool
+  follows. Light gas plays the half-throttle takes; off the gas the idle, after a decel
+  sweep if the revs were up; gas held with the rear wheel free (in the air, or the bike
+  down) runs the limiter takes; a landing on the gas and a wreck have their own.
 - **Synth**: our own single-cylinder four-stroke: one blow-down pulse per firing into
   head-pipe and silencer resonators, tone opening with throttle, intake snarl, valve ticks,
   a stuttering limiter, pops off the throttle.
 
 Both add wind with speed. Without Reflex the Reflex choice plays the synth.
 `HALO3_ENGINE_WAV=DIR cargo test -p halo3_audio engine` writes both models over the same
-scripted eight-second ride to `DIR\engine-reflex.wav` and `engine-synth.wav`.
+scripted nine-second ride to `DIR\engine-reflex.wav` and `engine-synth.wav`.
 
 Headless check: `halo3 riverworld --shot DIR --bike --view spawn50` rides from
 spawn 50 holding `HALO3_BIKE_THROTTLE` (default 0.4) for `HALO3_SKATE_FOR`
