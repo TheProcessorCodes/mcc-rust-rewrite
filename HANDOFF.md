@@ -143,6 +143,12 @@ checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkou
 
 **Sound, still missing:** reverb from the BSP acoustics, dialogue, and the game's real mix levels.
 
+**Dirt bike engine sound** (merged 2026-10-30, user-approved): Reflex's own 450F recordings
+read from the user's install (`reflex_assets::engine_audio`, `docs/format/reflex-engine-audio.md`),
+played as Reflex plays them (whole takes from the event file's pools at their own pitch, a new
+one at each shift), or our synth (H / left stick click); engine volume slider on the pause
+menu's Dirt bike tab (`bike-sound.json`). Still a guess: which pool plays in which gear.
+
 **Campaign:**
 
 - The other missions are untested.
@@ -159,12 +165,6 @@ checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkou
 - `halo-script`: reads HaloScript (`blam_script`, `blam scripts`) and runs the map's own scripts
   (`halo3_script`); object collision models and damage sections; the Warthog run's floor
   collapses.
-- `bike-sound`: the dirt bike's engine sound, two models to compare (H / left stick click):
-  Reflex's own 450F recordings read from the user's install (`reflex_assets::engine_audio`,
-  `docs/format/reflex-engine-audio.md`), played as Reflex plays them (whole takes from the
-  event file's pools at their own pitch, a new one at each shift: found by matching a
-  recording of the game against the takes), and our own synthesised single-cylinder
-  (`halo3_audio::engine`). Waiting on the user's playtest.
 - `first-run-setup`: the one-time MCC / Skate 3 setup (`game_paths`, `halo3_setup`); Reflex is
   still to be added to it.
 
