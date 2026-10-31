@@ -1,6 +1,8 @@
 //! The 16 KiB header at the start of every MCC Halo 3 cache file (format
 //! version 13, update 6 and later), and the rules that turn the pointers in
-//! it into file offsets.
+//! it into file offsets. MCC Halo: Reach (update 13) uses the same layout
+//! in a 40 KiB header, and offsets its tag-data pointers by 0x50000000
+//! (`docs/format/reach.md` 1); [`Engine`] tells the two apart.
 //!
 //! The file is laid out as four *sections*. Every 32-bit pointer in the
 //! header is an address in a virtual layout where each section sits at
@@ -20,6 +22,30 @@ pub const SECTION_RESOURCE: usize = 1;
 pub const SECTION_TAG: usize = 2;
 pub const SECTION_LOCALE: usize = 3;
 
+/// Which game wrote the file. Both say `head`, version 13, with the same
+/// header fields; Reach's header is 40 KiB (its first section starts at
+/// 0xA000), Halo 3's 16 KiB.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Engine {
+    #[default]
+    Halo3,
+    Reach,
+}
+
+/// Size of MCC Reach's header: where its first non-empty section starts.
+pub const REACH_HEADER_SIZE: u64 = 0xA000;
+
+impl Engine {
+    /// What a packed tag-data pointer, shifted left by two, is offset by
+    /// to give a 64-bit tag address.
+    pub fn pointer_base(self) -> u64 {
+        match self {
+            Engine::Halo3 => 0,
+            Engine::Reach => 0x5000_0000,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Section {
     pub address: u32,
@@ -34,6 +60,7 @@ pub struct Partition {
 
 #[derive(Clone, Debug)]
 pub struct Header {
+    pub engine: Engine,
     pub version: u32,
     pub file_size: u32,
     pub tag_data_address: u32,
@@ -122,7 +149,15 @@ impl Header {
                 size: u32_at(b, o + 4),
             };
         }
+        // The header ends where the first section with bytes begins.
+        let header_end = (0..4)
+            .filter(|&i| sections[i].size > 0)
+            .map(|i| sections[i].address.wrapping_add(section_offsets[i]) as u64)
+            .min()
+            .unwrap_or(HEADER_SIZE as u64);
+        let engine = if header_end >= REACH_HEADER_SIZE { Engine::Reach } else { Engine::Halo3 };
         Ok(Header {
+            engine,
             version,
             file_size: u32_at(b, 0x8),
             tag_data_address: u32_at(b, 0x10),
@@ -170,9 +205,9 @@ impl Header {
         Ok(self.section_file_base(SECTION_TAG) + rel)
     }
 
-    /// Tag data stores its 32-bit pointers shifted right by two. This undoes
-    /// that and gives the file offset.
+    /// Tag data stores its 32-bit pointers shifted right by two (Reach's
+    /// also less 0x50000000). This undoes that and gives the file offset.
     pub fn packed_pointer_to_file(&self, packed: u32) -> Result<u64> {
-        self.tag_address_to_file((packed as u64) << 2)
+        self.tag_address_to_file(((packed as u64) << 2) + self.engine.pointer_base())
     }
 }

@@ -1691,6 +1691,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "blam_reach"
+version = "0.1.0"
+dependencies = [
+ "blam_cache",
+ "blam_geometry",
+ "blam_texture",
+ "glam",
+]
+
+[[package]]
 name = "blam_sound"
 version = "0.1.0"
 dependencies = [
@@ -2555,6 +2565,7 @@ dependencies = [
  "blam_geometry",
  "blam_h1",
  "blam_h2",
+ "blam_reach",
  "blam_texture",
  "halo3_audio",
  "halo3_bike",

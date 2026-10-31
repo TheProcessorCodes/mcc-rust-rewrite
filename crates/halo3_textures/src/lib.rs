@@ -5,6 +5,8 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
+pub mod reach;
+
 use blam_cache::CacheFile;
 use blam_geometry::Scene;
 use blam_texture::shader::{self, AnimationKind, Shader};
@@ -641,6 +643,9 @@ pub fn lightmap_textures(
     resources: &blam_cache::Resources,
     lm: &blam_geometry::Lightmap,
 ) -> Result<LightmapTextures, String> {
+    if cache.engine() == blam_cache::Engine::Reach {
+        return reach::lightmap(cache, resources, lm);
+    }
     let load = |tag: Option<u32>, layers: u32| -> Result<Texture, String> {
         let tag = tag.ok_or("no bitmap")?;
         let t = bitmap::decode(cache, resources, tag, 0).map_err(|e| e.to_string())?;

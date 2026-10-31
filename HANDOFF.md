@@ -42,6 +42,7 @@ A Cargo workspace (`cargo build`, `cargo test`). Crates (`README.md` "Layout" ha
 | `blam_geometry` | structure BSPs, render models, scenario objects, sky, the real collision BSP, lightmaps, atmosphere, camera fx (exposure), zone sets, trigger volumes and cluster portals, into one plain `Scene` |
 | `blam_h1` | MCC Halo CE maps into the same `Scene`: BSP lightmap meshes, collision, gbxmodels, shaders, `bitmaps.map`, spawns, sky (`docs/format/halo1.md`) |
 | `blam_h2` | MCC Halo 2 maps into the same `Scene`: inflated in memory, `shared.map` and `textures.dat`, BSP, collision, lightmaps, lifts, weapons, sound (`docs/format/halo2.md`) |
+| `blam_reach` | MCC Halo: Reach maps into the same `Scene`: BSPs, instances, collision, objects, sky, spawns, lightmap texcoords (`docs/format/reach.md`); `blam_cache` and `blam_texture` read Reach's cache file, shaders and bitmaps |
 | `blam_texture` | bitmap tags to mip chains (BC kept compressed, own CPU decoders) and the shader resolver |
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
 | `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound |
@@ -120,6 +121,7 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Halo 2: Lockout | `lockout` (MCC Halo 2) | built with lightmaps, fog, gravity lift, weapons, ambient sound; own counts pinned; not playtested |
 | Halo CE: all 19 multiplayer maps | `h1:bloodgulch` ... (MCC `halo1\maps`) | built 2026-10-31, every map drawn in headless shots (textures, lightmaps, sky, spawns); HaloExportH1 counts match on 4 maps; bike, skate and foot stand on Blood Gulch; no weapons or sound yet; not playtested |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
+| Reach: all 20 multiplayer maps | `hr:20_sword_slayer`, `hr:cex_timberland`, ... | built 2026-10-31, counts pinned, each drawn headlessly; not playtested. Lightmaps read without their directions (per-vertex and probe-lit instances use the fallback), no fog, sound or weapons |
 
 Narrows, Isolation and Sandbox were "written, not built yet" when their README entries were
 made; they are on master now and build with the rest. This audit did not re-run their tests.

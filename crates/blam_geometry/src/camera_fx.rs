@@ -26,6 +26,10 @@ pub struct CameraFx {
 
 /// Reads the scenario's camera effects; `None` when it has none.
 pub fn read(cache: &CacheFile) -> Result<Option<CameraFx>> {
+    // Reach's scenario keeps this elsewhere and its tag differs: none read.
+    if cache.engine() == blam_cache::Engine::Reach {
+        return Ok(None);
+    }
     let scnr = cache
         .scenario()
         .ok_or_else(|| Error::Invalid("no scenario tag".into()))?;
