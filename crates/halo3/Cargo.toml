@@ -3,7 +3,8 @@ name = "halo3"
 description = "The Halo 3 runtime: wires the halo3_* crates into an app; screenshots and the pause menu"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+# Links the GPL-3.0 Skate 3 engine (third_party/skate-engine).
+license = "GPL-3.0-only"
 publish.workspace = true
 
 [[bin]]

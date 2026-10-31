@@ -13,8 +13,9 @@ the format descriptions the code is written from.
 - No game files live here. The code reads the MCC install read-only.
 - Nothing here launches the game.
 - The format descriptions in `docs/format` were written by reading the files
-  on disk and public format documentation. No code from other projects is
-  copied: Reclaimer is GPL-3.0 and this project is Apache-2.0.
+  on disk and public format documentation. No code from other Halo tools is
+  copied (Reclaimer, TagTool, Assembly). The one outside code base in the
+  tree is the Skate 3 engine in `third_party/skate-engine` (see Licence).
 
 ## Layout
 
@@ -34,6 +35,7 @@ the format descriptions the code is written from.
 | `crates/halo3_world` | the world on the GPU: BSP streaming, culling, lightmaps, sky, water, zone keys |
 | `crates/halo3_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
 | `crates/halo3_skate` | skating through the Skate 3 engine (`skate-host`) |
+| `third_party/skate-engine` | the Skate 3 engine crates, vendored (GPL-3.0; its README says where from and what we changed) |
 | `crates/halo3_rider` | the Spartan on the board |
 | `crates/halo3_bike` | the dirt bike (MX vs ATV Unleashed's model with Reflex's numbers), drawn as Reflex's Dakumoto 450F in the Cortana kit |
 | `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model (no bevy) |
@@ -279,8 +281,8 @@ lists all 20).
       pinned by `cargo test -p blam_reach`.
 - [x] Milestone 3b: collision and rails fed to the skate world (playtested
       on Valhalla).
-- [x] Milestone 4: Skate 3 crates plugged in (path dependency on
-      `mw2-skate-3-src`), Master Chief as the rider (`docs/rider.md`).
+- [x] Milestone 4: Skate 3 crates plugged in (now vendored in
+      `third_party/skate-engine`), Master Chief as the rider (`docs/rider.md`).
 - [x] Milestone 5 (120_halo; built, awaiting a playtest): campaign zone sets
       (PageUp / PageDown, `--zone`, and the scenario's switch volumes), the
       player starting location, sky and haze per cluster, skating on the
@@ -291,3 +293,12 @@ lists all 20).
       skate collision swapped in without stopping the ride
       (`docs/viewer.md` "Streaming and culling", `--bench N`). Other campaign maps load the same way but are not checked yet
       (`docs/viewer.md` "Zone sets", `docs/format/zone-sets.md`).
+
+## Licence
+
+Our own crates are Apache-2.0 (`LICENSE-APACHE`). `halo3.exe` links the Skate 3 engine in
+`third_party/skate-engine`, which is GPL-3.0-only, so `halo3` and `halo3_skate`, and any
+released `halo3.exe`, are distributed under the GNU General Public License version 3 only
+(`LICENSE`), with this source. Apache-2.0 code may be used in a GPL-3.0 work. A release also
+ships the Skate 3 converter `iw4l-skate-convert.exe` with its own licence files. None of this
+grants rights to any game's code, data, assets or trademarks; the player brings their own copies.
