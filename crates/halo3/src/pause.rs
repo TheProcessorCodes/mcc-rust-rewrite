@@ -127,7 +127,7 @@ const BIKE: &[[&str; 2]] = &[
     ["LB + d-pad down", "set the session marker"],
     ["LB + d-pad up (hold)", "back to the session marker"],
     ["View / Back", "get off the bike"],
-    ["click left stick (H)", "engine sound: Reflex's 450F, synth, off"],
+    ["click left stick (H)", "engine sound on / off"],
     ["0 (keyboard)", "physics tuning menu"],
     ["Start", "pause"],
 ];

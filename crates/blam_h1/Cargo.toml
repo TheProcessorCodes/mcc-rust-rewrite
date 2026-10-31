@@ -13,3 +13,6 @@ blam_texture = { workspace = true }
 glam = { workspace = true }
 memmap2 = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+game_paths = { workspace = true }

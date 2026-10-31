@@ -161,15 +161,10 @@ impl CacheFile {
 mod tests {
     use super::*;
 
-    /// The user's MCC install, if it is where the handoff says.
+    /// The player's riverworld.map, when MCC is installed (`game_paths`).
     fn riverworld() -> Option<CacheFile> {
-        let dir = std::env::var_os("HALO3_MAPS").map(PathBuf::from).unwrap_or_else(|| {
-            PathBuf::from(
-                r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps",
-            )
-        });
-        let path = dir.join("riverworld.map");
-        path.exists().then(|| CacheFile::open(path).expect("riverworld.map opens"))
+        let path = game_paths::halo3_map("riverworld")?;
+        Some(CacheFile::open(path).expect("riverworld.map opens"))
     }
 
     #[test]

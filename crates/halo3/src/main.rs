@@ -54,9 +54,12 @@
 //! lists the controls (`pause.rs`).
 //! ```
 //!
-//! `<map>` is looked up in `%HALO3_MAPS%`, or the default MCC install; Halo 2
-//! maps (`coagulation`, `lockout`, or `h2:NAME`) in `%HALO2_MAPS%` or MCC's
-//! `halo2\h2_maps_win64_dx11` (`halo2.rs`). Halo 3's Blackout, whose file is
+//! The first launch asks for the player's own MCC and Skate 3 (`.iso` or
+//! `default.xex`), both required, and MX vs ATV Reflex if they have it, and
+//! saves the answers (`halo3_setup`); `--setup` asks again. `<map>` is looked up in that MCC's
+//! `halo3\maps` (`%HALO3_MAPS%` overrides), Halo 2 maps (`coagulation`,
+//! `lockout`, or `h2:NAME`) in its `halo2\h2_maps_win64_dx11`
+//! (`%HALO2_MAPS%`; `halo2.rs`). Halo 3's Blackout, whose file is
 //! `lockout.map`, is `blackout`.
 
 mod anim_test;
@@ -85,12 +88,6 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PresentMode, WindowMode};
 
-use halo3_core::DEFAULT_MAPS;
-
-/// MCC's Halo 2 (classic) maps, tried when a bare name is not a Halo 3 map.
-pub(crate) const DEFAULT_H2_MAPS: &str =
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11";
-
 /// Which game a map belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Game {
@@ -100,25 +97,21 @@ pub(crate) enum Game {
     Reach,
 }
 
-/// A game's maps folder: its env var, else its folder in the MCC install
-/// (found from the Halo 3 maps folder, `halo3\maps`).
+/// A game's maps folder in the player's MCC, from the saved setup or the
+/// dev overrides (`game_paths`); empty before setup.
 pub(crate) fn maps_dir(game: Game) -> PathBuf {
-    let var = |v: &str| std::env::var_os(v).map(PathBuf::from);
-    let h3 = var("HALO3_MAPS").unwrap_or_else(|| PathBuf::from(DEFAULT_MAPS));
-    let mcc = h3.parent().and_then(std::path::Path::parent).map(std::path::Path::to_path_buf);
-    let under = |sub: &str| mcc.as_ref().map_or_else(|| PathBuf::from(sub), |m| m.join(sub));
     match game {
-        Game::Halo3 => h3,
-        Game::Halo2 => var("HALO2_MAPS").unwrap_or_else(|| PathBuf::from(DEFAULT_H2_MAPS)),
-        Game::Halo1 => var("HALO1_MAPS").unwrap_or_else(|| under(r"halo1\maps")),
-        Game::Reach => var("HALOREACH_MAPS").unwrap_or_else(|| under(r"haloreach\maps")),
+        Game::Halo3 => game_paths::halo3_maps(),
+        Game::Halo2 => game_paths::halo2_maps(),
+        Game::Halo1 => game_paths::halo1_maps(),
+        Game::Reach => game_paths::reach_maps(),
     }
+    .unwrap_or_default()
 }
 
-/// A path, or a bare name: a Halo 3 map in `%HALO3_MAPS%` (or the MCC
-/// install), else a Halo 2 map in `%HALO2_MAPS%` (or the MCC install).
-/// `h1:NAME` (Halo CE, `%HALO1_MAPS%`), `h2:NAME`, `h3:NAME` and `hr:NAME`
-/// (Reach, `%HALOREACH_MAPS%`) pick the game; CE and Reach maps are only
+/// A path, or a bare name: a Halo 3 map in the player's MCC (`game_paths`),
+/// else a Halo 2 (classic) map there. `h1:NAME` (Halo CE), `h2:NAME`,
+/// `h3:NAME` and `hr:NAME` (Reach) pick the game; CE and Reach maps are only
 /// found with their prefix, as their file names overlap the others
 /// (`sidewinder`, `prisoner`). Halo 3's Blackout is `lockout.map`, so it
 /// goes by `blackout` and a bare `lockout` is Halo 2's Lockout ([`codename`]).
@@ -158,17 +151,34 @@ fn codename(arg: &str) -> (Option<Game>, &str) {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let help = matches!(args.first().map(String::as_str), Some("--help" | "-h"));
+    // First-run setup: MCC and Skate 3 (required) and Reflex (optional),
+    // asked once and saved (`halo3_setup`); `--setup` asks again. Without
+    // MCC and Skate 3 the game does not start. Headless runs (`--shot`, `--menu-shot`) never show
+    // a dialog: they need the setup done (or the dev overrides).
+    let redo = args.iter().any(|a| a == "--setup");
+    args.retain(|a| a != "--setup");
+    if !help && args.first().map(String::as_str) != Some("--test-scene") {
+        let interactive = !args.iter().any(|a| a == "--shot" || a == "--menu-shot");
+        if let Err(e) = halo3_setup::prepare(interactive, redo) {
+            if interactive {
+                halo3_setup::fail(&e);
+            }
+            anyhow::bail!(e);
+        }
+    }
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 [--foot]                                             the map menu
-  halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading] [--size WxH]
+  halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing] [--size WxH]
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 warthog_run [--foot] [--difficulty ...]             the Warthog run of 120_halo, timed
   halo3 <map> [--foot] [--ai nearby|zone|off|none]
   halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary] [--foot]   e.g. 120_halo --insertion trench_run (or trench_end)
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
+  halo3 --setup [<map>]                                      choose MCC, Skate 3 and Reflex again
   halo3 --test-scene");
             std::process::exit(2);
         }
@@ -254,11 +264,6 @@ pub(crate) const MISSIONS: &[Mission] = &[Mission {
 /// The mission called `name`, if it is one.
 pub(crate) fn mission(name: &str) -> Option<&'static Mission> {
     MISSIONS.iter().find(|m| m.name == name)
-}
-
-/// Whether the user's install has a map (or a mission's map).
-pub(crate) fn map_exists(arg: &str) -> bool {
-    resolve_map(mission(arg).map_or(arg, |m| m.map)).exists()
 }
 
 /// Decodes a map or a [`Mission`] (by name), with the command line's

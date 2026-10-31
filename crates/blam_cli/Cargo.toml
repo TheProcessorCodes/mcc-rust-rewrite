@@ -21,3 +21,4 @@ blam_sound = { workspace = true }
 blam_h2 = { workspace = true }
 blam_script = { workspace = true }
 png = "0.18"
+game_paths = { workspace = true }

@@ -31,6 +31,8 @@ the format descriptions the code is written from.
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
 | `crates/blam_reach` | MCC Halo: Reach maps: BSPs from the lightmap BSP data, instances from their resource, collision, objects, sky, spawns and lightmap texcoords into the same `Scene`; the cache file, shaders and bitmaps go through `blam_cache` / `blam_texture`, which tell Reach by its header (`docs/format/reach.md`) |
+| `crates/game_paths` | where the player's games are: the saved setup and dev overrides (`HALO3_MAPS`, ...); nothing is searched for. No dependencies; the readers' tests use it |
+| `crates/halo3_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`) and convert it once, take Reflex if the player has it, save the answers |
 | `crates/halo3` | the `halo3` binary: the map menu (`menu.rs`), wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
 | `crates/halo3_core` | what the runtime crates share: the map phase (`map.rs`: a map loaded, started and unloaded inside the running app), coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
 | `crates/halo3_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
@@ -50,6 +52,41 @@ the format descriptions the code is written from.
 | `crates/halo3_swim` | water, sinking and splashes |
 | `docs/format` | the file format, field by field |
 | `docs/` | notes on IW4L and the skate interface |
+
+## First run
+
+Nothing from any of the three games ships with this project. The first time `halo3` opens a
+window it asks for the player's own copies, once: a Windows folder picker for each game in
+turn. Nothing is searched for; the game uses only the folders the player chooses. MCC and
+Skate 3 are required: cancelling either stops setup and the game does not start. Reflex is
+optional.
+
+1. **Halo: The Master Chief Collection.** The MCC folder (or its `halo3` / `halo3\maps`
+   folder); the Halo 3 build is checked.
+2. **Skate 3 for Xbox 360.** The folder of the extracted game (`default.xex` with its `data`
+   folder, directly inside or one folder down) or the folder holding its disc image (`.iso`,
+   the only one there). From an image only
+   what the converter reads is copied out (`default.xex`, four `.big` files and `data\anim`,
+   about 512 MB, deleted afterwards). The
+   converter is IW4L's `iw4l-skate-convert.exe`, which this project does not ship: the
+   player downloads MW2 Skate 3 (the 2010 Rust Rewrite Mashup, from the Releases page of
+   https://github.com/chasmlol/2010-rust-rewrite-mashup) and setup asks for its
+   folder ("Choose your MW2 Skate 3 folder") just before Skate 3's, then runs its
+   `skate\iw4l-skate-convert.exe`.
+3. **MX vs ATV Reflex** (PC, optional; the dirt bike's model and engine sound). Setup asks
+   whether the player has it; if so, the folder with its `Database` folder. Without it the
+   bike is our own stand-in model (`crates/halo3_bike/src/stand_in.rs`) with no engine
+   sound, and the answer is saved like a folder (`REFLEX=skip`).
+
+The answers and the converted Skate 3 data go in `%LOCALAPPDATA%\Halo3Rewrite` (`setup.env`,
+`skate-data\`), per user, so every copy of the exe shares them. `halo3 --setup` asks again.
+Headless `--shot` and `--menu-shot` runs never show a dialog or write the setup: they use only what
+is saved (or the dev overrides) and stop with a message if anything is missing. So do tests:
+they skip when setup has not run.
+
+Dev overrides: `HALO3_MCC`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `HALO3_SKATE_ASSETS` (or
+`IW4L_SKATE_ASSETS`), `HALO3_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
+Reflex), `HALO3_SETUP_DIR`.
 
 ## Try it
 
@@ -74,24 +111,28 @@ target\debug\blam.exe anim 120_halo --all
 & "target\debug\halo3.exe" warthog_run
 ```
 
-`halo3.exe` with no map opens the map menu: Halo 3, Halo 2 and Campaign tabs
-with every map found in the MCC install, each shown with MCC's own preview
-picture (`Data\UI\texturepacks\levelstexturepack`, read at run time). Start
+`halo3.exe` with no map opens the map menu: Halo 3, Halo 2, Halo CE, Reach and
+Campaign tabs, each map shown with MCC's own preview picture
+(`Data\UI\texturepacks\levelstexturepack`, read at run time). MCC lets players
+skip a game's content, so a map whose `.map` file is not in its game's maps
+folder is grayed out, and choosing it shows "You must install these Halo maps
+with MCC" instead of loading (A / B / Enter / Esc or a click closes it). Start
 Game loads the map into the same window behind a loading screen; Q (or View)
 in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
 left stick move, Q / E / LB / RB change tab, Enter / A start, Escape / B exit;
 the mouse picks a tile and a double click starts it. Naming a map on the
 command line skips the menu, and Q then quits. `halo3.exe --menu-shot FILE
-[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-start [--menu-back
-TAB,PICK]]` draws the menu, the loading screen or the loaded map without a
-window.
+[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-start
+[--menu-back TAB,PICK]]` draws the menu, the loading screen, the picked map's
+not-installed notice or the loaded map without a window (point e.g.
+`HALOREACH_MAPS` at an empty folder to see a game grayed out).
 
-A bare map name is looked up in `%HALO3_MAPS%`, or in the default Steam
-install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
+A bare map name is looked up in the MCC install setup saved (`%HALO3_MAPS%`
+overrides; the `blam` tool also finds MCC through Steam). `riverworld` is Valhalla, `cyberdyne` The Pit,
 `deadlock` High Ground, `zanzibar` Last Resort, `bunkerworld` Standoff,
 `sidewinder` Avalanche, `guardian` Guardian,
 `blackout` Blackout (its file is `lockout.map`), `chill` Narrows, `armory` Rat's Nest, `shrine` Sandtrap,
-`sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
+`sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in MCC's
 `halo2\h2_maps_win64_dx11` (`coagulation`, `lockout` Lockout; `h2:NAME` / `h3:NAME` when
 both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
 Halo CE maps are only found as `h1:NAME` (`h1:bloodgulch`, ... in `%HALO1_MAPS%` or MCC's
@@ -343,6 +384,7 @@ lists all 20).
 Our own crates are Apache-2.0 (`LICENSE-APACHE`). `halo3.exe` links the Skate 3 engine in
 `third_party/skate-engine`, which is GPL-3.0-only, so `halo3` and `halo3_skate`, and any
 released `halo3.exe`, are distributed under the GNU General Public License version 3 only
-(`LICENSE`), with this source. Apache-2.0 code may be used in a GPL-3.0 work. A release also
-ships the Skate 3 converter `iw4l-skate-convert.exe` with its own licence files. None of this
+(`LICENSE`), with this source. Apache-2.0 code may be used in a GPL-3.0 work. The Skate 3
+converter `iw4l-skate-convert.exe` is not shipped; it comes from the player's MW2 Skate 3
+download, with its own licence files. None of this
 grants rights to any game's code, data, assets or trademarks; the player brings their own copies.

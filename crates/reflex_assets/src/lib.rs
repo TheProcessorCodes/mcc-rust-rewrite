@@ -48,53 +48,15 @@ impl From<std::io::Error> for Error {
     }
 }
 
-const STEAM_FOLDER: &str = r"steamapps\common\MX vs ATV Reflex";
-
 /// Whether `root` is a Reflex install (it has `Database\MXs.dx9.package`).
 pub fn is_reflex(root: &Path) -> bool {
-    root.join("Database").join("MXs.dx9.package").is_file()
+    game_paths::is_reflex(root)
 }
 
-/// The Reflex install: `$REFLEX_GAME` (a developer override), else Steam's
-/// usual places and every Steam library listed in `libraryfolders.vdf`.
-/// `None` when there is no Reflex; the bike is then drawn as sticks.
+/// The Reflex install: `$REFLEX_GAME` (a developer override), else the one the
+/// player chose in first-run setup (`halo3_setup`;
+/// `game_paths::reflex_root`). `None` when there is no Reflex; the bike is
+/// then drawn as sticks.
 pub fn find_reflex() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("REFLEX_GAME").map(PathBuf::from) {
-        return is_reflex(&p).then_some(p);
-    }
-    steam_libraries()
-        .into_iter()
-        .map(|lib| lib.join(STEAM_FOLDER))
-        .find(|p| is_reflex(p))
-}
-
-/// Steam's own folder (from the usual install places) and the libraries
-/// its `libraryfolders.vdf` lists.
-fn steam_libraries() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut steams: Vec<PathBuf> = ["ProgramFiles(x86)", "ProgramFiles"]
-        .iter()
-        .filter_map(std::env::var_os)
-        .map(|p| PathBuf::from(p).join("Steam"))
-        .collect();
-    steams.push(PathBuf::from(r"C:\Program Files (x86)\Steam"));
-    for steam in steams {
-        if !steam.is_dir() || out.contains(&steam) {
-            continue;
-        }
-        out.push(steam.clone());
-        let Ok(vdf) = std::fs::read_to_string(steam.join(r"steamapps\libraryfolders.vdf")) else {
-            continue;
-        };
-        for line in vdf.lines() {
-            let parts: Vec<&str> = line.split('"').collect();
-            if parts.len() >= 4 && parts[1] == "path" {
-                let lib = PathBuf::from(parts[3].replace(r"\\", r"\"));
-                if !out.contains(&lib) {
-                    out.push(lib);
-                }
-            }
-        }
-    }
-    out
+    game_paths::reflex_root()
 }

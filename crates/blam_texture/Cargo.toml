@@ -11,5 +11,6 @@ blam_cache = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+game_paths = { workspace = true }
 # Only for the V-direction check against decoded geometry in tests/maps.rs.
 blam_geometry = { workspace = true }

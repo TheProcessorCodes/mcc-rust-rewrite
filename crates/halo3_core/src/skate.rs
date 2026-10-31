@@ -9,7 +9,6 @@ use bevy::prelude::*;
 
 /// What IW4L ships: a Spartan-sized skater (`docs/skate-interface.md` 10).
 pub const DEFAULT_SCALE: f32 = 33.0 * 0.0254;
-pub const DEFAULT_ASSETS: &str = r"D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\assets";
 
 /// How the ride is going, for the board sounds (`audio/`): whether the
 /// skater is riding, the board speed in m/s and the engine's state name.
@@ -136,9 +135,10 @@ pub fn scale() -> f32 {
         .unwrap_or(DEFAULT_SCALE)
 }
 
+/// The player's converted Skate 3 data, as first-run setup saved it
+/// (`halo3_setup`; `%HALO3_SKATE_ASSETS%` overrides), else the folder setup
+/// converts into, which stays empty until the player gives Skate 3.
 pub fn assets_root() -> PathBuf {
-    ["HALO3_SKATE_ASSETS", "IW4L_SKATE_ASSETS"]
-        .iter()
-        .find_map(std::env::var_os)
-        .map_or_else(|| PathBuf::from(DEFAULT_ASSETS), PathBuf::from)
+    game_paths::skate_assets()
+        .unwrap_or_else(|| game_paths::settings_dir().join("skate-data").join("assets"))
 }

@@ -1023,13 +1023,9 @@ mod tests {
 
     #[test]
     fn riverworld_images_have_exact_lengths() {
-        let dir = std::env::var_os("HALO3_MAPS")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from(halo3_core::DEFAULT_MAPS));
-        let path = dir.join("riverworld.map");
-        if !path.exists() {
+        let Some(path) = game_paths::halo3_map("riverworld") else {
             return;
-        }
+        };
         let cache = blam_cache::CacheFile::open(path).unwrap();
         let mut scene = Scene::default();
         let options = blam_geometry::Options {

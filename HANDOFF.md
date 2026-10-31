@@ -142,6 +142,17 @@ checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkou
 & "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\out\bin\halo3.exe" 120_halo --zone 6 --music 120_music_15
 ```
 
+**First-run setup (2026-10-29).** The first windowed launch opens a folder picker for MCC, Skate 3
+(`.iso` or `default.xex`) and MX vs ATV Reflex (MCC and Skate 3 required, Reflex optional since
+2026-10-31: without it the bike is `stand_in.rs` and silent), converts Skate 3 once and saves everything in
+`%LOCALAPPDATA%\Halo3Rewrite` (`crates/halo3_setup`, README "First run"). All game paths go
+through `crates/game_paths`; no code names a folder on this PC any more. The Skate 3
+converter is not shipped (2026-10-31): setup asks for the player's MW2 Skate 3 folder and runs
+its `skate\iw4l-skate-convert.exe`. Still open for a public release: only MCC's
+Halo 3 builds in `blam_cache::KNOWN_BUILDS` are read (setup says so when the build is newer).
+The full-dump disc offsets (XGD2/XGD3 video partition) in `halo3_setup/src/xiso.rs` are from
+the format, not checked on a real full dump; a trimmed image was.
+
 ## What is left
 
 **Waiting on the user's playtest.** These are built but the user has not run them yet:
@@ -165,7 +176,8 @@ checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkou
 **Dirt bike engine sound** (merged 2026-10-30, user-approved): Reflex's own 450F recordings
 read from the user's install (`reflex_assets::engine_audio`, `docs/format/reflex-engine-audio.md`),
 played as Reflex plays them (whole takes from the event file's pools at their own pitch, a new
-one at each shift), or our synth (H / left stick click); engine volume slider on the pause
+one at each shift), H / left stick click turns it off; silent without Reflex (a synth was
+tried and dropped 2026-10-31); engine volume slider on the pause
 menu's Dirt bike tab (`bike-sound.json`). Still a guess: which pool plays in which gear.
 
 **Campaign:**
@@ -186,8 +198,8 @@ menu's Dirt bike tab (`bike-sound.json`). Still a guess: which pool plays in whi
 - `halo-script`: reads HaloScript (`blam_script`, `blam scripts`) and runs the map's own scripts
   (`halo3_script`); object collision models and damage sections; the Warthog run's floor
   collapses.
-- `first-run-setup`: the one-time MCC / Skate 3 setup (`game_paths`, `halo3_setup`); Reflex is
-  still to be added to it.
+- `first-run-setup`: the one-time MCC / Skate 3 / Reflex setup (`game_paths`, `halo3_setup`);
+  Reflex optional, with the stand-in bike.
 
 **Not started:**
 

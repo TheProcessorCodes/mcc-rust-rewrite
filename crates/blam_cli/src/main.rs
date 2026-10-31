@@ -24,7 +24,7 @@
 //! ```
 //!
 //! `<map>` is a path, or a bare name such as `riverworld` looked up in
-//! `$HALO3_MAPS` or the default MCC install.
+//! `$HALO3_MAPS`, else the MCC folder chosen in `halo3` setup.
 
 mod anim;
 mod ai;
@@ -45,21 +45,14 @@ use blam_cache::{CacheFile, StringId, TagEntry};
 use blam_geometry::{Options, Scene, WORLD_UNIT_METRES};
 use glam::Vec3;
 
-const DEFAULT_MAPS: &str =
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps";
-
+/// Halo 3's maps folder in the player's MCC (`game_paths`: `$HALO3_MAPS`,
+/// the MCC folder chosen in the game's setup).
 pub(crate) fn maps_dir() -> PathBuf {
-    std::env::var_os("HALO3_MAPS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_MAPS))
+    game_paths::halo3_maps().unwrap_or_default()
 }
 
-/// MCC's Halo 2 (classic) maps, tried when a bare name is not a Halo 3 map.
-const DEFAULT_H2_MAPS: &str =
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11";
-
-/// A path, or a bare name: a Halo 3 map in `$HALO3_MAPS` (or the MCC
-/// install), else a Halo 2 map in `$HALO2_MAPS` (or the MCC install).
+/// A path, or a bare name: a Halo 3 map in the player's MCC, else a Halo 2
+/// (classic) map there (`$HALO2_MAPS` overrides).
 /// `h2:NAME` / `h3:NAME` ask for one game when both have a map by that file
 /// name (`zanzibar`). Halo 3's Blackout is `lockout.map`, so it goes by
 /// `blackout` and a bare `lockout` is Halo 2's Lockout ([`codename`]).
@@ -71,10 +64,7 @@ fn resolve_map(arg: &str) -> PathBuf {
     let (game, file) = codename(arg);
     let name = format!("{file}.map");
     let h3 = maps_dir().join(&name);
-    let h2 = std::env::var_os("HALO2_MAPS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_H2_MAPS))
-        .join(&name);
+    let h2 = game_paths::halo2_maps().unwrap_or_default().join(&name);
     match game {
         Some(2) => h2,
         Some(_) => h3,
@@ -170,7 +160,7 @@ impl Args {
 
 pub(crate) fn usage() -> ! {
     eprintln!(
-        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n  blam scripts <map> [--grep TEXT | --functions | --summary]\n  blam anim <map> <jmad | object> [--anim NAME|N [--frame F] | --action m:c:t:a | --check]\n  blam ai <map> [--squads] [--zones] [--characters]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS (default: the MCC install)."
+        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n  blam scripts <map> [--grep TEXT | --functions | --summary]\n  blam anim <map> <jmad | object> [--anim NAME|N [--frame F] | --action m:c:t:a | --check]\n  blam ai <map> [--squads] [--zones] [--characters]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS, else the MCC folder chosen in halo3 setup."
     );
     std::process::exit(2)
 }

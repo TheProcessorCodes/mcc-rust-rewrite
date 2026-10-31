@@ -8,10 +8,10 @@ use std::path::PathBuf;
 
 use blam_geometry::Kind;
 
+/// The player's Halo CE maps (`game_paths`); empty before setup, so the
+/// tests skip.
 fn maps_dir() -> PathBuf {
-    std::env::var_os("HALO1_MAPS").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo1\maps")
-    })
+    game_paths::halo1_maps().unwrap_or_default()
 }
 
 fn map(name: &str) -> Option<PathBuf> {

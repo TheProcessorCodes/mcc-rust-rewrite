@@ -226,7 +226,7 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
     let root = assets_root();
     if !root.join("private").join("game.json").exists() {
         host.status = format!("skate assets not found at {}", root.display());
-        warn!("{}; set HALO3_SKATE_ASSETS", host.status);
+        warn!("{}; run halo3 --setup to add Skate 3", host.status);
         return;
     }
     let k = host.scale;

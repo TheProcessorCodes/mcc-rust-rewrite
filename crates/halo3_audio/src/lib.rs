@@ -6,7 +6,7 @@
 //!
 //! Music (`music.rs`) follows the map's scripts when they run, and the
 //! keys: M music on / off, Shift+M next track, N alternate loop, K mute,
-//! `-` / `=` master volume, H the bike's engine sound (Reflex, synth, off);
+//! `-` / `=` master volume, H the bike's engine sound on / off;
 //! the pause menu's Sound tab sets the master, music, effects, ambience and
 //! dialogue volumes (`levels.rs`, saved next to the exe), its Dirt bike tab
 //! the engine's. `HALO3_AUDIO=0` turns sound off; it is off in `--shot`

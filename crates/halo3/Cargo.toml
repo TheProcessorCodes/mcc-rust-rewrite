@@ -22,6 +22,8 @@ blam_reach = { workspace = true }
 anyhow = { workspace = true }
 halo3_anim = { workspace = true }
 halo3_ai = { workspace = true }
+game_paths = { workspace = true }
+halo3_setup = { workspace = true }
 halo3_audio = { workspace = true }
 halo3_bike = { workspace = true }
 halo3_core = { workspace = true }

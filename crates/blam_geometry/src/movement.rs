@@ -259,11 +259,7 @@ mod tests {
     use super::*;
 
     fn map(name: &str) -> Option<CacheFile> {
-        let path = std::path::Path::new(
-            r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps",
-        )
-        .join(format!("{name}.map"));
-        path.exists().then(|| CacheFile::open(path).unwrap())
+        game_paths::halo3_map(name).map(|path| CacheFile::open(path).unwrap())
     }
 
     /// Valhalla's numbers, as in `docs/format/movement.md` section 6.

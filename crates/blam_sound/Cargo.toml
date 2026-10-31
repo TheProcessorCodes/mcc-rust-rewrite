@@ -12,3 +12,6 @@ memmap2 = { workspace = true }
 thiserror = { workspace = true }
 # Pure Rust Vorbis decoder, MIT OR Apache-2.0.
 lewton = { version = "0.10", default-features = false }
+
+[dev-dependencies]
+game_paths = { workspace = true }

@@ -2,7 +2,8 @@
 //! the Spartan standing on it (`physics.rs` for the bike, `pose.rs` for the
 //! rider). The bike drawn is Reflex's Dakumoto 450F in the Cortana kit,
 //! read from the user's MX vs ATV Reflex install (`model.rs`); without
-//! Reflex it is a stick model: thin unlit cylinders.
+//! Reflex it is our own stand-in motocrosser (`stand_in.rs`). Until either
+//! is built it is a stick model: thin unlit cylinders.
 //!
 //! B (or the controller's View / Back button) drops the bike under the
 //! camera and starts riding; B again goes back to flying.
@@ -17,7 +18,7 @@
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`) |
 //! | LB + d-pad up (hold) | | back to the session marker |
-//! | left stick click | H | engine sound: Reflex's 450F, synth, off (`halo3_audio::engine`) |
+//! | left stick click | H | engine sound on / off (`halo3_audio::engine`) |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! A crash shows CRASHED in orange in the lower left until the bike is
@@ -35,6 +36,7 @@ pub mod model;
 pub mod physics;
 pub mod pose;
 pub mod reflex;
+pub mod stand_in;
 pub mod tune;
 pub mod unleashed;
 

@@ -12,4 +12,5 @@ blam_geometry = { workspace = true }
 glam = { workspace = true }
 
 [dev-dependencies]
+game_paths = { workspace = true }
 blam_texture = { workspace = true }

@@ -3,17 +3,12 @@
 //! `docs/format/weapon-sounds.md` 8, found by
 //! `docs/format/scripts/probe_weapon_sounds.py`.
 
-use std::path::PathBuf;
-
 use blam_cache::CacheFile;
 use blam_sound::tags::{SoundTags, distance_gain};
 use blam_sound::weapons::{WeaponSoundReader, WeaponSounds};
 
 fn map() -> Option<CacheFile> {
-    let dir = std::env::var_os("HALO3_MAPS").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps")
-    });
-    CacheFile::open(dir.join("riverworld.map")).ok()
+    CacheFile::open(game_paths::halo3_map("riverworld")?).ok()
 }
 
 /// Tag names with the common `sound\` prefix cut off.

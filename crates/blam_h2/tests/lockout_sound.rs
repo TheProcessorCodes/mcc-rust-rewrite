@@ -8,11 +8,8 @@ use std::path::PathBuf;
 use blam_h2::sound::{self, Compression, SoundFiles};
 
 fn map(name: &str) -> Option<PathBuf> {
-    let dir = std::env::var_os("HALO2_MAPS").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11")
-    });
-    let p = dir.join(format!("{name}.map"));
-    (p.exists() && dir.join("sounds_neutral.dat").exists()).then_some(p)
+    let p = game_paths::halo2_map(name)?;
+    p.with_file_name("sounds_neutral.dat").exists().then_some(p)
 }
 
 #[test]

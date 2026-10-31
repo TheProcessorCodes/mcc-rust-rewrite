@@ -45,7 +45,7 @@ dependencies = [
  "accesskit_consumer",
  "hashbrown 0.16.1",
  "objc2 0.5.3",
- "objc2-app-kit",
+ "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
 ]
 
@@ -1647,6 +1647,7 @@ name = "blam_cache"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "game_paths",
  "memmap2",
  "thiserror 2.0.21",
 ]
@@ -1663,6 +1664,7 @@ dependencies = [
  "blam_script",
  "blam_sound",
  "blam_texture",
+ "game_paths",
  "glam",
  "png",
 ]
@@ -1672,6 +1674,7 @@ name = "blam_geometry"
 version = "0.1.0"
 dependencies = [
  "blam_cache",
+ "game_paths",
  "glam",
  "thiserror 2.0.21",
 ]
@@ -1683,6 +1686,7 @@ dependencies = [
  "blam_geometry",
  "blam_h2",
  "blam_texture",
+ "game_paths",
  "glam",
  "memmap2",
  "thiserror 2.0.21",
@@ -1695,6 +1699,7 @@ dependencies = [
  "blam_geometry",
  "blam_texture",
  "flate2",
+ "game_paths",
  "glam",
  "memmap2",
  "thiserror 2.0.21",
@@ -1707,6 +1712,7 @@ dependencies = [
  "blam_cache",
  "blam_geometry",
  "blam_texture",
+ "game_paths",
  "glam",
 ]
 
@@ -1723,6 +1729,7 @@ name = "blam_sound"
 version = "0.1.0"
 dependencies = [
  "blam_cache",
+ "game_paths",
  "lewton",
  "memmap2",
  "thiserror 2.0.21",
@@ -1734,6 +1741,7 @@ version = "0.1.0"
 dependencies = [
  "blam_cache",
  "blam_geometry",
+ "game_paths",
  "thiserror 2.0.21",
 ]
 
@@ -2473,6 +2481,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "game_paths"
+version = "0.1.0"
+
+[[package]]
 name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2585,6 +2597,7 @@ dependencies = [
  "blam_h2",
  "blam_reach",
  "blam_texture",
+ "game_paths",
  "halo3_ai",
  "halo3_anim",
  "halo3_audio",
@@ -2593,6 +2606,7 @@ dependencies = [
  "halo3_foot",
  "halo3_rider",
  "halo3_script",
+ "halo3_setup",
  "halo3_skate",
  "halo3_swim",
  "halo3_textures",
@@ -2666,6 +2680,7 @@ dependencies = [
  "anyhow",
  "bevy",
  "blam_geometry",
+ "game_paths",
  "serde_json",
 ]
 
@@ -2676,6 +2691,7 @@ dependencies = [
  "bevy",
  "blam_geometry",
  "blam_h2",
+ "game_paths",
  "halo3_bike",
  "halo3_core",
  "halo3_swim",
@@ -2707,6 +2723,20 @@ dependencies = [
  "blam_script",
  "glam",
  "halo3_core",
+]
+
+[[package]]
+name = "halo3_setup"
+version = "0.1.0"
+dependencies = [
+ "blam_cache",
+ "game_paths",
+ "glam",
+ "half",
+ "png",
+ "rfd",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2761,6 +2791,7 @@ dependencies = [
  "blam_cache",
  "blam_geometry",
  "blam_texture",
+ "game_paths",
  "halo3_core",
  "halo3_textures",
 ]
@@ -3656,6 +3687,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-app-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
+dependencies = [
+ "bitflags 2.13.2",
+ "block2 0.6.2",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-audio-toolbox"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3850,7 +3893,7 @@ checksum = "a1a1ae721c5e35be65f01a03b6d2ac13a54cb4fa70d8a5da293d7b0020261398"
 dependencies = [
  "block2 0.5.1",
  "objc2 0.5.3",
- "objc2-app-kit",
+ "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
 ]
 
@@ -4321,6 +4364,7 @@ name = "reflex_assets"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "game_paths",
  "lzxd",
  "symphonia",
 ]
@@ -4347,6 +4391,27 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "rfd"
+version = "0.15.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef2bee61e6cffa4635c72d7d81a84294e28f0930db0ddcb0f66d10244674ebed"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "js-sys",
+ "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "rodio"
@@ -5731,7 +5796,7 @@ dependencies = [
  "libc",
  "ndk",
  "objc2 0.5.3",
- "objc2-app-kit",
+ "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
  "objc2-ui-kit",
  "orbclient",
