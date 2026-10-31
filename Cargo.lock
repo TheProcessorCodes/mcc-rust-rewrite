@@ -1676,6 +1676,7 @@ dependencies = [
  "blam_geometry",
  "blam_h2",
  "blam_texture",
+ "game_paths",
  "glam",
  "memmap2",
  "thiserror 2.0.21",
@@ -1701,6 +1702,7 @@ dependencies = [
  "blam_cache",
  "blam_geometry",
  "blam_texture",
+ "game_paths",
  "glam",
 ]
 
