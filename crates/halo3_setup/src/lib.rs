@@ -34,6 +34,9 @@ use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 const TITLE: &str = "Halo 3 Rust Rewrite";
 /// The converter's file name, as IW4L ships it.
 const CONVERTER: &str = "iw4l-skate-convert.exe";
+/// Where players get MW2 Skate 3 (the 2010 Rust Rewrite Mashup), whose
+/// release has the converter in its `skate` folder.
+const MW2_SKATE_3: &str = "https://github.com/chasmlol/2010-rust-rewrite-mashup";
 
 /// The Skate 3 files the converter reads, as paths on the disc. `data/anim`
 /// is copied whole. Checked against a full conversion of the extracted
@@ -78,14 +81,15 @@ pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
         return Err(format!("{} not set up yet. {RUN_SETUP}", missing.join(", ")));
     }
     if !(mcc_ready && skate_ready && reflex_ready) && interactive {
-        inform(
+        inform(&format!(
             "Welcome! This game is played with your own copies of these games:\n\n\
              1. Halo: The Master Chief Collection (PC)\n\
-             2. MW2 Skate 3: its folder has the Skate 3 converter (skate\\iw4l-skate-convert.exe)\n\
+             2. MW2 Skate 3: its folder has the Skate 3 converter (skate\\iw4l-skate-convert.exe). \
+             Download it from the Releases page of {MW2_SKATE_3}\n\
              3. Skate 3 (Xbox 360): the extracted game or its disc image (.iso)\n\
              4. MX vs ATV Reflex (PC), optional: the dirt bike's model and engine sound\n\n\
-             You will be asked for each folder in turn. This is asked once.",
-        );
+             You will be asked for each folder in turn. This is asked once."
+        ));
     }
 
     prepare_mcc(&mut settings, &path, interactive)?;
@@ -331,7 +335,7 @@ fn find_converter(settings: &mut Settings) -> Result<Option<PathBuf>, String> {
         }
         inform(&format!(
             "{}\n\nhas no skate\\{CONVERTER}. Select your MW2 Skate 3 folder (the one with iw4l.exe and \
-             the skate folder).",
+             the skate folder). Download it from the Releases page of {MW2_SKATE_3}",
             picked.display()
         ));
     }

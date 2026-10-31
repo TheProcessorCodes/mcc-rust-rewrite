@@ -63,7 +63,8 @@ optional.
    what the converter reads is copied out (`default.xex`, four `.big` files and `data\anim`,
    about 512 MB, deleted afterwards). The
    converter is IW4L's `iw4l-skate-convert.exe`, which this project does not ship: the
-   player downloads MW2 Skate 3 (the 2010 Rust Rewrite Mashup) and setup asks for its
+   player downloads MW2 Skate 3 (the 2010 Rust Rewrite Mashup, from the Releases page of
+   https://github.com/chasmlol/2010-rust-rewrite-mashup) and setup asks for its
    folder ("Choose your MW2 Skate 3 folder") just before Skate 3's, then runs its
    `skate\iw4l-skate-convert.exe`.
 3. **MX vs ATV Reflex** (PC, optional; the dirt bike's model and engine sound). Setup asks
