@@ -9,3 +9,6 @@ publish.workspace = true
 [dependencies]
 blam_cache = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+game_paths = { workspace = true }

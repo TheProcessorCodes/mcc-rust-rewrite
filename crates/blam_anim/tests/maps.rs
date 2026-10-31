@@ -3,15 +3,12 @@
 //! installed.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use blam_anim::{AnimKind, Clip, Graph, Library, MovementKind, NodeMap, Pose, Skeleton};
 use blam_cache::CacheFile;
 
 fn open(name: &str) -> Option<CacheFile> {
-    let dir = std::env::var_os("HALO3_MAPS").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps")
-    });
+    let dir = game_paths::halo3_maps()?;
     let p = dir.join(format!("{name}.map"));
     p.exists().then(|| CacheFile::open(p).expect("map opens"))
 }
