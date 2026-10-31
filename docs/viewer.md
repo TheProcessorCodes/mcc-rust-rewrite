@@ -618,7 +618,9 @@ click of the left stick goes Reflex → synth → off, and the log says which:
   recorded at. On the gas, each gear change starts a take from the gear's pool (the event
   file's: power in first, then the low, mid and high pools) from its beginning, so the
   climb through a gear is the take's own; when a take ends the next one in the pool
-  follows. Light gas plays the half-throttle takes; off the gas the idle, after a decel
+  follows. A little gas while riding plays the gear's takes too, quieter (up to 6 dB);
+  the half-throttle takes (low revs) only creeping with the engine under 4,800; off the gas
+  the idle, after a decel
   sweep if the revs were up; gas held with the rear wheel free (in the air, or the bike
   down) runs the limiter takes; a landing on the gas and a wreck have their own.
 - **Synth**: our own single-cylinder four-stroke: one blow-down pulse per firing into

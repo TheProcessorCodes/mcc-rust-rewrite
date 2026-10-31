@@ -234,6 +234,8 @@ pub struct Sampled {
     last: Option<usize>,
     /// Seconds since the engine track's current take started.
     since: f32,
+    /// The engine track's gain: lower on light gas.
+    level: f32,
     wind: Wind,
     rng: Rng,
     mono: Vec<f32>,
@@ -252,6 +254,7 @@ impl Sampled {
             pending: Some((Pool::Idle, 0.0, 0.05, 0.5)),
             last: None,
             since: 0.0,
+            level: 1.0,
             wind: Wind { lp: [0.0; 2], rng: Rng(0x2545_f491) },
             rng: Rng(0x9e37_79b9),
             mono: Vec::new(),
@@ -346,18 +349,24 @@ impl Generator for Sampled {
             self.shot(Pool::Wreck);
         }
         // Gas held with the rear wheel free (in the air, or the bike down)
-        // runs to the limiter; otherwise idle, half throttle or a gear's
-        // pool, with a little hysteresis between half and full.
-        let gas = t > 0.05;
+        // runs to the limiter; otherwise idle, or on the gas a gear's pool.
+        // The half-throttle takes are low revs (3,400 to 4,300), so they
+        // only play creeping on light gas with the engine low; riding along
+        // on a little gas plays the gear's takes, quieter (`level`).
+        let gas = t > 0.02;
+        let low = rpm < 4800.0 || (rpm < 5400.0 && self.state == State::Half);
         let state = if gas && (i.crashed || i.airborne) && t > 0.5 {
             State::Limiter
         } else if !gas || i.crashed {
             State::Idle
-        } else if t < 0.3 || (t < 0.4 && self.state == State::Half) {
+        } else if t < 0.35 && low {
             State::Half
         } else {
             State::Drive
         };
+        let level = if state == State::Drive { 0.5 + 0.5 * ((t - 0.02) / 0.5).clamp(0.0, 1.0).sqrt() } else { 1.0 };
+        let level0 = self.level;
+        self.level = level;
         let pool = Pool::for_gear(i.gear);
         let shifted = i.gear != self.gear;
         self.gear = i.gear;
@@ -416,6 +425,9 @@ impl Generator for Sampled {
             if self.pending.is_none() {
                 self.start(p, CHAIN, 0.0);
             }
+        }
+        for (f, m) in self.mono.iter_mut().enumerate() {
+            *m *= level0 + (level - level0) * f as f32 / frames as f32;
         }
         Self::play(&bank, &mut self.shots, &mut self.mono);
 
