@@ -27,7 +27,7 @@ the format descriptions the code is written from.
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
 | `crates/game_paths` | where the player's games are: the saved setup, dev overrides (`HALO3_MAPS`, ...), Steam's library list. No dependencies; the readers' tests use it |
-| `crates/halo3_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`) and convert it once, note Reflex, save the answers |
+| `crates/halo3_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`) and convert it once, take Reflex if the player has it, save the answers |
 | `crates/halo3` | the `halo3` binary: the map menu (`menu.rs`), wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
 | `crates/halo3_core` | what the runtime crates share: the map phase (`map.rs`: a map loaded, started and unloaded inside the running app), coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
 | `crates/halo3_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
@@ -47,8 +47,9 @@ the format descriptions the code is written from.
 
 Nothing from any of the three games ships with this project. The first time `halo3` opens a
 window it asks for the player's own copies, once: a Windows folder picker for each game in
-turn. Nothing is searched for; the game uses only the folders the player chooses. All three
-are required: cancelling any of them stops setup and the game does not start.
+turn. Nothing is searched for; the game uses only the folders the player chooses. MCC and
+Skate 3 are required: cancelling either stops setup and the game does not start. Reflex is
+optional.
 
 1. **Halo: The Master Chief Collection.** The MCC folder (or its `halo3` / `halo3\maps`
    folder); the Halo 3 build is checked.
@@ -59,8 +60,10 @@ are required: cancelling any of them stops setup and the game does not start.
    about 512 MB, deleted afterwards). The
    converter is IW4L's `iw4l-skate-convert.exe`, looked for at `skate\` beside `halo3.exe`
    (the release layout), else the player is asked to point at it.
-3. **MX vs ATV Reflex** (PC; the dirt bike's model and engine sound). The folder with its
-   `Database` folder.
+3. **MX vs ATV Reflex** (PC, optional; the dirt bike's model and engine sound). Setup asks
+   whether the player has it; if so, the folder with its `Database` folder. Without it the
+   bike is our own stand-in model (`crates/halo3_bike/src/stand_in.rs`) with the synth engine
+   sound, and the answer is saved like a folder (`REFLEX=skip`).
 
 The answers and the converted Skate 3 data go in `%LOCALAPPDATA%\Halo3Rewrite` (`setup.env`,
 `skate-data\`), per user, so every copy of the exe shares them. `halo3 --setup` asks again.
@@ -69,7 +72,8 @@ is saved (or the dev overrides) and stop with a message if anything is missing. 
 they skip when setup has not run.
 
 Dev overrides: `HALO3_MCC`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO3_SKATE_ASSETS` (or
-`IW4L_SKATE_ASSETS`), `HALO3_SKATE_CONVERTER`, `REFLEX_GAME`, `HALO3_SETUP_DIR`.
+`IW4L_SKATE_ASSETS`), `HALO3_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
+Reflex), `HALO3_SETUP_DIR`.
 
 ## Try it
 

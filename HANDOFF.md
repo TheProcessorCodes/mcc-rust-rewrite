@@ -132,7 +132,8 @@ checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkou
 ```
 
 **First-run setup (2026-10-29).** The first windowed launch opens a folder picker for MCC, Skate 3
-(`.iso` or `default.xex`) and MX vs ATV Reflex, all three required, converts Skate 3 once and saves everything in
+(`.iso` or `default.xex`) and MX vs ATV Reflex (MCC and Skate 3 required, Reflex optional since
+2026-10-31: without it the bike is `stand_in.rs` and the synth), converts Skate 3 once and saves everything in
 `%LOCALAPPDATA%\Halo3Rewrite` (`crates/halo3_setup`, README "First run"). All game paths go
 through `crates/game_paths`; no code names a folder on this PC any more. Still open for a
 public release: `skate-host` is a path dependency on `mw2-skate-3-src`, the release needs
@@ -183,8 +184,8 @@ menu's Dirt bike tab (`bike-sound.json`). Still a guess: which pool plays in whi
 - `halo-script`: reads HaloScript (`blam_script`, `blam scripts`) and runs the map's own scripts
   (`halo3_script`); object collision models and damage sections; the Warthog run's floor
   collapses.
-- `first-run-setup`: the one-time MCC / Skate 3 setup (`game_paths`, `halo3_setup`); Reflex is
-  still to be added to it.
+- `first-run-setup`: the one-time MCC / Skate 3 / Reflex setup (`game_paths`, `halo3_setup`);
+  Reflex optional, with the stand-in bike.
 
 **Not started:**
 
