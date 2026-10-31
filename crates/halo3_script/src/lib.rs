@@ -59,7 +59,7 @@ pub fn prepare(cache: &blam_cache::CacheFile, scene: &mut blam_geometry::Scene) 
 /// The runtime, handed from `main`, and a static script to run at start
 /// as if typed at the console (an insertion point: `ins_trench_run`).
 #[derive(Resource)]
-pub struct PendingScripts(pub Option<Runtime>, pub Option<String>);
+pub struct PendingScripts(pub Option<Runtime>, pub Option<String>, pub Option<setup::StartOverride>);
 
 /// The running scripts.
 #[derive(Resource)]
@@ -194,9 +194,14 @@ fn start(
         teleport: None,
         switch: None,
         effects: Vec::new(),
+        riding: false,
     };
     for _ in 0..STARTUP_TICKS {
         scripts.runtime.step(&mut bridge, ai.0.as_mut(), animation.0.as_deref());
+        bridge.zone_set = bridge.switch.or(bridge.zone_set);
+    }
+    if let Some(start) = pending.2.take() {
+        setup::apply_start(&mut scripts.runtime, &mut bridge, ai.0.as_mut(), animation.0.as_deref(), &start, STARTUP_TICKS);
         bridge.zone_set = bridge.switch.or(bridge.zone_set);
     }
     let t = apply_requests(&mut commands, &mut scripts, &mut bridge, &mut loaded, zones.as_deref(), fallback.as_deref_mut());
@@ -211,6 +216,8 @@ struct Bridge {
     teleport: Option<(Vec3, f32)>,
     switch: Option<usize>,
     effects: Vec<(String, Vec3)>,
+    /// The player rides the dirt bike.
+    riding: bool,
 }
 
 impl WorldApi for Bridge {
@@ -231,6 +238,9 @@ impl WorldApi for Bridge {
         if self.effects.len() < 64 {
             self.effects.push((tag.to_string(), at));
         }
+    }
+    fn player_in_vehicle(&self) -> bool {
+        self.riding
     }
 }
 
@@ -268,6 +278,7 @@ fn tick(
         teleport: None,
         switch: None,
         effects: Vec::new(),
+        riding: rider.as_deref().is_some_and(|r| r.active && r.bike),
     };
     // `HALO3_SCRIPT_TRACE=1`: where the player is, once a second.
     static TRACE: std::sync::LazyLock<bool> =
@@ -289,9 +300,16 @@ fn tick(
     scripts.accumulator = (scripts.accumulator + time.delta_secs_f64()).min(0.25);
     let dt = 1.0 / vm::TICKS_PER_SECOND;
     let poser = animation.0.as_deref();
-    while scripts.accumulator >= dt {
+    while scripts.accumulator >= dt && scripts.runtime.mission_over.is_none() {
         scripts.accumulator -= dt;
         scripts.runtime.step(&mut bridge, ai.0.as_mut(), poser);
+        if scripts.runtime.mission_over.is_some() {
+            // Won: the scripts stop here. The outro goes on to teleport the
+            // player to its cutscene flags (120_halo's `cin_halo_outro`);
+            // the game's completion screen takes over instead.
+            bridge.teleport = None;
+            scripts.accumulator = 0.0;
+        }
     }
 
     if let Some(t) = apply_requests(&mut commands, &mut *scripts, &mut bridge, &mut loaded, zones.as_deref(), fallback.as_deref_mut()) {

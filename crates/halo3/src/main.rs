@@ -30,7 +30,13 @@
 //!                        designers did at the console (120_halo:
 //!                        `trench_run`, the Warthog run); N starts the
 //!                        mission at insertion point N. `--scripts` runs
-//!                        them from the mission's own start.
+//!                        them from the mission's own start. 120_halo
+//!                        also has `trench_end` (ours): the run's last
+//!                        straight, before the jump into the frigate. A
+//!                        named insertion starts you on the dirt bike
+//!                        (`--foot`: on foot); when the scripts win the
+//!                        mission a completion screen shows the run's
+//!                        time (`finish.rs`).
 //! halo3 <map> --anim-test flood=move_front,sentinel=aim,... [--anim-at x,y,z,yaw]
 //!                        a row of the map's bipeds playing Halo 3's own
 //!                        animations (`anim_test.rs`); with `--shot` for
@@ -51,6 +57,7 @@
 //! `lockout.map`, is `blackout`.
 
 mod anim_test;
+mod finish;
 mod halo2;
 mod pause;
 mod shot;
@@ -122,7 +129,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut foot_tuning = None;
     let mut arsenal = None;
-    let mut scripts: Option<(halo3_script::PendingScripts, halo3_anim::MachinePoser)> = None;
+    let mut scripts: Option<ScriptStart> = None;
     let mut plain_fog = None;
     // Halo 2: the map's ambience, decoded on the sound plugin's thread.
     let mut plain_sound = None;
@@ -132,7 +139,7 @@ fn main() -> anyhow::Result<()> {
             eprintln!("usage:
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 <map> [--foot] [--ai nearby|zone|off|none]
-  halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary]   e.g. 120_halo --insertion trench_run
+  halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary] [--foot]   e.g. 120_halo --insertion trench_run (or trench_end)
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
   halo3 --test-scene");
             std::process::exit(2);
@@ -183,6 +190,12 @@ fn main() -> anyhow::Result<()> {
                 ..Default::default()
             };
             blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
+            // Machines stand where their own animation puts them at rest
+            // (120_halo's frigate faces the run with its hangar open).
+            let posed = halo3_anim::devices::place_machines(cache, &mut scene);
+            if posed > 0 {
+                eprintln!("machines: {posed} posed by their animations");
+            }
             // Objects collide (`HALO3_OBJECT_COLLISION=0`: not): crates,
             // rocks, and the Warthog run's floor plates, which are its
             // only floor.
@@ -254,6 +267,7 @@ fn main() -> anyhow::Result<()> {
         }
     };
     let shot = shot_plan(&args, &scene)?;
+    let insertion_start = scripts.as_ref().and_then(|s| s.start);
     let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
     let anim_test = match (value("--anim-test"), map_file) {
         (Some(spec), Some(cache)) => {
@@ -377,9 +391,18 @@ fn main() -> anyhow::Result<()> {
             if let Some(t) = foot_tuning {
                 app.insert_resource(foot::FootTuning(t));
             }
-            // `--foot`: start on foot at the start spawn.
-            if !shot_mode
-                && args.iter().any(|a| a == "--foot")
+            // An insertion starts the run on the bike where it puts the
+            // player (on foot with `--foot`); `--foot` alone starts on foot
+            // at the start spawn.
+            let foot_wanted = args.iter().any(|a| a == "--foot");
+            if !shot_mode && let Some((position, yaw)) = insertion_start {
+                if foot_wanted {
+                    app.insert_resource(foot::AutoStart::at(position, yaw));
+                } else {
+                    app.insert_resource(bike::AutoStart::player(position, yaw));
+                }
+            } else if !shot_mode
+                && foot_wanted
                 && let Some((position, yaw)) = scene
                     .spawns
                     .first()
@@ -429,7 +452,7 @@ fn main() -> anyhow::Result<()> {
     }
     app.insert_resource(weapons::PendingArsenal(arsenal));
     let scripted = scripts.is_some();
-    if let Some((s, devices)) = scripts {
+    if let Some(ScriptStart { pending: s, devices, .. }) = scripts {
         // The scripts' `ai_*` calls go to the enemies through the bridge
         // the AI plugin reads; the islands and pillars move by their own
         // animations.
@@ -466,6 +489,7 @@ fn main() -> anyhow::Result<()> {
         .insert_resource(world::water::PendingWater(Some(water)))
         .add_plugins((
             pause::PausePlugin,
+            finish::FinishPlugin,
             fly_camera::FlyCameraPlugin,
             flag::SessionFlagPlugin,
             world::WorldPlugin,
@@ -481,7 +505,7 @@ fn scripts_for(
     args: &[String],
     cache: &blam_cache::CacheFile,
     scene: &mut blam_geometry::Scene,
-) -> Option<(halo3_script::PendingScripts, halo3_anim::MachinePoser)> {
+) -> Option<ScriptStart> {
     let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
     let insertion = value("--insertion");
     if insertion.is_none() && !args.iter().any(|a| a == "--scripts") {
@@ -498,20 +522,30 @@ fn scripts_for(
         };
     }
     let mut console = None;
+    let mut start = None;
+    let mut start_override = None;
     match insertion.as_deref().map(|i| (i, i.parse::<i16>())) {
         Some((_, Ok(n))) => config.insertion_point = n,
-        Some((name, Err(_))) => {
-            let script = if name.starts_with("ins_") { name.to_string() } else { format!("ins_{name}") };
-            if data.script_index(&script).is_some() {
+        Some((name, Err(_))) => match halo3_script::setup::insertion(&data, scene, name) {
+            Some(ins) => {
                 // As at the console in the editor: the mission's own
                 // `start` stays out of the way.
                 config.editor = true;
-                console = Some(script);
-            } else {
-                let known: Vec<&str> = data.scripts.iter().map(|s| s.name.as_str()).filter(|n| n.starts_with("ins_")).collect();
-                eprintln!("scripts: no insertion script {script}; this map has {known:?}");
+                console = Some(ins.script);
+                start = ins.start;
+                start_override = ins.start_override;
+                if let Some((at, yaw)) = start {
+                    eprintln!("scripts: insertion {name} starts at halo [{:.2}, {:.2}, {:.2}] facing {:.0} degrees", at.x, at.y, at.z, yaw.to_degrees());
+                }
             }
-        }
+            None => {
+                let mut known: Vec<&str> = data.scripts.iter().map(|s| s.name.as_str()).filter(|n| n.starts_with("ins_")).collect();
+                if data.script_index("ins_trench_run").is_some() {
+                    known.push(halo3_script::setup::TRENCH_END);
+                }
+                eprintln!("scripts: no insertion {name}; this map has {known:?}");
+            }
+        },
         None => {}
     }
     let runtime = halo3_script::setup::runtime(cache, scene, data, config);
@@ -520,7 +554,19 @@ fn scripts_for(
     let started = std::time::Instant::now();
     let devices = halo3_anim::MachinePoser::load(cache, runtime.objects.info.iter().filter(|o| o.scene.is_some()).filter_map(|o| o.tag));
     eprintln!("scripts: {} machine animations in {:.1} s", devices.len(), started.elapsed().as_secs_f32());
-    Some((halo3_script::PendingScripts(Some(runtime), console), devices))
+    Some(ScriptStart {
+        pending: halo3_script::PendingScripts(Some(runtime), console, start_override),
+        devices,
+        start,
+    })
+}
+
+/// The map's scripts, ready to run, and where the insertion starts the
+/// player (on the bike) when known.
+struct ScriptStart {
+    pending: halo3_script::PendingScripts,
+    devices: halo3_anim::MachinePoser,
+    start: Option<(Vec3, f32)>,
 }
 
 /// The value after `flag`, if given.

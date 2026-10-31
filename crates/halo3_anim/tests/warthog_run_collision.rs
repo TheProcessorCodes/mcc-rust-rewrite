@@ -89,6 +89,8 @@ fn island_and_tunnel_are_ridable() {
     };
     let mut scene = blam_geometry::Scene::default();
     blam_geometry::decode_into(&cache, &options, &mut scene).unwrap();
+    // As the game does: machines stand in their animations' pose at rest.
+    halo3_anim::devices::place_machines(&cache, &mut scene);
     blam_geometry::objects::add_collision(&cache, &mut scene);
     let data = Arc::new(blam_script::ScriptData::read(&cache).unwrap());
     setup::mark_dynamic(&mut scene, &data);

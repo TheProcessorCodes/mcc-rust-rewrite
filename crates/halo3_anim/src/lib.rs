@@ -192,6 +192,35 @@ impl AnimModel {
         }
         any.then_some(pose)
     }
+
+    /// A named animation at `position` (0..1) laid over the rest pose as
+    /// values, not differences: each node it drives takes the animation's
+    /// own transform, whatever kind the animation is marked. A device
+    /// machine's tracks (`device:position`) are marked overlays but hold
+    /// whole node transforms (the island's root sits 55 wu up in both its
+    /// rest pose and its tracks; the frigate's root is turned a quarter
+    /// turn from its rest pose at frame 0), so this is the pose the machine
+    /// is in at that position. `None` when the graph lacks the animation.
+    pub fn pose_values(&self, name: &str, position: f32) -> Option<Pose> {
+        let id = self.named(name)?;
+        let (clip, map) = (self.clip(id)?, self.map(id.graph)?);
+        let frame = blam_anim::frame_at_position(clip, position);
+        let mut pose = Pose::rest(&self.skeleton);
+        for (g, track) in clip.tracks.iter().enumerate() {
+            let Some(n) = map.0.get(g).copied().flatten().map(usize::from) else { continue };
+            let Some(node) = pose.local.get_mut(n) else { continue };
+            if let Some(r) = track.rotation.sample(frame) {
+                node.rotation = r.normalize();
+            }
+            if let Some(t) = track.translation.sample(frame) {
+                node.translation = t;
+            }
+            if let Some(s) = track.scale.sample(frame) {
+                node.scale = s;
+            }
+        }
+        Some(pose)
+    }
 }
 
 /// The weapon stance an action is looked up under: Halo's mode, weapon

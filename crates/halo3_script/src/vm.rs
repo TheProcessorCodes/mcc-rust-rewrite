@@ -37,7 +37,25 @@ pub trait WorldApi {
     fn switch_zone_set(&mut self, zone_set: usize);
     /// An effect tag goes off here (drawn as a stand-in flash).
     fn effect(&mut self, tag: &str, at: Vec3);
+    /// The player rides a vehicle of ours (the dirt bike). It answers for
+    /// the small vehicle the map's end check accepts (see
+    /// [`PLAYER_RIDE_STANDS_IN_FOR`]).
+    fn player_in_vehicle(&self) -> bool {
+        false
+    }
 }
+
+/// AI starting locations whose vehicle the player's dirt bike stands in
+/// for while he rides it (`ai_vehicle_get_from_starting_location` returns
+/// the player). 120_halo's `mission_halo` ends the mission when a player
+/// reaches `end_trilogy01`, at the frigate hangar's mouth, or when one of
+/// the run's hidden small vehicles reaches `end_trilogy03`, in the air
+/// over the gap before it (presumably because they cannot make the whole
+/// jump the Warthog makes). The bike is such a vehicle: at full throttle it clears
+/// `end_trilogy03` with room to spare but drops through the bottom corner
+/// of `end_trilogy01`. `secret_egg/mongoose` is the Mongoose the map
+/// hides on the run for one player; no other script asks where it is.
+pub const PLAYER_RIDE_STANDS_IN_FOR: &[&str] = &["secret_egg/mongoose"];
 
 /// Choices the game makes before the scripts start.
 #[derive(Clone, Debug)]
@@ -171,6 +189,11 @@ pub struct Runtime {
     pending: Vec<Pending>,
     /// Calls made so far, by function name (for the log and tests).
     pub calls: std::collections::HashMap<String, u32>,
+    /// The mission is won: the script call that said so (`game_won`,
+    /// `end_mission`, or `game_award_level_complete_achievements`, which
+    /// 120_halo's outro calls first, once the player reaches
+    /// `end_trilogy01` in the frigate's hangar mouth).
+    pub mission_over: Option<String>,
 }
 
 impl Runtime {
@@ -237,6 +260,7 @@ impl Runtime {
             rng: 0x2545_F491,
             pending: Vec::new(),
             calls: Default::default(),
+            mission_over: None,
         };
         rt.init_globals();
         rt
@@ -848,6 +872,17 @@ impl Runtime {
                 info!("script {}: {text}", self.thread_name(t));
                 V(Value::Void)
             }
+            // ---- the end of the mission ----
+            "game_won" | "end_mission" | "game_award_level_complete_achievements" => {
+                if self.mission_over.is_none() {
+                    info!("script {}: {name}: the mission is won", self.thread_name(t));
+                    self.mission_over = Some(name.to_string());
+                }
+                // The thread goes no further: the rest of an outro (cutscene
+                // teleports, hiding the frigate) is the game's end screen's
+                // business now.
+                Outcome::Sleep(1 << 40)
+            }
             "script_finished" => {
                 let done = arg(0)
                     .text()
@@ -1073,6 +1108,13 @@ impl Runtime {
             // Cinematic music bookkeeping: nothing to do without cinematics.
             "sound_impulse_mark_as_outro" => V(Value::Void),
             // ---- AI, units and vehicles: the enemies' side ----
+            // The player's bike answers for the map's hidden Mongoose (see
+            // `PLAYER_RIDE_STANDS_IN_FOR`).
+            "ai_vehicle_get_from_starting_location"
+                if world.player_in_vehicle() && arg(0).text().is_some_and(|t| PLAYER_RIDE_STANDS_IN_FOR.contains(&t)) =>
+            {
+                V(Value::Object(Some(ObjectRef::player(0))))
+            }
             n if is_ai_function(n) => {
                 let ctx = HookContext {
                     player: world.player_position(),

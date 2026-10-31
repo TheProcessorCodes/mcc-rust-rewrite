@@ -52,6 +52,8 @@ fn islands_tilt_then_fall() {
     };
     let mut scene = blam_geometry::Scene::default();
     blam_geometry::decode_into(&cache, &options, &mut scene).unwrap();
+    // As the game does: machines stand in their animations' pose at rest.
+    halo3_anim::devices::place_machines(&cache, &mut scene);
     let data = Arc::new(blam_script::ScriptData::read(&cache).unwrap());
     setup::mark_dynamic(&mut scene, &data);
     let mut rt = setup::runtime(&cache, &scene, Arc::clone(&data), Config { editor: true, ..Default::default() });

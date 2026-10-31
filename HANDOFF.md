@@ -471,12 +471,57 @@ mix), keyboard / pad / mouse, saved to `sound-levels.json` next to the exe
 (`halo3_audio/src/levels.rs`); `-` / `=` / K drive the same Master value. A slider multiplies
 on top of the scripts' `sound_class_set_gain` (music, amb). Awaiting the user's playtest.
 
+## The frigate, the end of the run, and `trench_end` (2026-10-30, branch `halo-script`)
+
+User playtest: the Forward Unto Dawn hung broadside across the end of the run. It is
+`trench_frigate`, a device machine (`objects\cinematics\human\frigate\frigate`), placed by the
+scenario (yaw 180, pitch 2.45 degrees); no script moves it. Two causes, both fixed from the map
+data:
+
+- **Machines stand in their animation.** The frigate's model lies nose along +Y; frame 0 of its
+  `device:position` track turns the root a quarter turn. The game never shows a machine
+  unanimated, so every machine with a graph now stands in its `device:position` pose at
+  position 0, taken as values (`halo3_anim::devices::place_machines`, called in `main` before the
+  collision is built; `docs/format/animation.md` 10.3). That turns the open hangar (under the
+  stern, 13 wu wide, 8 high, 34 deep) to face the run. The islands move by about 0.6 wu with it.
+- **Rotation order.** Composed about the world's axes as Reclaimer does (`scenario::rotation`);
+  the other order sank the stern into the run's last ramp (`docs/format/scenario-and-tag-reading.md` 2.3).
+
+Now: the run's last ramp ends at x 370.7, z -71.3; the hangar mouth is 29.7 wu on at z -76.5,
+the stern 4.9 wu over the lip; the hangar's collision matches the drawn bay (floor, walls; open
+mouth). Its back wall is drawn but not in the collision (open into the hull).
+
+**The end.** `mission_halo` waits for a player in `end_trilogy01` (the hangar mouth, floor to
+ceiling) or one of the map's hidden small vehicles in `end_trilogy03` (over the gap), then wakes
+`cin_halo_outro`, which calls `game_award_level_complete_achievements`. The VM marks the mission
+won on that (or `game_won` / `end_mission`) and stops the thread there (no cutscene teleports, the
+frigate stays); the scripts stop. The dirt bike counts as the Mongoose (`secret_egg/mongoose`,
+`vm::PLAYER_RIDE_STANDS_IN_FOR`): headless at full throttle from `trench_end` it reaches 125 km/h,
+flies through `end_trilogy03` and only grazes `end_trilogy01`'s bottom corner, then drops just
+under the hangar's floor. `halo3/src/finish.rs` stops play and shows MISSION COMPLETE with the
+time (game time from the first frame the player is in control after loading, so pauses do not
+count and deaths do not reset it), Restart run (starts a fresh copy with the same arguments) or
+Quit; styled like the pause menu.
+
+**Starts.** A named insertion now starts on the dirt bike (`--foot`: on foot) where it puts the
+player. `trench_run`: the flag `trench_run_player0`, on the floor; the flag has no facing set
+(+X, into the side of the canyon the run starts in), so the start faces up the canyon to the run's
+first trigger, `120_08_trench_encounter_100` (`setup::FACE_TOWARDS`). `trench_end` (ours,
+`halo3_script::setup::insertion`): `ins_trench_run`, then zone set `120_110_120` and the run's
+last waypoint `trench_run_nav08` (75 wu before the ramp), facing `trench_run_nav09` in the
+hangar mouth; `object_management` then switches the run's kill volumes off and makes the frigate's
+lift shafts. Tests: `halo3_anim/tests/frigate.rs`.
+
+```
+& "<worktree>\out\bin\halo3.exe" 120_halo --insertion trench_end
+```
+
 ## Open questions and known gaps
 
-- **Object rotation order.** Yaw/pitch/roll are composed as Blam's intrinsic yaw, then pitch,
-  then roll (`scenario::rotation`). Reclaimer and HaloExport compose the other way round; the two
-  agree whenever only one angle is non-zero, which is almost every placement. Check one tilted
-  crate in game before trusting either (`docs/format/scenario-and-tag-reading.md` 2.3).
+- **Object rotation order.** Settled 2026-10-30 from 120_halo's frigate (yaw 180, pitch 2.45
+  degrees): yaw, pitch, roll are composed about the world's axes as Reclaimer and HaloExport do
+  (`scenario::rotation`); the other order sank the frigate's stern into the run's last ramp
+  (`docs/format/scenario-and-tag-reading.md` 2.3). Not yet compared in the real game.
 - **Instance scale.** Applied as a uniform scale on top of the 3x4 matrix, as Reclaimer does.
   Every instance checked so far has scale 1.
 - **Shader classification** in `blam_geometry` (`Material::shading`) is still by class code

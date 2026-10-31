@@ -369,6 +369,22 @@ the authored result when the base is the reference pose); `pose * delta` is
 the guess. The sentinel's aim centre has one node turned 5 degrees; the rest
 are identity.
 
+### 10.3 Device machines
+
+A machine's tracks (`device:position`, 120_halo's island `tilt_up` / `other_fall`)
+are marked overlays (kind 1) but hold whole node transforms, not differences:
+the island's root sits at z 55.6 in `device:position` frame 0 and 55.8 in the
+render model's rest pose; the frigate's root is at the rest translation
+(-0.032, 0, 0) but turned a quarter turn about Z (`0, 0, 0.707, -0.707`) from
+its rest rotation (identity), and its last frame is 845 wu away, turned half
+round (it flies off). The game never shows a machine unanimated, so a machine
+at rest stands in its `device:position` pose at position 0 taken as values
+(`AnimModel::pose_values`, `devices::place_machines`). For the frigate that
+is the difference between hanging broadside across the Warthog run (the
+model's nose is +Y) and pointing its open hangar, under the stern, at the
+run's end, where the map's end trigger waits. Motion the scripts start is
+measured from the tracks' first frames on top of that (`machine_pose`).
+
 ## 11. Pinned numbers (`cargo test -p blam_anim`)
 
 | map | graphs | decoded | no data in the map |

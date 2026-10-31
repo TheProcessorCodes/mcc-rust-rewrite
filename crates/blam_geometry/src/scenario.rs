@@ -64,10 +64,19 @@ pub fn is_level_vehicle(tag_path: &str) -> bool {
     tag_path.to_ascii_lowercase().starts_with(r"objects\levels\")
 }
 
-/// Blam's yaw, pitch, roll (radians, about Z, then Y nose-up, then X) as a
-/// rotation.
+/// Blam's yaw, pitch, roll (radians) as a rotation: yaw about world Z,
+/// then pitch about world -Y, then roll about world X (each about the
+/// world's axes, not the object's), as Reclaimer composes them
+/// (`docs/format/scenario-and-tag-reading.md` 2.3). The two orders agree
+/// while at most one angle is non-zero. 120_halo's Forward Unto Dawn
+/// (yaw 180 degrees, pitch 2.45) settles it: composed the other way
+/// (yaw, then pitch about the turned object's Y) its stern hangs 0.9 wu
+/// under the lip of the run's last ramp and its hangar floor tips down
+/// towards the mouth; this way the stern clears the ramp by 5 wu and the
+/// map's end trigger (`end_trilogy01`) spans the hangar mouth from floor
+/// to ceiling.
 pub fn rotation(yaw: f32, pitch: f32, roll: f32) -> Quat {
-    Quat::from_rotation_z(yaw) * Quat::from_rotation_y(-pitch) * Quat::from_rotation_x(roll)
+    Quat::from_rotation_x(roll) * Quat::from_rotation_y(-pitch) * Quat::from_rotation_z(yaw)
 }
 
 /// Counts worth printing after a decode.

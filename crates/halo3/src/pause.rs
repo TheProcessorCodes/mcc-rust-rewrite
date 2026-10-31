@@ -27,6 +27,7 @@ pub struct PausePlugin;
 impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Paused>()
+            .init_resource::<crate::finish::RunFinished>()
             .init_resource::<ShownTab>()
             .init_resource::<SliderInput>()
             .add_systems(Startup, spawn_menu)
@@ -381,6 +382,7 @@ struct SliderInput {
 #[allow(clippy::too_many_arguments)]
 fn sound_tab(
     paused: Res<Paused>,
+    finished: Res<crate::finish::RunFinished>,
     shown: Res<ShownTab>,
     time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -395,7 +397,7 @@ fn sound_tab(
     mut labels: Query<(&SliderLabel, &mut TextColor)>,
 ) {
     let Some(mut levels) = levels else { return };
-    let active = paused.0 && shown.0 == SOUND_TAB;
+    let active = paused.0 && !finished.0 && shown.0 == SOUND_TAB;
     let fresh = active && !input.was_active;
     if input.was_active != active {
         input.was_active = active;
@@ -521,10 +523,12 @@ fn toggle(
     mut time: ResMut<Time<Virtual>>,
     mut menus: Query<&mut Visibility, With<PauseMenu>>,
     mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    finished: Res<crate::finish::RunFinished>,
 ) {
     let pressed = keys.just_pressed(KeyCode::Escape)
         || gamepads.iter().any(|p| p.just_pressed(GamepadButton::Start));
-    if !pressed {
+    // The run is over: the completion screen (`finish.rs`) has the keys.
+    if !pressed || finished.0 {
         return;
     }
     paused.0 = !paused.0;
@@ -563,6 +567,7 @@ fn quit(
 #[allow(clippy::too_many_arguments)]
 fn switch_tab(
     paused: Res<Paused>,
+    finished: Res<crate::finish::RunFinished>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut shown: ResMut<ShownTab>,
@@ -571,7 +576,7 @@ fn switch_tab(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut labels: Query<(&TabLabel, &ComputedNode, &UiGlobalTransform, &mut TextColor)>,
 ) {
-    if !paused.0 {
+    if !paused.0 || finished.0 {
         return;
     }
     let key = |a: KeyCode, b: KeyCode| keys.just_pressed(a) || keys.just_pressed(b);
