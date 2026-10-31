@@ -13,6 +13,8 @@ pub mod engine;
 pub mod halo2;
 mod library;
 mod mixer;
+#[cfg(test)]
+mod engine_measure;
 mod weapons;
 
 use std::collections::HashMap;
