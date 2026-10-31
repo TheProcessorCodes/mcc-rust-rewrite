@@ -45,7 +45,7 @@ A Cargo workspace (`cargo build`, `cargo test`). Crates (`README.md` "Layout" ha
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
 | `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound |
 | `reflex_assets` | reads the user's MX vs ATV Reflex install for the bike model (no bevy) |
-| `halo3` | the game binary (bevy 0.20): wires the runtime crates into an app, the pause menu, headless screenshots |
+| `halo3` | the game binary (bevy 0.20): the map menu, wires the runtime crates into an app, the pause menu, headless screenshots |
 | `halo3_core`, `halo3_world`, `halo3_textures`, `halo3_audio`, `halo3_skate`, `halo3_rider`, `halo3_bike`, `halo3_foot`, `halo3_weapons`, `halo3_swim` | the runtime, split out of `halo3` on 2026-10-28 for faster rebuilds |
 
 What the game does now:
@@ -87,7 +87,15 @@ What the game does now:
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
 - **Switching modes.** Jumping off the bike or the board lands you on foot with the ride's speed;
   getting back on from walking keeps it too.
-- **Pause menu.** Escape or Start. It has tabs for free roam, dirt bike and skate controls; Q quits.
+- **Map menu (2026-10-31).** `halo3.exe` with no map opens it (`halo3/src/menu.rs`): Halo 3, Halo 2
+  and Campaign tabs listing every map in the user's MCC install, with MCC's own preview pictures
+  read from `Data\UI\texturepacks\levelstexturepack` at run time. Start Game decodes the map on a
+  thread behind a Halo-ring loading screen and puts it into the same window. Every map is offered:
+  a headless load of all 47 maps not checked by hand (Halo 3 multiplayer, campaign and Halo 2) drew
+  each one with textures and lighting; they have not been walked for spawns, collision or water.
+  Crow's Nest has no preview picture in MCC. A map named on the command line skips the menu.
+- **Pause menu.** Escape or Start. It has tabs for free roam, dirt bike and skate controls. Q goes
+  back to the map menu (unloading the map in place), or quits when the game was started on a map.
 - **Window.** Opens borderless fullscreen.
 - **Headless screenshots.** `halo3.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits. Claude may run this on its own to check visuals; it never opens a window.
 
@@ -187,6 +195,14 @@ Halo) or the look fixes above.
 - Worktrees you did not create in this thread, and any locked agent worktree, belong to the
   user's other sessions; leave them alone.
 - `.gitattributes` forces LF.
+- **The map is a phase of the app** (`halo3_core/src/map.rs`), so the menu can load and unload maps
+  in one window. In a map crate: start-up systems go in `halo3_core::map::MapStartup` (not
+  `Startup`); every `Update` / `PreUpdate` / `PostUpdate` system gets `.run_if(halo3_core::map::ready)`;
+  per-map resources use `MapAppExt`: `init_map_resource` (reset on unload) instead of
+  `init_resource`, and `remove_on_map_unload` for resources a system inserts later. `main.rs` is
+  `load` (decode, no bevy), `install` (resources into the world) and `run`; whatever `install`
+  inserts must be listed for removal in `MenuPlugin::build`. Anything left out carries over into the
+  next map.
 
 ## Dirt bike (2026-10-28)
 
