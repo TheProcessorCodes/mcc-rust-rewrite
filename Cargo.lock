@@ -1684,6 +1684,7 @@ version = "0.1.0"
 dependencies = [
  "blam_cache",
  "blam_geometry",
+ "blam_texture",
  "glam",
 ]
 

@@ -10,3 +10,6 @@ publish.workspace = true
 blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
 glam = { workspace = true }
+
+[dev-dependencies]
+blam_texture = { workspace = true }
