@@ -1,6 +1,6 @@
 # Read-only extra checks for the render_model gap fill in docs/format/scenario-and-tag-reading.md (riverworld.map).  Run: python -I mode_extra_checks.py
-import mmap, struct, sys
-MAP = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps\riverworld.map"
+import os, mmap, struct, sys
+MAP = os.path.join(os.environ["HALO3_MAPS"], "riverworld.map")
 f = open(MAP, "rb"); m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
 def u8(o):  return m[o]
 def i16(o): return struct.unpack_from("<h", m, o)[0]

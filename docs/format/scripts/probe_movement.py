@@ -5,7 +5,7 @@
 # Run: python -I probe_movement.py [map name or path ...]   (default riverworld)
 import math, struct, sys, os
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps"
+MAPS = os.environ.get("HALO3_MAPS", "")
 
 
 def probe(name):

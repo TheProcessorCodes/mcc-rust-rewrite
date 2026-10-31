@@ -3,11 +3,11 @@
 # MCC Halo 3 U13 map.  Run:  python -I mode_riverworld.py [path\to\map] [tag index ...]
 # Default: riverworld.map, tags 173 (mp_spawn_point) and the mp_masterchief render model.
 # Never writes anything.
-import mmap, struct, sys, math
+import os, mmap, struct, sys, math
 
 args = list(sys.argv[1:])
 MAP = args.pop(0) if args and args[0].lower().endswith(".map") else (
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps\riverworld.map")
+    os.path.join(os.environ["HALO3_MAPS"], "riverworld.map"))
 WANT = [int(a) for a in args]
 
 f = open(MAP, "rb")

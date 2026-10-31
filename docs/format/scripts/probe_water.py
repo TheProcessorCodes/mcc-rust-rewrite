@@ -3,7 +3,7 @@
 # Run: python -I probe_water.py [map name or path] [--blocks] [--groups]
 import struct, sys, os
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps"
+MAPS = os.environ.get("HALO3_MAPS", "")
 args = list(sys.argv[1:])
 flags = [a for a in args if a.startswith("--")]
 args = [a for a in args if not a.startswith("--")]

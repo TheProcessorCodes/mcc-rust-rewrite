@@ -5,7 +5,7 @@ user's Reflex install (`crates/reflex_assets`, drawn by `crates/halo3_bike/src/m
 Nothing from Reflex is in this repo: the code finds the install, reads it read-only and keeps
 the result in memory. Without Reflex the bike is the old stick model.
 
-The formats below were worked out in `D:\reflex-tools` (the mw2-to-reflex pipeline's `pkg.py`,
+The formats below were worked out with the Reflex tools (the mw2-to-reflex pipeline's `pkg.py`,
 `bxml.py`, `rtex.py` and the Master Chief skin's `surf.py`, `rmodel.py`); this is our own
 write-up of the facts, checked against the user's install (Steam, 2026-10-29).
 
@@ -34,7 +34,7 @@ the real size (stock files often give only the bytes used in the last 64 KiB chu
 full chunks before it). A chunk whose two sizes match is stored; the others are **Xbox XMem LZX,
 128 KiB window**, one stream per chunk, in XNB-style frames: `FF` + u16 BE frame size + u16 BE
 block size, or u16 BE block size with a 32 KiB frame. The `lzxd` crate decodes them; checked
-byte for byte against the reflex-tools helper on the 450F's surface, model and a texture.
+byte for byte against the Reflex tools' helper on the 450F's surface, model and a texture.
 
 ## Assets
 
@@ -86,7 +86,7 @@ turns it into the bike frame: metres, +X the rider's left, triangles re-wound.
 | overall | 0.81 wide (bars), 1.25 tall, 2.14 long |
 
 `cargo test -p reflex_assets -- --nocapture` prints these from the install. Reflex's own
-physics file for the bike (`mx450f_vehicle.json` in `D:\reflex-tools\physics`) gives tyre radii
+physics file for the bike (`mx450f_vehicle.json`) gives tyre radii
 1.17 / 1.04 ft (0.357 / 0.317 m); the drawn tyres are 0.345 / 0.335, and the physics uses the
 drawn ones so the tyres sit on the ground.
 
@@ -130,8 +130,7 @@ colours. Holes in DXT1/5 alpha (chain, spokes) are alpha-masked.
 
 ## The Cortana kit
 
-The user painted it for Reflex itself (`D:\reflex-tools\physics\reflex\master-chief-skin`,
-`tools\cortana.py`): holographic blue plastics over the THQ / Green sheet with the number plates
+The user painted it for Reflex itself: holographic blue plastics over the THQ / Green sheet with the number plates
 kept stock. An install where that kit is in place (the sheet is mostly blue) is used as is.
 Otherwise `reflex_assets::cortana::paint` repaints the stock sheet the same way at start-up, in
 the background.

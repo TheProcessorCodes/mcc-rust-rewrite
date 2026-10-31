@@ -5,7 +5,7 @@ Primary test file: `riverworld.map` (Valhalla). Shared resources: `shared.map`, 
 
 Everything here is a format fact (offsets, sizes, meanings, algorithms in our own words),
 not Reclaimer code. Each fact names the Reclaimer source file and member it was read from
-so a reviewer can re-check it. Reclaimer lives at `D:\reflex-tools\halo-tools\Reclaimer`
+so a reviewer can re-check it. Reclaimer lives at <https://github.com/Gravemind2401/Reclaimer>
 (GPL-3.0, read-only); file paths below are relative to `Reclaimer.Blam\Blam\` unless noted.
 
 Verification was done with `tools\probe_resources.py` (run it as

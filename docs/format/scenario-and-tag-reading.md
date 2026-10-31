@@ -4,7 +4,7 @@ Target: MCC Halo 3 build `Dec 21 2023 22:31:37` = Reclaimer `CacheType.MccHalo3U
 Primary test file: `riverworld.map` (Valhalla). Written 2026-10-27.
 
 Everything below is a **format fact** (offsets, sizes, semantics, algorithms in words).
-Reclaimer (GPL-3.0, clone at `D:\reflex-tools\halo-tools\Reclaimer`, commit `36224d7`) is cited
+Reclaimer (GPL-3.0, <https://github.com/Gravemind2401/Reclaimer>, commit `36224d7`) is cited
 as the source so a reviewer can re-check; no Reclaimer code is reproduced. Facts marked
 **VERIFIED** were checked byte-for-byte on the real map with
 `docs/format/verify/scnr_riverworld.py` (`python -I`, read-only).
@@ -331,7 +331,7 @@ M = Scale(s)  *  FromQuaternion(q)  *  Translation(pos)      // System.Numerics 
 ```
 
 `ScenarioTag.ConfigurePlacements` calls it as `SetTransform(placement.Scale,
-placement.Position, (Quaternion)placement.Rotation)`; HaloExport (`D:\reflex-tools\halo-tools\HaloExport\Program.cs`,
+placement.Position, (Quaternion)placement.Rotation)`; HaloExport (`HaloExport\Program.cs`,
 `ExportObjects`) builds the identical matrix. Row-vector convention means `world = local * M`
 and the translation sits in row 4 (`M41..M43`).
 
@@ -533,10 +533,10 @@ rot (-0.0028, 0.0255, 0.0692); crate at 0x05B23714 `generator` rot (2.0748, -0.0
 ## 5. Re-running the checks
 
 ```
-cd "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\docs\format\verify"
+cd docs\format\verify
 python -I scnr_riverworld.py                      # riverworld (default), prints sections 4.1-4.4
 python -I scnr_riverworld.py "<path>\zanzibar.map"
-& "D:\reflex-tools\halo-tools\dotnet\dotnet.exe" run --project rotcheck\rotcheck.csproj -c Release   # rotation probe (2.3)
+dotnet run --project rotcheck\rotcheck.csproj -c Release   # rotation probe (2.3)
 ```
 
 Both tools only read the map files. The rotation probe re-expresses the one-line quaternion
@@ -754,7 +754,7 @@ node space.** Three independent confirmations:
 
 1. mp_spawn_point (tag 173): its only node `root` sits at (0, 0, 0.5) wu, yet the disc section
    decodes to z `[-0.000, 0.033]` and the plasma column to `[0.013, 0.968]`, inside the model
-   bounds Z `[-0.0002, 0.9679]`. HaloExport's glTF (`D:\reflex-tools\halo-exports\riverworld\scene.gltf`,
+   bounds Z `[-0.0002, 0.9679]`. HaloExport's glTF (`<HaloExport output>\riverworld\scene.gltf`,
    node `respawn_point#scenery-0000`, mesh 76) has vertex Y (up) in `[-0.0007, 0.1015]` m for
    the disc and up to 2.95 m for the column, with the node's translation 4.5727 m / 3.048 =
    1.50024 wu = the placement z exactly: **no node offset was applied**, and that export is the

@@ -2,7 +2,7 @@
 # the .map is read into memory, nothing is written next to it.
 import os, struct
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo1\maps"
+MAPS = os.environ.get("HALO1_MAPS", "")
 
 # Section 2: tag data is loaded at this address; pointers inside it are
 # addresses, made file offsets by subtracting it and adding the tag data

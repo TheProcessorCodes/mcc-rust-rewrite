@@ -12,7 +12,7 @@ import struct
 import sys
 import zlib
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps"
+MAPS = os.environ.get("HALO3_MAPS", "")
 MAP = sys.argv[1] if len(sys.argv) > 1 else os.path.join(MAPS, "riverworld.map")
 
 with open(MAP, "rb") as f:

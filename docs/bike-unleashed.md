@@ -11,7 +11,7 @@ The bike physics from before this rewrite is kept on the branches
 ## Sources
 
 - **The tuning data**: the user's own Unleashed install (Steam,
-  `D:\Programs\SteamLibrary\steamapps\common\MX vs. ATV Unleashed`). `data\common.pak` holds
+  the Unleashed install folder). `data\common.pak` holds
   `Data\Veh\mx_*.phy`, plain INI text, one per bike (Pro / Race, 50 / 125 / 250 / 500, `A` and `P`
   variants that differ in a few tyre values). The `.pak` format: a `u32` entry count, then per
   entry a 100-byte name, `u32` offset and `u32` size; offsets count from the end of that table.
@@ -91,7 +91,7 @@ the gas lifts it (175). X also gives a 125 lbf sideways push.
 
 The bike now rides on **Reflex v1** by default (`crates/halo3_bike/src/reflex.rs`): the model
 above, unchanged in how it simulates, with stock MX vs ATV Reflex's mx450f numbers and four of
-Reflex's rules (from `D:\reflex-tools\physics`, as the earlier Reflex-style bike used):
+Reflex's rules (as the earlier Reflex-style bike used):
 
 - Reflex's mass (177 kg), inertia, springs (forks 20.2 kN/m, shock 13.9 kN/m), bump / rebound
   dampers, travel (0.40 / 0.37 m), brakes (339 / 475 N·m), torque curve (55 N·m, 11,500 rpm

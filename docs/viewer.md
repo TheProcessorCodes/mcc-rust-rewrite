@@ -719,7 +719,7 @@ way:
 
 ```
 & "target\debug\halo3.exe" coagulation
-& "target\debug\halo3.exe" "C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11\coagulation.map"
+& "target\debug\halo3.exe" "<MCC>\halo2\h2_maps_win64_dx11\coagulation.map"
 target\debug\halo3.exe coagulation --shot .scratch\shots\coagulation --view spawn --view overview
 ```
 

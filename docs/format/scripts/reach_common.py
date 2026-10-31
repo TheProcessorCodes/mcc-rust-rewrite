@@ -11,10 +11,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import h3_common  # noqa: E402
 
-MAPS = os.environ.get(
-    "HALOREACH_MAPS",
-    r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\haloreach\maps",
-)
+MAPS = os.environ.get("HALOREACH_MAPS", "")
 POINTER_BASE = 0x50000000
 
 MP_MAPS = [

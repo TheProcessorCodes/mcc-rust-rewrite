@@ -1,8 +1,8 @@
 # What a Halo 3 runtime must expose to plug in the Skate 3 crates
 
-Written 2026-10-27 from the `mw2-skate-3-src` sources (read-only). Every fact below names the
+Written 2026-10-27 from the MW2 Skate 3 mashup's sources. Every fact below names the
 file it came from so a reviewer can re-check it. Paths are relative to
-`D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2-skate-3-src\src\mashup\` unless written in full.
+the root of <https://github.com/chasmlol/2010-rust-rewrite-mashup> unless written in full.
 
 The short version: the skate engine (`skate/crates/skate-host`) is a black box that takes
 **a triangle soup, a list of rail polylines, a spawn point and a controller state**, and
@@ -452,12 +452,12 @@ the units and where the pose goes.
 Found through the installed mashup's `.env`:
 
 ```text
-D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\.env
-  IW4L_GAMES="D:/Programs/SteamLibrary/steamapps/common/Call of Duty Modern Warfare 2"
-  IW4L_SKATE_ASSETS="D:/GAME ISO AND ROMS/PC - AI MASHUP/mw2 skate 3/skate-data/assets"
+<MW2 Skate 3>\.env
+  IW4L_GAMES="<MW2 install>"
+  IW4L_SKATE_ASSETS="<MW2 Skate 3>/skate-data/assets"
 ```
 
-`D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2 skate 3\skate-data\` (188 MB, written 2026-10-14 by
+`<MW2 Skate 3>\skate-data\` (188 MB, written 2026-10-14 by
 `skate\iw4l-skate-convert.exe`; `conversion.log` = one line
 `DEFAULT_SKATER_EXTRACTION_OK models=10 textures=33 ...`):
 
@@ -494,8 +494,8 @@ derived JSON files, and even those only depend on `skater.glb`.
 
 ## 10. The Halo conversion
 
-**Facts** (HANDOFF.md; `D:\reflex-tools\halo-tools\README.md` lines 60-64;
-`D:\reflex-tools\halo-exports\cyberdyne\halo_export.json` `units`/`axes`):
+**Facts** (HANDOFF.md; `halo-tools\README.md` lines 60-64;
+`<HaloExport output>\cyberdyne\halo_export.json` `units`/`axes`):
 
 - Halo world units are right-handed, **+Z up**, +X forward, +Y left.
 - **1 world unit = 10 ft = 3.048 m** (Reclaimer `WorldUnitScale`; verified by HaloExport's
@@ -577,7 +577,7 @@ covers 19 % more Halo distance per tick, so a speed shown to the player should b
    moved externally" switch in whatever movement code exists (noclip for now).
 7. **A camera consumer** that accepts `(position, forward, up, vertical fov)` from the pose.
 8. The Skate 3 asset folder path (`IW4L_SKATE_ASSETS` or our own setting) pointing at
-   `...\mw2 skate 3\skate-data\assets`, or run the same converter into our project.
+   `<MW2 Skate 3>\skate-data\assets`, or run the same converter into our project.
 
 ---
 

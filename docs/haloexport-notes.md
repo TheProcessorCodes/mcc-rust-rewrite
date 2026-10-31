@@ -1,8 +1,8 @@
 # HaloExport notes: how the C# exporter walks an MCC Halo 3 map with Reclaimer
 
-Written 2026-10-27 from reading `D:\reflex-tools\halo-tools\HaloExport\Program.cs` (1113 lines),
-`D:\reflex-tools\halo-tools\README.md` and the Reclaimer sources it calls into
-(`D:\reflex-tools\halo-tools\Reclaimer`, commit `36224d7`, GPL-3.0). This file records **format facts and
+Written 2026-10-27 from reading `HaloExport\Program.cs` (1113 lines),
+`halo-tools\README.md` and the Reclaimer sources it calls into
+(<https://github.com/Gravemind2401/Reclaimer>, commit `36224d7`, GPL-3.0). This file records **format facts and
 the order of operations** in plain words. No Reclaimer code is copied; every fact names the Reclaimer
 source file and property so a reviewer can re-check it. Offsets are given as decimal (hex).
 

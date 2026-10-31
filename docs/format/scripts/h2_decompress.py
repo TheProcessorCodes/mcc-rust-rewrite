@@ -4,7 +4,7 @@
 # Run: python -I h2_decompress.py [map name or path] [out path]
 import os, struct, sys, zlib
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11"
+MAPS = os.environ.get("HALO2_MAPS", "")
 name = sys.argv[1] if len(sys.argv) > 1 else "coagulation"
 path = name if name.lower().endswith(".map") else os.path.join(MAPS, name + ".map")
 here = os.path.dirname(os.path.abspath(__file__))

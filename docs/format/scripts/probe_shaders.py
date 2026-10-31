@@ -3,7 +3,7 @@
 # Writes nothing. Companion to docs/format/shaders.md.
 import struct, sys, os
 
-MAPS = r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo3\maps"
+MAPS = os.environ.get("HALO3_MAPS", "")
 args = list(sys.argv[1:])
 path = args.pop(0) if args and args[0].lower().endswith(".map") else os.path.join(MAPS, "riverworld.map")
 d = open(path, "rb").read()

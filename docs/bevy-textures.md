@@ -1,8 +1,8 @@
 # Uploading Halo's textures in bevy 0.20 and applying them to `StandardMaterial`
 
 Written 2026-10-27 by reading the bevy 0.20.0 / wgpu 30.0.1 sources in the local cargo registry
-(`C:\Users\gibso\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\`) and the IW4L material
-code (`D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2-skate-3-src\src\mashup\...`). Everything here is
+(`~\.cargo\registry\src\index.crates.io-*\`) and the IW4L material
+code (<https://github.com/chasmlol/2010-rust-rewrite-mashup>). Everything here is
 about **our own code** in `crates\halo3\src\world.rs`; it does not depend on any map file and
 contains no Reclaimer facts. The bitmap tag / resource page layout (how to get the BCn bytes out
 of `shared.map`) is another reader's topic; this document starts where that one ends: you hold
@@ -505,7 +505,7 @@ in A and G) bevy has no decoder; those would need a CPU swizzle to RG/BC5 or a c
 
 ## 9. Prior art: how IW4L (`asset_material`) uploads MW2's textures
 
-`D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2-skate-3-src\src\mashup\crates\asset_material\src\`:
+`crates\asset_material\src\`:
 
 - **Image build** (`material_images.rs:313-327`, `material_images\materialization.rs:265-283`):
   `Image::new_uninit(Extent3d{w,h,1}, TextureDimension::D2, format, RenderAssetUsages::RENDER_WORLD)`;
@@ -535,7 +535,7 @@ in A and G) bevy has no decoder; those would need a CPU swizzle to RG/BC5 or a c
 ## 10. Prior art: IW4L's Halo stand-in terrain shader
 
 The Valhalla stand-in does not use bevy's PBR at all; it has its own wgpu pass
-(`D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2-skate-3-src\src\mashup-halo3-valhalla\crates\render_gpu\src\drawsurf\halo_world.rs`,
+(the mashup's Halo 3 Valhalla build, `crates\render_gpu\src\drawsurf\halo_world.rs`,
 WGSL at lines 430-545; textures there are RGBA8 sRGB from HaloExport PNGs with CPU box-filtered
 mips, `docs\iw4l-notes.md` section 8). What its fragment shader does, in words:
 

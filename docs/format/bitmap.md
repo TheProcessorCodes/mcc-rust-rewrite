@@ -7,7 +7,7 @@ level, handing raw BC1/BC2/BC3/BC5 blocks and raw RGBA/BGRA pixels to wgpu witho
   (ordinal 22, `MccHalo3 16 < ... < MccHalo3U13 22 < Halo3ODST 23`; Reclaimer version ranges are
   `Min` inclusive, `Max` exclusive, see `resources.md` section 0). Every field below is resolved to
   its U13 value only.
-- Facts come from Gravemind2401's Reclaimer (GPL-3.0, clone at `D:\reflex-tools\halo-tools\Reclaimer`,
+- Facts come from Gravemind2401's Reclaimer (GPL-3.0, <https://github.com/Gravemind2401/Reclaimer>,
   read-only). Only format facts are recorded (offsets, sizes, enums, meanings, algorithms in our own
   words); no code was copied. Each fact names the Reclaimer file and member it was read from. Paths
   are relative to `Reclaimer.Blam\Blam\` unless they start with `Reclaimer.Core` or `Utilities`.
@@ -459,7 +459,7 @@ Source: `Halo3\BitmapTag.cs` `ToDds`, `Utilities\TextureUtils.cs` `GetDds`, `Uti
 | Xbox LZX (`XCompress`), Oodle | other engines | no: pages are raw deflate (`resources.md` 6) |
 | `ReadData(PageType.Auto, mip0 length)` | always | matches: secondary page = mip 0 when present |
 
-HaloExport (`D:\reflex-tools\halo-tools\HaloExport\Program.cs`) only ever calls `ToDds(0)` and
+HaloExport (`HaloExport\Program.cs`) only ever calls `ToDds(0)` and
 decodes to BGRA32 PNGs; it never used mips or the other bitmaps of a tag, so the reference exports say
 nothing about mip layout; the checks above are the first on this machine.
 
