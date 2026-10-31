@@ -46,24 +46,27 @@ the format descriptions the code is written from.
 ## First run
 
 Nothing from any of the three games ships with this project. The first time `halo3` opens a
-window it asks for the player's own copies, once. All three are required: cancelling any of
-them stops setup and the game does not start.
+window it asks for the player's own copies, once: a Windows folder picker for each game in
+turn. Nothing is searched for; the game uses only the folders the player chooses. All three
+are required: cancelling any of them stops setup and the game does not start.
 
-1. **Halo: The Master Chief Collection.** Found through Steam's library list and confirmed,
-   or picked by hand; the Halo 3 build is checked.
-2. **Skate 3 for Xbox 360.** Either the disc image
-   (`.iso`) or the extracted game's `default.xex` with its `data` folder. From an image only
+1. **Halo: The Master Chief Collection.** The MCC folder (or its `halo3` / `halo3\maps`
+   folder); the Halo 3 build is checked.
+2. **Skate 3 for Xbox 360.** The folder of the extracted game (`default.xex` with its `data`
+   folder, directly inside or one folder down) or the folder holding its disc image (`.iso`,
+   the only one there). From an image only
    what the converter reads is copied out (`default.xex`, four `.big` files and `data\anim`,
    about 512 MB, deleted afterwards). The
    converter is IW4L's `iw4l-skate-convert.exe`, looked for at `skate\` beside `halo3.exe`
    (the release layout), else the player is asked to point at it.
-3. **MX vs ATV Reflex** (PC; the dirt bike's model and engine sound). Saved without a
-   question when Steam has it, else picked by hand.
+3. **MX vs ATV Reflex** (PC; the dirt bike's model and engine sound). The folder with its
+   `Database` folder.
 
 The answers and the converted Skate 3 data go in `%LOCALAPPDATA%\Halo3Rewrite` (`setup.env`,
 `skate-data\`), per user, so every copy of the exe shares them. `halo3 --setup` asks again.
-Headless `--shot` and `--menu-shot` runs never show a dialog or write the setup: they use what
-is saved (MCC and Reflex can also come from Steam) and stop with a message if anything is missing.
+Headless `--shot` and `--menu-shot` runs never show a dialog or write the setup: they use only what
+is saved (or the dev overrides) and stop with a message if anything is missing. So do tests:
+they skip when setup has not run.
 
 Dev overrides: `HALO3_MCC`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO3_SKATE_ASSETS` (or
 `IW4L_SKATE_ASSETS`), `HALO3_SKATE_CONVERTER`, `REFLEX_GAME`, `HALO3_SETUP_DIR`.

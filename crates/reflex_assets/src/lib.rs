@@ -53,9 +53,9 @@ pub fn is_reflex(root: &Path) -> bool {
     game_paths::is_reflex(root)
 }
 
-/// The Reflex install: `$REFLEX_GAME` (a developer override), the one
-/// first-run setup saved (`halo3_setup`), else Steam's libraries
-/// (`game_paths::reflex_root`). `None` when there is no Reflex; the bike is
+/// The Reflex install: `$REFLEX_GAME` (a developer override), else the one the
+/// player chose in first-run setup (`halo3_setup`;
+/// `game_paths::reflex_root`). `None` when there is no Reflex; the bike is
 /// then drawn as sticks.
 pub fn find_reflex() -> Option<PathBuf> {
     game_paths::reflex_root()

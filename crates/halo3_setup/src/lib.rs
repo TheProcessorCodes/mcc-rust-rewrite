@@ -1,10 +1,12 @@
 //! First-launch setup: the three games this one is played with, each the
-//! player's own copy, asked for once:
+//! player's own copy. The player chooses each one's folder in a Windows
+//! folder picker; nothing is searched for. Asked once:
 //!
 //! - Halo: The Master Chief Collection (its Halo 3 build is checked);
-//! - Skate 3 for Xbox 360, a disc image (`.iso`) or the extracted game's
-//!   `default.xex`, from which the few files skating needs are converted
-//!   once with the bundled converter;
+//! - Skate 3 for Xbox 360: a folder holding the extracted game
+//!   (`default.xex` with `data` beside it) or the disc image (`.iso`), from
+//!   which the few files skating needs are converted once with the bundled
+//!   converter;
 //! - MX vs ATV Reflex (the dirt bike's model and engine sound).
 //!
 //! All three are required: cancelling any of them stops setup, and the game
@@ -23,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use game_paths::{Settings, key};
-use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
+use rfd::{MessageDialog, MessageLevel};
 
 const TITLE: &str = "Halo 3 Rust Rewrite";
 /// The converter's file name, as IW4L ships it.
@@ -46,8 +48,8 @@ const RUN_SETUP: &str = "Run halo3 once with a window to set it up.";
 
 /// Makes sure MCC, Skate 3 and Reflex are all set up; an `Err` means the
 /// game must not start. With `interactive` false (headless screenshots) it
-/// never shows a dialog or writes the setup: it uses what is saved or found.
-/// `redo` forgets the saved answers and asks again.
+/// never shows a dialog or writes the setup: it uses only what is saved (or
+/// the dev overrides). `redo` forgets the saved answers and asks again.
 pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
     let path = game_paths::settings_path();
     let mut settings = Settings::read(&path);
@@ -58,6 +60,29 @@ pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
         settings.write(&path)?;
     }
 
+    let mcc_ready = std::env::var_os("HALO3_MCC").is_some()
+        || std::env::var_os("HALO3_MAPS").is_some()
+        || game_paths::saved_mcc().is_some();
+    let skate_ready = game_paths::skate_assets().is_some_and(|a| game_paths::is_skate_assets(&a));
+    let reflex_ready = game_paths::reflex_root().is_some();
+    if !(mcc_ready && skate_ready && reflex_ready) {
+        if !interactive {
+            let missing: Vec<&str> = [(mcc_ready, "Halo MCC"), (skate_ready, "Skate 3"), (reflex_ready, "MX vs ATV Reflex")]
+                .into_iter()
+                .filter(|(ready, _)| !ready)
+                .map(|(_, name)| name)
+                .collect();
+            return Err(format!("{} not set up yet. {RUN_SETUP}", missing.join(", ")));
+        }
+        inform(
+            "Welcome! This game is played with your own copies of three games:\n\n\
+             1. Halo: The Master Chief Collection (PC)\n\
+             2. Skate 3 (Xbox 360): the extracted game or its disc image (.iso)\n\
+             3. MX vs ATV Reflex (PC)\n\n\
+             You will be asked for each game's folder in turn. This is asked once.",
+        );
+    }
+
     prepare_mcc(&mut settings, &path, interactive)?;
     let assets = prepare_skate(&mut settings, &path, interactive)?;
     board::ensure(&assets).map_err(|e| format!("Could not prepare the skateboard: {e}"))?;
@@ -65,29 +90,16 @@ pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
 }
 
 /// MX vs ATV Reflex: the dirt bike's Dakumoto 450F and its engine
-/// recordings. Saved without a question when Steam has it, else picked.
+/// recordings.
 fn prepare_reflex(settings: &mut Settings, path: &Path, interactive: bool) -> Result<(), String> {
     if std::env::var_os("REFLEX_GAME").is_some() || game_paths::saved_reflex().is_some() {
         return game_paths::reflex_root()
             .map(|_| ())
             .ok_or_else(|| "REFLEX_GAME is not an MX vs ATV Reflex folder.".to_owned());
     }
-    if let Some(found) = game_paths::find_reflex() {
-        // Headless runs only read; Steam is searched again each time.
-        if interactive {
-            settings.set_path(key::REFLEX, &found);
-            settings.write(path)?;
-        }
-        return Ok(());
-    }
     if !interactive {
-        return Err(format!("MX vs ATV Reflex was not found. {RUN_SETUP}"));
+        return Err(format!("MX vs ATV Reflex is not set up yet. {RUN_SETUP}"));
     }
-    inform(
-        "This game also needs your own copy of MX vs ATV Reflex (PC): the dirt bike is its \
-         Dakumoto 450F, with its engine sounds.\n\n\
-         Select your MX vs ATV Reflex folder (the one containing the Database folder).",
-    );
     let root = locate_reflex().ok_or("Setup cancelled: MX vs ATV Reflex is needed to play.")?;
     settings.set_path(key::REFLEX, &root);
     settings.write(path)
@@ -96,7 +108,7 @@ fn prepare_reflex(settings: &mut Settings, path: &Path, interactive: bool) -> Re
 fn locate_reflex() -> Option<PathBuf> {
     loop {
         let picked = rfd::FileDialog::new()
-            .set_title("Select your MX vs ATV Reflex folder")
+            .set_title("3 of 3: Select your MX vs ATV Reflex folder (the one with the Database folder)")
             .pick_folder()?;
         if game_paths::is_reflex(&picked) {
             return Some(picked);
@@ -129,10 +141,7 @@ fn prepare_mcc(settings: &mut Settings, path: &Path, interactive: bool) -> Resul
         return check_mcc(&saved);
     }
     if !interactive {
-        let found = game_paths::find_mcc().ok_or(
-            "Halo: The Master Chief Collection was not found. Run halo3 once without --shot to choose it.",
-        )?;
-        return check_mcc(&found);
+        return Err(format!("Halo: The Master Chief Collection is not set up yet. {RUN_SETUP}"));
     }
     let mcc = locate_mcc()?;
     settings.set_path(key::MCC, &mcc);
@@ -164,33 +173,11 @@ fn check_mcc(root: &Path) -> Result<(), String> {
 }
 
 fn locate_mcc() -> Result<PathBuf, String> {
-    if let Some(found) = game_paths::find_mcc() {
-        let use_it = MessageDialog::new()
-            .set_title(TITLE)
-            .set_description(format!(
-                "Found Halo: The Master Chief Collection here:\n\n{}\n\nUse this copy?",
-                found.display()
-            ))
-            .set_buttons(MessageButtons::YesNo)
-            .show();
-        if use_it == MessageDialogResult::Yes {
-            match check_mcc(&found) {
-                Ok(()) => return Ok(found),
-                Err(e) => inform(&e),
-            }
-        }
-    } else {
-        inform(
-            "Welcome! This game plays on your own copy of Halo: The Master Chief Collection.\n\n\
-             Select your MCC folder (the one containing the halo3 folder). \
-             Halo 3 must be installed in it.",
-        );
-    }
     loop {
         let picked = rfd::FileDialog::new()
-            .set_title("Select your Halo: The Master Chief Collection folder")
+            .set_title("1 of 3: Select your Halo: The Master Chief Collection folder (the one with the halo3 folder)")
             .pick_folder()
-            .ok_or("Setup cancelled: no Master Chief Collection folder was selected.")?;
+            .ok_or("Setup cancelled: Halo: The Master Chief Collection is needed to play.")?;
         let Some(root) = game_paths::mcc_from_pick(&picked) else {
             inform(&format!(
                 "{}\n\ndoesn't look like the Master Chief Collection with Halo 3 installed. \
@@ -213,7 +200,7 @@ fn prepare_skate(settings: &mut Settings, path: &Path, interactive: bool) -> Res
         return Ok(assets);
     }
     if !interactive {
-        return Err(format!("Skate 3 has not been set up. {RUN_SETUP}"));
+        return Err(format!("Skate 3 is not set up yet. {RUN_SETUP}"));
     }
     let assets = convert_skate(settings)?;
     settings.set_path(key::SKATE_ASSETS, &assets);
@@ -223,31 +210,66 @@ fn prepare_skate(settings: &mut Settings, path: &Path, interactive: bool) -> Res
 
 const SKATE_CANCELLED: &str = "Setup cancelled: Skate 3 is needed to play.";
 
+/// What the player's Skate 3 folder holds.
+#[derive(Debug, PartialEq)]
+enum SkateSource {
+    /// The extracted game's `default.xex` (its `data` folder beside it).
+    Xex(PathBuf),
+    /// A disc image.
+    Iso(PathBuf),
+}
+
+/// The Skate 3 in a chosen folder: `default.xex` in it or in a folder just
+/// inside it (extractions often nest one level), else the one `.iso` in it.
+fn skate_source(folder: &Path) -> Result<SkateSource, String> {
+    let xex = folder.join("default.xex");
+    if xex.is_file() {
+        return Ok(SkateSource::Xex(xex));
+    }
+    let entries: Vec<PathBuf> = std::fs::read_dir(folder)
+        .map_err(|e| format!("cannot read {}: {e}", folder.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    if let Some(xex) = entries.iter().map(|d| d.join("default.xex")).find(|x| x.is_file()) {
+        return Ok(SkateSource::Xex(xex));
+    }
+    let isos: Vec<&PathBuf> = entries
+        .iter()
+        .filter(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("iso")))
+        .collect();
+    match isos.as_slice() {
+        [iso] => Ok(SkateSource::Iso((*iso).clone())),
+        [] => Err(format!(
+            "{}\n\nhas neither Skate 3's default.xex nor a disc image (.iso). Select the folder of the \
+             extracted game, or the folder the .iso is in.",
+            folder.display()
+        )),
+        _ => Err(format!(
+            "{}\n\nhas more than one .iso. Put Skate 3's disc image in a folder of its own and select that.",
+            folder.display()
+        )),
+    }
+}
+
 fn convert_skate(settings: &mut Settings) -> Result<PathBuf, String> {
-    inform(
-        "This game also needs your own copy of Skate 3 (Xbox 360): skating runs on its data.\n\n\
-         Select either the disc image (.iso) or the extracted game's default.xex with its data \
-         folder beside it. A few files are converted once and kept; the game itself is not changed.",
-    );
     let converter = find_converter(settings)?.ok_or(SKATE_CANCELLED)?;
     let dir = game_paths::settings_dir();
     let out = dir.join("skate-data");
     loop {
         let picked = rfd::FileDialog::new()
-            .set_title("Select your Skate 3 disc image (.iso) or default.xex")
-            .add_filter("Skate 3 (.iso or default.xex)", &["iso", "xex"])
-            .pick_file()
+            .set_title("2 of 3: Select your Skate 3 folder (the extracted game, or the folder with its .iso)")
+            .pick_folder()
             .ok_or(SKATE_CANCELLED)?;
-        let result = if picked.extension().is_some_and(|e| e.eq_ignore_ascii_case("iso")) {
-            let staging = dir.join("skate-disc");
-            let result = unpack_disc(&picked, &staging)
-                .and_then(|xex| run_converter(&converter, &xex, &out));
-            // The copied game files are only needed for the conversion.
-            std::fs::remove_dir_all(&staging).ok();
-            result
-        } else {
-            run_converter(&converter, &picked, &out)
-        };
+        let result = skate_source(&picked).and_then(|source| match source {
+            SkateSource::Iso(iso) => {
+                let staging = dir.join("skate-disc");
+                let result = unpack_disc(&iso, &staging).and_then(|xex| run_converter(&converter, &xex, &out));
+                // The copied game files are only needed for the conversion.
+                std::fs::remove_dir_all(&staging).ok();
+                result
+            }
+            SkateSource::Xex(xex) => run_converter(&converter, &xex, &out),
+        });
         match result {
             Ok(()) => break,
             Err(e) => inform(&format!("{e}\n\nSelect Skate 3 again.")),
@@ -476,6 +498,30 @@ mod tests {
             }
         }
         eprintln!("{checked} files match IW4L's conversion");
+    }
+
+    #[test]
+    fn skate_folder_holds_xex_nested_xex_or_one_iso() {
+        use super::{SkateSource, skate_source};
+        let root = std::env::temp_dir().join(format!("halo3-skate-source-{}", std::process::id()));
+        let make = |rel: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, b"x").unwrap();
+            p
+        };
+        let flat = make("flat/default.xex");
+        assert_eq!(skate_source(&root.join("flat")).unwrap(), SkateSource::Xex(flat));
+        let nested = make("nested/Skate 3/default.xex");
+        assert_eq!(skate_source(&root.join("nested")).unwrap(), SkateSource::Xex(nested));
+        let iso = make("disc/skate3.ISO");
+        assert_eq!(skate_source(&root.join("disc")).unwrap(), SkateSource::Iso(iso));
+        make("two/a.iso");
+        make("two/b.iso");
+        assert!(skate_source(&root.join("two")).is_err());
+        std::fs::create_dir_all(root.join("empty")).unwrap();
+        assert!(skate_source(&root.join("empty")).is_err());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     /// `board.json` and `rig.json` from the user's converted data match what

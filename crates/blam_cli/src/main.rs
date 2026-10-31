@@ -19,7 +19,7 @@
 //! ```
 //!
 //! `<map>` is a path, or a bare name such as `riverworld` looked up in
-//! `$HALO3_MAPS`, else the MCC install `halo3` setup saved or Steam lists.
+//! `$HALO3_MAPS`, else the MCC folder chosen in `halo3` setup.
 
 mod geometry;
 mod halo2;
@@ -38,7 +38,7 @@ use blam_geometry::{Options, Scene, WORLD_UNIT_METRES};
 use glam::Vec3;
 
 /// Halo 3's maps folder in the player's MCC (`game_paths`: `$HALO3_MAPS`,
-/// the game's saved setup, else Steam's libraries).
+/// the MCC folder chosen in the game's setup).
 pub(crate) fn maps_dir() -> PathBuf {
     game_paths::halo3_maps().unwrap_or_default()
 }
@@ -149,7 +149,7 @@ impl Args {
 
 pub(crate) fn usage() -> ! {
     eprintln!(
-        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS, else the MCC install halo3 setup saved or Steam lists."
+        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS, else the MCC folder chosen in halo3 setup."
     );
     std::process::exit(2)
 }

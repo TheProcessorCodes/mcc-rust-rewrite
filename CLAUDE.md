@@ -24,8 +24,8 @@ far, the paths on disk and the open decision.
 - **Build for a public release.** Assume a stranger downloads this and has only their own
   MCC install, Skate 3 copy and MX vs ATV Reflex install. Nothing may depend on this PC's paths, the
   `mw2 skate 3` folder or game data in the repo or the release. The one-time first-run setup
-  (`crates/halo3_setup`, README "First run") finds or asks for MCC, Skate 3 (`.iso` or
-  `default.xex`) and Reflex, all three required to play, checks them, converts what it needs, and saves it all per user in
+  (`crates/halo3_setup`, README "First run") asks the player to choose the folder of MCC, Skate 3 (extracted or `.iso`) and Reflex in
+  a folder picker (never searches the disk for them), all three required to play, checks them, converts what it needs, and saves it all per user in
   `%LOCALAPPDATA%\Halo3Rewrite`, so it never asks again. New code gets game paths only
   through `crates/game_paths` (`halo3_maps()`, `halo3_map(name)` for tests, `skate_assets()`,
   ...), never a hard-coded `C:\`/`D:\` path; env vars stay as dev overrides. Tests skip quietly

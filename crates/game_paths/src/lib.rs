@@ -1,14 +1,16 @@
 //! Where the player's own games are. Nothing here names a folder on any one
-//! PC: the paths come from, in order,
+//! PC, and nothing searches the disk: the paths come only from
 //!
 //! 1. dev overrides in the environment (`HALO3_MCC`, `HALO3_MAPS`,
 //!    `HALO2_MAPS`, `HALO3_SKATE_ASSETS`, `IW4L_SKATE_ASSETS`,
 //!    `REFLEX_GAME`);
-//! 2. the first-run setup (`halo3_setup`), saved in `setup.env` under
-//!    [`settings_dir`] (`%LOCALAPPDATA%\Halo3Rewrite`), so it is asked once
-//!    per user however many copies of the exe there are;
-//! 3. for MCC and Reflex, Steam's own library list, so tests and the `blam`
-//!    tool work before setup has run.
+//! 2. the folders the player chose in first-run setup (`halo3_setup`),
+//!    saved in `setup.env` under [`settings_dir`]
+//!    (`%LOCALAPPDATA%\Halo3Rewrite`), so they are asked once per user
+//!    however many copies of the exe there are.
+//!
+//! Before setup has run (and without overrides) every lookup is `None`;
+//! tests then skip.
 //!
 //! No bevy and no other dependencies: the `blam_*` readers' tests use it too.
 
@@ -26,41 +28,25 @@ pub mod key {
     pub const REFLEX: &str = "REFLEX";
 }
 
-/// Reflex's folder name under `steamapps\common`.
-pub const REFLEX_FOLDER: &str = "MX vs ATV Reflex";
-
 /// Whether `root` is an MX vs ATV Reflex install (it has
 /// `Database\MXs.dx9.package`).
 pub fn is_reflex(root: &Path) -> bool {
     root.join("Database").join("MXs.dx9.package").is_file()
 }
 
-/// The MX vs ATV Reflex install (the dirt bike's model and engine sound): `%REFLEX_GAME%`, the saved setup, else the first Steam library
-/// holding one.
+/// The MX vs ATV Reflex install (the dirt bike's model and engine sound):
+/// `%REFLEX_GAME%`, else the one the player chose in setup.
 pub fn reflex_root() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("REFLEX_GAME").map(PathBuf::from) {
         return is_reflex(&p).then_some(p);
     }
-    saved_reflex().or_else(find_reflex)
+    saved_reflex()
 }
 
 /// The Reflex install the setup saved, when it is still there.
 pub fn saved_reflex() -> Option<PathBuf> {
     settings().get(key::REFLEX).map(PathBuf::from).filter(|p| is_reflex(p))
 }
-
-/// The first Reflex found in a Steam library.
-pub fn find_reflex() -> Option<PathBuf> {
-    steam_libraries()
-        .into_iter()
-        .map(|l| l.join("steamapps").join("common").join(REFLEX_FOLDER))
-        .find(|p| is_reflex(p))
-}
-
-/// Steam's app id for Halo: The Master Chief Collection.
-pub const MCC_STEAM_APP: &str = "976730";
-/// MCC's folder name under `steamapps\common`.
-pub const MCC_FOLDER: &str = "Halo The Master Chief Collection";
 
 /// Where the setup and the converted Skate 3 data live:
 /// `%HALO3_SETUP_DIR%`, else `%LOCALAPPDATA%\Halo3Rewrite`.
@@ -98,7 +84,7 @@ pub fn mcc_from_pick(picked: &Path) -> Option<PathBuf> {
 }
 
 /// The MCC install: `%HALO3_MCC%`, the install around `%HALO3_MAPS%`, the
-/// saved setup, else the first Steam library holding one.
+/// one the player chose in setup.
 pub fn mcc_root() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("HALO3_MCC") {
         return Some(PathBuf::from(dir));
@@ -108,7 +94,7 @@ pub fn mcc_root() -> Option<PathBuf> {
             return Some(root.to_path_buf());
         }
     }
-    saved_mcc().or_else(find_mcc)
+    saved_mcc()
 }
 
 /// The MCC install the setup saved, when it is still there.
@@ -165,64 +151,6 @@ pub fn skate_assets() -> Option<PathBuf> {
         .find_map(std::env::var_os)
         .map(PathBuf::from)
         .or_else(|| settings().get(key::SKATE_ASSETS).map(PathBuf::from))
-}
-
-/// The first MCC found in a Steam library, or an Xbox app install.
-pub fn find_mcc() -> Option<PathBuf> {
-    steam_libraries()
-        .into_iter()
-        .map(|l| l.join("steamapps").join("common").join(MCC_FOLDER))
-        .chain(('C'..='Z').map(|d| PathBuf::from(format!(r"{d}:\XboxGames\{MCC_FOLDER}\Content"))))
-        .find(|p| is_mcc(p))
-}
-
-/// Steam's own folder (from the registry, else the usual install places),
-/// every library its `libraryfolders.vdf` lists, and `SteamLibrary` on each
-/// drive.
-pub fn steam_libraries() -> Vec<PathBuf> {
-    let mut steams: Vec<PathBuf> = steam_from_registry().into_iter().collect();
-    for dir in [r"C:\Program Files (x86)\Steam", r"C:\Program Files\Steam"] {
-        steams.push(PathBuf::from(dir));
-    }
-    let mut libraries = Vec::new();
-    for steam in steams {
-        if let Ok(text) = std::fs::read_to_string(steam.join("steamapps").join("libraryfolders.vdf")) {
-            libraries.extend(vdf_paths(&text));
-        }
-        libraries.push(steam);
-    }
-    for drive in 'C'..='Z' {
-        libraries.push(PathBuf::from(format!(r"{drive}:\SteamLibrary")));
-    }
-    let mut seen = std::collections::HashSet::new();
-    libraries.retain(|p| seen.insert(p.to_string_lossy().to_lowercase().replace('/', "\\")));
-    libraries
-}
-
-/// The `"path"` values of a `libraryfolders.vdf`.
-fn vdf_paths(text: &str) -> Vec<PathBuf> {
-    text.lines()
-        .filter_map(|line| {
-            let mut fields = line.split('"').filter(|f| !f.trim().is_empty());
-            (fields.next() == Some("path")).then(|| fields.next()).flatten()
-        })
-        .map(|p| PathBuf::from(p.replace(r"\\", r"\")))
-        .collect()
-}
-
-/// `HKCU\Software\Valve\Steam\SteamPath`, through `reg.exe`.
-fn steam_from_registry() -> Option<PathBuf> {
-    if !cfg!(windows) {
-        return None;
-    }
-    let out = std::process::Command::new("reg")
-        .args(["query", r"HKCU\Software\Valve\Steam", "/v", "SteamPath"])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let line = text.lines().find(|l| l.trim_start().starts_with("SteamPath"))?;
-    let value = line.split("REG_SZ").nth(1)?.trim();
-    (!value.is_empty()).then(|| PathBuf::from(value.replace('/', "\\")))
 }
 
 /// `KEY=value` lines, rewritten in place: keys that are set are replaced and
@@ -286,14 +214,5 @@ mod tests {
         assert_eq!(s.lines.len(), 3);
         s.remove(key::REFLEX);
         assert_eq!(s.get(key::REFLEX), None);
-    }
-
-    #[test]
-    fn vdf_library_paths() {
-        let text = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t}\n}\n";
-        assert_eq!(
-            vdf_paths(text),
-            vec![PathBuf::from(r"C:\Program Files (x86)\Steam"), PathBuf::from(r"D:\SteamLibrary")]
-        );
     }
 }
