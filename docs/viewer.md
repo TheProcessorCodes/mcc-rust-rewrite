@@ -627,7 +627,10 @@ click of the left stick goes Reflex → synth → off, and the log says which:
   head-pipe and silencer resonators, tone opening with throttle, intake snarl, valve ticks,
   a stuttering limiter, pops off the throttle.
 
-Both add wind with speed. Without Reflex the Reflex choice plays the synth.
+Both add wind with speed. Without Reflex the Reflex choice plays the synth. The pause
+menu's Dirt bike tab has an engine volume slider (drag or click it, or d-pad up / down,
+the up / down arrows, W / S); it starts at 70 % and is saved to `bike-sound.json` next to
+the exe when the game carries on.
 `HALO3_ENGINE_WAV=DIR cargo test -p halo3_audio engine` writes both models over the same
 scripted nine-second ride to `DIR\engine-reflex.wav` and `engine-synth.wav`.
 

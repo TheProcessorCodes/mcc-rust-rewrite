@@ -2588,6 +2588,7 @@ dependencies = [
  "anyhow",
  "bevy",
  "blam_geometry",
+ "serde_json",
 ]
 
 [[package]]

@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex};
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
 
-use halo3_core::bike::BikeMotion;
+use halo3_core::bike::{BikeMotion, EngineVolume};
 
 use crate::mixer::{Generator, Mixer, RATE, VoiceId};
 
@@ -67,6 +67,8 @@ pub struct Input {
     pub landings: u32,
     pub land_force: f32,
     pub wrecks: u32,
+    /// The pause menu's engine slider, 0 to 1.
+    pub volume: f32,
 }
 
 /// The event file's sound definitions the Reflex model plays.
@@ -236,6 +238,8 @@ pub struct Sampled {
     since: f32,
     /// The engine track's gain: lower on light gas.
     level: f32,
+    /// The slider's, as last heard.
+    volume: f32,
     wind: Wind,
     rng: Rng,
     mono: Vec<f32>,
@@ -255,6 +259,7 @@ impl Sampled {
             last: None,
             since: 0.0,
             level: 1.0,
+            volume: -1.0,
             wind: Wind { lp: [0.0; 2], rng: Rng(0x2545_f491) },
             rng: Rng(0x9e37_79b9),
             mono: Vec::new(),
@@ -431,13 +436,23 @@ impl Generator for Sampled {
         }
         Self::play(&bank, &mut self.shots, &mut self.mono);
 
+        let (g0, g1) = (follow_volume(&mut self.volume, i.volume), self.volume);
         for (f, m) in self.mono.iter().enumerate() {
-            let v = (m * LEVEL + self.wind.sample(i.speed)) * 0.9;
+            let g = g0 + (g1 - g0) * f as f32 / frames as f32;
+            let v = (m * LEVEL + self.wind.sample(i.speed)) * 0.9 * g;
             out[2 * f] += v;
             out[2 * f + 1] += v;
         }
         true
     }
+}
+
+/// Steps `held` to the slider's `wanted`; returns where it was (the first
+/// block starts there).
+fn follow_volume(held: &mut f32, wanted: f32) -> f32 {
+    let was = if *held < 0.0 { wanted } else { *held };
+    *held = wanted;
+    was
 }
 
 /// xorshift.
@@ -678,7 +693,7 @@ impl Generator for Synth {
             v = (v * drive).tanh() / drive.tanh();
             self.dc[1] = v - self.dc[0] + 0.995 * self.dc[1];
             self.dc[0] = v;
-            let s = (self.dc[1] * LEVEL * 0.6 + self.wind.sample(i.speed)) * 0.9;
+            let s = (self.dc[1] * LEVEL * 0.6 + self.wind.sample(i.speed)) * 0.9 * i.volume;
             out[2 * f] += s;
             out[2 * f + 1] += s;
         }
@@ -710,6 +725,7 @@ pub fn bike_engine(
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     motion: Option<Res<BikeMotion>>,
+    volume: Option<Res<EngineVolume>>,
     mixer: Res<Mixer>,
     mut e: ResMut<EngineSound>,
 ) {
@@ -816,6 +832,7 @@ pub fn bike_engine(
         s.crashed = m.crashed;
         s.landings = landings;
         s.wrecks = wrecks;
+        s.volume = volume.map_or(EngineVolume::default().0, |v| v.0);
     }
 
     // The voice for the model (the synth while Reflex loads or is missing).
@@ -855,6 +872,7 @@ mod tests {
                 let mut s = shared.lock().unwrap();
                 s.min_rpm = 1500.0;
                 s.max_rpm = 11500.0;
+                s.volume = 1.0;
                 let (rpm, gas) = match t {
                     t if t < 1.5 => (1500.0, 0.0),
                     t if t < 3.0 => (1500.0 + (t - 1.5) / 1.5 * 8500.0, 1.0),
