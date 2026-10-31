@@ -12,8 +12,7 @@
 //! | left stick X | A / D | handlebars |
 //! | right stick | arrow keys | rider: forward, back, left, right |
 //! | RT | W | throttle |
-//! | LT | S | brake |
-//! | A (hold) | Space (hold) | back up, to 10 mph |
+//! | LT | S | brake; held at a standstill, back up to 10 mph |
 //! | Y | R | stand the bike back up |
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`) |
@@ -234,7 +233,6 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         ),
         throttle: key(KeyCode::KeyW),
         brake: key(KeyCode::KeyS),
-        reverse: keys.pressed(KeyCode::Space),
     };
     if let Some(pad) = pad {
         let l = dead(pad.left_stick(), 0.12);
@@ -244,7 +242,6 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         let rt = trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]);
         c.throttle = c.throttle.max(rt.powf(THROTTLE_CURVE));
         c.brake = c.brake.max(trigger(pad, B::LeftTrigger2, GamepadAxis::LeftZ, &mut rested[0]));
-        c.reverse |= pad.pressed(B::South);
     }
     c
 }
