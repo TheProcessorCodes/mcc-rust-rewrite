@@ -1,6 +1,6 @@
 //! Decodes the user's own Halo CE multiplayer maps and pins their numbers:
 //! the render triangles and lightmaps against HaloExportH1's exports of the
-//! same files (`D:\reflex-tools\halo-exports\h1-*`), the collision, spawns
+//! same files, the collision, spawns
 //! and objects against our own probes (`docs/format/scripts/probe_h1_*.py`).
 //! Skips quietly when the maps are not installed.
 

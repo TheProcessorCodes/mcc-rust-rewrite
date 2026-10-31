@@ -1,7 +1,8 @@
 //! Grind rails found in the map's collision: the lips a skater can grind.
 //!
 //! Ported from the MW2 Skate 3 mashup (IW4L), licensed Apache-2.0:
-//! `D:\GAME ISO AND ROMS\PC - AI MASHUP\mw2-skate-3-src\src\mashup\crates\render_anim\src\skate\rails.rs`.
+//! `crates/render_anim/src/skate/rails.rs` in
+//! https://github.com/chasmlol/2010-rust-rewrite-mashup.
 //! The detector ([`find`]) is unchanged apart from using `glam` directly
 //! instead of bevy's re-export and dropping the log lines; it still works in
 //! IW4 inches, Z up, with its constants in inches, so it behaves exactly as

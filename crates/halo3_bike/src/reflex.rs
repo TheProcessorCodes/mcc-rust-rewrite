@@ -18,10 +18,9 @@
 //! - the shape of the bike drawn, Reflex's Dakumoto 450F: where its axles
 //!   sit, how big its tyres are (`DAKUMOTO_450F` below).
 //!
-//! Reflex's numbers come from the stock mx450f as read in
-//! `D:\reflex-tools\physics` (`reflex\docs\fields\lean.md`,
-//! `susp-tires.md`, `engine.md`; `dumps\stock-json\mx450f_vehicle.json`), the
-//! same ones the earlier Reflex-style bike used
+//! Reflex's numbers come from the stock mx450f's vehicle data (lean,
+//! suspension and tyres, engine), the same ones the earlier Reflex-style
+//! bike used
 //! (`backup/bike-physics-reflex-2026-10-28`).
 
 use bevy::math::Vec3;

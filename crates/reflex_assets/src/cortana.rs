@@ -1,8 +1,7 @@
 //! The Cortana graphics kit: holographic blue plastics over the 450F's
 //! THQ / Green sheet, with the number plates kept stock.
 //!
-//! The user made this kit for Reflex itself (`D:\reflex-tools\physics\
-//! reflex\master-chief-skin`, `tools\cortana.py`); an install with it
+//! The kit was first made as a skin for Reflex itself; an install with it
 //! already in place is used as is. Any other install has the stock green
 //! sheet, which `paint` repaints here the same way: every texel of the
 //! sheet learns where on the bike it is (a bake of the plastics in UV
