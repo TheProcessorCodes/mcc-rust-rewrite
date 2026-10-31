@@ -36,8 +36,10 @@
 //! `halo2\h2_maps_win64_dx11` (`halo2.rs`). Halo 3's Blackout, whose file is
 //! `lockout.map`, is `blackout`.
 
+mod halo1;
 mod halo2;
 mod menu;
+mod reach;
 mod pause;
 mod shot;
 
@@ -63,11 +65,37 @@ use halo3_core::DEFAULT_MAPS;
 pub(crate) const DEFAULT_H2_MAPS: &str =
     r"C:\Program Files (x86)\Steam\steamapps\common\Halo The Master Chief Collection\halo2\h2_maps_win64_dx11";
 
+/// Which game a map belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Game {
+    Halo1,
+    Halo2,
+    Halo3,
+    Reach,
+}
+
+/// A game's maps folder: its env var, else its folder in the MCC install
+/// (found from the Halo 3 maps folder, `halo3\maps`).
+pub(crate) fn maps_dir(game: Game) -> PathBuf {
+    let var = |v: &str| std::env::var_os(v).map(PathBuf::from);
+    let h3 = var("HALO3_MAPS").unwrap_or_else(|| PathBuf::from(DEFAULT_MAPS));
+    let mcc = h3.parent().and_then(std::path::Path::parent).map(std::path::Path::to_path_buf);
+    let under = |sub: &str| mcc.as_ref().map_or_else(|| PathBuf::from(sub), |m| m.join(sub));
+    match game {
+        Game::Halo3 => h3,
+        Game::Halo2 => var("HALO2_MAPS").unwrap_or_else(|| PathBuf::from(DEFAULT_H2_MAPS)),
+        Game::Halo1 => var("HALO1_MAPS").unwrap_or_else(|| under(r"halo1\maps")),
+        Game::Reach => var("HALOREACH_MAPS").unwrap_or_else(|| under(r"haloreach\maps")),
+    }
+}
+
 /// A path, or a bare name: a Halo 3 map in `%HALO3_MAPS%` (or the MCC
 /// install), else a Halo 2 map in `%HALO2_MAPS%` (or the MCC install).
-/// `h2:NAME` / `h3:NAME` pick the game when both have a map by that file
-/// name (`zanzibar`). Halo 3's Blackout is `lockout.map`, so it goes by
-/// `blackout` and a bare `lockout` is Halo 2's Lockout ([`codename`]).
+/// `h1:NAME` (Halo CE, `%HALO1_MAPS%`), `h2:NAME`, `h3:NAME` and `hr:NAME`
+/// (Reach, `%HALOREACH_MAPS%`) pick the game; CE and Reach maps are only
+/// found with their prefix, as their file names overlap the others
+/// (`sidewinder`, `prisoner`). Halo 3's Blackout is `lockout.map`, so it
+/// goes by `blackout` and a bare `lockout` is Halo 2's Lockout ([`codename`]).
 fn resolve_map(arg: &str) -> PathBuf {
     let p = PathBuf::from(arg);
     if p.exists() {
@@ -75,30 +103,30 @@ fn resolve_map(arg: &str) -> PathBuf {
     }
     let (game, file) = codename(arg);
     let name = format!("{file}.map");
-    let dir = |var: &str, default: &str| std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(default));
-    let h3 = dir("HALO3_MAPS", DEFAULT_MAPS).join(&name);
-    let h2 = dir("HALO2_MAPS", DEFAULT_H2_MAPS).join(&name);
     match game {
-        Some(2) => h2,
-        Some(_) => h3,
-        None if !h3.exists() && h2.exists() => h2,
-        None => h3,
+        Some(game) => maps_dir(game).join(&name),
+        None => {
+            let h3 = maps_dir(Game::Halo3).join(&name);
+            let h2 = maps_dir(Game::Halo2).join(&name);
+            if !h3.exists() && h2.exists() { h2 } else { h3 }
+        }
     }
 }
 
-/// A map argument to (game, file name without `.map`): `h2:` / `h3:` force
-/// the game; `blackout` is Halo 3's `lockout`, and a bare `lockout` is Halo
-/// 2's, so the two maps sharing a file name each have a plain name.
-fn codename(arg: &str) -> (Option<u8>, &str) {
-    let (game, bare) = match (arg.strip_prefix("h2:"), arg.strip_prefix("h3:")) {
-        (Some(rest), _) => (Some(2), rest),
-        (_, Some(rest)) => (Some(3), rest),
-        _ => (None, arg),
-    };
+/// A map argument to (game, file name without `.map`): `h1:` / `h2:` /
+/// `h3:` / `hr:` force the game; `blackout` is Halo 3's `lockout`, and a
+/// bare `lockout` is Halo 2's, so the two maps sharing a file name each have
+/// a plain name.
+fn codename(arg: &str) -> (Option<Game>, &str) {
+    let prefixes = [("h1:", Game::Halo1), ("h2:", Game::Halo2), ("h3:", Game::Halo3), ("hr:", Game::Reach)];
+    let (game, bare) = prefixes
+        .iter()
+        .find_map(|(p, g)| arg.strip_prefix(p).map(|rest| (Some(*g), rest)))
+        .unwrap_or((None, arg));
     let bare = bare.strip_suffix(".map").unwrap_or(bare);
     match (game, bare) {
-        (None | Some(3), "blackout") => (Some(3), "lockout"),
-        (None, "lockout") => (Some(2), "lockout"),
+        (None | Some(Game::Halo3), "blackout") => (Some(Game::Halo3), "lockout"),
+        (None, "lockout") => (Some(Game::Halo2), "lockout"),
         _ => (game, bare),
     }
 }
@@ -130,7 +158,7 @@ fn main() -> anyhow::Result<()> {
 /// A map decoded and ready to go into the app. Made up front for
 /// `halo3 <map>`, or on the menu's loading thread.
 pub(crate) struct LoadedMap {
-    scene: blam_geometry::Scene,
+    pub(crate) scene: blam_geometry::Scene,
     textures: textures::MaterialTextures,
     chief: Option<rider::ChiefModel>,
     sky: world::sky::SkyData,
@@ -168,6 +196,33 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
         });
     }
     let path = resolve_map(map);
+    // Told by the file's own header, not its name: Halo CE's `sidewinder`
+    // and `prisoner` share their file names with other games' maps.
+    if blam_h1::is_halo1(&path) {
+        // Halo CE: decoded up front like Halo 2 (`halo1.rs`).
+        let h1 = halo1::load(&path)?;
+        if let Some(mean) = world::lighting::scene_mean_irradiance(&h1.scene, &h1.textures.lightmaps) {
+            eprintln!("halo ce lightmap: mean irradiance {mean:.3}");
+            world::lighting::set_scene_mean(mean);
+        }
+        // The rider is Halo 3's Spartan, borrowed from Valhalla as for
+        // Halo 2.
+        let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
+            .ok()
+            .and_then(|c| rider::load_chief(&c));
+        return Ok(LoadedMap {
+            scene: h1.scene,
+            textures: h1.textures,
+            chief,
+            sky: h1.sky,
+            water: world::water::WaterData::default(),
+            map_file: None,
+            arsenal: None,
+            foot_tuning: None,
+            plain_fog: h1.fog,
+            plain_sound: None,
+        });
+    }
     if blam_h2::is_halo2(&path) {
         // Halo 2: everything decoded up front, no Halo 3 cache file
         // behind it (`halo2.rs`).
@@ -202,7 +257,14 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
         name: cache.header.map_name.clone(),
         ..Default::default()
     };
-    blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
+    // Reach: the same cache file, resources, shaders and bitmaps as Halo 3,
+    // its own tag layouts (`blam_reach`, `reach.rs`).
+    let reach = cache.engine() == blam_cache::Engine::Reach;
+    if reach {
+        reach::decode(cache, &mut scene)?;
+    } else {
+        blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
+    }
     eprintln!(
         "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
         scene.name,
@@ -239,6 +301,9 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
         }
         Ok(None) => eprintln!("no camera fx: exposure x{}", world::lighting::exposure()),
         Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
+    }
+    if reach {
+        return Ok(reach::finish(cache, scene, textures));
     }
     let chief = rider::load_chief(cache);
     let arsenal = weapons::assets::load(cache);
@@ -390,6 +455,8 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         );
     }
     match (map_file, plain_sound) {
+        // Reach's sound tags are not read (`reach.rs`).
+        (Some(cache), _) if cache.engine() != blam_cache::Engine::Halo3 => {}
         (Some(cache), _) => audio::install(w, audio::MapSound::Halo3(cache)),
         (None, Some(loader)) => audio::install(w, audio::MapSound::Plain(loader)),
         (None, None) => {}

@@ -191,7 +191,7 @@ const C0_PER_IRRADIANCE: f32 = std::f32::consts::PI / 0.886227;
 /// the dark). The other coefficients and the dominant light are zero: their
 /// ranges are 0, so their layers are left out (the shader clamps the layer
 /// index) and the intensity array is one black texel.
-fn encode_lightmap(atlas: &Texture, scale: f32) -> (LightmapTextures, f32) {
+pub(crate) fn encode_lightmap(atlas: &Texture, scale: f32) -> (LightmapTextures, f32) {
     let srgb = |b: u8| {
         let c = b as f32 / 255.0;
         if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
@@ -244,7 +244,7 @@ fn encode_lightmap(atlas: &Texture, scale: f32) -> (LightmapTextures, f32) {
     )
 }
 
-fn convert(l: &blam_h2::Look, material: u32, bitmaps: &mut std::collections::HashMap<u32, Texture>) -> Look {
+pub(crate) fn convert(l: &blam_h2::Look, material: u32, bitmaps: &mut std::collections::HashMap<u32, Texture>) -> Look {
     let have = |m: Option<(u32, Xform)>, bitmaps: &std::collections::HashMap<u32, Texture>| m.filter(|(b, _)| bitmaps.contains_key(b));
     let base = have(l.base, bitmaps);
     let detail = have(l.detail, bitmaps);

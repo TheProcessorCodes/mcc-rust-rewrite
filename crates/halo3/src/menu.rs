@@ -1,5 +1,5 @@
-//! The map menu: `halo3` with no map opens it. Three tabs (Halo 3, Halo 2,
-//! Campaign) hold a grid of the maps found in the user's MCC install, each
+//! The map menu: `halo3` with no map opens it. Five tabs (Halo 3, Halo 2,
+//! Halo CE, Reach, Campaign) hold a grid of the maps found in the user's MCC install, each
 //! shown with MCC's own preview picture (`levelstexturepack`, read at run
 //! time, never copied into the repo). Start Game decodes the map on a thread
 //! behind a loading screen, then puts it into this same app (`main.rs`
@@ -28,10 +28,11 @@ use bevy::window::PrimaryWindow;
 
 use halo3_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady};
 
-const TABS: [&str; 3] = ["HALO 3", "HALO 2", "CAMPAIGN"];
+const TABS: [&str; 5] = ["HALO 3", "HALO 2", "HALO CE", "REACH", "CAMPAIGN"];
 const COLUMNS: usize = 6;
 
-/// (map argument, shown name, MCC preview texture without `_LARGE`).
+/// (map argument, shown name, MCC preview texture without `_LARGE` /
+/// `LARGE`).
 type Entry = (&'static str, &'static str, Option<&'static str>);
 
 const HALO3: &[Entry] = &[
@@ -92,6 +93,54 @@ const HALO2: &[Entry] = &[
     ("h2:zanzibar", "Zanzibar", Some("H2MP_ZANZIBAR")),
 ];
 
+/// Halo CE's multiplayer maps (MCC's `halo1\maps`).
+const HALO1: &[Entry] = &[
+    ("h1:beavercreek", "Battle Creek", Some("H1MP_BATTLECREEK")),
+    ("h1:bloodgulch", "Blood Gulch", Some("H1MP_BLOODGULCH")),
+    ("h1:boardingaction", "Boarding Action", Some("H1MP_BOARDINGACTION")),
+    ("h1:chillout", "Chill Out", Some("H1MP_CHILLOUT")),
+    ("h1:putput", "Chiron TL-34", Some("H1MP_CHIRONTL34")),
+    ("h1:damnation", "Damnation", Some("H1MP_DAMNATION")),
+    ("h1:dangercanyon", "Danger Canyon", Some("H1MP_DANGERCANYON")),
+    ("h1:deathisland", "Death Island", Some("H1MP_DEATHISLAND")),
+    ("h1:carousel", "Derelict", Some("H1MP_DERELICT")),
+    ("h1:gephyrophobia", "Gephyrophobia", Some("H1MP_GEPHYROPHOBIA")),
+    ("h1:hangemhigh", "Hang 'Em High", Some("H1MP_HANGEMHIGH")),
+    ("h1:icefields", "Ice Fields", Some("H1MP_ICEFIELDS")),
+    ("h1:infinity", "Infinity", Some("H1MP_INFINITY")),
+    ("h1:longest", "Longest", Some("H1MP_LONGEST")),
+    ("h1:prisoner", "Prisoner", Some("H1MP_PRISONER")),
+    ("h1:ratrace", "Rat Race", Some("H1MP_RATRACE")),
+    ("h1:sidewinder", "Sidewinder", Some("H1MP_SIDEWINDER")),
+    ("h1:timberland", "Timberland", Some("H1MP_TIMBERLAND")),
+    ("h1:wizard", "Wizard", Some("H1MP_WIZARD")),
+];
+
+/// Halo Reach's multiplayer maps (MCC's `haloreach\maps`; the Firefight
+/// maps are left out).
+const REACH: &[Entry] = &[
+    ("hr:dlc_slayer", "Anchor 9", Some("HREACHMP_ANCHOR9")),
+    ("hr:cex_beaver_creek", "Battle Canyon", Some("HREACHMP_BATTLECANYON")),
+    ("hr:50_panopticon", "Boardwalk", Some("HREACHMP_BOARDWALK")),
+    ("hr:70_boneyard", "Boneyard", Some("HREACHMP_BONEYARD")),
+    ("hr:cex_headlong", "Breakneck", Some("HREACHMP_BREAKNECK")),
+    ("hr:dlc_invasion", "Breakpoint", Some("HREACHMP_BREAKPOINT")),
+    ("hr:condemned", "Condemned", Some("HREACHMP_CONDEMNED")),
+    ("hr:45_launch_station", "Countdown", Some("HREACHMP_COUNTDOWN")),
+    ("hr:forge_halo", "Forge World", Some("HREACHMP_FORGEWORLD")),
+    ("hr:trainingpreserve", "Highlands", Some("HREACHMP_HIGHLANDS")),
+    ("hr:cex_hangemhigh", "High Noon", Some("HREACHMP_HIGHNOON")),
+    ("hr:cex_damnation", "Penance", Some("HREACHMP_PENANCE")),
+    ("hr:30_settlement", "Powerhouse", Some("HREACHMP_POWERHOUSE")),
+    ("hr:52_ivory_tower", "Reflection", Some("HREACHMP_REFLECTION")),
+    ("hr:cex_timberland", "Ridgeline", Some("HREACHMP_RIDGELINE")),
+    ("hr:cex_prisoner", "Solitary", Some("HREACHMP_SOLITARY")),
+    ("hr:35_island", "Spire", Some("HREACHMP_SPIRE")),
+    ("hr:20_sword_slayer", "Sword Base", Some("HREACHMP_SWORDBASE")),
+    ("hr:dlc_medium", "Tempest", Some("HREACHMP_TEMPEST")),
+    ("hr:45_aftship", "Zealot", Some("HREACHMP_ZEALOT")),
+];
+
 /// Halo 3's missions in story order. Crow's Nest has no preview in MCC.
 const CAMPAIGN: &[Entry] = &[
     ("h3:005_intro", "Arrival", Some("H3_C01_ARRIVAL")),
@@ -107,7 +156,13 @@ const CAMPAIGN: &[Entry] = &[
     ("h3:130_epilogue", "Epilogue", Some("H3_C11_EPILOGUE")),
 ];
 
-const KINDS: [&str; 3] = ["Halo 3 multiplayer", "Halo 2 multiplayer", "Halo 3 campaign"];
+const KINDS: [&str; 5] = [
+    "Halo 3 multiplayer",
+    "Halo 2 multiplayer",
+    "Halo CE multiplayer",
+    "Halo Reach multiplayer",
+    "Halo 3 campaign",
+];
 
 const BACKGROUND: Color = Color::srgb(0.043, 0.059, 0.082);
 const BAR: Color = Color::srgb(0.071, 0.098, 0.141);
@@ -138,10 +193,10 @@ enum Phase {
 
 #[derive(Resource)]
 struct Menu {
-    tabs: [Vec<Map>; 3],
+    tabs: [Vec<Map>; TABS.len()],
     tab: usize,
     /// The selected tile on each tab.
-    pick: [usize; 3],
+    pick: [usize; TABS.len()],
     phase: Phase,
     /// Arguments for the map (`--foot`, `--zone`, ...).
     args: Vec<String>,
@@ -218,10 +273,10 @@ impl Pack {
         Some(Pack { perm, temp })
     }
 
-    /// `NAME_LARGE` as RGBA.
+    /// `NAME_LARGE` (or Reach's `NAMELARGE`) as RGBA.
     fn picture(&self, name: &str) -> Option<Image> {
-        let want = format!("{name}_LARGE\0");
-        let at = self.perm.windows(want.len()).position(|w| w == want.as_bytes())?.checked_sub(4)?;
+        let find = |want: String| self.perm.windows(want.len()).position(|w| w == want.as_bytes());
+        let at = find(format!("{name}_LARGE\0")).or_else(|| find(format!("{name}LARGE\0")))?.checked_sub(4)?;
         let e = self.perm.get(at..at + 0x54)?;
         let u16_at = |o: usize| u16::from_le_bytes([e[o], e[o + 1]]) as u32;
         let u32_at = |o: usize| u32::from_le_bytes(e[o..o + 4].try_into().unwrap()) as usize;
@@ -318,7 +373,7 @@ impl Plugin for MenuPlugin {
             saved: false,
             target: None,
         });
-        let mut tab = value(args, "--menu-tab").and_then(|s| s.parse().ok()).unwrap_or(0usize).min(2);
+        let mut tab = value(args, "--menu-tab").and_then(|s| s.parse().ok()).unwrap_or(0usize).min(TABS.len() - 1);
         let pick = value(args, "--menu-pick").and_then(|s| s.parse().ok()).unwrap_or(0usize);
         let with_value = ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--size"];
         let alone = ["--menu-loading", "--menu-start"];
@@ -342,7 +397,7 @@ impl Plugin for MenuPlugin {
             eprintln!("menu: no map pictures under {}", root.join(r"Data\UI\texturepacks").display());
         }
         let mut images = app.world_mut().resource_mut::<Assets<Image>>();
-        let tabs = [HALO3, HALO2, CAMPAIGN].map(|entries| {
+        let tabs = [HALO3, HALO2, HALO1, REACH, CAMPAIGN].map(|entries| {
             entries
                 .iter()
                 .filter(|(arg, ..)| crate::resolve_map(arg).exists())
@@ -354,16 +409,18 @@ impl Plugin for MenuPlugin {
                 .collect::<Vec<_>>()
         });
         eprintln!(
-            "menu: {} Halo 3, {} Halo 2, {} campaign maps under {}",
+            "menu: {} Halo 3, {} Halo 2, {} Halo CE, {} Reach, {} campaign maps under {}",
             tabs[0].len(),
             tabs[1].len(),
             tabs[2].len(),
+            tabs[3].len(),
+            tabs[4].len(),
             root.display()
         );
         if tabs[tab].is_empty() {
-            tab = (0..3).find(|&t| !tabs[t].is_empty()).unwrap_or(0);
+            tab = (0..TABS.len()).find(|&t| !tabs[t].is_empty()).unwrap_or(0);
         }
-        let mut picks = [0; 3];
+        let mut picks = [0; TABS.len()];
         picks[tab] = pick.min(tabs[tab].len().saturating_sub(1));
         let choosing = |menu: Res<Menu>| menu.phase == Phase::Choosing;
         // What `install` (main.rs) puts in goes when the map is unloaded.
@@ -970,7 +1027,7 @@ fn capture(
         {
             eprintln!("menu: shot: back to the menu");
             commands.insert_resource(BackToMenu);
-            menu.tab = tab.min(2);
+            menu.tab = tab.min(TABS.len() - 1);
             let t = menu.tab;
             menu.pick[t] = pick;
             shot.ready_frames = 0;

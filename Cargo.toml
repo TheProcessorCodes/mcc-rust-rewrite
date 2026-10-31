@@ -6,7 +6,9 @@ members = [
     "crates/blam_cache",
     "crates/blam_cli",
     "crates/blam_geometry",
+    "crates/blam_h1",
     "crates/blam_h2",
+    "crates/blam_reach",
     "crates/blam_sound",
     "crates/blam_texture",
     "crates/halo3",
@@ -40,7 +42,9 @@ blam_cache = { path = "crates/blam_cache" }
 blam_geometry = { path = "crates/blam_geometry" }
 blam_texture = { path = "crates/blam_texture" }
 blam_sound = { path = "crates/blam_sound" }
+blam_h1 = { path = "crates/blam_h1" }
 blam_h2 = { path = "crates/blam_h2" }
+blam_reach = { path = "crates/blam_reach" }
 halo3_audio = { path = "crates/halo3_audio" }
 halo3_bike = { path = "crates/halo3_bike" }
 halo3_core = { path = "crates/halo3_core" }
