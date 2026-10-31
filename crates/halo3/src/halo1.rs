@@ -145,15 +145,29 @@ fn sky_looks(scene: &Scene, looks: &[Option<blam_h1::ShaderLook>], bitmaps: &Has
         if l.look.hidden {
             continue;
         }
-        let colour = |b: &u32| bitmaps.get(b).is_some_and(|t| t.format != blam_texture::Format::A8);
+        let is_mask = |b: &u32| bitmaps.get(b).is_some_and(|t| t.format == blam_texture::Format::A8);
+        let colour = |b: &u32| bitmaps.contains_key(b) && !is_mask(b);
         let pick = l.maps.iter().rev().find(|(b, _)| colour(b)).copied().or(l.look.base.filter(|(b, _)| colour(b)));
         let Some((bitmap, xform)) = pick else { continue };
-        out.bitmaps.insert(bitmap, bitmaps[&bitmap].clone());
+        // Colour maps are stored in gamma space: sampled as sRGB.
+        let mut t = bitmaps[&bitmap].clone();
+        t.srgb = true;
+        out.bitmaps.insert(bitmap, t);
+        // A cloud layer's alpha is its own map (`cloud mask`, A8) under
+        // the colour map: it goes in the detail slot, as neutral grey
+        // with the mask in alpha, so it cuts the clouds without tinting.
+        let mask = l.maps.iter().find(|(b, _)| is_mask(b)).and_then(|&(b, xform)| {
+            let key = MASK + b;
+            if !out.bitmaps.contains_key(&key) {
+                out.bitmaps.insert(key, neutral_mask(&bitmaps[&b], key)?);
+            }
+            Some(SkyMap { bitmap: key, xform })
+        });
         out.looks.insert(
             m,
             SkyLook {
                 albedo: Albedo::Default,
-                maps: [Some(SkyMap { bitmap, xform }), None, None, None, None],
+                maps: [Some(SkyMap { bitmap, xform }), mask, None, None, None],
                 albedo_colour: [1.0; 4],
                 illum: None,
                 illum_mode: IllumMode::Off,
@@ -165,4 +179,32 @@ fn sky_looks(scene: &Scene, looks: &[Option<blam_h1::ShaderLook>], bitmaps: &Has
         );
     }
     out
+}
+
+/// Keys for the masks made here, past any real tag index.
+const MASK: u32 = 0x2_0000;
+
+/// The sky shader multiplies its detail map by this (`DETAIL` in
+/// `sky.wesl`); a detail of `1 / DETAIL` leaves the colour as it is.
+const SKY_DETAIL: f32 = 4.59479;
+
+/// An A8 mask as an A8R8G8B8 detail map: colour `1 / SKY_DETAIL` (stored
+/// linear), the mask in alpha, every mip level kept.
+fn neutral_mask(mask: &Texture, key: u32) -> Option<Texture> {
+    let grey = (255.0 / SKY_DETAIL).round() as u8;
+    let mut mips = Vec::with_capacity(mask.mips.len());
+    for level in 0..mask.mips.len() as u32 {
+        let (w, h) = blam_texture::Format::level_dims(mask.width, mask.height, level);
+        let px = blam_texture::rgba::decode_level(mask.format, w, h, mask.level(level, 0)?).ok()?;
+        // Bytes B G R A.
+        mips.push(px.as_chunks::<4>().0.iter().flat_map(|p| [grey, grey, grey, p[3]]).collect());
+    }
+    Some(Texture {
+        name: format!("{} (sky mask)", mask.name),
+        tag_index: key,
+        format: blam_texture::Format::A8R8G8B8,
+        srgb: false,
+        mips,
+        ..mask.clone()
+    })
 }
