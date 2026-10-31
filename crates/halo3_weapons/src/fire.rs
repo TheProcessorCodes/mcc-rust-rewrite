@@ -10,6 +10,7 @@
 //! can be watched.
 
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use blam_geometry::weapons::Barrel;
 
@@ -23,7 +24,8 @@ pub struct FirePlugin;
 
 impl Plugin for FirePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Shots>()
+        app.init_map_resource::<Shots>()
+            .remove_on_map_unload::<Looks>()
             .add_systems(halo3_core::map::MapStartup, setup)
             .add_systems(
                 Update,

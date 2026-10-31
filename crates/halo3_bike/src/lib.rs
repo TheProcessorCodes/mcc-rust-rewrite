@@ -37,6 +37,7 @@ pub mod unleashed;
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::window::PrimaryWindow;
 
 use blam_geometry::Collision;
@@ -69,13 +70,13 @@ pub struct BikePlugin;
 
 impl Plugin for BikePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Riding>()
-            .init_resource::<AutoStart>()
-            .init_resource::<StickPool>()
-            .init_resource::<model::BikeMesh>()
-            .init_resource::<Dismount>()
-            .init_resource::<Mount>()
-            .init_resource::<SessionFlag>()
+        app.init_map_resource::<Riding>()
+            .init_map_resource::<AutoStart>()
+            .init_map_resource::<StickPool>()
+            .init_map_resource::<model::BikeMesh>()
+            .init_map_resource::<Dismount>()
+            .init_map_resource::<Mount>()
+            .init_map_resource::<SessionFlag>()
             .add_plugins(tune::TunePlugin)
             .add_systems(halo3_core::map::MapStartup, (setup, model::start))
             .add_systems(

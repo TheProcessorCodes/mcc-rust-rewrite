@@ -27,7 +27,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_dis
 use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
 
-use halo3_core::map::{MapInstalled, MapReady};
+use halo3_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady};
 
 const TABS: [&str; 3] = ["HALO 3", "HALO 2", "CAMPAIGN"];
 const COLUMNS: usize = 6;
@@ -273,6 +273,13 @@ struct MenuShot {
     frames: u32,
     /// Frames since the map was ready (`--menu-start`).
     ready_frames: u32,
+    /// Maps started so far.
+    starts: u32,
+    /// `--menu-back TAB,PICK`: go back to the menu from the first map and
+    /// start this one.
+    back: Option<(usize, usize)>,
+    /// The frame it went back to the menu.
+    backed_at: Option<u32>,
     saved: bool,
     target: Option<Handle<Image>>,
 }
@@ -325,12 +332,18 @@ impl Plugin for MenuPlugin {
             start: args.iter().any(|a| a == "--menu-start"),
             frames: 0,
             ready_frames: 0,
+            starts: 0,
+            back: value(args, "--menu-back").and_then(|s| {
+                let (t, p) = s.split_once(',')?;
+                Some((t.parse().ok()?, p.parse().ok()?))
+            }),
+            backed_at: None,
             saved: false,
             target: None,
         });
         let mut tab = value(args, "--menu-tab").and_then(|s| s.parse().ok()).unwrap_or(0usize).min(2);
         let pick = value(args, "--menu-pick").and_then(|s| s.parse().ok()).unwrap_or(0usize);
-        let with_value = ["--menu-shot", "--menu-tab", "--menu-pick", "--size"];
+        let with_value = ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--size"];
         let alone = ["--menu-loading", "--menu-start"];
         let mut pass = Vec::new();
         let mut skip = false;
@@ -377,6 +390,18 @@ impl Plugin for MenuPlugin {
         let mut picks = [0; 3];
         picks[tab] = pick.min(tabs[tab].len().saturating_sub(1));
         let choosing = |menu: Res<Menu>| menu.phase == Phase::Choosing;
+        // What `install` (main.rs) puts in goes when the map is unloaded.
+        app.insert_resource(MapMenu)
+            .remove_on_map_unload::<crate::falls::KillZones>()
+            .remove_on_map_unload::<halo3_core::lifts::Lifts>()
+            .remove_on_map_unload::<crate::world::stream::ZoneTriggers>()
+            .remove_on_map_unload::<crate::world::PendingScene>()
+            .remove_on_map_unload::<crate::rider::PendingChief>()
+            .remove_on_map_unload::<crate::skate::SkateInput>()
+            .remove_on_map_unload::<crate::bike::BikeInput>()
+            .remove_on_map_unload::<crate::swim::WaterWorld>()
+            .remove_on_map_unload::<crate::swim::FallbackSpot>()
+            .remove_on_map_unload::<crate::weapons::PendingArsenal>();
         app.insert_resource(Menu {
             tabs,
             tab,
@@ -388,7 +413,7 @@ impl Plugin for MenuPlugin {
         })
         .add_systems(Startup, spawn)
         .add_systems(Update, ((navigate, mouse, act).run_if(choosing), show, spin).chain())
-        .add_systems(Last, (finish_loading, leave));
+        .add_systems(Last, (back_to_menu, finish_loading, leave).chain());
         if let Some(shot) = shot {
             app.insert_resource(shot).add_systems(Update, capture.after(show));
         }
@@ -777,11 +802,17 @@ fn act(
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut menu: ResMut<Menu>,
-    shot: Option<Res<MenuShot>>,
+    shot: Option<ResMut<MenuShot>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
-    let auto = shot.is_some_and(|s| s.start || s.loading);
+    // `--menu-shot`: start the map (twice with `--menu-back`).
+    let auto = shot.is_some_and(|mut s| {
+        let planned = if s.loading { 1 } else if s.start { 1 + s.back.is_some() as u32 } else { 0 };
+        let go = s.starts < planned;
+        s.starts += go as u32;
+        go
+    });
     if auto || keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]) || pad(GamepadButton::South) {
         start(&mut commands, &mut menu);
     } else if keys.just_pressed(KeyCode::Escape) || pad(GamepadButton::East) {
@@ -804,6 +835,31 @@ fn start(commands: &mut Commands, menu: &mut Menu) {
     commands.insert_resource(Loading(Mutex::new(receive)));
     menu.phase = Phase::Loading;
     menu.error = None;
+}
+
+/// Q in the pause menu (`pause.rs`): unload the map and show the menu again.
+fn back_to_menu(world: &mut World) {
+    if world.remove_resource::<BackToMenu>().is_none() {
+        return;
+    }
+    halo3_core::map::unload(world);
+    if let Ok(mut window) = world.query_filtered::<&mut Window, With<PrimaryWindow>>().single_mut(world) {
+        window.title = "Halo 3".to_string();
+    }
+    if let Ok(mut cursor) = world
+        .query_filtered::<&mut bevy::window::CursorOptions, With<PrimaryWindow>>()
+        .single_mut(world)
+    {
+        cursor.grab_mode = bevy::window::CursorGrabMode::None;
+        cursor.visible = true;
+    }
+    let mut menu = world.resource_mut::<Menu>();
+    menu.phase = Phase::Choosing;
+    menu.error = None;
+    menu.click = None;
+    if let Err(e) = world.run_system_cached(spawn) {
+        error!("menu: cannot show the menu again: {e}");
+    }
 }
 
 /// The map is decoded: put it into the app (or back to the menu with the
@@ -940,7 +996,7 @@ fn spin(menu: Res<Menu>, time: Res<Time<Real>>, mut segments: Query<(&RingSegmen
 fn capture(
     mut commands: Commands,
     mut shot: ResMut<MenuShot>,
-    menu: Res<Menu>,
+    mut menu: ResMut<Menu>,
     ready: Option<Res<MapReady>>,
     installed: Option<Res<MapInstalled>>,
     cameras: Query<Entity, (With<Camera3d>, Without<MenuCamera>)>,
@@ -958,6 +1014,20 @@ fn capture(
     };
     let due = if shot.start {
         // Give the world a few seconds of frames to stream in.
+        if ready.is_some()
+            && shot.starts == 1
+            && shot.ready_frames == 120
+            && let Some((tab, pick)) = shot.back
+        {
+            eprintln!("menu: shot: back to the menu");
+            commands.insert_resource(BackToMenu);
+            menu.tab = tab.min(2);
+            let t = menu.tab;
+            menu.pick[t] = pick;
+            shot.ready_frames = 0;
+            shot.backed_at = Some(shot.frames);
+            return;
+        }
         if ready.is_some() {
             shot.ready_frames += 1;
             if shot.ready_frames == 1 {
@@ -966,7 +1036,11 @@ fn capture(
                 }
             }
         }
-        shot.ready_frames == 300
+        // Back on the menu with a map that does not start (TBD): the menu.
+        let menu_again = shot.backed_at.is_some_and(|at| shot.frames == at + 40)
+            && ready.is_none()
+            && menu.phase == Phase::Choosing;
+        menu_again || (shot.ready_frames == 300 && shot.starts == 1 + shot.back.is_some() as u32)
     } else if shot.loading {
         menu.phase == Phase::Loading && installed.is_none() && shot.frames == 30
     } else {

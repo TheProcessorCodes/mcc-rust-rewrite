@@ -28,6 +28,7 @@ use bevy::math::{Affine2, Affine3A, Mat2};
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use serde::Deserialize;
 
@@ -236,7 +237,9 @@ pub struct RiderPlugin;
 
 impl Plugin for RiderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(halo3_core::map::MapStartup, spawn_rider)
+        app.remove_on_map_unload::<SpartanStatue>()
+            .remove_on_map_unload::<Rider>()
+            .add_systems(halo3_core::map::MapStartup, spawn_rider)
             .add_systems(
                 PostUpdate,
                 (pose_rider, light_rider).chain().before(TransformSystems::Propagate).run_if(halo3_core::map::ready),

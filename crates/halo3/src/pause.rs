@@ -1,8 +1,8 @@
 //! The pause menu: Escape, or Start on a pad, stops the game and lists the
 //! controls on four tabs: free roam and on foot (keyboard and controller), the dirt bike
 //! and skating (controller only). Click a tab, or change tab with LB / RB,
-//! the d-pad, A / D or the arrow keys. The same button carries on; Q, or View (Back) on a pad, quits the
-//! game.
+//! the d-pad, A / D or the arrow keys. The same button carries on; Q, or View (Back) on a pad, goes
+//! back to the map menu (or quits the game when it was started on a map).
 //!
 //! Pausing stops virtual time, and the systems that read input or move
 //! things run only `while running`, so nothing reacts to keys behind the
@@ -14,6 +14,7 @@
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
@@ -23,8 +24,8 @@ pub struct PausePlugin;
 
 impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Paused>()
-            .init_resource::<ShownTab>()
+        app.init_map_resource::<Paused>()
+            .init_map_resource::<ShownTab>()
             .add_systems(halo3_core::map::MapStartup, spawn_menu)
             .add_systems(
                 PreUpdate,
@@ -171,7 +172,12 @@ fn page<const N: usize>(
         });
 }
 
-fn spawn_menu(mut commands: Commands) {
+fn spawn_menu(mut commands: Commands, map_menu: Option<Res<halo3_core::map::MapMenu>>) {
+    let leave = if map_menu.is_some() {
+        "Q or View (Back) to go back to the map menu"
+    } else {
+        "Q or View (Back) to quit the game"
+    };
     commands
         .spawn((
             PauseMenu,
@@ -200,7 +206,7 @@ fn spawn_menu(mut commands: Commands) {
             .with_children(|panel| {
                 panel.spawn(text("PAUSED", 36.0, Color::WHITE));
                 panel.spawn(text("Esc or Start to resume", 16.0, DIM));
-                panel.spawn(text("Q or View (Back) to quit the game", 16.0, DIM));
+                panel.spawn(text(leave, 16.0, DIM));
                 panel
                     .spawn(Node {
                         column_gap: Val::Px(12.0),
@@ -271,9 +277,12 @@ fn toggle(
     }
 }
 
-/// Q, or View (Back) on a pad, closes the game from the menu.
+/// Q, or View (Back) on a pad, goes back to the map menu (`menu.rs`), or
+/// closes the game when it was started on a map.
 fn quit(
+    mut commands: Commands,
     paused: Res<Paused>,
+    map_menu: Option<Res<halo3_core::map::MapMenu>>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut exit: MessageWriter<AppExit>,
@@ -282,7 +291,11 @@ fn quit(
         return;
     }
     if keys.just_pressed(KeyCode::KeyQ) || gamepads.iter().any(|p| p.just_pressed(GamepadButton::Select)) {
-        exit.write(AppExit::Success);
+        if map_menu.is_some() {
+            commands.insert_resource(halo3_core::map::BackToMenu);
+        } else {
+            exit.write(AppExit::Success);
+        }
     }
 }
 

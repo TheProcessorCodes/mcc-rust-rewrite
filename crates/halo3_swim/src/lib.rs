@@ -23,6 +23,7 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use blam_geometry::Scene;
 
@@ -209,7 +210,8 @@ pub struct SwimPlugin;
 impl Plugin for SwimPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SwimState::new())
-            .init_resource::<Splashes>()
+            .on_map_unload(|w| w.insert_resource(SwimState::new()))
+            .init_map_resource::<Splashes>()
             .add_systems(Update, (water_rules.run_if(halo3_core::pause::running), draw_splashes).chain().run_if(halo3_core::map::ready));
     }
 }

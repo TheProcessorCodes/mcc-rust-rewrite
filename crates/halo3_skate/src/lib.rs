@@ -22,6 +22,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::window::PrimaryWindow;
 use skate_host::bridge::{InputFrame, Pose, PreparedCollision, Session};
 
@@ -44,15 +45,15 @@ pub struct SkatePlugin;
 
 impl Plugin for SkatePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Host>()
-            .init_resource::<RiderPose>()
-            .init_resource::<AutoStart>()
-            .init_resource::<Respawn>()
-            .init_resource::<Dismount>()
-            .init_resource::<Mount>()
-            .init_resource::<SessionFlag>()
+        app.init_map_resource::<Host>()
+            .init_map_resource::<RiderPose>()
+            .init_map_resource::<AutoStart>()
+            .init_map_resource::<Respawn>()
+            .init_map_resource::<Dismount>()
+            .init_map_resource::<Mount>()
+            .init_map_resource::<SessionFlag>()
             .add_systems(halo3_core::map::MapStartup, start_worker)
-            .init_resource::<SkateMotion>()
+            .init_map_resource::<SkateMotion>()
             .add_systems(
                 Update,
                 (update.run_if(halo3_core::pause::running), publish_motion, draw_rider, show_status).chain().run_if(halo3_core::map::ready),

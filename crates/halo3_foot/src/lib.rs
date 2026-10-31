@@ -32,6 +32,7 @@ pub mod pose;
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use halo3_bike::physics::World;
@@ -63,11 +64,11 @@ pub struct FootPlugin;
 
 impl Plugin for FootPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<OnFoot>()
-            .init_resource::<FootTuning>()
-            .init_resource::<AutoStart>()
-            .init_resource::<Dismount>()
-            .init_resource::<Mount>()
+        app.init_map_resource::<OnFoot>()
+            .init_map_resource::<FootTuning>()
+            .init_map_resource::<AutoStart>()
+            .init_map_resource::<Dismount>()
+            .init_map_resource::<Mount>()
             .add_systems(halo3_core::map::MapStartup, setup)
             .add_systems(Update, (walk.run_if(halo3_core::pause::running), show_status).chain().run_if(halo3_core::map::ready));
     }

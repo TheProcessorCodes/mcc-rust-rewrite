@@ -20,6 +20,7 @@
 
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use blam_geometry::{BspInfo, WORLD_UNIT_METRES};
 
@@ -54,7 +55,7 @@ pub struct CullingPlugin;
 
 impl Plugin for CullingPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PortalView>()
+        app.init_map_resource::<PortalView>()
             .add_systems(PostUpdate, (portal_flood, apply_culling).chain().before(TransformSystems::Propagate).run_if(halo3_core::map::ready));
     }
 }

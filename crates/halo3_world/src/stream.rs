@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use blam_texture::Texture;
 
@@ -191,8 +192,8 @@ pub struct StreamPlugin;
 
 impl Plugin for StreamPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Residency>()
-            .init_resource::<GpuCache>()
+        app.init_map_resource::<Residency>()
+            .init_map_resource::<GpuCache>()
             .add_systems(
                 Update,
                 (switch_test, zone_triggers, stream_units).chain().after(zones::ZoneKeys).run_if(halo3_core::map::ready),

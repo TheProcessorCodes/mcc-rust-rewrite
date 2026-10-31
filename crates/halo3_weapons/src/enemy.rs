@@ -16,6 +16,7 @@
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use halo3_bike::physics::World;
 use halo3_core::coords::to_halo;
@@ -32,7 +33,8 @@ pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Enemy>()
+        app.init_map_resource::<Enemy>()
+            .remove_on_map_unload::<Stand>()
             .add_message::<EnemyKilled>()
             .add_systems(halo3_core::map::MapStartup, setup)
             .add_systems(Update, (control, tick).chain().run_if(halo3_core::pause::running).run_if(halo3_core::map::ready));

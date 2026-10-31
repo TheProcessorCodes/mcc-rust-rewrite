@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use bevy::audio::AddAudioSource;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use blam_cache::CacheFile;
 
@@ -81,6 +82,11 @@ impl Plugin for HaloAudioPlugin {
             level: volume,
             muted: false,
         });
+        // A map's sounds go when it is unloaded (`halo3_core::map`).
+        app.remove_on_map_unload::<Loader>()
+            .remove_on_map_unload::<Sounds>()
+            .remove_on_map_unload::<halo2::PlainState>()
+            .on_map_unload(unload_sounds);
         // Halo 3: the sound library loading from the cache file.
         app.insert_resource(Trace {
             on: self.trace,
@@ -90,10 +96,10 @@ impl Plugin for HaloAudioPlugin {
             wanted_at_start: self.music.clone(),
             ..Default::default()
         })
-        .init_resource::<Listener>()
-        .init_resource::<Ambience>()
-        .init_resource::<BoardSounds>()
-        .init_resource::<weapons::WeaponVoices>()
+        .init_map_resource::<Listener>()
+        .init_map_resource::<Ambience>()
+        .init_map_resource::<BoardSounds>()
+        .init_map_resource::<weapons::WeaponVoices>()
         // Registered by `WeaponsPlugin` too; harmless twice, and the
         // sound still builds without it.
         .add_message::<halo3_core::weapons::WeaponEvent>()
@@ -138,6 +144,22 @@ impl Plugin for HaloAudioPlugin {
             })
             .add_systems(Update, headless_mix.after(volume_keys));
         }
+    }
+}
+
+/// Silences the map's voices and starts the music and trace state over.
+fn unload_sounds(world: &mut World) {
+    world.resource::<Mixer>().stop_all();
+    if let Some(mut music) = world.get_resource_mut::<Music>() {
+        let wanted = music.wanted_at_start.clone();
+        *music = Music {
+            wanted_at_start: wanted,
+            ..Default::default()
+        };
+    }
+    if let Some(mut trace) = world.get_resource_mut::<Trace>() {
+        let on = trace.on;
+        *trace = Trace { on, ..Default::default() };
     }
 }
 
