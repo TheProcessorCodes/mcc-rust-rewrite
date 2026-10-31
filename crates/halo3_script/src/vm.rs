@@ -182,6 +182,13 @@ pub struct Runtime {
     /// Sound function calls for the sound side, oldest first
     /// (`halo3_core::script_sound`); the game moves them on every frame.
     pub sounds: Vec<SoundRequest>,
+    /// The mission dialogue's lines and the sounds' lengths
+    /// (`ai_play_line*`, `sound_impulse_language_time`).
+    pub dialogue: crate::dialogue::Dialogue,
+    /// Trigger volumes `volume_test_players` answers true for whatever the
+    /// player's position: the ones an insertion takes him to have passed
+    /// through on the way (see [`Runtime::pass_volumes`]).
+    pub passed_volumes: HashSet<usize>,
     pub config: Config,
     pub tick: u64,
     logged: HashSet<String>,
@@ -254,6 +261,8 @@ impl Runtime {
             folders,
             kill_volumes: Vec::new(),
             sounds: Vec::new(),
+            dialogue: Default::default(),
+            passed_volumes: HashSet::new(),
             config,
             tick: 0,
             logged: HashSet::new(),
@@ -326,6 +335,21 @@ impl Runtime {
         });
         info!("script: console runs {script}");
         true
+    }
+
+    /// Takes the player to have passed through these trigger volumes (by
+    /// name): `volume_test_players` answers true for them from now on.
+    /// For an insertion that starts past a volume a script still waits
+    /// for (`Insertion::passed`).
+    pub fn pass_volumes(&mut self, names: &[String]) {
+        for n in names {
+            match self.volumes.iter().position(|v| &v.name == n) {
+                Some(i) => {
+                    self.passed_volumes.insert(i);
+                }
+                None => warn!("scripts: no trigger volume {n} to pass"),
+            }
+        }
     }
 
     fn log_once(&mut self, key: &str, message: impl FnOnce() -> String) {
@@ -918,7 +942,8 @@ impl Runtime {
             }
             // ---- trigger volumes ----
             "volume_test_players" | "volume_test_players_all" => {
-                V(Value::Bool(self.in_volume(&arg(0), world.player_position())))
+                let passed = arg(0).index().is_some_and(|v| self.passed_volumes.contains(&v));
+                V(Value::Bool(passed || self.in_volume(&arg(0), world.player_position())))
             }
             "volume_test_object" => {
                 let (w, h) = (&*world, &*ai);
@@ -1104,6 +1129,47 @@ impl Runtime {
                     self.sounds.push(r);
                 }
                 V(Value::Void)
+            }
+            // ---- dialogue: a line of the mission dialogue by name ----
+            // `ai_play_line_on_object object line`, `ai_play_line ai line`,
+            // `vs_play_line ai interrupt line`: the line plays (at the
+            // object when one is named; Cortana's `none` is in the player's
+            // ear) and the call returns its length in ticks, which the
+            // scripts sleep on.
+            "ai_play_line_on_object" | "ai_play_line" | "vs_play_line" => {
+                let line_arg = a.last().cloned().unwrap_or_default();
+                let at = if name == "ai_play_line_on_object" {
+                    let (w, h) = (&*world, &*ai);
+                    arg(0).object().and_then(|o| self.object_position(o, w, h))
+                } else {
+                    None
+                };
+                let Some(line) = line_arg.text().and_then(|n| self.dialogue.line(n)).cloned() else {
+                    let n = line_arg.text().unwrap_or("?").to_string();
+                    self.log_once(&format!("line {n}"), || format!("{name}: no dialogue line {n}; plays nothing"));
+                    return V(Value::Real(0.0).coerce(ty));
+                };
+                let seconds = self.dialogue.seconds_of(line.sound);
+                info!(
+                    "script {}: {name} {} ({}, {seconds:.2} s)",
+                    self.thread_name(t),
+                    line_arg.text().unwrap_or("?"),
+                    line.speaker
+                );
+                self.sounds.push(SoundRequest::Impulse {
+                    tag: line.sound,
+                    name: line.sound_name,
+                    at,
+                    scale: 1.0,
+                });
+                V(Value::Real((seconds as f64 * TICKS_PER_SECOND).round() as f32).coerce(ty))
+            }
+            // `sound_impulse_language_time snd`: the sound's length in
+            // ticks, in the player's language.
+            "sound_impulse_language_time" => {
+                let tag = arg(0).raw() & 0xFFFF;
+                let seconds = self.dialogue.seconds_of(tag);
+                V(Value::Real((seconds as f64 * TICKS_PER_SECOND).round() as f32).coerce(ty))
             }
             // Cinematic music bookkeeping: nothing to do without cinematics.
             "sound_impulse_mark_as_outro" => V(Value::Void),

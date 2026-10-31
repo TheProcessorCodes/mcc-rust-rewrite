@@ -791,6 +791,7 @@ fn scripts_for(
     let mut console = None;
     let mut start = None;
     let mut start_override = None;
+    let mut passed = Vec::new();
     match insertion.as_deref().map(|i| (i, i.parse::<i16>())) {
         Some((_, Ok(n))) => config.insertion_point = n,
         Some((name, Err(_))) => match halo3_script::setup::insertion(&data, scene, name) {
@@ -801,6 +802,7 @@ fn scripts_for(
                 console = Some(ins.script);
                 start = ins.start;
                 start_override = ins.start_override;
+                passed = ins.passed;
                 if let Some((at, yaw)) = start {
                     eprintln!("scripts: insertion {name} starts at halo [{:.2}, {:.2}, {:.2}] facing {:.0} degrees", at.x, at.y, at.z, yaw.to_degrees());
                 }
@@ -815,7 +817,13 @@ fn scripts_for(
         },
         None => {}
     }
-    let runtime = halo3_script::setup::runtime(cache, scene, data, config);
+    let mut runtime = halo3_script::setup::runtime(cache, scene, data, config);
+    runtime.pass_volumes(&passed);
+    eprintln!(
+        "scripts: {} dialogue lines ({} lengths)",
+        runtime.dialogue.lines.len(),
+        runtime.dialogue.language.unwrap_or("the tags'")
+    );
     // The animations of the machines scripts move (doors, the Warthog
     // run's islands and pillars).
     let started = std::time::Instant::now();

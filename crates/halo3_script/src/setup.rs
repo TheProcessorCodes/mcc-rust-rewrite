@@ -123,7 +123,9 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
         }
     }
     let objects = Objects::new(info, by_name);
-    Runtime::new(data, objects, scene.trigger_volumes.clone(), folders, config)
+    let mut rt = Runtime::new(data, objects, scene.trigger_volumes.clone(), folders, config);
+    rt.dialogue = crate::dialogue::Dialogue::read(cache);
+    rt
 }
 
 fn kind_type(kind: Kind) -> i16 {
@@ -181,6 +183,9 @@ pub struct Insertion {
     pub start: Option<(glam::Vec3, f32)>,
     /// Applied after the script's start-up ticks.
     pub start_override: Option<StartOverride>,
+    /// Trigger volumes the player is taken to have passed through on the
+    /// way to this start (`Runtime::pass_volumes`, [`PASSED_ON_THE_WAY`]).
+    pub passed: Vec<String>,
 }
 
 /// The insertion `--insertion NAME` names: the map's own `ins_NAME`, which
@@ -199,6 +204,7 @@ pub fn insertion(data: &ScriptData, scene: &Scene, name: &str) -> Option<Inserti
             script: "ins_trench_run".into(),
             start: Some((at, yaw)),
             start_override: Some(StartOverride { zone_set, at, yaw }),
+            passed: Vec::new(),
         });
     }
     let script = format!("ins_{bare}");
@@ -228,6 +234,11 @@ pub fn insertion(data: &ScriptData, scene: &Scene, name: &str) -> Option<Inserti
         start_override: start
             .filter(|_| FACE_TOWARDS.iter().any(|(ins, _)| *ins == bare))
             .map(|(at, yaw)| StartOverride { zone_set: None, at, yaw }),
+        passed: PASSED_ON_THE_WAY
+            .iter()
+            .filter(|(ins, _)| *ins == bare)
+            .map(|(_, volume)| volume.to_string())
+            .collect(),
     })
 }
 
@@ -284,3 +295,12 @@ pub fn height_on(t: [glam::Vec3; 3], p: glam::Vec2) -> Option<f32> {
 /// the canyon the run starts in; the canyon runs north to the run's first
 /// trigger, `120_08_trench_encounter_100`.
 pub const FACE_TOWARDS: &[(&str, &str)] = &[("trench_run", "120_08_trench_encounter_100")];
+
+/// Insertions that start past a trigger volume a script they wake still
+/// waits for, and that volume. 120_halo's `120_08_trench_run` wakes
+/// `md_09_cortana_hints`, whose first wait is for the end of the hallway
+/// before the run (`120_07_c_hall_end`): played through, the player has
+/// just passed it ("There! Johnson's Warthog!"), but `ins_trench_run` puts
+/// him beyond it, so without this the run's first six Cortana lines never
+/// play (`ins_trench_run` itself does nothing about it).
+pub const PASSED_ON_THE_WAY: &[(&str, &str)] = &[("trench_run", "120_07_c_hall_end")];

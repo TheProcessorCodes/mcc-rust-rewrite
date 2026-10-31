@@ -484,7 +484,76 @@ impl<'a> SoundTags<'a> {
         }
         Ok(out)
     }
+
+    /// The map's mission dialogue (`mdlg`, one tag per campaign map, none
+    /// on multiplayer maps): the lines the scripts play by name
+    /// (`ai_play_line_on_object none 120mg_030`), `sound.md` 11.
+    pub fn mission_dialogue(&self) -> Result<Vec<DialogueLine>> {
+        let c = self.cache;
+        let mut out = Vec::new();
+        for t in c.tags.of_class("mdlg") {
+            let o = c.tag_offset(t)?;
+            for l in c.reader_at(o).block()?.elements(DIALOGUE_LINE_SIZE) {
+                let mut variants = Vec::new();
+                for v in c.reader_at(l + 4).block()?.elements(DIALOGUE_VARIANT_SIZE) {
+                    variants.push(DialogueVariant {
+                        speaker: self.string_at(v)?,
+                        sound: tag_index(c, v + 4, "snd!")?,
+                        effect: self.string_at(v + 0x14)?,
+                    });
+                }
+                out.push(DialogueLine {
+                    name: self.string_at(l)?,
+                    variants,
+                    effect: self.string_at(l + 0x10)?,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    fn string_at(&self, at: usize) -> Result<String> {
+        let id = self.cache.reader_at(at).string_id()?;
+        Ok(self.cache.string(id).unwrap_or("").to_string())
+    }
 }
+
+/// One line of a map's mission dialogue (`mdlg + 0x00`, 20 bytes).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DialogueLine {
+    /// What the scripts name it by: `120mg_030`.
+    pub name: String,
+    /// Who may say it; nearly always one (120_halo: one line of 213 has
+    /// two, the Master Chief's and Guilty Spark's takes of `120lb_220`).
+    pub variants: Vec<DialogueVariant>,
+    /// The line's sound effect by name, `""` for none: `cortana_mission`
+    /// (Cortana in the Chief's head), `radio_default`, `radio_3d`,
+    /// `object`. Not applied (`sound.md` 11).
+    pub effect: String,
+}
+
+/// One speaker's take of a line (24 bytes).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DialogueVariant {
+    /// The speaker's three-letter code: `cor` Cortana, `jon` Johnson, `arb`
+    /// the Arbiter, `gsp` Guilty Spark, `mas` the Master Chief, `grv` the
+    /// Gravemind, `sma` a marine.
+    pub speaker: String,
+    /// The `snd!` tag (its permutations are in the language bank).
+    pub sound: Option<u32>,
+    /// A per-variant effect (`radio_default`, `radio_3d`), `""` for none.
+    pub effect: String,
+}
+
+impl DialogueLine {
+    /// The sound of the first variant that has one.
+    pub fn sound(&self) -> Option<(u32, &str)> {
+        self.variants.iter().find_map(|v| v.sound.map(|s| (s, v.speaker.as_str())))
+    }
+}
+
+const DIALOGUE_LINE_SIZE: usize = 20;
+const DIALOGUE_VARIANT_SIZE: usize = 24;
 
 /// The scenario's block of tag references its scripts use.
 const SCRIPT_REFERENCES: usize = 0x404;
@@ -509,6 +578,14 @@ pub struct SoundClass {
     /// -15 on weapons, impacts, footsteps, vehicles and ambience. Most
     /// classes give one value twice.
     pub gain_bounds_db: [f32; 2],
+    /// How far the class is turned down while scripted dialogue plays, dB
+    /// (`+0x5C`; 0 = not at all), and the fade down / back up times, s
+    /// (`+0x60`, `+0x68`). Inferred (`sound.md` 9 and 11): of the three
+    /// ducking slots this is the one that turns music down 3 dB, effects 6
+    /// and unit (AI) dialogue 6, and leaves ambience and the mission
+    /// dialogue classes alone.
+    pub dialogue_duck_db: f32,
+    pub dialogue_duck_fade: [f32; 2],
 }
 
 impl SoundClass {
@@ -584,6 +661,8 @@ impl SoundTags<'_> {
                 max_per_object,
                 distances: c.reader_at(e + 0x34).f32x4()?,
                 gain_bounds_db: [g.f32()?, g.f32()?],
+                dialogue_duck_db: c.reader_at(e + 0x5C).f32()?,
+                dialogue_duck_fade: [c.reader_at(e + 0x60).f32()?, c.reader_at(e + 0x68).f32()?],
             });
         }
         Ok(out)

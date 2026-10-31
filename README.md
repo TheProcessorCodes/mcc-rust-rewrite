@@ -86,7 +86,8 @@ they skip when setup has not run.
 
 Dev overrides: `HALO3_MCC`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `HALO3_SKATE_ASSETS` (or
 `IW4L_SKATE_ASSETS`), `HALO3_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
-Reflex), `HALO3_SETUP_DIR`.
+Reflex), `HALO3_SETUP_DIR`, `HALO3_LANGUAGE` (dialogue language: `english`, `french`,
+`german`, `italian`, `mexican` or `spanish`; else `LANGUAGE=` in `setup.env`, else English).
 
 ## Try it
 
@@ -103,6 +104,7 @@ target\debug\blam.exe sound riverworld list
 target\debug\blam.exe scripts 120_halo --grep trench_timer_100_001
 target\debug\blam.exe ai 120_halo --squads
 target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_music_15"
+target\debug\blam.exe sound 120_halo dialogue --grep 120mg
 target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human"
 target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human" --anim combat:any:any:melee --frame 6
 target\debug\blam.exe anim 120_halo --all
@@ -247,7 +249,9 @@ lists all 20).
       user's `halo3.dll`), driven by the map's tags: each cluster's background
       ambience with its random details, cross-faded as you move; the sound
       scenery placed in the world, panned and attenuated by distance; music by
-      hand (M; the Warthog run on 120_halo); board roll, grind and landing
+      hand (M; the Warthog run on 120_halo); the scripts' dialogue lines
+      (Cortana, Johnson, Guilty Spark ...) from MCC's language bank
+      (`english.fsb`), on the Dialogue slider; board roll, grind and landing
       sounds while skating. K mutes, `-` / `=` volume, `HALO3_AUDIO=0` off
       (`docs/format/sound.md`, `docs/viewer.md` "Sound").
 - [x] Blackout (`blackout`, file `lockout.map`, DLC; built, awaiting a playtest): 21 clusters,

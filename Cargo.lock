@@ -2654,6 +2654,7 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_sound",
+ "game_paths",
  "halo3_core",
  "reflex_assets",
  "serde_json",
@@ -2721,6 +2722,8 @@ dependencies = [
  "blam_cache",
  "blam_geometry",
  "blam_script",
+ "blam_sound",
+ "game_paths",
  "glam",
  "halo3_core",
 ]

@@ -134,6 +134,8 @@ struct State {
     /// change ramps over one block).
     bus_gain: [f32; BUSES],
     bus_was: [f32; BUSES],
+    /// Each bus's ducking (under dialogue), multiplied on its volume.
+    bus_duck: [f32; BUSES],
     /// Per bus, the sum of squares of its mix (both channels, before the
     /// master volume), and the frames summed, since `take_levels`.
     meter: [f64; BUSES],
@@ -153,6 +155,7 @@ impl Default for Mixer {
             next_id: 1,
             bus_gain: [1.0; BUSES],
             bus_was: [1.0; BUSES],
+            bus_duck: [1.0; BUSES],
             ..Default::default()
         })))
     }
@@ -261,6 +264,12 @@ impl Mixer {
         self.0.lock().unwrap().bus_gain[bus.index()] = gain.max(0.0);
     }
 
+    /// Sets a bus's ducking (1: none), multiplied on its volume; it ramps
+    /// there over one block like the volume.
+    pub fn set_duck(&self, bus: Bus, gain: f32) {
+        self.0.lock().unwrap().bus_duck[bus.index()] = gain.max(0.0);
+    }
+
     /// Each bus's RMS level in dBFS (both channels, after the bus volume,
     /// before the master volume) since the last call; `None` for a bus
     /// that was silent.
@@ -331,7 +340,8 @@ impl Mixer {
         }
         // The buses into the output, each at its volume (ramped from the
         // last block's).
-        let (was, now) = (s.bus_was, s.bus_gain);
+        let was = s.bus_was;
+        let now: [f32; BUSES] = std::array::from_fn(|b| s.bus_gain[b] * s.bus_duck[b]);
         for (f, cell) in s.scratch.iter().enumerate() {
             let t = (f + 1) as f32 / frames as f32;
             for b in 0..BUSES {
