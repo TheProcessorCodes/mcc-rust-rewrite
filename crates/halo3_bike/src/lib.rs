@@ -12,13 +12,16 @@
 //! | left stick X | A / D | handlebars |
 //! | right stick | arrow keys | rider: forward, back, left, right |
 //! | RT | W | throttle |
-//! | LT | S | brake |
-//! | A (hold) | Space (hold) | back up, to 10 mph |
+//! | LT | S | brake; held at a standstill, back up to 10 mph |
 //! | Y | R | stand the bike back up |
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`) |
 //! | LB + d-pad up (hold) | | back to the session marker |
+//! | left stick click | H | engine sound: Reflex's 450F, synth, off (`halo3_audio::engine`) |
 //! | | 0 | physics tuning menu (`tune.rs`) |
+//!
+//! A crash shows CRASHED in orange in the lower left until the bike is
+//! put back.
 //!
 //! Falling into a kill volume or out of the world (`falls.rs`: Guardian's
 //! abyss) puts the bike back where it last rode well, as a crash does.
@@ -37,6 +40,7 @@ pub mod unleashed;
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::window::PrimaryWindow;
 
 use blam_geometry::Collision;
@@ -74,15 +78,16 @@ pub struct BikePlugin;
 
 impl Plugin for BikePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Riding>()
-            .init_resource::<AutoStart>()
-            .init_resource::<StickPool>()
-            .init_resource::<model::BikeMesh>()
-            .init_resource::<Dismount>()
-            .init_resource::<Mount>()
-            .init_resource::<SessionFlag>()
+        app.init_map_resource::<Riding>()
+            .init_map_resource::<AutoStart>()
+            .init_map_resource::<StickPool>()
+            .init_map_resource::<model::BikeMesh>()
+            .init_map_resource::<Dismount>()
+            .init_map_resource::<Mount>()
+            .init_map_resource::<SessionFlag>()
+            .init_map_resource::<halo3_core::bike::BikeMotion>()
             .add_plugins(tune::TunePlugin)
-            .add_systems(Startup, (setup, model::start))
+            .add_systems(halo3_core::map::MapStartup, (setup, model::start, spawn_crashed_text))
             .add_systems(
                 Update,
                 (
@@ -92,8 +97,10 @@ impl Plugin for BikePlugin {
                     model::place,
                     model::light,
                     show_status,
+                    show_crashed,
+                    publish_motion,
                 )
-                    .chain(),
+                    .chain().run_if(halo3_core::map::ready),
             );
     }
 }
@@ -114,6 +121,60 @@ struct Riding {
     look: Vec3,
     /// Kept while off the bike, as the skate's is.
     marker: marker::SessionMarker,
+}
+
+/// The bike's state for the engine sound (`halo3_audio`).
+fn publish_motion(riding: Res<Riding>, mut motion: ResMut<halo3_core::bike::BikeMotion>) {
+    let m = match riding.bike.as_ref() {
+        Some(b) => {
+            let s = physics::setup();
+            halo3_core::bike::BikeMotion {
+                riding: true,
+                rpm: b.engine.rpm,
+                min_rpm: s.min_rpm,
+                max_rpm: s.max_rpm(),
+                throttle: b.gas(),
+                speed: b.velocity.length(),
+                gear: b.engine.gear,
+                grounded: b.grounded(),
+                crashed: b.crashed.is_some(),
+                clutch_slipping: !b.engine.locked,
+                rear_sliding: b.wheels[0].sliding && b.wheels[0].contact.is_some(),
+            }
+        }
+        None => halo3_core::bike::BikeMotion::default(),
+    };
+    *motion = m;
+}
+
+/// The CRASHED text in the lower left, shown while the bike is down.
+#[derive(Component)]
+struct CrashedText;
+
+const CRASHED_ORANGE: Color = Color::srgb(1.0, 0.55, 0.1);
+
+fn spawn_crashed_text(mut commands: Commands) {
+    commands.spawn((
+        CrashedText,
+        Text::new("CRASHED"),
+        TextFont::from_font_size(32.0),
+        TextColor(CRASHED_ORANGE),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(24.0),
+            bottom: Val::Px(40.0),
+            ..default()
+        },
+        Visibility::Hidden,
+    ));
+}
+
+fn show_crashed(riding: Res<Riding>, mut text: Query<&mut Visibility, With<CrashedText>>) {
+    let crashed = riding.bike.as_ref().is_some_and(|b| b.crashed.is_some());
+    let want = if crashed { Visibility::Inherited } else { Visibility::Hidden };
+    for mut v in &mut text {
+        v.set_if_neq(want);
+    }
 }
 
 /// The skate scale `k` the rider is drawn at (`skate.rs`).
@@ -213,7 +274,6 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         ),
         throttle: key(KeyCode::KeyW),
         brake: key(KeyCode::KeyS),
-        reverse: keys.pressed(KeyCode::Space),
     };
     if let Some(pad) = pad {
         let l = dead(pad.left_stick(), 0.12);
@@ -223,7 +283,6 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         let rt = trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]);
         c.throttle = c.throttle.max(rt.powf(THROTTLE_CURVE));
         c.brake = c.brake.max(trigger(pad, B::LeftTrigger2, GamepadAxis::LeftZ, &mut rested[0]));
-        c.reverse |= pad.pressed(B::South);
     }
     c
 }

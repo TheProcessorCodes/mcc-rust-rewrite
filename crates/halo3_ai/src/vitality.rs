@@ -11,6 +11,7 @@
 //! hurt its allies.
 
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use halo3_core::ai::{Allegiances, Damage, DamageSource, DamageTarget, PlayerVitality, team};
 use halo3_foot::OnFoot;
@@ -24,16 +25,17 @@ pub(crate) struct VitalityPlugin;
 
 impl Plugin for VitalityPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Checkpoint>()
-            .add_systems(Startup, spawn_hud)
+        app.init_map_resource::<Checkpoint>()
+            .add_systems(halo3_core::map::MapStartup, spawn_hud)
             .add_systems(
                 Update,
                 (hurt, fall, recharge, checkpoint, respawn)
                     .chain()
                     .in_set(AiSet::Hurt)
-                    .run_if(halo3_core::pause::running),
+                    .run_if(halo3_core::pause::running)
+                    .run_if(halo3_core::map::ready),
             )
-            .add_systems(Update, hud.after(AiSet::Hurt));
+            .add_systems(Update, hud.after(AiSet::Hurt).run_if(halo3_core::map::ready));
     }
 }
 

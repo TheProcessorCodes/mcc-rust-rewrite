@@ -1,17 +1,19 @@
 //! Halo 3's own sound in the viewer: the map's ambience (each cluster's
 //! background sound with its random details, sound scenery placed in the
-//! world), its music by hand, board sounds while skating, and weapon sounds
-//! (`weapons.rs`).
+//! world), its music by hand, board sounds while skating, weapon sounds
+//! (`weapons.rs`) and the dirt bike's engine (`engine.rs`).
 //! `docs/format/sound.md` has the data, `docs/viewer.md` "Sound" the rules.
 //!
 //! Music (`music.rs`) follows the map's scripts when they run, and the
 //! keys: M music on / off, Shift+M next track, N alternate loop, K mute,
-//! `-` / `=` master volume; the pause menu's Sound tab sets the master,
-//! music, effects, ambience and dialogue volumes (`levels.rs`, saved next
-//! to the exe). `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
+//! `-` / `=` master volume, H the bike's engine sound (Reflex, synth, off);
+//! the pause menu's Sound tab sets the master, music, effects, ambience and
+//! dialogue volumes (`levels.rs`, saved next to the exe), its Dirt bike tab
+//! the engine's. `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
 //! mode, where `HALO3_AUDIO_TRACE=1` runs the logic without output and
 //! logs which emitters are active at each view.
 
+pub mod engine;
 pub mod halo2;
 mod levels;
 mod library;
@@ -25,6 +27,7 @@ use std::sync::{Arc, Mutex};
 
 use bevy::audio::AddAudioSource;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use blam_cache::CacheFile;
 
@@ -35,17 +38,34 @@ use mixer::{Bus, Clip, Mixer, MixerAsset, Play, VoiceId};
 
 pub use levels::{Channel, SoundLevels};
 
+/// The mixer and the sound systems; the map's own sounds come in with
+/// [`install`] when the map loads (`halo3_core::map`).
 pub struct HaloAudioPlugin {
-    pub cache: Option<&'static CacheFile>,
     /// Play through the sound device (false: `--shot` trace mode).
     pub output: bool,
     /// Log the active emitters as the camera moves.
     pub trace: bool,
     /// `--music NAME|N`: a music track to start with.
     pub music: Option<String>,
-    /// A map with no Halo 3 cache file (Halo 2): its ambience, decoded by
-    /// the caller on a thread (`halo2.rs`).
-    pub plain: Mutex<Option<halo2::PlainLoader>>,
+}
+
+/// A map's sound source: a Halo 3 cache file, or for a map with none
+/// (Halo 2) its ambience, decoded by the caller on a thread (`halo2.rs`).
+pub enum MapSound {
+    Halo3(&'static CacheFile),
+    Plain(halo2::PlainLoader),
+}
+
+/// Starts loading a map's sounds; their systems run from then on. Does
+/// nothing without [`HaloAudioPlugin`].
+pub fn install(world: &mut World, sound: MapSound) {
+    if !world.contains_resource::<Mixer>() {
+        return;
+    }
+    match sound {
+        MapSound::Halo3(cache) => world.insert_resource(Loader(Mutex::new(Some(library::load(cache))))),
+        MapSound::Plain(loader) => world.insert_resource(halo2::PlainState::start(loader)),
+    }
 }
 
 /// Whether sound is wanted: not in `--shot` mode, not with `HALO3_AUDIO=0`.
@@ -60,23 +80,68 @@ pub fn trace_wanted() -> bool {
 
 impl Plugin for HaloAudioPlugin {
     fn build(&self, app: &mut App) {
-        let plain = self.plain.lock().unwrap().take();
-        if self.cache.is_none() && plain.is_none() {
-            return;
-        }
         let levels = SoundLevels::load();
         info!("sound: volumes {}", levels.describe());
         app.insert_resource(Mixer::default())
             .insert_resource(levels)
             .init_resource::<levels::SaveDelay>()
-            .add_systems(Update, levels::apply.after(volume_keys));
-        if let Some(cache) = self.cache {
-            self.build_halo3(app, cache);
-        } else if let Some(loader) = plain {
-            app.insert_resource(halo2::PlainState::start(loader))
-                .init_resource::<Listener>()
-                .add_systems(Update, (listener, halo2::receive, halo2::play, volume_keys).chain());
-        }
+            .add_systems(Update, levels::apply.after(VolumeKeys));
+        // The dirt bike's engine (`engine.rs`).
+        app.init_map_resource::<engine::EngineSound>().add_systems(
+            Update,
+            engine::bike_engine.before(VolumeKeys).run_if(halo3_core::map::ready),
+        );
+        // A map's sounds go when it is unloaded (`halo3_core::map`).
+        app.remove_on_map_unload::<Loader>()
+            .remove_on_map_unload::<Sounds>()
+            .remove_on_map_unload::<halo2::PlainState>()
+            .on_map_unload(unload_sounds);
+        // Halo 3: the sound library loading from the cache file.
+        app.insert_resource(Trace {
+            on: self.trace,
+            ..Default::default()
+        })
+        .insert_resource(music::MusicPlayer::new(self.music.clone()))
+        .init_map_resource::<music::ClassGains>()
+        .init_map_resource::<halo3_core::script_sound::ScriptSounds>()
+        .init_map_resource::<Listener>()
+        .init_map_resource::<Ambience>()
+        .init_map_resource::<BoardSounds>()
+        .init_map_resource::<weapons::WeaponVoices>()
+        // Registered by `WeaponsPlugin` too; harmless twice, and the
+        // sound still builds without it.
+        .add_message::<halo3_core::weapons::WeaponEvent>()
+        .add_message::<halo3_core::weapons::WeaponImpact>()
+        .add_systems(
+            Update,
+            (
+                receive,
+                listener,
+                background,
+                details,
+                scenery,
+                music::script_requests,
+                music::hand_controls,
+                music::update,
+                board,
+                weapons::weapon_sounds,
+                volume_keys.in_set(VolumeKeys),
+                trace,
+                trace_levels,
+            )
+                .chain()
+                .after(halo3_core::zones::ZoneKeys)
+                .run_if(resource_exists::<Loader>)
+                .run_if(halo3_core::map::ready),
+        );
+        // Halo 2: the plain ambience.
+        app.add_systems(
+            Update,
+            (listener, halo2::receive, halo2::play, volume_keys.in_set(VolumeKeys))
+                .chain()
+                .run_if(resource_exists::<halo2::PlainState>)
+                .run_if(halo3_core::map::ready),
+        );
         if self.output {
             app.add_audio_source::<MixerAsset>()
                 .add_systems(Startup, start_output);
@@ -93,44 +158,16 @@ impl Plugin for HaloAudioPlugin {
     }
 }
 
-impl HaloAudioPlugin {
-    fn build_halo3(&self, app: &mut App, cache: &'static CacheFile) {
-        app.insert_resource(Loader(Mutex::new(Some(library::load(cache)))))
-            .insert_resource(Trace {
-                on: self.trace,
-                ..Default::default()
-            })
-            .insert_resource(music::MusicPlayer::new(self.music.clone()))
-            .init_resource::<music::ClassGains>()
-            .init_resource::<halo3_core::script_sound::ScriptSounds>()
-            .init_resource::<Listener>()
-            .init_resource::<Ambience>()
-            .init_resource::<BoardSounds>()
-            .init_resource::<weapons::WeaponVoices>()
-            // Registered by `WeaponsPlugin` too; harmless twice, and the
-            // sound still builds without it.
-            .add_message::<halo3_core::weapons::WeaponEvent>()
-            .add_message::<halo3_core::weapons::WeaponImpact>()
-            .add_systems(
-                Update,
-                (
-                    receive,
-                    listener,
-                    background,
-                    details,
-                    scenery,
-                    music::script_requests,
-                    music::hand_controls,
-                    music::update,
-                    board,
-                    weapons::weapon_sounds,
-                    volume_keys,
-                    trace,
-                    trace_levels,
-                )
-                    .chain()
-                    .after(halo3_core::zones::ZoneKeys),
-            );
+/// Silences the map's voices and starts the music and trace state over.
+fn unload_sounds(world: &mut World) {
+    world.resource::<Mixer>().stop_all();
+    if let Some(mut music) = world.get_resource_mut::<music::MusicPlayer>() {
+        let fresh = music.fresh();
+        *music = fresh;
+    }
+    if let Some(mut trace) = world.get_resource_mut::<Trace>() {
+        let on = trace.on;
+        *trace = Trace { on, ..Default::default() };
     }
 }
 
@@ -771,6 +808,12 @@ fn board(
         b.last_state = state.to_string();
     }
 }
+
+/// [`volume_keys`], which runs in both the Halo 3 and the Halo 2 chain: a
+/// system added twice cannot be ordered against by name, so the others
+/// order against this set.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+struct VolumeKeys;
 
 /// K mutes, `-` / `=` step the master volume by 10 % (the pause menu's
 /// Master slider shows the same value).

@@ -31,6 +31,10 @@ pub struct Zones {
     pub layout: Scene,
     /// Placed skies: (scenario sky index, active-BSP mask).
     pub skies: Vec<(u32, u32)>,
+    /// A mission's zone sets (`halo3` `MISSIONS`): no other is ever
+    /// loaded, whether a trigger volume, a script or a key asks. `None`:
+    /// every zone set.
+    pub allowed: Option<Vec<usize>>,
 }
 
 impl Zones {
@@ -52,7 +56,13 @@ impl Zones {
                 ..Default::default()
             },
             skies,
+            allowed: None,
         }
+    }
+
+    /// Whether zone set `n` may be loaded (see [`Zones::allowed`]).
+    pub fn allows(&self, n: usize) -> bool {
+        self.allowed.as_ref().is_none_or(|a| a.contains(&n))
     }
 
     pub fn all(&self) -> u32 {
@@ -101,6 +111,10 @@ pub fn load_zone_set(loaded: &mut LoadedBsps, zones: &Zones, n: usize) {
     let Some(z) = zones.layout.zone_sets.get(n) else {
         return;
     };
+    if !zones.allows(n) {
+        info!("zone set {n} {}: not part of this mission; staying in {:?}", z.name, loaded.zone_set);
+        return;
+    }
     loaded.mask = z.bsps & zones.all();
     loaded.zone_set = Some(n);
     loaded.sky = zones.layout.main_sky(loaded.mask, &zones.skies);

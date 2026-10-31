@@ -529,7 +529,10 @@ impl Plugin for AnimPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PostUpdate,
-            pose_joints.in_set(AnimSystems).after(bevy::transform::TransformSystems::Propagate),
+            pose_joints
+                .in_set(AnimSystems)
+                .after(bevy::transform::TransformSystems::Propagate)
+                .run_if(halo3_core::map::ready),
         );
     }
 }

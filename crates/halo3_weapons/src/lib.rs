@@ -34,6 +34,7 @@ mod killfeed;
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 pub use halo3_core::weapons::{WeaponAction, WeaponEvent, WeaponImpact};
 pub use fire::Shots;
@@ -53,8 +54,11 @@ impl Plugin for WeaponsPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<WeaponEvent>()
             .add_message::<WeaponImpact>()
-            .init_resource::<Inventory>()
-            .add_systems(Startup, setup)
+            .init_map_resource::<Inventory>()
+            .remove_on_map_unload::<Items>()
+            .remove_on_map_unload::<Placements>()
+            .remove_on_map_unload::<Armory>()
+            .add_systems(halo3_core::map::MapStartup, setup)
             .add_systems(
                 Update,
                 (
@@ -64,7 +68,7 @@ impl Plugin for WeaponsPlugin {
                     respawn_items.run_if(halo3_core::pause::running),
                 )
                     .chain()
-                    .after(halo3_foot::walk),
+                    .after(halo3_foot::walk).run_if(halo3_core::map::ready),
             )
             .add_plugins((fire::FirePlugin, hud::HudPlugin, enemy::EnemyPlugin, killfeed::KillFeedPlugin));
     }

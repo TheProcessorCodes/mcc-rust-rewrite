@@ -1,14 +1,20 @@
 //! The pause menu: Escape, or Start on a pad, stops the game and lists the
 //! controls on four tabs: free roam and on foot (keyboard and controller), the dirt bike
-//! and skating (controller only); a fifth, Sound, has the volume sliders
-//! (`sound_tab`). Click a tab, or change tab with LB / RB, the d-pad, A / D
-//! or the arrow keys (on the Sound tab the arrows and the d-pad move the
-//! sliders; LB / RB and A / D still change tab). The same button carries
-//! on; Q, or View (Back) on a pad, quits the game.
+//! and skating (controller only), with the bike's engine volume slider on
+//! the dirt bike tab; a fifth, Sound, has the volume sliders (`sound_tab`).
+//! Click a tab, or change tab with LB / RB, the d-pad, A / D or the arrow
+//! keys (on the Sound tab the arrows and the d-pad move the sliders; LB / RB
+//! and A / D still change tab). The same button carries on; Q, or View
+//! (Back) on a pad, goes back to the map menu (or quits the game when it
+//! was started on a map).
 //!
 //! Pausing stops virtual time, and the systems that read input or move
 //! things run only `while running`, so nothing reacts to keys behind the
 //! menu. Drawing goes on, so the frozen frame stays on screen.
+//!
+//! The dirt bike tab has the engine sound's volume slider: drag or click
+//! it, or d-pad up / down, the up / down arrows or W / S; it is saved when
+//! the game carries on (`EngineVolume`, `bike-sound.json`).
 //!
 //! The skate buttons are the stock Skate 3 layout the engine maps them
 //! through (`skate-core` `input/controller.rs` and `gameplay_map.rs`: A and
@@ -16,27 +22,30 @@
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use halo3_audio::{Channel, SoundLevels};
+use halo3_core::bike::EngineVolume;
 use halo3_core::pause::Paused;
 
 pub struct PausePlugin;
 
 impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Paused>()
-            .init_resource::<crate::finish::RunFinished>()
-            .init_resource::<ShownTab>()
-            .init_resource::<SliderInput>()
-            .add_systems(Startup, spawn_menu)
+        app.init_map_resource::<Paused>()
+            .init_map_resource::<crate::finish::RunFinished>()
+            .init_map_resource::<ShownTab>()
+            .init_map_resource::<SliderInput>()
+            .insert_resource(EngineVolume::load())
+            .add_systems(halo3_core::map::MapStartup, spawn_menu)
             .add_systems(
                 PreUpdate,
-                (toggle, quit, switch_tab, sound_tab)
+                (toggle, quit, switch_tab, sound_tab, engine_slider)
                     .chain()
                     .after(InputSystems)
-                    .after(halo3_core::pause::OverlayInput),
+                    .after(halo3_core::pause::OverlayInput).run_if(halo3_core::map::ready),
             );
     }
 }
@@ -55,6 +64,16 @@ struct TabPage(usize);
 /// A tab's name in the row along the top.
 #[derive(Component)]
 struct TabLabel(usize);
+
+/// The engine volume slider's bar, its filled part and its figure.
+#[derive(Component)]
+struct VolumeBar;
+#[derive(Component)]
+struct VolumeFill;
+#[derive(Component)]
+struct VolumeText;
+
+const BIKE_TAB: usize = 2;
 
 const TABS: [&str; 5] = ["Free roam", "On foot", "Dirt bike", "Skate", "Sound"];
 
@@ -108,6 +127,7 @@ const BIKE: &[[&str; 2]] = &[
     ["LB + d-pad down", "set the session marker"],
     ["LB + d-pad up (hold)", "back to the session marker"],
     ["View / Back", "get off the bike"],
+    ["click left stick (H)", "engine sound: Reflex's 450F, synth, off"],
     ["0 (keyboard)", "physics tuning menu"],
     ["Start", "pause"],
 ];
@@ -153,13 +173,14 @@ fn row(parent: &mut ChildSpawnerCommands, cells: &[&str], widths: &[f32], colour
     });
 }
 
-/// A tab page: a header row, then the controls.
+/// A tab page: a header row, then the controls, then `extra`.
 fn page<const N: usize>(
     panel: &mut ChildSpawnerCommands,
     index: usize,
     header: [&str; N],
     widths: [f32; N],
     rows: &[[&str; N]],
+    extra: impl FnOnce(&mut ChildSpawnerCommands),
 ) {
     panel
         .spawn((
@@ -176,10 +197,64 @@ fn page<const N: usize>(
             for cells in rows {
                 row(p, cells, &widths, Color::WHITE);
             }
+            extra(p);
         });
 }
 
-fn spawn_menu(mut commands: Commands, levels: Option<Res<SoundLevels>>) {
+/// The engine volume row: a label, the bar, the figure, how to move it.
+fn volume_slider(p: &mut ChildSpawnerCommands) {
+    p.spawn(Node {
+        margin: UiRect::top(Val::Px(14.0)),
+        align_items: AlignItems::Center,
+        column_gap: Val::Px(14.0),
+        ..default()
+    })
+    .with_children(|r| {
+        r.spawn(Node {
+            width: Val::Px(246.0),
+            ..default()
+        })
+        .with_child(text("Engine volume", 18.0, LIT));
+        r.spawn((
+            VolumeBar,
+            Node {
+                width: Val::Px(240.0),
+                height: Val::Px(14.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
+        ))
+        .with_child((
+            VolumeFill,
+            Node {
+                width: Val::Percent(70.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            BackgroundColor(LIT),
+        ));
+        r.spawn((
+            VolumeText,
+            Node {
+                width: Val::Px(56.0),
+                ..default()
+            },
+            text("70 %", 18.0, Color::WHITE),
+        ));
+        r.spawn(text("d-pad up / down, or drag", 16.0, DIM));
+    });
+}
+
+fn spawn_menu(
+    mut commands: Commands,
+    levels: Option<Res<SoundLevels>>,
+    map_menu: Option<Res<halo3_core::map::MapMenu>>,
+) {
+    let leave = if map_menu.is_some() {
+        "Q or View (Back) to go back to the map menu"
+    } else {
+        "Q or View (Back) to quit the game"
+    };
     commands
         .spawn((
             PauseMenu,
@@ -208,7 +283,7 @@ fn spawn_menu(mut commands: Commands, levels: Option<Res<SoundLevels>>) {
             .with_children(|panel| {
                 panel.spawn(text("PAUSED", 36.0, Color::WHITE));
                 panel.spawn(text("Esc or Start to resume", 16.0, DIM));
-                panel.spawn(text("Q or View (Back) to quit the game", 16.0, DIM));
+                panel.spawn(text(leave, 16.0, DIM));
                 panel
                     .spawn(Node {
                         column_gap: Val::Px(12.0),
@@ -236,6 +311,7 @@ fn spawn_menu(mut commands: Commands, levels: Option<Res<SoundLevels>>) {
                     ["Keyboard", "Controller", ""],
                     [260.0, 200.0, 320.0],
                     FREE_ROAM,
+                    |_| {},
                 );
                 page(
                     panel,
@@ -243,9 +319,10 @@ fn spawn_menu(mut commands: Commands, levels: Option<Res<SoundLevels>>) {
                     ["Keyboard", "Controller", ""],
                     [260.0, 200.0, 320.0],
                     FOOT,
+                    |_| {},
                 );
-                page(panel, 2, ["Controller", ""], [260.0, 520.0], BIKE);
-                page(panel, 3, ["Controller", ""], [260.0, 520.0], SKATE);
+                page(panel, BIKE_TAB, ["Controller", ""], [260.0, 520.0], BIKE, volume_slider);
+                page(panel, 3, ["Controller", ""], [260.0, 520.0], SKATE, |_| {});
                 sound_page(panel, levels.as_deref());
             });
         });
@@ -524,6 +601,7 @@ fn toggle(
     mut menus: Query<&mut Visibility, With<PauseMenu>>,
     mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
     finished: Res<crate::finish::RunFinished>,
+    volume: Res<EngineVolume>,
 ) {
     let pressed = keys.just_pressed(KeyCode::Escape)
         || gamepads.iter().any(|p| p.just_pressed(GamepadButton::Start));
@@ -541,15 +619,19 @@ fn toggle(
         }
     } else {
         time.unpause();
+        volume.save();
     }
     for mut v in &mut menus {
         *v = if paused.0 { Visibility::Visible } else { Visibility::Hidden };
     }
 }
 
-/// Q, or View (Back) on a pad, closes the game from the menu.
+/// Q, or View (Back) on a pad, goes back to the map menu (`menu.rs`), or
+/// closes the game when it was started on a map.
 fn quit(
+    mut commands: Commands,
     paused: Res<Paused>,
+    map_menu: Option<Res<halo3_core::map::MapMenu>>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut exit: MessageWriter<AppExit>,
@@ -558,7 +640,11 @@ fn quit(
         return;
     }
     if keys.just_pressed(KeyCode::KeyQ) || gamepads.iter().any(|p| p.just_pressed(GamepadButton::Select)) {
-        exit.write(AppExit::Success);
+        if map_menu.is_some() {
+            commands.insert_resource(halo3_core::map::BackToMenu);
+        } else {
+            exit.write(AppExit::Success);
+        }
     }
 }
 
@@ -624,6 +710,69 @@ fn switch_tab(
         };
         if colour.0 != want {
             colour.0 = want;
+        }
+    }
+}
+
+/// The engine volume slider on the dirt bike tab: a click or drag on the
+/// bar sets it; d-pad up / down, the arrows or W / S step it by 5 %.
+#[allow(clippy::too_many_arguments)]
+fn engine_slider(
+    paused: Res<Paused>,
+    shown: Res<ShownTab>,
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    bars: Query<(&ComputedNode, &UiGlobalTransform), With<VolumeBar>>,
+    mut fills: Query<&mut Node, With<VolumeFill>>,
+    mut figures: Query<&mut Text, With<VolumeText>>,
+    mut volume: ResMut<EngineVolume>,
+    mut dragging: Local<bool>,
+) {
+    if !paused.0 || shown.0 != BIKE_TAB {
+        *dragging = false;
+        return;
+    }
+    let mut v = volume.0;
+    let key = |a: KeyCode, b: KeyCode| keys.just_pressed(a) || keys.just_pressed(b);
+    let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
+    if key(KeyCode::ArrowUp, KeyCode::KeyW) || pad(GamepadButton::DPadUp) {
+        v += 0.05;
+    }
+    if key(KeyCode::ArrowDown, KeyCode::KeyS) || pad(GamepadButton::DPadDown) {
+        v -= 0.05;
+    }
+    // Node sizes and the cursor are in physical pixels.
+    let cursor = windows.single().ok().and_then(Window::physical_cursor_position);
+    if let (Some(at), Ok((node, transform))) = (cursor, bars.single()) {
+        if mouse.just_pressed(MouseButton::Left) && node.contains_point(*transform, at) {
+            *dragging = true;
+        }
+        if *dragging && mouse.pressed(MouseButton::Left) {
+            let width = node.size().x.max(1.0);
+            let left = transform.translation.x - width / 2.0;
+            v = (at.x - left) / width;
+        }
+    }
+    if !mouse.pressed(MouseButton::Left) {
+        *dragging = false;
+    }
+    // Whole per cents, so the steps land on round figures.
+    let v = ((v.clamp(0.0, 1.0) * 100.0).round() / 100.0).clamp(0.0, 1.0);
+    if v != volume.0 {
+        volume.0 = v;
+    }
+    for mut fill in &mut fills {
+        let want = Val::Percent(v * 100.0);
+        if fill.width != want {
+            fill.width = want;
+        }
+    }
+    for mut figure in &mut figures {
+        let want = format!("{:.0} %", v * 100.0);
+        if figure.0 != want {
+            figure.0 = want;
         }
     }
 }

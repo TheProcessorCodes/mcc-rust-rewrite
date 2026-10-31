@@ -208,6 +208,11 @@ impl MusicPlayer {
         }
     }
 
+    /// A new player for the next map, with the same `--music`.
+    pub(crate) fn fresh(&self) -> MusicPlayer {
+        MusicPlayer::new(self.wanted_at_start.clone())
+    }
+
     fn random(&mut self) -> u32 {
         if self.rng == 0 {
             self.rng = 0x2F6B_1A3D;

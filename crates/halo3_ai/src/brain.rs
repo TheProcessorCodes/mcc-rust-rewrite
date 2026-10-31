@@ -25,6 +25,7 @@
 //!   (`halo3_weapons::fire`), so they fly, hit walls and hurt.
 
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use halo3_bike::physics::World;
 use halo3_core::ai::{
@@ -46,12 +47,13 @@ pub(crate) struct BrainPlugin;
 
 impl Plugin for BrainPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<AiWorld>().add_systems(
+        app.init_map_resource::<AiWorld>().add_systems(
             Update,
             (follow_world, think, separate, place_roots, light, targets)
                 .chain()
                 .in_set(AiSet::Think)
                 .run_if(halo3_core::pause::running)
+                .run_if(halo3_core::map::ready)
                 .after(halo3_foot::walk),
         );
     }

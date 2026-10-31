@@ -40,7 +40,9 @@ A Cargo workspace (`cargo build`, `cargo test`). Crates (`README.md` "Layout" ha
 |---|---|
 | `blam_cache` | opens a `.map` read-only (memory-mapped): header, sections, tag index and names, string ids, a tag data cursor, the resource system (zone gestalt, play layout, deflate pages, shared caches) |
 | `blam_geometry` | structure BSPs, render models, scenario objects, sky, the real collision BSP, lightmaps, atmosphere, camera fx (exposure), zone sets, trigger volumes and cluster portals, into one plain `Scene` |
+| `blam_h1` | MCC Halo CE maps into the same `Scene`: BSP lightmap meshes, collision, gbxmodels, shaders, `bitmaps.map`, spawns, sky (`docs/format/halo1.md`) |
 | `blam_h2` | MCC Halo 2 maps into the same `Scene`: inflated in memory, `shared.map` and `textures.dat`, BSP, collision, lightmaps, lifts, weapons, sound (`docs/format/halo2.md`) |
+| `blam_reach` | MCC Halo: Reach maps into the same `Scene`: BSPs, instances, collision, objects, sky, spawns, lightmap texcoords (`docs/format/reach.md`); `blam_cache` and `blam_texture` read Reach's cache file, shaders and bitmaps |
 | `blam_texture` | bitmap tags to mip chains (BC kept compressed, own CPU decoders) and the shader resolver |
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
 | `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound, scripts, animations |
@@ -48,7 +50,7 @@ A Cargo workspace (`cargo build`, `cargo test`). Crates (`README.md` "Layout" ha
 | `halo3_script` | runs a map's scripts in the game (threads, objects, devices, trigger volumes, insertions), with AI and animation hooks |
 | `blam_anim` | animation graphs (`jmad`) and their codec data; poses sampled and blended for skinning |
 | `reflex_assets` | reads the user's MX vs ATV Reflex install for the bike model (no bevy) |
-| `halo3` | the game binary (bevy 0.20): wires the runtime crates into an app, the pause menu, headless screenshots |
+| `halo3` | the game binary (bevy 0.20): the map menu, wires the runtime crates into an app, the pause menu, headless screenshots |
 | `halo3_core`, `halo3_world`, `halo3_textures`, `halo3_audio`, `halo3_skate`, `halo3_rider`, `halo3_bike`, `halo3_foot`, `halo3_weapons`, `halo3_swim` | the runtime, split out of `halo3` on 2026-10-28 for faster rebuilds |
 
 What the game does now:
@@ -92,7 +94,17 @@ What the game does now:
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
 - **Switching modes.** Jumping off the bike or the board lands you on foot with the ride's speed;
   getting back on from walking keeps it too.
-- **Pause menu.** Escape or Start. It has tabs for free roam, on foot, dirt bike and skate controls, and a Sound tab with volume sliders; Q quits.
+- **Map menu (2026-10-31).** `halo3.exe` with no map opens it (`halo3/src/menu.rs`): Halo 3, Halo 2
+  and Campaign tabs listing every map in the user's MCC install, with MCC's own preview pictures
+  read from `Data\UI\texturepacks\levelstexturepack` at run time. Start Game decodes the map on a
+  thread behind a Halo-ring loading screen and puts it into the same window. Every map is offered:
+  a headless load of all 47 maps not checked by hand (Halo 3 multiplayer, campaign and Halo 2) drew
+  each one with textures and lighting; they have not been walked for spawns, collision or water.
+  Crow's Nest has no preview picture in MCC. A map named on the command line skips the menu.
+- **Pause menu.** Escape or Start. It has tabs for free roam, on foot, dirt bike (with the engine
+  volume slider) and skate controls, and a Sound tab with the Master / Music / Effects / Ambience /
+  Dialogue sliders. Q goes back to the map menu (unloading the map in place), or quits when the game
+  was started on a map.
 - **Window.** Opens borderless fullscreen.
 - **Headless screenshots.** `halo3.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits. Claude may run this on its own to check visuals; it never opens a window.
 
@@ -114,7 +126,9 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Halo (final mission) | `120_halo` | built with streaming, not playtested |
 | Halo 2: Coagulation | `coagulation` (MCC Halo 2) | built, HaloExportH2 counts match, not playtested; no sky model yet |
 | Halo 2: Lockout | `lockout` (MCC Halo 2) | built with lightmaps, fog, gravity lift, weapons, ambient sound; own counts pinned; not playtested |
+| Halo CE: all 19 multiplayer maps | `h1:bloodgulch` ... (MCC `halo1\maps`) | built 2026-10-31, every map drawn in headless shots (textures, lightmaps, sky, spawns); HaloExportH1 counts match on 4 maps; bike, skate and foot stand on Blood Gulch; no weapons or sound yet; not playtested |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
+| Reach: all 20 multiplayer maps | `hr:20_sword_slayer`, `hr:cex_timberland`, ... | built 2026-10-31, counts pinned, each drawn headlessly; not playtested. Lightmaps read without their directions (per-vertex and probe-lit instances use the fallback), no fog, sound or weapons |
 
 Narrows, Isolation and Sandbox were "written, not built yet" when their README entries were
 made; they are on master now and build with the rest. This audit did not re-run their tests.
@@ -147,6 +161,12 @@ checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkou
 - The rider is lit at one level for his whole body (no per-part lighting).
 
 **Sound, still missing:** reverb from the BSP acoustics, dialogue, and the game's real mix levels.
+
+**Dirt bike engine sound** (merged 2026-10-30, user-approved): Reflex's own 450F recordings
+read from the user's install (`reflex_assets::engine_audio`, `docs/format/reflex-engine-audio.md`),
+played as Reflex plays them (whole takes from the event file's pools at their own pitch, a new
+one at each shift), or our synth (H / left stick click); engine volume slider on the pause
+menu's Dirt bike tab (`bike-sound.json`). Still a guess: which pool plays in which gear.
 
 **Campaign:**
 
@@ -188,6 +208,14 @@ Halo) or the look fixes above.
 - Worktrees you did not create in this thread, and any locked agent worktree, belong to the
   user's other sessions; leave them alone.
 - `.gitattributes` forces LF.
+- **The map is a phase of the app** (`halo3_core/src/map.rs`), so the menu can load and unload maps
+  in one window. In a map crate: start-up systems go in `halo3_core::map::MapStartup` (not
+  `Startup`); every `Update` / `PreUpdate` / `PostUpdate` system gets `.run_if(halo3_core::map::ready)`;
+  per-map resources use `MapAppExt`: `init_map_resource` (reset on unload) instead of
+  `init_resource`, and `remove_on_map_unload` for resources a system inserts later. `main.rs` is
+  `load` (decode, no bevy), `install` (resources into the world) and `run`; whatever `install`
+  inserts must be listed for removal in `MenuPlugin::build`. Anything left out carries over into the
+  next map.
 
 ## Dirt bike (2026-10-28)
 
@@ -500,8 +528,17 @@ frigate stays); the scripts stop. The dirt bike counts as the Mongoose (`secret_
 flies through `end_trilogy03` and only grazes `end_trilogy01`'s bottom corner, then drops just
 under the hangar's floor. `halo3/src/finish.rs` stops play and shows MISSION COMPLETE with the
 time (game time from the first frame the player is in control after loading, so pauses do not
-count and deaths do not reset it), Restart run (starts a fresh copy with the same arguments) or
-Quit; styled like the pause menu.
+count and deaths do not reset it), Restart run or Quit; styled like the pause menu. Since the
+master merge (2026-10-31) Restart unloads the map and loads it again in the same window (the map
+menu's loading screen, or a plain RESTARTING screen when started from the command line); Quit
+goes back to the map menu, or closes the game when it was started on a map.
+
+**The Warthog Run mission (2026-10-31).** `main.rs` `MISSIONS`: `warthog_run` is 120_halo with
+`--insertion trench_run --zone 120_04_100_110`, and only zone sets `120_04_100_110`,
+`120_100_110`, `120_110_120`: only their BSPs (040, 100, 110, 120: indices 4, 7, 8, 9) are
+decoded, and `Zones::allowed` refuses any other zone set (trigger volumes, scripts, Page keys).
+It is a tile on the menu's Campaign tab ("The Warthog Run", MCC's Halo picture) and starts with
+`halo3.exe warthog_run`. Objects of the other BSPs are still decoded (never uploaded).
 
 **Starts.** A named insertion now starts on the dirt bike (`--foot`: on foot) where it puts the
 player. `trench_run`: the flag `trench_run_player0`, on the floor; the flag has no facing set

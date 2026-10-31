@@ -9,15 +9,21 @@
 //! the bike at once) and counts game time only: the pause menu stops it,
 //! and dying, falling and respawning do not touch it.
 //!
-//! Restart starts the game again with the same command line (a fresh copy
-//! of the program, so the scripts, the floor plates, the AI and the music
-//! all begin again), then closes this one.
+//! Restart unloads the map and loads it again in the same window
+//! (`halo3_core::map`), so the scripts, the floor plates, the AI and the
+//! music all begin again: behind the map menu's loading screen when the
+//! game has the menu, else behind a plain one. Quit goes back to the map
+//! menu, or closes the game when it was started on a map.
+
+use std::sync::Mutex;
+use std::sync::mpsc::Receiver;
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use halo3_core::map::{BackToMenu, MapAppExt, MapMenu, MapReady};
 use halo3_core::pause::Paused;
 use halo3_core::skate::RiderPose;
 use halo3_script::Scripts;
@@ -26,14 +32,38 @@ pub struct FinishPlugin;
 
 impl Plugin for FinishPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<RunClock>()
-            .init_resource::<RunFinished>()
-            .init_resource::<Picked>()
-            .add_systems(Startup, spawn_screen)
-            .add_systems(Update, (clock, finish).chain())
-            .add_systems(PreUpdate, choose.after(InputSystems));
+        app.init_map_resource::<RunClock>()
+            .init_map_resource::<RunFinished>()
+            .init_map_resource::<Picked>()
+            .remove_on_map_unload::<CurrentMap>()
+            .add_systems(halo3_core::map::MapStartup, spawn_screen)
+            .add_systems(Update, (clock, finish).chain().run_if(halo3_core::map::ready))
+            .add_systems(PreUpdate, choose.after(InputSystems).run_if(halo3_core::map::ready))
+            .add_systems(Last, (restart, reload_done).chain());
     }
 }
+
+/// The map in the app: the name it was loaded by (a map or a mission,
+/// `main.rs` `load`) and the command line it was loaded with.
+#[derive(Resource, Clone)]
+pub struct CurrentMap {
+    pub arg: String,
+    pub args: Vec<String>,
+}
+
+/// Asks for the map to be loaded again from the start (at the end of the
+/// frame).
+#[derive(Resource)]
+pub struct RestartMap;
+
+/// A restart without the map menu: the map decoding on its thread, and the
+/// command line it goes in with.
+#[derive(Resource)]
+struct Reloading(Mutex<Receiver<anyhow::Result<crate::LoadedMap>>>, Vec<String>);
+
+/// The plain loading screen of a restart without the map menu.
+#[derive(Component)]
+struct ReloadScreen;
 
 /// The run's clock, in game (virtual) seconds.
 #[derive(Resource, Default, Debug)]
@@ -238,6 +268,8 @@ fn choose(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut picked: ResMut<Picked>,
     mut choices: Query<(&Choice, &ComputedNode, &UiGlobalTransform, &mut TextColor, &mut BackgroundColor)>,
+    mut commands: Commands,
+    map_menu: Option<Res<MapMenu>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if !finished.0 {
@@ -302,8 +334,10 @@ fn choose(
     }
     match action {
         Some(0) => {
-            restart();
-            exit.write(AppExit::Success);
+            commands.insert_resource(RestartMap);
+        }
+        Some(_) if map_menu.is_some() => {
+            commands.insert_resource(BackToMenu);
         }
         Some(_) => {
             exit.write(AppExit::Success);
@@ -312,12 +346,73 @@ fn choose(
     }
 }
 
-/// Starts a fresh copy of the game with the same command line.
-fn restart() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(&args).spawn()) {
-        Ok(_) => info!("restarting the run: {}", args.join(" ")),
-        Err(e) => error!("could not restart the run: {e}"),
+/// Restart: the map goes and comes in again, from the same name and
+/// command line. With the map menu its loading screen shows (`menu.rs`);
+/// without, a plain one.
+fn restart(world: &mut World) {
+    if world.remove_resource::<RestartMap>().is_none() {
+        return;
+    }
+    let Some(current) = world.get_resource::<CurrentMap>().cloned() else {
+        return;
+    };
+    info!("restarting {} in place", current.arg);
+    if world.contains_resource::<MapMenu>() {
+        crate::menu::reload(world, &current.arg);
+        return;
+    }
+    halo3_core::map::unload(world);
+    let CurrentMap { arg, args } = current;
+    let (send, receive) = std::sync::mpsc::channel();
+    let thread_args = args.clone();
+    std::thread::spawn(move || {
+        let _ = send.send(crate::load(&arg, &thread_args));
+    });
+    world.insert_resource(Reloading(Mutex::new(receive), args));
+    // Something on screen while it decodes: a camera and a line of text.
+    world.spawn((ReloadScreen, Camera2d));
+    world
+        .spawn((
+            ReloadScreen,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.043, 0.059, 0.082)),
+        ))
+        .with_child(text("RESTARTING...", 36.0, LIT));
+}
+
+/// A restart without the map menu: once decoded, the map goes in; once
+/// started, the plain loading screen goes.
+fn reload_done(world: &mut World) {
+    if world.contains_resource::<MapReady>() {
+        let screens: Vec<Entity> = world.query_filtered::<Entity, With<ReloadScreen>>().iter(world).collect();
+        for e in screens {
+            world.despawn(e);
+        }
+    }
+    let Some(received) = world.get_resource::<Reloading>().map(|l| l.0.lock().unwrap().try_recv()) else {
+        return;
+    };
+    let result = match received {
+        Ok(result) => result,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(anyhow::anyhow!("the map crashed while loading")),
+    };
+    let Some(Reloading(_, args)) = world.remove_resource::<Reloading>() else {
+        return;
+    };
+    let failed = match result {
+        Ok(map) => crate::install(world, map, &args).err(),
+        Err(e) => Some(e),
+    };
+    if let Some(e) = failed {
+        error!("restart: the map did not load: {e:#}");
+        world.write_message(AppExit::from_code(1));
     }
 }
 

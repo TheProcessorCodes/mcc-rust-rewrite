@@ -1,6 +1,6 @@
 [package]
 name = "reflex_assets"
-description = "Reads MX vs ATV Reflex's own database/package pairs (the user's install, read-only): meshes, skeletons, textures"
+description = "Reads MX vs ATV Reflex's own database/package pairs (the user's install, read-only): meshes, skeletons, textures, engine sounds"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,3 +9,5 @@ publish.workspace = true
 [dependencies]
 flate2 = { workspace = true }
 lzxd = "0.2"
+# MPEG layer III, for the engine recordings (FMOD banks).
+symphonia = { version = "0.5", default-features = false, features = ["mp3"] }

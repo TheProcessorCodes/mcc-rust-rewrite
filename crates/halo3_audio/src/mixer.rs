@@ -8,6 +8,9 @@
 //! changing the queue and loop set takes effect when the current clip
 //! ends, which is how music moves to its alternate loop or its outro on a
 //! loop boundary.
+//!
+//! A [`Generator`] is a voice that makes its own sound block by block (the
+//! bike's engine, `engine.rs`); it is mixed in with the rest.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -115,9 +118,16 @@ impl Voice {
     }
 }
 
+/// A voice that renders itself: adds `out.len() / 2` stereo frames at
+/// [`RATE`] into `out`, on the audio thread. Returns false when it is done.
+pub trait Generator: Send {
+    fn render(&mut self, out: &mut [f32]) -> bool;
+}
+
 #[derive(Default)]
 struct State {
     voices: HashMap<VoiceId, Voice>,
+    generators: HashMap<VoiceId, Box<dyn Generator>>,
     next_id: VoiceId,
     master: f32,
     /// Each bus's volume, and what it was at the end of the last block (a
@@ -182,6 +192,14 @@ impl Mixer {
         id
     }
 
+    pub fn add_generator(&self, g: Box<dyn Generator>) -> VoiceId {
+        let mut s = self.0.lock().unwrap();
+        let id = s.next_id;
+        s.next_id += 1;
+        s.generators.insert(id, g);
+        id
+    }
+
     /// Sets a voice's gains; it ramps there over one block (21 ms).
     pub fn set_gain(&self, id: VoiceId, gain: [f32; 2]) {
         if let Some(v) = self.0.lock().unwrap().voices.get_mut(&id) {
@@ -203,20 +221,35 @@ impl Mixer {
         }
     }
 
-    /// Fades out over one block and removes the voice.
+    /// Fades out over one block and removes the voice (a generator goes at
+    /// once: it fades itself).
     pub fn stop(&self, id: VoiceId) {
-        if let Some(v) = self.0.lock().unwrap().voices.get_mut(&id) {
+        let mut s = self.0.lock().unwrap();
+        if s.generators.remove(&id).is_some() {
+            return;
+        }
+        if let Some(v) = s.voices.get_mut(&id) {
+            v.stopping = true;
+            v.target = [0.0; 2];
+        }
+    }
+
+    /// Fades out every voice (the map is unloading).
+    pub fn stop_all(&self) {
+        for v in self.0.lock().unwrap().voices.values_mut() {
             v.stopping = true;
             v.target = [0.0; 2];
         }
     }
 
     pub fn is_playing(&self, id: VoiceId) -> bool {
-        self.0.lock().unwrap().voices.contains_key(&id)
+        let s = self.0.lock().unwrap();
+        s.voices.contains_key(&id) || s.generators.contains_key(&id)
     }
 
     pub fn voices(&self) -> usize {
-        self.0.lock().unwrap().voices.len()
+        let s = self.0.lock().unwrap();
+        s.voices.len() + s.generators.len()
     }
 
     pub fn set_master(&self, gain: f32) {
@@ -311,6 +344,9 @@ impl Mixer {
         }
         s.bus_was = now;
         s.metered += frames;
+        // Generators (the bike engine, with its own volume) after the
+        // buses, under the master volume only.
+        s.generators.retain(|_, g| g.render(out));
         for x in out.iter_mut() {
             // A soft limit instead of hard clipping when many voices pile up.
             let y = *x * master;

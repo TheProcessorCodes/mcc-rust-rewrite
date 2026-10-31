@@ -150,8 +150,8 @@ pub struct AnimTestPlugin;
 impl Plugin for AnimTestPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(halo3_anim::AnimPlugin)
-            .add_systems(Startup, spawn)
-            .add_systems(Update, (drive, light));
+            .add_systems(halo3_core::map::MapStartup, spawn)
+            .add_systems(Update, (drive, light).run_if(halo3_core::map::ready));
     }
 }
 

@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use blam_cache::CacheFile;
 use blam_geometry::ai::{self as tags, AiData, Character, Unit};
@@ -283,12 +284,14 @@ impl Plugin for AiPlugin {
         app.add_message::<AiCommand>()
             .add_message::<halo3_core::weapons::WeaponEvent>()
             .add_message::<Damage>()
-            .init_resource::<AiCensus>()
-            .init_resource::<halo3_core::ai::AiBridge>()
-            .init_resource::<AutoPlace>()
-            .init_resource::<Allegiances>()
-            .init_resource::<Targets>()
-            .init_resource::<PlayerVitality>()
+            .init_map_resource::<AiCensus>()
+            .init_map_resource::<halo3_core::ai::AiBridge>()
+            .init_map_resource::<AutoPlace>()
+            .init_map_resource::<Allegiances>()
+            .init_map_resource::<Targets>()
+            .init_map_resource::<PlayerVitality>()
+            .remove_on_map_unload::<PendingAi>()
+            .remove_on_map_unload::<place::Ai>()
             .configure_sets(Update, (AiSet::Place, AiSet::Think, AiSet::Hurt).chain())
             .add_plugins((place::PlacePlugin, brain::BrainPlugin, vitality::VitalityPlugin, animate::AnimatePlugin));
     }

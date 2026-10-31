@@ -35,6 +35,11 @@ pub fn set_kill_volume_enabled(name: &str, enabled: bool) {
     }
 }
 
+/// Switches every kill volume back on (the map is unloading).
+pub fn reset_kill_volumes() {
+    SCRIPT_OFF.write().unwrap().clear();
+}
+
 /// Whether a script switched this kill volume off.
 pub fn kill_volume_disabled(name: &str) -> bool {
     SCRIPT_OFF.read().unwrap().contains(name)

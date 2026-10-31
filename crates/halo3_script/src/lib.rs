@@ -18,6 +18,7 @@ pub mod value;
 pub mod vm;
 
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::falls::{FallbackSpot, set_kill_volume_enabled};
@@ -140,18 +141,29 @@ pub struct ScriptPlugin;
 
 impl Plugin for ScriptPlugin {
     fn build(&self, app: &mut App) {
-        if !app.world().contains_resource::<ScriptAi>() {
-            app.insert_resource(ScriptAi::new(NoAi));
-        }
-        app.init_resource::<ScriptAnimation>()
-            .init_resource::<FlashAssets>()
-            .add_systems(Startup, start)
+        // A map's scripts come in with it (`PendingScripts`, and `ScriptAi`
+        // / `ScriptAnimation` when it has AI and machines); everything they
+        // changed goes when it is unloaded (`halo3_core::map`).
+        app.insert_resource(ScriptAi::new(NoAi))
+            .init_map_resource::<ScriptAnimation>()
+            .init_map_resource::<FlashAssets>()
+            .init_map_resource::<ScriptSounds>()
+            .remove_on_map_unload::<PendingScripts>()
+            .remove_on_map_unload::<Scripts>()
+            .on_map_unload(|world| {
+                world.insert_resource(ScriptAi::new(NoAi));
+                halo3_core::objects::reset();
+                halo3_core::falls::reset_kill_volumes();
+            })
+            .add_systems(halo3_core::map::MapStartup, start)
             .add_systems(
                 Update,
-                (tick.run_if(halo3_core::pause::running), apply_objects, flashes).chain(),
+                (
+                    (tick.run_if(halo3_core::pause::running), apply_objects, flashes).chain(),
+                    forward_sounds.after(tick),
+                )
+                    .run_if(halo3_core::map::ready),
             );
-        app.init_resource::<ScriptSounds>()
-            .add_systems(Update, forward_sounds.after(tick));
     }
 }
 

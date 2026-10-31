@@ -91,6 +91,10 @@ fn f32x3(r: &mut blam_cache::Reader<'_>) -> Result<[f32; 3]> {
 
 /// Reads the scenario's atmosphere; `None` when it has no `skya` reference.
 pub fn read(cache: &CacheFile) -> Result<Option<Atmosphere>> {
+    // Reach's scenario keeps this elsewhere and its tag differs: none read.
+    if cache.engine() == blam_cache::Engine::Reach {
+        return Ok(None);
+    }
     let scnr = cache
         .scenario()
         .ok_or_else(|| Error::Invalid("no scenario tag".into()))?;

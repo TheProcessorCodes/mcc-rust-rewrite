@@ -67,6 +67,25 @@ pub fn retain_present(candidates: &mut Vec<u32>, owner: impl Fn(u32) -> u32) {
     });
 }
 
+/// Gives every object its collision back and puts every moved object back
+/// where the scenario placed it (the map is unloading).
+pub fn reset() {
+    {
+        let mut r = REMOVED.write().unwrap();
+        if !r.set.is_empty() {
+            r.set.clear();
+            r.changed = Some(Instant::now());
+            GENERATION.fetch_add(1, Ordering::Release);
+        }
+    }
+    let mut p = POSES.write().unwrap();
+    if !p.map.is_empty() {
+        p.map.clear();
+        p.changed = Some(Instant::now());
+        POSE_GENERATION.fetch_add(1, Ordering::Release);
+    }
+}
+
 /// The change counter and when it last changed.
 pub fn removed_generation() -> (u64, Option<Instant>) {
     let g = GENERATION.load(Ordering::Acquire);

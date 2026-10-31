@@ -11,7 +11,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn).add_systems(Update, update.after(super::place_held));
+        app.add_systems(halo3_core::map::MapStartup, spawn).add_systems(Update, update.after(super::place_held).run_if(halo3_core::map::ready));
     }
 }
 

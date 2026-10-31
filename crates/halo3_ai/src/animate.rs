@@ -34,7 +34,8 @@ impl Plugin for AnimatePlugin {
             (start, animate)
                 .chain()
                 .after(AiSet::Hurt)
-                .run_if(halo3_core::pause::running),
+                .run_if(halo3_core::pause::running)
+                .run_if(halo3_core::map::ready),
         );
     }
 }

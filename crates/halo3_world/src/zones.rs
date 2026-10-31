@@ -2,6 +2,7 @@
 //! itself ([`LoadedBsps`], [`Zones`]) lives in `halo3_core::zones`.
 
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 pub use halo3_core::zones::*;
 
@@ -12,14 +13,14 @@ pub struct ZonesPlugin;
 
 impl Plugin for ZonesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Zones>()
-            .init_resource::<LoadedBsps>()
-            .init_resource::<ShowCollision>()
+        app.init_map_resource::<Zones>()
+            .init_map_resource::<LoadedBsps>()
+            .init_map_resource::<ShowCollision>()
             .add_systems(
                 Update,
                 (zone_keys.run_if(halo3_core::pause::running), follow_cluster)
                     .chain()
-                    .in_set(ZoneKeys),
+                    .in_set(ZoneKeys).run_if(halo3_core::map::ready),
             );
     }
 }
@@ -29,11 +30,16 @@ fn zone_keys(keys: Res<ButtonInput<KeyCode>>, zones: Res<Zones>, mut loaded: Res
     if keys.just_pressed(KeyCode::Home) {
         load_bsps(&mut loaded, &zones, u32::MAX);
     } else if count > 0 && keys.just_pressed(KeyCode::PageDown) {
-        let n = loaded.zone_set.map_or(0, |n| (n + 1) % count);
-        load_zone_set(&mut loaded, &zones, n);
+        // The next zone set this map (or mission) allows.
+        let from = loaded.zone_set.map_or(count - 1, |n| n);
+        if let Some(n) = (1..=count).map(|k| (from + k) % count).find(|&n| zones.allows(n)) {
+            load_zone_set(&mut loaded, &zones, n);
+        }
     } else if count > 0 && keys.just_pressed(KeyCode::PageUp) {
-        let n = loaded.zone_set.map_or(count - 1, |n| (n + count - 1) % count);
-        load_zone_set(&mut loaded, &zones, n);
+        let from = loaded.zone_set.unwrap_or(0);
+        if let Some(n) = (1..=count).map(|k| (from + count - k) % count).find(|&n| zones.allows(n)) {
+            load_zone_set(&mut loaded, &zones, n);
+        }
     }
 }
 

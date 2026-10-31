@@ -275,6 +275,24 @@ pub(crate) fn triangulate<'a>(
     Ok(out.len() - before)
 }
 
+/// Triangulates one collision geometry struct of a fixed-up resource
+/// definition (`def`, with `data` its primary bytes) in its own frame,
+/// for readers of other games' resources. `at` is where the struct's
+/// surfaces, edges and vertices blocks sit less 0x3C / 0x48 / 0x54: the
+/// struct itself for Halo 3, the struct + 0xC for Reach, whose collision
+/// geometry has a supernodes block after the 3D nodes
+/// (`docs/format/reach.md` 6). Element layouts are Halo 3's 16-bit ones.
+pub fn triangulate_geometry(
+    def: &[u8],
+    data: &[u8],
+    at: usize,
+    source: CollisionSource,
+    out: &mut Vec<CollisionTriangle>,
+    stats: &mut CollisionStats,
+) -> Result<usize> {
+    triangulate(&Resolver { def, data }, at, NORMAL, None, source, out, stats)
+}
+
 /// The BSP 3D nodes and planes of a structure BSP's first (normal)
 /// collision BSP, for finding the leaf a point is in
 /// (`docs/format/sbsp-portals.md` 3). Its leaves are the structure BSP's

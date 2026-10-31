@@ -23,12 +23,13 @@ pub(crate) struct PlacePlugin;
 
 impl Plugin for PlacePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup).add_systems(
+        app.add_systems(halo3_core::map::MapStartup, setup).add_systems(
             Update,
             (bridge_in, commands_in, auto_place, unload, census, bridge_out)
                 .chain()
                 .in_set(AiSet::Place)
-                .run_if(halo3_core::pause::running),
+                .run_if(halo3_core::pause::running)
+                .run_if(halo3_core::map::ready),
         );
     }
 }

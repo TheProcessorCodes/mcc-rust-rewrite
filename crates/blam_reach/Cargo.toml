@@ -1,0 +1,15 @@
+[package]
+name = "blam_reach"
+description = "Reads MCC Halo: Reach .map files into the same Scene the Halo 3 readers produce"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_cache = { workspace = true }
+blam_geometry = { workspace = true }
+glam = { workspace = true }
+
+[dev-dependencies]
+blam_texture = { workspace = true }
