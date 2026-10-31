@@ -655,7 +655,7 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         scene.water_triangles(),
     ));
     w.insert_resource(rider::PendingChief(chief));
-    w.insert_resource(bike::BikeInput(scene.collision.clone()));
+    w.insert_resource(bike::BikeInput(std::sync::Arc::new(scene.collision.clone())));
     if let Some(t) = foot_tuning {
         w.insert_resource(foot::FootTuning(t));
     }

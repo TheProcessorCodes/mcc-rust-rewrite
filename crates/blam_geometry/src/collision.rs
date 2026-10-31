@@ -293,6 +293,19 @@ pub fn triangulate_geometry(
     triangulate(&Resolver { def, data }, at, NORMAL, None, source, out, stats)
 }
 
+/// [`triangulate_geometry`] for a large collision geometry: the same
+/// blocks with 32-bit indices (surfaces 16, edges 24, vertices 20 bytes).
+pub fn triangulate_large_geometry(
+    def: &[u8],
+    data: &[u8],
+    at: usize,
+    source: CollisionSource,
+    out: &mut Vec<CollisionTriangle>,
+    stats: &mut CollisionStats,
+) -> Result<usize> {
+    triangulate(&Resolver { def, data }, at, LARGE, None, source, out, stats)
+}
+
 /// The BSP 3D nodes and planes of a structure BSP's first (normal)
 /// collision BSP, for finding the leaf a point is in
 /// (`docs/format/sbsp-portals.md` 3). Its leaves are the structure BSP's

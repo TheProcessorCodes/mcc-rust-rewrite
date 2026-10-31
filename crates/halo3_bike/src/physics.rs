@@ -25,10 +25,10 @@
 //! - in the air the stick turns the bike against heavy damping, and let go
 //!   it levels and lines up with where it is going.
 
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use bevy::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
+use blam_geometry::column_grid::ColumnGrid;
 
 use super::reflex::Tuning;
 use super::unleashed::{RPM, Setup, Tyre, ft, lerp_clamp};
@@ -179,9 +179,8 @@ struct Triangle {
 /// The map's collision in a flat grid of columns (X, Z), for short rays and
 /// small spheres.
 pub struct World {
-    cell: f32,
     triangles: Vec<Triangle>,
-    grid: HashMap<(i32, i32), Vec<u32>>,
+    grid: ColumnGrid,
     /// Per triangle, the scene object it belongs to (`u32::MAX`: the
     /// structure BSP's own); empty when none does. Objects whose collision
     /// a script took away (`halo3_core::objects`) are skipped.
@@ -229,10 +228,9 @@ impl World {
     /// The same, with the scene object each triangle belongs to
     /// (`u32::MAX` for none).
     pub fn with_owners(triangles: impl IntoIterator<Item = ([Vec3; 3], bool, u32)>) -> World {
-        let cell = 4.0;
         let mut out = Vec::new();
         let mut owners = Vec::new();
-        let mut grid: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+        let mut grid = ColumnGrid::new(4.0);
         for ([a, b, c], two_sided, owner) in triangles {
             let normal = (b - a).cross(c - a);
             if !normal.is_finite() || normal.length_squared() < 1e-10 {
@@ -249,17 +247,12 @@ impl World {
             });
             let lo = a.min(b).min(c);
             let hi = a.max(b).max(c);
-            for x in (lo.x / cell).floor() as i32..=(hi.x / cell).floor() as i32 {
-                for z in (lo.z / cell).floor() as i32..=(hi.z / cell).floor() as i32 {
-                    grid.entry((x, z)).or_default().push(i);
-                }
-            }
+            grid.insert(i, [lo.x, lo.z], [hi.x, hi.z]);
         }
         if owners.iter().all(|o| *o == u32::MAX) {
             owners.clear();
         }
         World {
-            cell,
             triangles: out,
             grid,
             owners,
@@ -282,14 +275,11 @@ impl World {
     /// objects, whose columns are tilted against the world's.
     fn gather_along(&self, centre: Vec3, radius: f32, along: (Vec3, Vec3), out: &mut Vec<u32>) {
         out.clear();
-        let c = self.cell;
-        for x in ((centre.x - radius) / c).floor() as i32..=((centre.x + radius) / c).floor() as i32 {
-            for z in ((centre.z - radius) / c).floor() as i32..=((centre.z + radius) / c).floor() as i32 {
-                if let Some(list) = self.grid.get(&(x, z)) {
-                    out.extend_from_slice(list);
-                }
-            }
-        }
+        self.grid.query(
+            [centre.x - radius, centre.z - radius],
+            [centre.x + radius, centre.z + radius],
+            |i| out.push(i),
+        );
         if !self.owners.is_empty() {
             let reach = radius - Vec2::new(along.1.x - along.0.x, along.1.z - along.0.z).length() * 0.5;
             self.gather_moved(along, reach.max(0.0), out);
@@ -329,18 +319,15 @@ impl World {
         if moved.objects.is_empty() {
             return;
         }
-        let c = self.cell;
         for (object, _, inverse) in &moved.objects {
             let (a, b) = (inverse.transform_point3(along.0), inverse.transform_point3(along.1));
             let p = (a + b) * 0.5;
             let radius = radius + Vec2::new(b.x - a.x, b.z - a.z).length() * 0.5;
-            for x in ((p.x - radius) / c).floor() as i32..=((p.x + radius) / c).floor() as i32 {
-                for z in ((p.z - radius) / c).floor() as i32..=((p.z + radius) / c).floor() as i32 {
-                    if let Some(list) = self.grid.get(&(x, z)) {
-                        out.extend(list.iter().filter(|&&i| self.owners[i as usize] == *object));
-                    }
+            self.grid.query([p.x - radius, p.z - radius], [p.x + radius, p.z + radius], |i| {
+                if self.owners[i as usize] == *object {
+                    out.push(i);
                 }
-            }
+            });
         }
     }
 

@@ -17,12 +17,13 @@
 //! The rider is the map's Spartan on the Skate 3 board (`rider.rs`); a
 //! stick figure stands in when either is missing.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
-use halo3_core::map::MapAppExt;
+use halo3_core::map::{MapAppExt, Warmup};
 use bevy::window::PrimaryWindow;
 use skate_host::bridge::{InputFrame, Pose, PreparedCollision, Session};
 
@@ -56,7 +57,7 @@ impl Plugin for SkatePlugin {
             .init_map_resource::<SkateMotion>()
             .add_systems(
                 Update,
-                (update.run_if(halo3_core::pause::running), publish_motion, draw_rider, show_status).chain().run_if(halo3_core::map::ready),
+                (warmed, update.run_if(halo3_core::pause::running), publish_motion, draw_rider, show_status).chain().run_if(halo3_core::map::ready),
             );
     }
 }
@@ -129,6 +130,8 @@ struct Host {
     world: Option<u32>,
     /// A new zone set's collision is being built to swap in.
     swapping: bool,
+    /// Raised by the skate thread when its first session is up or it ended.
+    warmed: Option<Arc<AtomicBool>>,
     /// The removed- plus moved-objects generations the skate world was
     /// built with (`halo3_core::objects`).
     removed: u64,
@@ -152,6 +155,7 @@ impl Default for Host {
             status: String::new(),
             world: None,
             swapping: false,
+            warmed: None,
             removed: 0,
         }
     }
@@ -217,7 +221,33 @@ fn skate_world(
     (triangles, rails)
 }
 
-fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: Res<LoadedBsps>) {
+/// The [`Warmup`] name of the first skate session.
+const WARMUP: &str = "skate";
+
+/// Raises its flag when dropped: the skate thread's first session is up,
+/// or the thread ended (an error or a panic) without one.
+struct Warmed(Arc<AtomicBool>);
+
+impl Drop for Warmed {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+/// Lets the loading screen go once the first session is up. Not held by
+/// the pause menu, unlike [`update`].
+fn warmed(host: Res<Host>, mut warmup: ResMut<Warmup>) {
+    if host.warmed.as_ref().is_some_and(|w| w.load(Ordering::Acquire)) && warmup.0.contains(WARMUP) {
+        warmup.0.remove(WARMUP);
+    }
+}
+
+fn start_worker(
+    mut host: ResMut<Host>,
+    mut input: ResMut<SkateInput>,
+    loaded: Res<LoadedBsps>,
+    mut warmup: ResMut<Warmup>,
+) {
     let volumes = std::mem::take(&mut input.1);
     let water = std::mem::take(&mut input.2);
     let Some(collision) = input.0.take() else {
@@ -236,11 +266,15 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
     let collision = std::sync::Arc::new(collision);
     let volumes = std::sync::Arc::new(volumes);
     let water = std::sync::Arc::new(water);
+    let warmed = Arc::new(AtomicBool::new(false));
+    let first = Warmed(Arc::clone(&warmed));
     let spawned = std::thread::Builder::new()
         .name("halo3-skate".into())
         // The engine recurses deeply.
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
+            // Dropped when the first session is up, or the thread ends.
+            let mut first = Some(first);
             let result = (|| -> Result<(), String> {
                 let mut session: Option<Session> = None;
                 let mut epoch = 0;
@@ -326,6 +360,7 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
                                 counts.0,
                                 counts.1
                             );
+                            first.take();
                             if publish.send(Reply::Ready(counts.0, counts.1)).is_err() {
                                 return Ok(());
                             }
@@ -403,6 +438,8 @@ fn start_worker(mut host: ResMut<Host>, mut input: ResMut<SkateInput>, loaded: R
             host.send = Some(send);
             host.receive = Some(Mutex::new(replies));
             host.status = "skate: loading".into();
+            host.warmed = Some(warmed);
+            warmup.0.insert(WARMUP);
         }
         Err(e) => host.status = format!("skate thread: {e}"),
     }

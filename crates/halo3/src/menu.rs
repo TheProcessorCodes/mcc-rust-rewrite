@@ -33,7 +33,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_dis
 use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
 
-use halo3_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady};
+use halo3_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady, Warmup};
 
 use crate::Game;
 
@@ -282,6 +282,9 @@ struct Chooser;
 struct LoadingScreen;
 #[derive(Component)]
 struct LoadingName;
+/// Under the name: what the map is still getting ready ([`Warmup`]).
+#[derive(Component)]
+struct LoadingStatus;
 #[derive(Component)]
 struct LoadingPicture;
 #[derive(Component)]
@@ -815,6 +818,7 @@ fn spawn_loading(screen: &mut ChildSpawnerCommands) {
         },
     ));
     screen.spawn((LoadingName, text("", 34.0, Color::WHITE)));
+    screen.spawn((LoadingStatus, text("", 18.0, DIM)));
     let size = RING_RADIUS * 2.0 + 24.0;
     screen
         .spawn(Node {
@@ -1092,17 +1096,48 @@ fn finish_loading(world: &mut World) {
     }
 }
 
-/// Once the map has started, the menu, its camera and the loading screen go.
+/// Longest the loading screen waits for the map's [`Warmup`] work.
+const WARMUP_LIMIT: f32 = 180.0;
+
+/// Once the map has started and its [`Warmup`] work (the bike's collision,
+/// the skate session) is done, the menu, its camera and the loading screen
+/// go. Meanwhile the screen says what it is waiting for.
+#[allow(clippy::too_many_arguments)]
 fn leave(
     mut commands: Commands,
     ready: Option<Res<MapReady>>,
+    warmup: Option<Res<Warmup>>,
     shot: Option<Res<MenuShot>>,
+    time: Res<Time<Real>>,
+    mut since: Local<Option<f32>>,
+    mut status: Query<&mut Text, With<LoadingStatus>>,
     roots: Query<Entity, Or<(With<MenuRoot>, With<MenuCamera>)>>,
 ) {
     // `--menu-shot --menu-loading` keeps the loading screen for its picture.
     if ready.is_none() || shot.is_some_and(|s| s.loading) {
+        *since = None;
         return;
     }
+    if roots.is_empty() {
+        return;
+    }
+    let now = time.elapsed_secs();
+    let started = *since.get_or_insert(now);
+    if let Some(warmup) = warmup.filter(|w| !w.0.is_empty()) {
+        if now - started < WARMUP_LIMIT {
+            let waiting: Vec<&str> = warmup.0.iter().copied().collect();
+            let line = format!("Preparing {}", waiting.join(" and "));
+            for mut text in &mut status {
+                if text.0 != line {
+                    text.0 = line.clone();
+                }
+            }
+            return;
+        }
+        eprintln!("menu: still preparing {:?} after {WARMUP_LIMIT} s; into the map anyway", warmup.0);
+    }
+    eprintln!("menu: map ready, prepared in {:.1} s", now - started);
+    *since = None;
     for e in &roots {
         commands.entity(e).despawn();
     }

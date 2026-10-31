@@ -97,7 +97,10 @@ What the game does now:
 - **Map menu (2026-10-31).** `halo3.exe` with no map opens it (`halo3/src/menu.rs`): Halo 3, Halo 2
   and Campaign tabs listing every map in the user's MCC install, with MCC's own preview pictures
   read from `Data\UI\texturepacks\levelstexturepack` at run time. Start Game decodes the map on a
-  thread behind a Halo-ring loading screen and puts it into the same window. Every map is offered:
+  thread behind a Halo-ring loading screen and puts it into the same window. The screen stays
+  up ("Preparing bike collision and skate") until the map's `halo3_core::map::Warmup` work is
+  done: the bike / on-foot / enemy collision world (`halo3_bike::SharedWorld`, built once on a
+  thread) and the first skate session; at most 180 s. Every map is offered:
   a headless load of all 47 maps not checked by hand (Halo 3 multiplayer, campaign and Halo 2) drew
   each one with textures and lighting; they have not been walked for spawns, collision or water.
   Crow's Nest has no preview picture in MCC. A map named on the command line skips the menu.
@@ -605,8 +608,11 @@ lift shafts. Tests: `halo3_anim/tests/frigate.rs`.
 - **Shader classification** in `blam_geometry` (`Material::shading`) is still by class code
   only; the viewer refines it from the shader options through `blam_texture` (alpha test,
   blend mode, HaloExport's "special" path rule). `Material::shader_tag` links the two.
-- **Large collision BSPs** (32-bit indices) are implemented from the documented layout but no
-  installed map uses them.
+- **Large collision BSPs** (32-bit indices): no installed Halo 3 map uses them; eight Reach
+  maps do (Forge World's main BSP only has a large one), read since 2026-10-31
+  (`docs/format/reach.md` 6). Reach instances that are not flagged collidable have empty
+  collision definitions and get no collision, as in the game; `blam_reach`'s
+  `collision_coverage` test (ignored) lists drawn geometry with no collision near spawns.
 - **Spawn-point discs** and the other game-type markers are no longer drawn (2026-10-28,
   `world.rs` `is_editor_only`, `textures.rs` `is_game_type_marker`); `Scene::spawns` still has
   them all.

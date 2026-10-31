@@ -7,6 +7,7 @@ pub mod ai;
 pub mod atmosphere;
 pub mod camera_fx;
 pub mod collision;
+pub mod column_grid;
 pub mod lift;
 pub mod lightmap;
 pub mod materials;
