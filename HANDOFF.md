@@ -481,9 +481,9 @@ data:
 - **Machines stand in their animation.** The frigate's model lies nose along +Y; frame 0 of its
   `device:position` track turns the root a quarter turn. The game never shows a machine
   unanimated, so every machine with a graph now stands in its `device:position` pose at
-  position 0, taken as values (`halo3_anim::devices::place_machines`, called in `main` before the
+  position 0, laid over the rest pose as the clip's kind says (an overlay adds; `halo3_anim::devices::place_machines`, called in `main` before the
   collision is built; `docs/format/animation.md` 10.3). That turns the open hangar (under the
-  stern, 13 wu wide, 8 high, 34 deep) to face the run. The islands move by about 0.6 wu with it.
+  stern, 13 wu wide, 8 high, 34 deep) to face the run. The islands move by about 0.3 wu with it. (Read as whole values instead, the islands sank 56 wu out of sight; the user saw them gone. `tests/machines_at_rest.rs` now pins every machine within 1 wu of its placement.)
 - **Rotation order.** Composed about the world's axes as Reclaimer does (`scenario::rotation`);
   the other order sank the stern into the run's last ramp (`docs/format/scenario-and-tag-reading.md` 2.3).
 

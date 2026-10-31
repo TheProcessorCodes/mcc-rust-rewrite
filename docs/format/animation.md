@@ -378,8 +378,11 @@ render model's rest pose; the frigate's root is at the rest translation
 (-0.032, 0, 0) but turned a quarter turn about Z (`0, 0, 0.707, -0.707`) from
 its rest rotation (identity), and its last frame is 845 wu away, turned half
 round (it flies off). The game never shows a machine unanimated, so a machine
-at rest stands in its `device:position` pose at position 0 taken as values
-(`AnimModel::pose_values`, `devices::place_machines`). For the frigate that
+at rest stands in its `device:position` pose at position 0, laid over the
+rest pose by the clip's kind (`AnimModel::pose_at`, `devices::place_machines`).
+Taking the tracks as whole values instead sank the islands 56 wu below their
+placement (the user saw them vanish); laid as overlays they stay within 0.3 wu
+and the frigate still turns its quarter turn. For the frigate that
 is the difference between hanging broadside across the Warthog run (the
 model's nose is +Y) and pointing its open hangar, under the stern, at the
 run's end, where the map's end trigger waits. Motion the scripts start is

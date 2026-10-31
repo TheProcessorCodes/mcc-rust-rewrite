@@ -82,12 +82,14 @@ impl MachinePoser {
 }
 
 /// The root node's model-space frame at rest: its `device:position`
-/// animation at position 0 taken as values ([`AnimModel::pose_values`]),
-/// relative to the render model's rest pose. `None` when that is the rest
+/// animation at position 0 laid over the rest pose as the clip says
+/// ([`AnimModel::pose_at`]: its overlay adds to the rest pose), relative to
+/// the rest pose. Read as whole values instead, the islands' track (zero
+/// translation) dropped them 56 wu below where the scenario put them. `None` when that is the rest
 /// pose (doors, whose root the animation does not drive) or the graph has
 /// no `device:position`.
 pub fn initial_pose(model: &AnimModel) -> Option<Mat4> {
-    let pose = model.pose_values("device:position", 0.0)?;
+    let pose = model.pose_at(&[("device:position", 0.0)])?;
     let now = pose.model(&model.skeleton).first().copied()?;
     let rest = model.rest_model().first().copied()?;
     let c = now * rest.inverse();
