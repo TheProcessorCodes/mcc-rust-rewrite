@@ -61,7 +61,7 @@ What the game does now:
   - Docs: `docs/format/lightmaps.md`, `sky-and-atmosphere.md`, `shaders.md`.
 - **Water.** Animated waves from the shader's slope arrays, sky reflection, depth murk, shore fade, foam and waterfalls. Deep water sinks the skater, who respawns at the last dry spot (`docs/format/water.md`, `swim.rs`).
 - **Skating.**
-  - The Skate 3 crates come from `mw2-skate-3-src` as a path dependency and run on a worker thread (`skate.rs`).
+  - The Skate 3 crates are vendored in `third_party/skate-engine` (GPL-3.0, 2026-10-31; its README has their origin and our changes) and run on a worker thread (`skate.rs`).
   - Skate collision is the real collision BSP; grind rails come from IW4L's lip detector.
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
@@ -193,8 +193,8 @@ Halo) or the look fixes above.
 ## Working rules for agents
 
 - New work goes in a new worktree under `.claude/worktrees/`, on its own branch from master
-  (CLAUDE.md). Each worktree needs a junction `.claude\worktrees\mw2-skate-3-src` pointing at the
-  real `mw2-skate-3-src` folder so the skate crates' relative path resolves.
+  (CLAUDE.md). The skate crates are in the tree (`third_party/skate-engine`), so a worktree
+  needs nothing outside it.
 - Agents commit their own files by path once verified; never `git add -A` in a shared tree.
 - Worktrees you did not create in this thread, and any locked agent worktree, belong to the
   user's other sessions; leave them alone.
