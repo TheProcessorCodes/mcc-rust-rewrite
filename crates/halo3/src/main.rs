@@ -38,6 +38,7 @@
 
 mod halo2;
 mod menu;
+mod reach;
 mod pause;
 mod shot;
 
@@ -156,7 +157,7 @@ fn main() -> anyhow::Result<()> {
 /// A map decoded and ready to go into the app. Made up front for
 /// `halo3 <map>`, or on the menu's loading thread.
 pub(crate) struct LoadedMap {
-    scene: blam_geometry::Scene,
+    pub(crate) scene: blam_geometry::Scene,
     textures: textures::MaterialTextures,
     chief: Option<rider::ChiefModel>,
     sky: world::sky::SkyData,
@@ -228,7 +229,14 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
         name: cache.header.map_name.clone(),
         ..Default::default()
     };
-    blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
+    // Reach: the same cache file, resources, shaders and bitmaps as Halo 3,
+    // its own tag layouts (`blam_reach`, `reach.rs`).
+    let reach = cache.engine() == blam_cache::Engine::Reach;
+    if reach {
+        reach::decode(cache, &mut scene)?;
+    } else {
+        blam_geometry::decode_into(cache, &blam_geometry::Options::default(), &mut scene)?;
+    }
     eprintln!(
         "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
         scene.name,
@@ -265,6 +273,9 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
         }
         Ok(None) => eprintln!("no camera fx: exposure x{}", world::lighting::exposure()),
         Err(e) => eprintln!("camera fx: {e}; exposure x{}", world::lighting::exposure()),
+    }
+    if reach {
+        return Ok(reach::finish(cache, scene, textures));
     }
     let chief = rider::load_chief(cache);
     let arsenal = weapons::assets::load(cache);
@@ -416,6 +427,8 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         );
     }
     match (map_file, plain_sound) {
+        // Reach's sound tags are not read (`reach.rs`).
+        (Some(cache), _) if cache.engine() != blam_cache::Engine::Halo3 => {}
         (Some(cache), _) => audio::install(w, audio::MapSound::Halo3(cache)),
         (None, Some(loader)) => audio::install(w, audio::MapSound::Plain(loader)),
         (None, None) => {}
