@@ -559,10 +559,32 @@ pub struct Synth {
     tone: [f32; 2],
     intake: [f32; 2],
     tick: f32,
-    dc: [f32; 2],
+    /// Band-limited turbulence noise.
+    hiss: f32,
+    /// Three one-pole high-passes: (last input, output) each.
+    hp: [[f32; 2]; 3],
+    /// The exhaust's body resonance (a state-variable band-pass).
+    body: [f32; 2],
     wind: Wind,
     rng: Rng,
 }
+
+/// Tuned by `engine_measure` against Reflex's 450F takes (2026-10-31): a
+/// real single's exhaust has little at the firing note itself, its energy
+/// spread from about 150 Hz to 5 kHz, as much noise between the harmonics
+/// as on them on the gas, and firings that differ a lot one to the next.
+/// How rough the blow-down is: turbulence riding on the pulse, at no gas
+/// and at full gas.
+const ROUGH: [f32; 2] = [3.4, 4.0];
+/// Firing-to-firing spread of strength, at no gas and full gas.
+const SPREAD: [f32; 2] = [0.3, 1.3];
+/// Make-up gain for what the high-pass takes away, at no gas and full gas:
+/// keeps idle and full gas about 11 dB apart, as before and as in Reflex.
+const MAKEUP: [f32; 2] = [3.0, 1.45];
+/// The body resonance: its centre at no gas and full gas (Hz) and how much
+/// of it is added. The takes' strongest harmonics sit near 150 Hz at idle
+/// and 300-500 Hz on the gas, whatever the rpm.
+const BODY: [f32; 3] = [150.0, 320.0, 1.2];
 
 /// Head pipe and silencer lengths as delays: a round trip of about 1.1 m
 /// and 0.3 m of pipe at 343 m/s.
@@ -586,7 +608,9 @@ impl Synth {
             tone: [0.0; 2],
             intake: [0.0; 2],
             tick: 0.0,
-            dc: [0.0; 2],
+            hiss: 0.0,
+            hp: [[0.0; 2]; 3],
+            body: [0.0; 2],
             wind: Wind { lp: [0.0; 2], rng: Rng(0x6a09_e667) },
             rng: Rng(0xbb67_ae85),
         }
@@ -595,8 +619,8 @@ impl Synth {
     /// A new firing: how hard, from the load, with cycle-to-cycle spread;
     /// the limiter and a closed throttle cut some.
     fn fire(&mut self, rpm: f32, load: f32, i: &Input) {
-        let spread = 0.12 + 0.15 * (1.0 - load);
-        let mut amp = (0.5 + 0.5 * load.powf(0.8)) * (1.0 + spread * self.rng.signed());
+        let spread = SPREAD[0] + (SPREAD[1] - SPREAD[0]) * load;
+        let mut amp = (0.5 + 0.5 * load.powf(0.8)) * (1.0 + spread * self.rng.signed()).max(0.05);
         let hi = i.max_rpm.max(i.min_rpm + 1000.0);
         if rpm >= hi * 0.985 && load > 0.4 && self.rng.unit() < 0.5 {
             // The limiter cuts the spark.
@@ -613,7 +637,7 @@ impl Synth {
         self.amp = amp;
         // The exhaust valve open for about 80° of crank.
         let crank = rpm / 60.0;
-        self.width = (0.22 / crank).clamp(0.0012, 0.009);
+        self.width = (0.22 / crank).clamp(0.0012, 0.009) * (1.0 + 0.25 * self.rng.signed());
         self.since = 0.0;
     }
 }
@@ -648,7 +672,9 @@ impl Generator for Synth {
             let x = self.since / (self.width * 0.35);
             let env = if x < 10.0 { x * (1.0 - x).exp() } else { 0.0 };
             let noise = self.rng.signed();
-            let src = self.amp * env * (1.0 + noise * (0.3 + 0.5 * load));
+            self.hiss += (noise - self.hiss) * 0.45;
+            let rough = ROUGH[0] + (ROUGH[1] - ROUGH[0]) * load;
+            let src = self.amp * env * (1.0 + self.hiss * rough);
 
             // Head pipe: the open end sends the pulse back inverted.
             let d = self.head[self.at[0]];
@@ -664,11 +690,18 @@ impl Generator for Synth {
             self.at[1] = (self.at[1] + 1) % SILENCER;
             let body = 0.55 * y1 + 0.45 * y2;
 
-            // The tone opens with the throttle and the revs.
-            let k = one_pole((900.0 + 5200.0 * load.powf(0.8) + rpm * 0.25).min(9000.0));
+            // The tone opens with the throttle: dull at idle, bright and
+            // nearly flat to a few kHz on the gas.
+            let k = one_pole((160.0 + 5200.0 * load * load + rpm * 0.05).min(9000.0));
             self.tone[0] += (body - self.tone[0]) * k;
-            self.tone[1] += (self.tone[0] - self.tone[1]) * k;
+            self.tone[1] += (self.tone[0] - self.tone[1]) * one_pole(9000.0);
             let mut v = self.tone[1];
+            // The body resonance, Chamberlin state-variable filter, Q ~1.4.
+            let tune = 2.0 * (std::f32::consts::PI * (BODY[0] + (BODY[1] - BODY[0]) * load) / RATE as f32).sin();
+            let high = v - self.body[0] - 0.7 * self.body[1];
+            self.body[1] += tune * high;
+            self.body[0] += tune * self.body[1];
+            v += BODY[2] * self.body[1];
 
             // Intake snarl while the intake valve is open, with the throttle.
             if (0.45..0.7).contains(&self.phase) {
@@ -684,16 +717,25 @@ impl Generator for Synth {
                 self.tick = 1.0;
             }
             if self.tick > 1e-3 {
-                v += self.rng.signed() * self.tick * (0.02 + 0.03 * (1.0 - load));
+                v += self.rng.signed() * self.tick * (0.006 + 0.01 * (1.0 - load));
                 self.tick *= 0.85;
             }
 
-            // A little saturation, harder with load; the DC taken out.
+            // A little saturation, harder with load; then the firing note
+            // and below taken down (18 dB an octave under ~150 Hz).
             let drive = 1.3 + 1.7 * load;
             v = (v * drive).tanh() / drive.tanh();
-            self.dc[1] = v - self.dc[0] + 0.995 * self.dc[1];
-            self.dc[0] = v;
-            let s = (self.dc[1] * LEVEL * 0.6 + self.wind.sample(i.speed)) * 0.9 * i.volume;
+            let a = (-std::f32::consts::TAU * 150.0 / RATE as f32).exp();
+            for stage in &mut self.hp {
+                let y = a * (stage[1] + v - stage[0]);
+                stage[0] = v;
+                stage[1] = y;
+                v = y;
+            }
+            // Held under full scale; barely touches the usual levels.
+            let makeup = MAKEUP[0] + (MAKEUP[1] - MAKEUP[0]) * load;
+            let engine = (v * makeup * LEVEL * 0.6).tanh();
+            let s = (engine + self.wind.sample(i.speed)) * 0.9 * i.volume;
             out[2 * f] += s;
             out[2 * f + 1] += s;
         }
