@@ -248,8 +248,11 @@ the game.
 - **Shader classification** in `blam_geometry` (`Material::shading`) is still by class code
   only; the viewer refines it from the shader options through `blam_texture` (alpha test,
   blend mode, HaloExport's "special" path rule). `Material::shader_tag` links the two.
-- **Large collision BSPs** (32-bit indices) are implemented from the documented layout but no
-  installed map uses them.
+- **Large collision BSPs** (32-bit indices): no installed Halo 3 map uses them; eight Reach
+  maps do (Forge World's main BSP only has a large one), read since 2026-10-31
+  (`docs/format/reach.md` 6). Reach instances that are not flagged collidable have empty
+  collision definitions and get no collision, as in the game; `blam_reach`'s
+  `collision_coverage` test (ignored) lists drawn geometry with no collision near spawns.
 - **Spawn-point discs** and the other game-type markers are no longer drawn (2026-10-28,
   `world.rs` `is_editor_only`, `textures.rs` `is_game_type_marker`); `Scene::spawns` still has
   them all.

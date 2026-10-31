@@ -426,20 +426,25 @@ pub fn decode_collision(
         }
     };
     let mut triangles = Vec::new();
-    // The BSP's own collision geometries (0x6C each).
-    let (count, at) = def_block(&l, l.root)?;
-    for k in 0..count {
-        let start = triangles.len();
-        let n = collision::triangulate_geometry(
-            &l.def,
-            &l.data,
-            at + k * GEOMETRY_SIZE + SURFACES_SHIFT,
-            CollisionSource::Bsp(bsp_index),
-            &mut triangles,
-            &mut stats,
-        )?;
-        triangles[start..].iter_mut().for_each(fix);
-        stats.bsp_triangles += n;
+    // The BSP's own collision geometries (0x6C each): normal ones at +0,
+    // large ones (32-bit indices) at +0xC. Forge World's main BSP has only
+    // a large one.
+    for (block_at, large) in [(l.root, false), (l.root + 0xC, true)] {
+        let (count, at) = def_block(&l, block_at)?;
+        let walk = if large { collision::triangulate_large_geometry } else { collision::triangulate_geometry };
+        for k in 0..count {
+            let start = triangles.len();
+            let n = walk(
+                &l.def,
+                &l.data,
+                at + k * GEOMETRY_SIZE + SURFACES_SHIFT,
+                CollisionSource::Bsp(bsp_index),
+                &mut triangles,
+                &mut stats,
+            )?;
+            triangles[start..].iter_mut().for_each(fix);
+            stats.bsp_triangles += n;
+        }
     }
     // Instanced geometry definitions (0x144 each, collision at +8).
     let (defs, defs_at) = def_block(&l, l.root + 0x18)?;

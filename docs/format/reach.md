@@ -135,6 +135,14 @@ block (0x80 each) inserted second: nodes +0, supernodes +0xC, planes +0x18, leav
 2D references +0x30, 2D nodes +0x3C, **surfaces +0x48, edges +0x54, vertices +0x60**.
 Surfaces, edges and vertices are Halo 3's (12, 12, 16 bytes), so
 `blam_geometry::collision::triangulate_geometry` walks them at the geometry + 0xC.
+
+**Large collision BSPs** (+0xC) have the same 0x6C struct with Halo 3's 32-bit element
+sizes: 3D nodes 12, supernodes 128, planes 16, leaves 8, 2D references 8, 2D nodes 20,
+surfaces 16, edges 24, vertices 20 (strides measured from consecutive block addresses on
+Forge World). Eight multiplayer maps keep some or all of their structure collision there:
+Forge World's main BSP has no normal collision BSP at all, only one large one (60,685
+surfaces). The others are Beaver Creek, Breakpoint, Highlands, Damnation, Timberland,
+Prisoner and Tempest. `triangulate_large_geometry` walks them.
 An instanced geometry definition has a checksum +0, flags +4 and its collision geometry
 inline at +8.
 
