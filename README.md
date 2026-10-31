@@ -22,6 +22,7 @@ the format descriptions the code is written from.
 |---|---|
 | `crates/blam_cache` | opens a `.map`: header, sections, tag index, tag names, string ids, a cursor for tag data, resource pages |
 | `crates/blam_geometry` | decodes structure BSPs (clusters and instances) into plain meshes with materials |
+| `crates/blam_h1` | MCC Halo CE maps: tags, BSP lightmap meshes, collision, gbxmodels, shaders, bitmaps (`bitmaps.map`), spawns and sky decoded into the same `Scene` (`docs/format/halo1.md`) |
 | `crates/blam_h2` | MCC Halo 2 maps: inflated in memory, tags, `shared.map` and `textures.dat` read, BSP, collision, objects, spawns, shaders and bitmaps decoded into the same `Scene` (`docs/format/halo2.md`) |
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
@@ -78,6 +79,8 @@ install when that is not set. `riverworld` is Valhalla, `cyberdyne` The Pit,
 `sandbox` Sandbox, `isolation` Isolation. Halo 2 maps are then looked for in `%HALO2_MAPS%` or MCC's
 `halo2\h2_maps_win64_dx11` (`coagulation`, `lockout` Lockout; `h2:NAME` / `h3:NAME` when
 both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
+Halo CE maps are only found as `h1:NAME` (`h1:bloodgulch`, ... in `%HALO1_MAPS%` or MCC's
+`halo1\maps`); a map's game is told from its own header, not its file name.
 
 ## Status
 
@@ -249,6 +252,18 @@ both games have a map of that file name, see `docs/viewer.md` "Halo 2 maps").
       its lightmap (65 pages packed into one atlas, the light fixtures from
       the nearest surface) and the sky's blue fog (`docs/format/halo2.md`
       7, 10). Not yet: the sky model; a few small black panels on the boxes.
+- [x] Halo CE: all 19 multiplayer maps (`h1:NAME`, the menu's Halo CE tab;
+      built 2026-10-31, awaiting a playtest), read by our own `blam_h1`
+      (`docs/format/halo1.md`): the BSP's lightmap meshes with their
+      textures (blended ground, alpha-tested foliage, transparent
+      stacks), lit by the map's lightmap pages, scenery and machines, the
+      sky model with its cloud masks, outdoor fog where a cluster sees the
+      sky, the collision BSP (no broken loops) and the player starting
+      locations as spawns. HaloExportH1's lightmap, triangle and scenery
+      counts match on Blood Gulch, Death Island, Sidewinder and Timberland
+      (`crates/blam_h1/tests/maps.rs`). Headless shots of every map; the
+      bike, skating and walking stand on Blood Gulch's collision. Not yet:
+      weapons, sound, teleporters, water animation.
 - [x] Milestone 3b: collision and rails fed to the skate world (playtested
       on Valhalla).
 - [x] Milestone 4: Skate 3 crates plugged in (path dependency on

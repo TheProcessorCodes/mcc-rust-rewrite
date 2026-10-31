@@ -40,6 +40,7 @@ A Cargo workspace (`cargo build`, `cargo test`). Crates (`README.md` "Layout" ha
 |---|---|
 | `blam_cache` | opens a `.map` read-only (memory-mapped): header, sections, tag index and names, string ids, a tag data cursor, the resource system (zone gestalt, play layout, deflate pages, shared caches) |
 | `blam_geometry` | structure BSPs, render models, scenario objects, sky, the real collision BSP, lightmaps, atmosphere, camera fx (exposure), zone sets, trigger volumes and cluster portals, into one plain `Scene` |
+| `blam_h1` | MCC Halo CE maps into the same `Scene`: BSP lightmap meshes, collision, gbxmodels, shaders, `bitmaps.map`, spawns, sky (`docs/format/halo1.md`) |
 | `blam_h2` | MCC Halo 2 maps into the same `Scene`: inflated in memory, `shared.map` and `textures.dat`, BSP, collision, lightmaps, lifts, weapons, sound (`docs/format/halo2.md`) |
 | `blam_texture` | bitmap tags to mip chains (BC kept compressed, own CPU decoders) and the shader resolver |
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
@@ -117,6 +118,7 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Halo (final mission) | `120_halo` | built with streaming, not playtested |
 | Halo 2: Coagulation | `coagulation` (MCC Halo 2) | built, HaloExportH2 counts match, not playtested; no sky model yet |
 | Halo 2: Lockout | `lockout` (MCC Halo 2) | built with lightmaps, fog, gravity lift, weapons, ambient sound; own counts pinned; not playtested |
+| Halo CE: all 19 multiplayer maps | `h1:bloodgulch` ... (MCC `halo1\maps`) | built 2026-10-31, every map drawn in headless shots (textures, lightmaps, sky, spawns); HaloExportH1 counts match on 4 maps; bike, skate and foot stand on Blood Gulch; no weapons or sound yet; not playtested |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
 
 Narrows, Isolation and Sandbox were "written, not built yet" when their README entries were
