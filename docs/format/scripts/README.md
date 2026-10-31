@@ -8,5 +8,5 @@ take a map path as their first argument.
 
 ```
 $env:HALO3_MAPS = '<MCC>\halo3\maps'
-python docs\format\scripts\probe_lod.py
+python docs\format\scripts\check_winding.py
 ```
