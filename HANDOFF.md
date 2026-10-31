@@ -155,9 +155,39 @@ the format, not checked on a real full dump; a trimmed image was.
 
 ## What is left
 
+**The Warthog Run mission (user's list, 2026-10-31).** The user played `warthog_run` from start
+to the hangar and it all worked. What is left to call it finished:
+
+To do:
+
+1. **Falling pieces in the tunnels fall through the road.** The big pieces that come down in
+   the tunnels drop straight through the drivable floor; they should land on it and stay there
+   (collide with the road / plates). Not looked into yet; likely the `plates\pillar_fall`
+   machines or other script-dropped objects, whose fall is posed by `halo3_anim::devices` with
+   no collision against the world (check which objects they are first).
+2. **Dialogue.** Cortana, Johnson, the Arbiter and the rest: the scripts' dialogue lines played
+   from MCC's language banks (not read yet), on the Dialogue bus that already exists.
+3. **Accurate explosion effects.** The plates blowing up ahead (and other script `effect_new`
+   calls) are stand-in flashes now; play Halo 3's own `effe` effects (particles, lights,
+   sounds) as the game does.
+4. **Enemies must attack.** Today the AI only fights while the player is on foot (their rounds
+   fly on the on-foot collision), so on the bike the run's Flood and Sentinels mostly ignore
+   you. They should see, chase and shoot / hit the rider on the bike (and the skater).
+
+Skipped by the user's choice (do not do unless asked):
+
+- The Warthog and the Mongoose (vehicles, and the `warthog01..04`, `chopper*`, `secret_egg*`
+  crews). The dirt bike stays the ride.
+- The final cutscene (`cin_halo_outro`): the mission still ends on MISSION COMPLETE at the hangar.
+- The Arbiter driving or riding with the player (`cs_*` command scripts, `ai_get_object`); he is
+  placed and nothing more.
+
+Order and priorities: the user wants to discuss them before work starts.
+
 **Waiting on the user's playtest.** These are built but the user has not run them yet:
 
-1. 120_halo: streaming and culling on the Warthog run, and skating across zone sets (`--zone 4`).
+1. 120_halo: skating across zone sets (`--zone 4`). (Streaming on the Warthog run: played
+   through 2026-10-31, fine.)
 2. Sound on Valhalla and 120_halo: anything too loud, too quiet or broken.
 3. The material, water and exposure changes made since the last look at Valhalla.
 4. Guardian, Last Resort, High Ground, Blackout, Narrows, Rat's Nest, Sandtrap, Isolation,
@@ -186,8 +216,7 @@ menu's Dirt bike tab (`bike-sound.json`). Still a guess: which pool plays in whi
 - `010_jungle` BSP 11 fails with "segment has no page".
 - Seen from far above the play space, the sky is only the trench haze colour.
 
-**Started on branches, not on master yet** (worktrees under `.claude/worktrees/`, scoped to
-120_halo; none merged as of 2026-10-30):
+**Merged to master 2026-10-31** (was on branches; kept here for where things live):
 
 - `halo-script` also merges `biped-anim`, `enemies-ai`, `mission-music` and `music-volume`
   into one build for 120_halo.
