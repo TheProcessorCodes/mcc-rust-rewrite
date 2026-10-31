@@ -95,6 +95,7 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
             sections: secs,
             tag_path: o.tag_path.clone(),
             tag: Some(o.tag),
+            contacts: Vec::new(),
         });
     }
     // Named objects nothing draws (sound scenery, bipeds, vehicles).
@@ -111,6 +112,7 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
                 sections: Vec::new(),
                 tag_path: String::new(),
                 tag: None,
+                contacts: Vec::new(),
             });
         }
     }
@@ -122,7 +124,14 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
             list.push(i as u32);
         }
     }
-    let objects = Objects::new(info, by_name);
+    // Crates scripts drop land on the floor under them (the tunnels'
+    // girders); only when the scene has collision.
+    let (contacts, ground) = crate::ground::build(&scene.collision, &info);
+    for (o, c) in info.iter_mut().zip(contacts) {
+        o.contacts = c;
+    }
+    let mut objects = Objects::new(info, by_name);
+    objects.ground = ground;
     Runtime::new(data, objects, scene.trigger_volumes.clone(), folders, config)
 }
 

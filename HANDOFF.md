@@ -163,11 +163,10 @@ to the hangar and it all worked. What is left to call it finished:
 
 To do:
 
-1. **Falling pieces in the tunnels fall through the road.** The big pieces that come down in
-   the tunnels drop straight through the drivable floor; they should land on it and stay there
-   (collide with the road / plates). Not looked into yet; likely the `plates\pillar_fall`
-   machines or other script-dropped objects, whose fall is posed by `halo3_anim::devices` with
-   no collision against the world (check which objects they are first).
+1. ~~**Falling pieces in the tunnels fall through the road.**~~ Done 2026-10-31 on branch
+   `tunnel-fall-collision`, awaiting the user's playtest: they are the `tunnel_girder` crates,
+   which now drop onto the road, settle and stay solid (see "Tunnel girders land on the road"
+   below).
 2. **Dialogue.** Cortana, Johnson, the Arbiter and the rest: the scripts' dialogue lines played
    from MCC's language banks (not read yet), on the Dialogue bus that already exists.
 3. **Accurate explosion effects.** The plates blowing up ahead (and other script `effect_new`
@@ -509,6 +508,44 @@ Two bugs from the first bike playtest of `--insertion trench_run`:
   headless `--bike` runs with `HALO3_SCRIPT_TRACE=1`: through the tunnel the bike crosses
   y = 37.5 at 100 km/h; onto island 1 it is lifted with the island (z -28.2 -> -23.5) where
   before the carrying it fell through. Not playtested.
+
+## Tunnel girders land on the road (2026-10-31, branch `tunnel-fall-collision`)
+
+User playtest: the giant pieces falling in the tunnels went straight through the road. They are
+the run's `tunnel_girder` crates (`objects\levels\solo\120_halo\plates\tunnel_girder`, a `bloc`
+with a `phmo`, 22.5 wu long, hung across the ceiling): `100_hw_ceiling01..14` in the first
+tunnel (folder `trench_run_100_hw`) and `110_hw_ceiling01..14` in the second
+(`trench_run_110_hw`). `trench_tunnel01` / `02` drop twelve of them with `fall_off` (damage
+section `fall`) as the player passes `tunnel01_trig*` / `tunnel02_trig*`; `100_hw_ceiling10`
+gets `tunnel_fall_away`, which also destroys it. The `pillar_fall` machines (BSP 120, after
+the second tunnel) are animated machines, not these, and are unchanged. Cause: every dropped object took the floor plates' fall (a push, a
+tumble, no collision, gone after 6 s); in the game Havok drops the crates onto the road.
+
+Fix (`halo3_script/src/ground.rs`, `objects.rs`): a dropped **crate** with a floor within 40 wu
+under it (`LAND_REACH`) falls straight down (no push or spin), stops when a corner of its
+collision touches the BSP or a solid object still in place, and, if it came down on one side of
+its middle only (a girder with one end on a raised plate), tips about its width onto the other
+side (`Motion::Settling`, up to `MAX_TILT`). Then it is solid again where it lies
+(`Motion::Landed`): its collision is published moved like the islands' (`publish_collision` ->
+`set_object_pose`), so the bike, the Spartan, the AI and the guns hit it at once and the skater a
+second later. If the floor under it drops later (the run's timers drop the first tunnel's plates
+behind the player) it falls on and is gone with them. The floor plates are scenery, so they keep
+their old tumbling fall. Only the collision under the crates is indexed (about 6,000 triangles).
+`HALO3_SCRIPT_TRACE=1` now also logs every object a script damages.
+
+What it looks like now: the girders come down 8 to 25 wu and lie across the middle of the road
+(most level on their three feet, some tipped 3 to 31 degrees); they are 0.8 to 3.8 wu tall and
+span the flat middle of the road (the tunnels are 38 wu wall to wall, the flat middle about 17),
+so the bike has to go round through the side gutters or jump them. In the game the Warthog shoves them aside; nothing pushes them here.
+
+Checked: `halo3_anim/tests/tunnel_falls.rs` (scripts headless through both tunnels: all twelve
+girders land, none tumbles; at the moment each lands, the bike's own world has the road right
+under a corner and no corner in it, its middle not under the road beside it, held up on both
+sides of its middle, its top where the bike meets it, and nothing left where it hung; the
+second tunnel's six still lie there at the end), all `halo3_anim` and `halo3_script` tests.
+Headless shots in the first tunnel: `out\shots\tunnel_fall_close\before.png`, `falling.png`,
+`after.png` (`100_hw_ceiling08`), `out\shots\tunnel_fall\wide_before.png`, `wide_after.png`.
+Not playtested; the girders are drawn very dark (their material, not looked at).
 
 ## Mission music (2026-10-30, branch `mission-music`)
 

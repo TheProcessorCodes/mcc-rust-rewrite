@@ -811,6 +811,14 @@ impl Runtime {
                 format!("{tag} has no damage section {section}; treated as {}", if destroy { "destroyed" } else { "falling" })
             });
         }
+        // `HALO3_SCRIPT_TRACE=1`: every object a script damages.
+        static TRACE: std::sync::LazyLock<bool> =
+            std::sync::LazyLock::new(|| std::env::var("HALO3_SCRIPT_TRACE").is_ok_and(|v| v == "1"));
+        if *TRACE {
+            let name = self.objects.info[e].name.as_deref().unwrap_or("?");
+            let exists = self.objects.state[e].exists;
+            info!("script trace: tick {} {name} {section}{}", self.tick, if exists { "" } else { " (not there)" });
+        }
         if destroy {
             self.objects.destroy(e);
         } else {
