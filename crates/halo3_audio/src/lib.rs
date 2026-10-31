@@ -1,14 +1,15 @@
 //! Halo 3's own sound in the viewer: the map's ambience (each cluster's
 //! background sound with its random details, sound scenery placed in the
-//! world), its music by hand, board sounds while skating, and weapon sounds
-//! (`weapons.rs`).
+//! world), its music by hand, board sounds while skating, weapon sounds
+//! (`weapons.rs`) and the dirt bike's engine (`engine.rs`).
 //! `docs/format/sound.md` has the data, `docs/viewer.md` "Sound" the rules.
 //!
 //! Keys: M music on / off, Shift+M next track, N alternate loop, K mute,
-//! `-` / `=` volume. `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
+//! `-` / `=` volume, H the bike's engine sound (Reflex, synth, off). `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
 //! mode, where `HALO3_AUDIO_TRACE=1` runs the logic without output and
 //! logs which emitters are active at each view.
 
+pub mod engine;
 pub mod halo2;
 mod library;
 mod mixer;
@@ -64,10 +65,13 @@ impl Plugin for HaloAudioPlugin {
             .clamp(0.0, 2.0);
         let mixer = Mixer::default();
         mixer.set_master(volume);
-        app.insert_resource(mixer).insert_resource(Volume {
-            level: volume,
-            muted: false,
-        });
+        app.insert_resource(mixer)
+            .insert_resource(Volume {
+                level: volume,
+                muted: false,
+            })
+            .init_resource::<engine::EngineSound>()
+            .add_systems(Update, engine::bike_engine.before(volume_keys));
         if let Some(cache) = self.cache {
             self.build_halo3(app, cache);
         } else if let Some(loader) = plain {

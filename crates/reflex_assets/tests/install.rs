@@ -44,3 +44,30 @@ fn the_450f_loads() {
     assert!(m.parts.len() > 20);
     assert!(reflex_assets::cortana::is_cortana(&m.textures[bike::KIT]));
 }
+
+#[test]
+fn the_450f_engine_decodes() {
+    let Some(root) = find_reflex() else {
+        eprintln!("no Reflex install; skipped");
+        return;
+    };
+    let engine = reflex_assets::engine_audio::load_450f(&root).unwrap();
+    let clips = &engine.clips;
+    assert_eq!(clips.len(), 54);
+    // The event file's pools: every take they name is in the bank.
+    let low = engine.defs.iter().find(|d| d.name == "MXB_450F_THROTTLE_LOW").unwrap();
+    assert_eq!(low.takes.len(), 7);
+    assert!(low.takes.contains(&"MXB_450F_THROTTLE_HIGH_01".to_string()));
+    for d in &engine.defs {
+        eprintln!("{}: {:?}", d.name, d.takes);
+        assert!(d.takes.iter().all(|t| clips.iter().any(|c| &c.name == t)), "{}", d.name);
+    }
+    assert!(engine.defs.iter().any(|d| d.name == "MXB_450F_SHIFT" && d.takes.is_empty()));
+    let idle = clips.iter().find(|c| c.name == "MXB_450F_IDLE").unwrap();
+    assert_eq!(idle.rate, 44100);
+    // 131,328 samples in the bank's header; the decoder adds its own delay.
+    assert!((131_328..131_328 + 2304).contains(&idle.samples.len()), "{}", idle.samples.len());
+    let peak = idle.samples.iter().fold(0f32, |m, v| m.max(v.abs()));
+    assert!(peak > 0.1 && peak <= 1.0, "peak {peak}");
+}
+

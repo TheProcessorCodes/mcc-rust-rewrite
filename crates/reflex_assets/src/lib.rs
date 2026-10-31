@@ -2,7 +2,8 @@
 //! written, never copied into this project): the database/package pairs in
 //! `<Reflex>\Database`, and in them the bike meshes, skeletons and
 //! textures. `bike::load` puts together the Dakumoto 450F with the Cortana
-//! graphics kit for `halo3_bike`.
+//! graphics kit for `halo3_bike`; `engine_audio::load_450f` its engine
+//! recordings for `halo3_audio`.
 //!
 //! The formats were worked out in `D:\reflex-tools` (the Reflex track and
 //! skin tools); `docs/format/reflex-bike.md` has the notes this is written
@@ -11,6 +12,7 @@
 pub mod bike;
 pub mod bxml;
 pub mod cortana;
+pub mod engine_audio;
 pub mod model;
 pub mod package;
 pub mod surface;
