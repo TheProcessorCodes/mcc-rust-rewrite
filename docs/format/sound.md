@@ -20,7 +20,7 @@ FMOD sound banks in `halo3\fmod\pc\`:
 | file | size | what |
 |---|---|---|
 | `sfx.fsb` + `sfx.fsb.info` | 724 MB, 4.6 MB | every sound effect, ambience and music: 16,421 samples |
-| `english.fsb` (+ french, german, italian, mexican, spanish) + `.info` | ~460 MB each | dialogue, one bank per language (not read yet) |
+| `english.fsb` (+ french, german, italian, mexican, spanish) + `.info` | ~460 MB each | dialogue, one bank per language: 32,984 samples each (section 11) |
 
 There is no `.bank` (FMOD Studio event) file: the game plays samples itself, the tags say how.
 FMOD's runtime is linked into `halo3.dll` (no `fmod*.dll` in the Halo 3 folder).
@@ -321,8 +321,8 @@ Pinned by `halo3_script/tests/trench_music.rs`, which drives the player through 
   plays at its class's gain (section 9: music 0 dB, effects and ambience 12 to 15 dB down) and
   the player's volume for its bus (pause menu, Sound tab).
 * `sound_impulse_start` plays one permutation of a `snd!` once, at the object when one is named
-  (by its distances), else at the listener. Dialogue is in the language banks, which are not
-  read: those calls log once and play nothing.
+  (by its distances), else at the listener. A dialogue `snd!` (its permutations are in the
+  language bank, section 11) plays the same way, on the dialogue bus.
 
 ## 9. Sound class gains: why music sits on top
 
@@ -339,7 +339,7 @@ code was used; the meanings are inferred.
 | `0x34` | 4 x f32 | default distances | `weapon-sounds.md` 7 |
 | **`0x44`, `0x48`** | f32 x2 | **gain range, dB (lower, upper)** | 0 / 0 on music (32); -3 / -3 on dialogue (19 unit, 47 mission, 48 cinematic) and cinematic music (38); -12 / -12 on weapon fire (4), reloads, ambient loops and sound scenery (33 to 35, 37 upper); -15 on vehicle engines (23), ready sounds, flybys; -10 footsteps (18); ranges only on physics impacts (13: -30 / -12), particles (14: -22 / -14), crashes (22: -24 / -12) |
 | `0x4C`, `0x50`..`0x58` | f32, 3 x f32 | a ducking level, dB, with fade-in / sustain / fade-out times (0.5 s): probably while cutscenes play | -6 on effects and ambience, **0 on music** |
-| `0x5C`, `0x60`.. | f32, times | a second ducking, probably under scripted dialogue | -6 effects, -3 music |
+| `0x5C`, `0x60`, `0x68` | f32 x3 | a second ducking, taken as **under scripted dialogue**, with fade down / up times (0.5 s); applied since 2026-10-31 (section 11) | -6 effects and unit dialogue (19), -3 music, 0 ambience and the mission dialogue classes (46 to 48) |
 | `0x6C`, `0x70`.. | f32, times | a third ducking | -12 effects, -3 music |
 | `0x7C`, `0x80` | f32 | 15 and 1 on most classes | not used |
 
@@ -365,8 +365,98 @@ whose volume is the player's slider. Measured headless on the Warthog run (`HALO
 
 ## 10. Not decoded
 
-Dialogue banks; `lsnd` layers (`sound_looping_activate_layer`, unused on 120_halo) and the header
+The dialogue's sound effects (`cortana_mission`, the radio filters; section 11); AI combat dialogue (`udlg`); `lsnd` layers (`sound_looping_activate_layer`, unused on 120_halo) and the header
 flag bits 3-6; pitch ranges past the first; `snde` reverb; cone gains; the classes' ducking and
 the mix (`snmx`) (section 9; the classes' limits and default distances, and a reading of all four
 distances, are in `weapon-sounds.md` 7); the per-sound `ugh! + 0xBC`
 block; the 8 DLL setup rows that do not rebuild (unused by the bank).
+
+## 11. Dialogue: the language banks and the mission dialogue tag
+
+Probed 2026-10-31 on the user's install (`probe_fsb5.py <halo3 dir> english header|stats|info
+N|grep TEXT`, `probe_dialogue.py`); no GPL code or plugin XML was used.
+
+### 11.1 The banks
+
+`halo3\fmod\pc\<language>.fsb` for `english`, `french`, `german`, `italian`, `mexican`,
+`spanish`, each with its `.fsb.info`. They are laid out exactly like `sfx.fsb` (sections 1 to 3):
+FSB5 version 1, Vorbis, 32,984 samples, all 48 kHz, 32,965 mono and 19 stereo, only the two
+setup CRCs `sfx.fsb` uses (`0x632B1FAC`, `0xAD11D38D`), no intra layers, no loop chunks, and
+280-byte `.info` records. So the existing reader decodes them with no change: `Library::add_dialog`
+opens one beside `sfx.fsb` and `Library::find` looks an id up in the sfx bank, then the language
+bank.
+
+| fact | value | how checked |
+|---|---|---|
+| sample ids | the same 32,984 ids, in the same order, in all six banks | `.info` id columns compared |
+| clash with `sfx.fsb` | none in any bank | id sets intersected |
+| paths | `data\sound\...` in English; the other banks' localised takes are under `data_fr\`, `data_de\`, `data_it\`, `data_mx\`, `data_sp\` (about 29,770 each; the rest, about 3,210, are the English `data\` takes, kept where nothing was recorded) | prefixes counted |
+| what the id is | for 29,873 records in every bank, djb2 of the path under `data*\sound\` without `.aif` (section 2), so the language prefix does not change it; for the other 3,111 (the campaign levels' own lines, e.g. `120mg_030_cor` = `0x87AAD115`, whose path hashes to `0xC88DCF5D`) it is not that hash, and we have not worked out what it is. Not needed: the `snd!` stores the id | hashed every path |
+| what a `snd!` stores | the bank id (`snd! 120mg_030_cor` permutation `+0x10` = `0x87AAD115`, English record 32,776) | `blam sound 120_halo show 8979` |
+| contents | `data\sound\dialog\...` for all but 31 English records (a few HUD and radio sounds: `visual_fx\cortana_hud_on`, `dsp_effects\radio_static`) | paths counted |
+| length | the take's own: `120mg_030_cor` is 102,400 frames in English, 102,358 in French | `.info` PCM bytes |
+| 6 "channel" records | 33 English records say 6 channels in the `.info`; the bank sample is mono and `PCM bytes / (6 x 2)` is its frame count | `info 25589` |
+
+So a line's length in the player's language is `PCM bytes / (channels x 2) / 48000` s from the
+`.info` alone (`blam_sound::info_seconds`). The `snd!`'s own longest-permutation field
+(`+0x14`, 2,133 ms for `120mg_030_cor`) is the English length.
+
+The language is the setup's `LANGUAGE` (`game_paths::language`; `HALO3_LANGUAGE` overrides),
+English when unset. Setup does not ask yet.
+
+### 11.2 `mdlg`, mission dialogue
+
+One per campaign map (`sound\dialog\120_halo\120_halo`), found by class. The scripts name its
+lines, not tags: `(sleep (ai_play_line_on_object none 120mg_030))`.
+
+| offset | type | what |
+|---|---|---|
+| `0x00` | block | **lines**, 20 bytes (120_halo: 213) |
+
+**Line**, 20 bytes:
+
+| offset | type | what | evidence |
+|---|---|---|---|
+| `0x00` | string id | name, `120mg_030` | the names the scripts use |
+| `0x04` | block | **variants**, 24 bytes | 212 lines have one, `120lb_220` two (the Chief's and Guilty Spark's takes); 6 lines' variant has no `snd!` (cut lines: `120ma_020`, five of the Gravemind's), so 207 lines play |
+| `0x10` | string id | the line's sound effect: `cortana_mission` (47 lines, all Cortana's), `radio_default` (16), `radio_3d` (6), `object` (1), none (143) | names; Cortana's run lines all `cortana_mission` |
+
+**Variant**, 24 bytes:
+
+| offset | type | what |
+|---|---|---|
+| `0x00` | string id | speaker code: `cor` Cortana (82), `jon` Johnson (44), `gsp` Guilty Spark (37), `grv` the Gravemind (30), `arb` the Arbiter (10), `mas` the Master Chief (7), `sma` a marine (4) |
+| `0x04` | tag ref | the `snd!` (class 47, mission dialogue: -3 dB, section 9) |
+| `0x14` | string id | a per-variant effect, `radio_default` (17) or `radio_3d` (4), else none |
+
+The scenario does not seem to reference the `mdlg` in its first 4 KiB; it is read by class.
+
+### 11.3 How the scripts use it, and what we do
+
+* `ai_play_line_on_object OBJECT LINE`, `ai_play_line AI LINE`, `vs_play_line AI BOOL LINE` play
+  the line's sound and **return its length in ticks**; the scripts sleep on that
+  (`(sleep (ai_play_line_on_object none 120mg_030))`, or `(- ... 10.0)` to overlap). With
+  `none` the line has no speaker in the world: Cortana in the Chief's head, Johnson on the radio.
+  We play it at the listener; at the object when one is named; `ai_play_line` lines at the
+  listener (no actor objects yet).
+* `sound_impulse_start` names a dialogue `snd!` directly in some scripts (Guilty Spark's boss
+  lines, `120me_*_gsp`), and `sound_impulse_language_time SND` returns its length in ticks, in the
+  language being played.
+* The Warthog run's lines are all Cortana's, from `md_09_cortana_hints` (`120mg_010` to `090`,
+  one every 30 s once the player is on the run) and `md_cortana_countdown` (`120mg_100` to `160`,
+  the charge percentages, at `trench_run_110_trig09`, `trench_run_110_island_trig02`,
+  `120_08_trench_encounter_120`, `trench_run_120_trig02`, `_trig10`, `_trig14`).
+  `md_09_cortana_hints` first waits for the hallway before the run (`120_07_c_hall_end`), which
+  `ins_trench_run` puts the player past; our `trench_run` insertion counts that volume as passed
+  (`setup::PASSED_ON_THE_WAY`). Pinned by `halo3_script/tests/trench_dialogue.rs`.
+* Levels: the class's -3 dB plus the sound's playback gain (-3 dB on most of Cortana's run
+  lines, -5 on `120mg_010`), on the dialogue bus (the pause menu's Dialogue slider). A line
+  decodes at about -16 dBFS RMS (`120mg_030_cor`), so it plays near -22 dBFS against the run's
+  music at about -18 to -21. While a line plays the other buses duck by the classes' `+0x5C`
+  (section 9): music -3 dB (class 32), effects -6 dB (class 4), ambience 0 (class 33), fading
+  over 0.5 s. Measured headless on `warthog_run` (`HALO3_AUDIO_TRACE=1`, riding from just before
+  the first volume): Cortana about -22 to -25 dBFS, the music -18.6 dBFS, -19.6 over a window
+  that was mostly ducked. Not compared with the real game.
+* Not done: the effects (`cortana_mission`, the radio filters, `radio_3d`); AI combat dialogue
+  (`udlg`, `ai_dialogue_enable`: the AI has no vocalisation system yet); `ai_play_line` lines
+  are not placed at the actor.

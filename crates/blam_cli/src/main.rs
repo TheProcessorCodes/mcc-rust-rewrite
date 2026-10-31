@@ -160,7 +160,7 @@ impl Args {
 
 pub(crate) fn usage() -> ! {
     eprintln!(
-        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n  blam scripts <map> [--grep TEXT | --functions | --summary]\n  blam anim <map> <jmad | object> [--anim NAME|N [--frame F] | --action m:c:t:a | --check]\n  blam ai <map> [--squads] [--zones] [--characters]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS, else the MCC folder chosen in halo3 setup."
+        "usage:\n  blam info <map>\n  blam classes <map>\n  blam tags <map> [--class CODE] [--grep TEXT]\n  blam strings <map> [--grep TEXT]\n  blam string-id <map> <hex id>\n  blam dump <map> <tag index | class:name | name> [--len N] [--skip N]\n  blam geometry <map> [--bsp N[,M]] [--no-objects] [--obj PATH]\n  blam rails <map> [--obj PATH]\n  blam nodes <map> <mode tag | object tag>\n  blam movement <map>\n  blam weapons <map> [--all] [--meshes] [--markers]\n  blam scripts <map> [--grep TEXT | --functions | --summary]\n  blam anim <map> <jmad | object> [--anim NAME|N [--frame F] | --action m:c:t:a | --check]\n  blam ai <map> [--squads] [--zones] [--characters]\n  blam sound <map> list | show TAG... | wav TAG... [--out DIR] | check | music | dialogue [--grep TEXT]\n\n<map> is a path or a bare name looked up in $HALO3_MAPS, else the MCC folder chosen in halo3 setup."
     );
     std::process::exit(2)
 }

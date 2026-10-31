@@ -168,8 +168,10 @@ To do:
    (collide with the road / plates). Not looked into yet; likely the `plates\pillar_fall`
    machines or other script-dropped objects, whose fall is posed by `halo3_anim::devices` with
    no collision against the world (check which objects they are first).
-2. **Dialogue.** Cortana, Johnson, the Arbiter and the rest: the scripts' dialogue lines played
-   from MCC's language banks (not read yet), on the Dialogue bus that already exists.
+2. ~~**Dialogue.**~~ Done 2026-10-31 on branch `mission-dialogue`, awaiting the user's
+   playtest: the scripts' lines play from MCC's language bank on the Dialogue bus (see
+   "Dialogue" under the Warthog Run below). Not done: the radio / Cortana voice effects, ducking
+   under lines, AI combat chatter.
 3. **Accurate explosion effects.** The plates blowing up ahead (and other script `effect_new`
    calls) are stand-in flashes now; play Halo 3's own `effe` effects (particles, lights,
    sounds) as the game does.
@@ -204,7 +206,8 @@ Order and priorities: the user wants to discuss them before work starts.
 - Water's painted masks; High Ground's seam between the cove and the sea.
 - The rider is lit at one level for his whole body (no per-part lighting).
 
-**Sound, still missing:** reverb from the BSP acoustics, dialogue, and the game's real mix levels.
+**Sound, still missing:** reverb from the BSP acoustics, the dialogue's voice effects and
+ducking, AI combat chatter, and the game's real mix levels.
 
 **Dirt bike engine sound** (merged 2026-10-30, user-approved): Reflex's own 450F recordings
 read from the user's install (`reflex_assets::engine_audio`, `docs/format/reflex-engine-audio.md`),
@@ -596,6 +599,40 @@ lift shafts. Tests: `halo3_anim/tests/frigate.rs`.
 ```
 & "<worktree>\out\bin\halo3.exe" 120_halo --insertion trench_end
 ```
+
+**Dialogue (2026-10-31, branch `mission-dialogue`, awaiting the user's playtest).** The
+scripts' lines play: MCC keeps them in `halo3\fmod\pc\<language>.fsb`, one bank per language,
+laid out like `sfx.fsb` (same Vorbis setups), and the dialogue `snd!` tags store their bank ids,
+so `blam_sound::Library::add_dialog` opens the bank beside `sfx.fsb` and every dialogue tag
+decodes. The scripts name lines, not tags: the map's mission dialogue tag (`mdlg`, read
+`SoundTags::mission_dialogue`) maps `120mg_030` to its speaker (`cor`) and `snd!`.
+`ai_play_line_on_object`, `ai_play_line` and `vs_play_line` now queue the line as a one-shot and
+return its length in ticks, and `sound_impulse_language_time` returns a sound's length, from the
+language bank's `.info` (`halo3_script::dialogue`), so the scripts' `(sleep (ai_play_line...))`
+wait as long as the take. Lines play on the dialogue bus at their class and tag gains (-6 dB on
+most of Cortana's), and the other buses duck under them by the classes' dialogue ducking (music
+-3 dB, effects -6 dB). The language is English unless `setup.env` has `LANGUAGE=french` (or
+german, italian, mexican, spanish; setup does not ask) or `HALO3_LANGUAGE` overrides.
+`docs/format/sound.md` 11 has the format; `blam sound 120_halo dialogue --grep 120mg` lists the
+lines.
+
+On the run, Cortana: "There! Johnson's Warthog!" (`120mg_010`) at the start, `120mg_030` on the
+first stretch, then a line every 30 s (`120mg_040` to `090`) until the countdown takes over at
+`trench_run_110_trig09` (`120mg_100` "charging sequence at 30 percent" to `120mg_160` "floor it!
+right into the hangar!"). `md_09_cortana_hints` first waits for the hallway before the run, which
+the insertion starts past, so `trench_run` counts `120_07_c_hall_end` as passed
+(`setup::PASSED_ON_THE_WAY`). As in the map's scripts, if the player takes over 20 s to reach the
+first stretch and then crosses it within a second, `md_09`'s once-a-second check misses it and the
+hint lines stay silent until the countdown.
+
+Checked: `halo3_script/tests/trench_dialogue.rs` (the six lines at their volumes, `120mg_040`
+915 ticks plus `120mg_030`'s 64 ticks after it, `120mg_050` right after `040`),
+`blam_sound/tests/install.rs` (`english_dialogue_bank_and_mission_dialogue`), and a headless
+`warthog_run --bike --view -178,-300,-4,90` with `HALO3_AUDIO_TRACE=1`: `120mg_010`, `030`,
+`040` (32.6 s after `030`) and `050` played, Cortana about -22 to -25 dBFS against the music at
+-18.6. Not done: the voice effects (Cortana's `cortana_mission`, the radio filters), AI combat
+chatter (`udlg`), placing `ai_play_line` lines at the actor. For the playtest: is Cortana loud
+enough over the music (the Dialogue slider goes to 200 %)?
 
 ## Open questions and known gaps
 

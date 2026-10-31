@@ -11,7 +11,7 @@ use blam_sound::tags::{Looping, MapSounds, Sound, SoundClass, SoundTags};
 use blam_sound::weapons::{WeaponSoundReader, WeaponSounds};
 use blam_sound::{Library, Pcm};
 
-use super::mixer::{Clip, RATE};
+use super::mixer::{Bus, Clip, RATE};
 
 /// What the viewer needs to know about a `snd!` tag.
 #[derive(Clone, Debug, Default)]
@@ -39,7 +39,7 @@ impl SoundInfo {
                 .permutations
                 .iter()
                 .map(|p| p.fmod_id)
-                .filter(|id| library.sample(*id).is_some())
+                .filter(|id| library.find(*id).is_some())
                 .collect(),
             bounds: snd.playback.bounds(),
             gain_db: snd.playback.gain_db + class.map_or(0.0, SoundClass::gain_db),
@@ -70,6 +70,12 @@ pub struct SoundData {
     pub gameplay: Gameplay,
     /// Every `weap` tag's sounds, by tag index.
     pub weapons: HashMap<u32, WeaponSounds>,
+    /// How each bus is turned down while a line of dialogue plays: (bus,
+    /// gain dB, fade down s, fade up s), from the sound classes' dialogue
+    /// ducking (`SoundClass::dialogue_duck_db`) of the class the bus mostly
+    /// carries: music 32, ambience 33, effects 4 (weapon fire; impacts and
+    /// crashes have the same).
+    pub ducking: Vec<(Bus, f32, [f32; 2])>,
 }
 
 impl SoundData {
@@ -183,10 +189,33 @@ pub fn load(cache: &'static CacheFile) -> Receiver<Result<Loaded, String>> {
 fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
     let started = std::time::Instant::now();
     let maps = cache.path().parent().unwrap_or(Path::new("."));
-    let library = Library::open_beside(maps)?;
+    let mut library = Library::open_beside(maps)?;
+    // The dialogue: the language bank of the player's language (English
+    // unless the setup says otherwise). Without it everything else plays.
+    let language = game_paths::language();
+    match maps
+        .parent()
+        .ok_or_else(|| blam_sound::Error::Invalid("no halo3 folder".into()))
+        .and_then(|h| blam_sound::language_bank(h, language))
+        .and_then(|bank| library.add_dialog(bank))
+    {
+        Ok(()) => bevy::log::info!(
+            "sound: {language} dialogue bank, {} lines",
+            library.dialog.as_ref().map_or(0, |d| d.samples.len())
+        ),
+        Err(e) => bevy::log::warn!("sound: no {language} dialogue ({e}); lines will not play"),
+    }
     let tags = SoundTags::new(cache)?;
     let map = tags.map_sounds()?;
+    let dialogue = tags.mission_dialogue().unwrap_or_else(|e| {
+        bevy::log::warn!("sound: mission dialogue not read ({e})");
+        Vec::new()
+    });
     let classes = tags.classes().unwrap_or_default();
+    let ducking = [(Bus::Music, 32usize), (Bus::Ambience, 33), (Bus::Effects, 4)]
+        .into_iter()
+        .filter_map(|(bus, class)| classes.get(class).map(|c| (bus, c.dialogue_duck_db.min(0.0), c.dialogue_duck_fade)))
+        .collect();
     let weapons = WeaponSoundReader::new(cache).all().unwrap_or_else(|e| {
         bevy::log::warn!("sound: weapons not read ({e})");
         HashMap::new()
@@ -243,7 +272,14 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         }
         loops.insert(l, looping);
     }
-    let one_shots = map.script_sounds.iter().copied().filter(|t| is_class(*t, "snd!"));
+    // One-shots the scripts name, and every line of the mission dialogue
+    // (`ai_play_line_on_object` names lines, not tags).
+    let one_shots = map
+        .script_sounds
+        .iter()
+        .copied()
+        .filter(|t| is_class(*t, "snd!"))
+        .chain(dialogue.iter().flat_map(|l| l.variants.iter().filter_map(|v| v.sound)));
     for s in weapons.values().flat_map(|w| w.all_sounds()).chain(one_shots) {
         if !sounds.contains_key(&s)
             && let Ok(snd) = tags.sound(s)
@@ -303,6 +339,7 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
             loops,
             gameplay,
             weapons,
+            ducking,
         }),
         clips,
     })

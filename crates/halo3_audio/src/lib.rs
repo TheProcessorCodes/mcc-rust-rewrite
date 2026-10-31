@@ -161,6 +161,9 @@ impl Plugin for HaloAudioPlugin {
 /// Silences the map's voices and starts the music and trace state over.
 fn unload_sounds(world: &mut World) {
     world.resource::<Mixer>().stop_all();
+    for b in mixer::Bus::ALL {
+        world.resource::<Mixer>().set_duck(b, 1.0);
+    }
     if let Some(mut music) = world.get_resource_mut::<music::MusicPlayer>() {
         let fresh = music.fresh();
         *music = fresh;

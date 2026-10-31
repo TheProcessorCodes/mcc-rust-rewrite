@@ -12,6 +12,8 @@ glam = { workspace = true }
 blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
 blam_script = { workspace = true }
+blam_sound = { workspace = true }
+game_paths = { workspace = true }
 halo3_core = { workspace = true }
 
 [dev-dependencies]

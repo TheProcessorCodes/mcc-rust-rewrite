@@ -10,7 +10,9 @@
 //! `halo3_script`) and by hand: M starts the map's showpiece (or ends what
 //! is playing), Shift+M the next piece, N toggles the alternate loop of the
 //! newest piece, `--music NAME|N` starts one at launch. One-shots a script
-//! starts (`sound_impulse_start`) play here too.
+//! starts (`sound_impulse_start`) play here too, and so do the lines of
+//! dialogue (`ai_play_line*`, from the language bank), with the other
+//! buses ducked under them (`sound.md` 11).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -150,11 +152,15 @@ struct Impulse {
     at: Option<Vec3>,
     gain: f32,
     distances: [f32; 4],
+    /// A line of dialogue: the other buses duck under it.
+    dialogue: bool,
 }
 
 /// A one-shot waiting for its clip to decode.
 struct PendingImpulse {
     tag: u32,
+    /// The tag path, for the log.
+    name: String,
     at: Option<Vec3>,
     scale: f32,
     waited: f32,
@@ -197,6 +203,9 @@ pub(crate) struct MusicPlayer {
     serial: u64,
     rng: u32,
     warned: HashSet<String>,
+    /// The music, ambience and effects buses' ducking under dialogue
+    /// (`SoundData::ducking`), once the sounds are in.
+    ducks: Vec<(super::mixer::Bus, Fader)>,
 }
 
 impl MusicPlayer {
@@ -481,10 +490,10 @@ impl MusicPlayer {
             SoundRequest::Impulse { tag, name, at, scale } => {
                 let playable = sounds.data.sounds.get(&tag).is_some_and(|s| !s.permutations.is_empty());
                 if playable {
-                    self.pending.push(PendingImpulse { tag, at, scale, waited: 0.0 });
+                    self.pending.push(PendingImpulse { tag, name, at, scale, waited: 0.0 });
                 } else {
                     self.warn_once(format!("impulse {tag}"), || {
-                        format!("sound: {name} has no samples in the sfx bank (dialogue is in the language banks, not read); not played")
+                        format!("sound: {name} has no samples in the sfx bank or the dialogue bank; not played")
                     });
                 }
             }
@@ -680,9 +689,22 @@ pub(crate) fn update(
             // Decoding; give up after a few seconds.
             return p.waited < 3.0;
         };
-        let gain = db(info.gain_db) * p.scale * amb_gain;
+        let bus = bus_of_class(info.class as i32);
+        let dialogue = bus == super::mixer::Bus::Dialogue;
+        // A script's `amb` class gain is for ambience and effects, not for
+        // the lines.
+        let gain = db(info.gain_db) * p.scale * if dialogue { 1.0 } else { amb_gain };
+        if dialogue {
+            info!(
+                "dialogue: {} ({:.2} s, {:+.1} dB, {})",
+                p.name.rsplit('\\').next().unwrap_or(&p.name),
+                clip.seconds(),
+                info.gain_db,
+                if p.at.is_some() { "at its speaker" } else { "in the player's ear" }
+            );
+        }
         let id = mixer.play(Play {
-            bus: bus_of_class(info.class as i32),
+            bus,
             queue: vec![clip],
             looping: Vec::new(),
             gain: [0.0; 2],
@@ -694,11 +716,27 @@ pub(crate) fn update(
             at: p.at,
             gain,
             distances: info.distances,
+            dialogue,
         });
         false
     });
     player.pending = pending;
     player.impulses.retain(|v| mixer.is_playing(v.id));
+    // While a line plays the other buses duck by their classes' dialogue
+    // ducking (music -3 dB, effects -6 dB on 120_halo), fading down and
+    // back up over the classes' times.
+    let talking = player.impulses.iter().any(|v| v.dialogue);
+    if player.ducks.is_empty() {
+        player.ducks = sounds.data.ducking.iter().map(|(bus, _, _)| (*bus, Fader::new(0, 1.0))).collect();
+    }
+    for ((bus, f), (_, duck_db, [down, up])) in player.ducks.iter_mut().zip(&sounds.data.ducking) {
+        let target = if talking { db(*duck_db) } else { 1.0 };
+        if f.target != target {
+            f.fade_to(target, if talking { *down } else { *up });
+        }
+        f.step(dt);
+        mixer.set_duck(*bus, f.level);
+    }
     for v in &player.impulses {
         let lr = match v.at.filter(|_| l.valid) {
             Some(at) => l.pan(at, v.gain * distance_gain(at.distance(l.position), v.distances)),
