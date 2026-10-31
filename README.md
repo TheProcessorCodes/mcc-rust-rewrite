@@ -98,17 +98,21 @@ target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_mu
 & "target\debug\halo3.exe" riverworld
 ```
 
-`halo3.exe` with no map opens the map menu: Halo 3, Halo 2 and Campaign tabs
-with every map found in the MCC install, each shown with MCC's own preview
-picture (`Data\UI\texturepacks\levelstexturepack`, read at run time). Start
+`halo3.exe` with no map opens the map menu: Halo 3, Halo 2, Halo CE, Reach and
+Campaign tabs, each map shown with MCC's own preview picture
+(`Data\UI\texturepacks\levelstexturepack`, read at run time). MCC lets players
+skip a game's content, so a map whose `.map` file is not in its game's maps
+folder is grayed out, and choosing it shows "You must install these Halo maps
+with MCC" instead of loading (A / B / Enter / Esc or a click closes it). Start
 Game loads the map into the same window behind a loading screen; Q (or View)
 in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
 left stick move, Q / E / LB / RB change tab, Enter / A start, Escape / B exit;
 the mouse picks a tile and a double click starts it. Naming a map on the
 command line skips the menu, and Q then quits. `halo3.exe --menu-shot FILE
-[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-start [--menu-back
-TAB,PICK]]` draws the menu, the loading screen or the loaded map without a
-window.
+[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-start
+[--menu-back TAB,PICK]]` draws the menu, the loading screen, the picked map's
+not-installed notice or the loaded map without a window (point e.g.
+`HALOREACH_MAPS` at an empty folder to see a game grayed out).
 
 A bare map name is looked up in the MCC install setup saved (`%HALO3_MAPS%`
 overrides; the `blam` tool also finds MCC through Steam). `riverworld` is Valhalla, `cyberdyne` The Pit,

@@ -146,7 +146,7 @@ fn main() -> anyhow::Result<()> {
         Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 [--foot]                                             the map menu
-  halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading] [--size WxH]
+  halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing] [--size WxH]
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 <map> [--foot]
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]

@@ -5,14 +5,21 @@
 //! behind a loading screen, then puts it into this same app (`main.rs`
 //! `install`, `halo3_core::map`); Exit closes the game.
 //!
+//! MCC lets the player leave out any game but Halo 3 (or part of one): a map
+//! whose `.map` file is not in its game's maps folder is still listed, grayed
+//! out, and starting it shows a notice to install it with MCC instead of
+//! loading.
+//!
 //! Keys: arrows / WASD / d-pad / left stick move, Q / E / LB / RB change tab,
 //! Enter / Space / A start, Escape / B exit. The mouse selects a tile with a
-//! click and starts it with a double click.
+//! click and starts it with a double click. On the notice, Enter / Space /
+//! Escape / A / B or a click close it.
 //!
 //! `halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--size WxH]`
 //! draws the menu without a window into a PNG; `--menu-loading` draws the
-//! loading screen instead, and `--menu-start` loads the picked map the way
-//! Start Game does and saves the first view of it.
+//! loading screen instead, `--menu-missing` the picked map's not-installed
+//! notice, and `--menu-start` loads the picked map the way Start Game does
+//! and saves the first view of it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -27,6 +34,8 @@ use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
 
 use halo3_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady};
+
+use crate::Game;
 
 const TABS: [&str; 5] = ["HALO 3", "HALO 2", "HALO CE", "REACH", "CAMPAIGN"];
 const COLUMNS: usize = 6;
@@ -178,17 +187,53 @@ const RING_RADIUS: f32 = 70.0;
 /// Turns per second.
 const RING_SPEED: f32 = 0.6;
 
+/// A missing map's picture is drawn through this tint.
+const MISSING_TINT: Color = Color::srgb(0.30, 0.30, 0.32);
+
 /// One map the menu offers.
 struct Map {
     arg: &'static str,
     name: &'static str,
     picture: Option<Handle<Image>>,
+    game: Game,
+    /// Its `.map` file is in the player's MCC ([`installed`]).
+    installed: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
     Choosing,
     Loading,
+    /// The notice over the chooser: this game's map is not installed.
+    Missing(Game),
+}
+
+/// The game a menu entry's map belongs to (every entry has its prefix).
+fn game_of(arg: &str) -> Game {
+    crate::codename(arg).0.unwrap_or(Game::Halo3)
+}
+
+/// The game as MCC names it, for the notice.
+fn game_title(game: Game) -> &'static str {
+    match game {
+        Game::Halo1 => "Halo: Combat Evolved",
+        Game::Halo2 => "Halo 2",
+        Game::Halo3 => "Halo 3",
+        Game::Reach => "Halo: Reach",
+    }
+}
+
+/// Whether a menu entry's map is in the player's MCC: its `.map` file in its
+/// game's maps folder ([`crate::maps_dir`]). Checked per map, as MCC can
+/// install part of a game.
+fn installed(arg: &str) -> bool {
+    let (game, file) = crate::codename(arg);
+    has_map(&crate::maps_dir(game.unwrap_or(Game::Halo3)), file)
+}
+
+/// `dir` holds `file.map` (an empty `dir`, before setup, holds nothing).
+fn has_map(dir: &Path, file: &str) -> bool {
+    !dir.as_os_str().is_empty() && dir.join(format!("{file}.map")).is_file()
 }
 
 #[derive(Resource)]
@@ -204,6 +249,9 @@ struct Menu {
     click: Option<(usize, f64)>,
     /// Why the last map did not load.
     error: Option<String>,
+    /// The notice opened this frame: the press that opened it does not
+    /// close it ([`dismiss`]).
+    fresh: bool,
 }
 
 impl Menu {
@@ -243,6 +291,12 @@ struct TileLabel(usize, usize);
 struct Chosen(usize);
 #[derive(Component)]
 struct StartLabel;
+/// The not-installed notice over the chooser.
+#[derive(Component)]
+struct Notice;
+/// The notice's line naming the game.
+#[derive(Component)]
+struct NoticeGame;
 #[derive(Component, Clone, Copy, PartialEq)]
 enum MenuButton {
     Start,
@@ -298,6 +352,8 @@ struct MenuShot {
     path: PathBuf,
     size: UVec2,
     loading: bool,
+    /// `--menu-missing`: the picked map's not-installed notice.
+    missing: bool,
     start: bool,
     frames: u32,
     /// Frames since the map was ready (`--menu-start`).
@@ -358,6 +414,7 @@ impl Plugin for MenuPlugin {
                 .and_then(|s| s.split_once('x').and_then(|(w, h)| Some(UVec2::new(w.parse().ok()?, h.parse().ok()?))))
                 .unwrap_or(UVec2::new(1920, 1080)),
             loading: args.iter().any(|a| a == "--menu-loading"),
+            missing: args.iter().any(|a| a == "--menu-missing"),
             start: args.iter().any(|a| a == "--menu-start"),
             frames: 0,
             ready_frames: 0,
@@ -373,7 +430,7 @@ impl Plugin for MenuPlugin {
         let mut tab = value(args, "--menu-tab").and_then(|s| s.parse().ok()).unwrap_or(0usize).min(TABS.len() - 1);
         let pick = value(args, "--menu-pick").and_then(|s| s.parse().ok()).unwrap_or(0usize);
         let with_value = ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--size"];
-        let alone = ["--menu-loading", "--menu-start"];
+        let alone = ["--menu-loading", "--menu-start", "--menu-missing"];
         let mut pass = Vec::new();
         let mut skip = false;
         for a in args {
@@ -387,7 +444,8 @@ impl Plugin for MenuPlugin {
             }
         }
 
-        // The maps this install has, with their pictures.
+        // Every map, with its picture; the ones this install lacks are
+        // grayed out.
         let root = mcc_root();
         let pack = Pack::open(&root);
         if pack.is_none() {
@@ -397,21 +455,23 @@ impl Plugin for MenuPlugin {
         let tabs = [HALO3, HALO2, HALO1, REACH, CAMPAIGN].map(|entries| {
             entries
                 .iter()
-                .filter(|(arg, ..)| crate::resolve_map(arg).exists())
                 .map(|&(arg, name, texture)| Map {
                     arg,
                     name,
                     picture: texture.and_then(|t| pack.as_ref()?.picture(t)).map(|i| images.add(i)),
+                    game: game_of(arg),
+                    installed: installed(arg),
                 })
                 .collect::<Vec<_>>()
         });
+        let count = |t: usize| format!("{}/{}", tabs[t].iter().filter(|m| m.installed).count(), tabs[t].len());
         eprintln!(
-            "menu: {} Halo 3, {} Halo 2, {} Halo CE, {} Reach, {} campaign maps under {}",
-            tabs[0].len(),
-            tabs[1].len(),
-            tabs[2].len(),
-            tabs[3].len(),
-            tabs[4].len(),
+            "menu: installed {} Halo 3, {} Halo 2, {} Halo CE, {} Reach, {} campaign maps under {}",
+            count(0),
+            count(1),
+            count(2),
+            count(3),
+            count(4),
             root.display()
         );
         if tabs[tab].is_empty() {
@@ -419,7 +479,13 @@ impl Plugin for MenuPlugin {
         }
         let mut picks = [0; TABS.len()];
         picks[tab] = pick.min(tabs[tab].len().saturating_sub(1));
+        // `--menu-shot --menu-missing`: open on the picked map's notice.
+        let phase = match tabs[tab].get(picks[tab]) {
+            Some(map) if shot.as_ref().is_some_and(|s| s.missing) => Phase::Missing(map.game),
+            _ => Phase::Choosing,
+        };
         let choosing = |menu: Res<Menu>| menu.phase == Phase::Choosing;
+        let missing = |menu: Res<Menu>| matches!(menu.phase, Phase::Missing(_));
         // What `install` (main.rs) puts in goes when the map is unloaded.
         app.insert_resource(MapMenu)
             .remove_on_map_unload::<crate::falls::KillZones>()
@@ -436,13 +502,17 @@ impl Plugin for MenuPlugin {
             tabs,
             tab,
             pick: picks,
-            phase: Phase::Choosing,
+            phase,
             args: pass,
             click: None,
             error: None,
+            fresh: false,
         })
         .add_systems(Startup, spawn)
-        .add_systems(Update, ((navigate, mouse, act).run_if(choosing), show, spin).chain())
+        .add_systems(
+            Update,
+            ((navigate, mouse, act).run_if(choosing), dismiss.run_if(missing), show, show_notice, spin).chain(),
+        )
         .add_systems(Last, (back_to_menu, finish_loading, leave).chain());
         if let Some(shot) = shot {
             app.insert_resource(shot).add_systems(Update, capture.after(show));
@@ -505,6 +575,66 @@ fn spawn(mut commands: Commands, menu: Res<Menu>, shot: Option<ResMut<MenuShot>>
                 BackgroundColor(BACKGROUND),
             ))
             .with_children(spawn_loading);
+            root.spawn((
+                Notice,
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(BACKGROUND.with_alpha(0.8)),
+            ))
+            .with_children(spawn_notice);
+        });
+}
+
+/// The not-installed notice: what to do, which game, and OK.
+fn spawn_notice(screen: &mut ChildSpawnerCommands) {
+    screen
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(18.0),
+                padding: UiRect::axes(Val::Px(56.0), Val::Px(36.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(BAR),
+            BorderColor::all(LINE),
+        ))
+        .with_children(|panel| {
+            panel.spawn(text("You must install these Halo maps with MCC", 28.0, Color::WHITE));
+            panel.spawn((NoticeGame, text("", 19.0, DIM)));
+            panel
+                .spawn(Node {
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(10.0),
+                    margin: UiRect::top(Val::Px(14.0)),
+                    padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                    ..default()
+                })
+                .with_children(|b| {
+                    b.spawn((
+                        Node {
+                            width: Val::Px(26.0),
+                            height: Val::Px(26.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::MAX,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.37, 0.75, 0.29)),
+                    ))
+                    .with_child(text("A", 15.0, Color::BLACK));
+                    b.spawn(text("OK", 20.0, LIT));
+                    b.spawn(text("(Enter / Esc)", 15.0, FAINT));
+                });
         });
 }
 
@@ -558,9 +688,6 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
             },
         ))
         .with_children(|grid| {
-            if maps.is_empty() {
-                grid.spawn(text("No maps for this game in the MCC install.", 18.0, DIM));
-            }
             for (i, map) in maps.iter().enumerate() {
                 grid.spawn(Node { flex_direction: FlexDirection::Column, ..default() })
                     .with_children(|tile| spawn_tile(tile, t, i, map));
@@ -644,8 +771,9 @@ fn spawn_tile(tile: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
     .with_children(|frame| {
         match &map.picture {
             Some(picture) => {
+                let tint = if map.installed { Color::WHITE } else { MISSING_TINT };
                 frame.spawn((
-                    ImageNode::new(picture.clone()),
+                    ImageNode { color: tint, ..ImageNode::new(picture.clone()) },
                     Node {
                         position_type: PositionType::Absolute,
                         width: Val::Percent(100.0),
@@ -655,14 +783,15 @@ fn spawn_tile(tile: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
                 ));
             }
             None => {
-                frame.spawn(text(&map.name.to_uppercase(), 16.0, FAINT));
+                let colour = if map.installed { FAINT } else { FAINT.mix(&BACKGROUND, 0.5) };
+                frame.spawn(text(&map.name.to_uppercase(), 16.0, colour));
             }
         }
     });
     tile.spawn((
         TileLabel(t, i),
         Node { margin: UiRect::top(Val::Px(5.0)), ..default() },
-        text(map.name, 17.0, DIM),
+        text(map.name, 17.0, if map.installed { DIM } else { FAINT }),
     ));
 }
 
@@ -825,11 +954,17 @@ fn act(
 }
 
 /// Starts decoding the chosen map on a thread; the loading screen shows
-/// until it is in.
+/// until it is in. A map MCC does not have opens the notice instead.
 fn start(commands: &mut Commands, menu: &mut Menu) {
     let Some(map) = menu.selected() else {
         return;
     };
+    if !map.installed {
+        eprintln!("menu: {} ({}) is not installed in MCC", map.name, map.arg);
+        menu.phase = Phase::Missing(map.game);
+        menu.fresh = true;
+        return;
+    }
     let arg = map.arg;
     eprintln!("menu: loading {} ({arg})", map.name);
     let (send, receive) = std::sync::mpsc::channel();
@@ -839,6 +974,27 @@ fn start(commands: &mut Commands, menu: &mut Menu) {
     commands.insert_resource(Loading(Mutex::new(receive)));
     menu.phase = Phase::Loading;
     menu.error = None;
+}
+
+/// The notice: Enter / Space / Escape / A / B or a click close it, back to
+/// the chooser.
+fn dismiss(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    gamepads: Query<&Gamepad>,
+    mut menu: ResMut<Menu>,
+) {
+    // The press that opened it, this frame, is not one that closes it.
+    if menu.fresh {
+        menu.fresh = false;
+        return;
+    }
+    let pad = gamepads.iter().any(|p| p.any_just_pressed([GamepadButton::South, GamepadButton::East]));
+    let key = keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space, KeyCode::Escape]);
+    if pad || key || buttons.just_pressed(MouseButton::Left) {
+        menu.phase = Phase::Choosing;
+        menu.click = None;
+    }
 }
 
 /// Q in the pause menu (`pause.rs`): unload the map and show the menu again.
@@ -958,10 +1114,16 @@ fn show(
         *border = BorderColor::all(if on { LIT } else { Color::NONE });
     }
     for (label, mut colour) in &mut names {
-        colour.0 = if label.1 == menu.pick[label.0] { LIT } else { DIM };
+        let installed = menu.tabs[label.0].get(label.1).is_some_and(|m| m.installed);
+        colour.0 = match (label.1 == menu.pick[label.0], installed) {
+            (true, true) => LIT,
+            (true, false) => LIT.mix(&FAINT, 0.5),
+            (false, true) => DIM,
+            (false, false) => FAINT,
+        };
     }
     for mut colour in &mut start_label {
-        colour.0 = if selected.is_some() { LIT } else { FAINT };
+        colour.0 = if selected.is_some_and(|m| m.installed) { LIT } else { FAINT };
     }
     for (part, name, mut text) in &mut texts {
         if name.is_some() {
@@ -974,9 +1136,29 @@ fn show(
         text.0 = match (selected, part.0) {
             (Some(map), 0) => map.name.to_string(),
             (Some(_), _) if menu.error.is_some() => menu.error.clone().unwrap_or_default(),
+            (Some(map), _) if !map.installed => format!("{} - not installed in MCC", KINDS[menu.tab]),
             (Some(_), _) => KINDS[menu.tab].to_string(),
             (None, _) => String::new(),
         };
+    }
+}
+
+/// The notice shows while the phase is [`Phase::Missing`], naming the game.
+fn show_notice(menu: Res<Menu>, mut notice: Query<&mut Node, With<Notice>>, mut line: Query<&mut Text, With<NoticeGame>>) {
+    if !menu.is_changed() {
+        return;
+    }
+    let game = match menu.phase {
+        Phase::Missing(game) => Some(game),
+        _ => None,
+    };
+    for mut node in &mut notice {
+        node.display = if game.is_some() { Display::Flex } else { Display::None };
+    }
+    if let Some(game) = game {
+        for mut text in &mut line {
+            text.0 = format!("{} isn't installed in your Master Chief Collection.", game_title(game));
+        }
     }
 }
 
@@ -1063,5 +1245,41 @@ fn capture(
                 shot.saved = true;
                 shot.frames = 0;
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every entry names its game, and each tab holds one game's maps, so
+    /// the installed check looks in the right folder.
+    #[test]
+    fn entries_name_their_game() {
+        for (entries, game) in [
+            (HALO3, Game::Halo3),
+            (HALO2, Game::Halo2),
+            (HALO1, Game::Halo1),
+            (REACH, Game::Reach),
+            (CAMPAIGN, Game::Halo3),
+        ] {
+            for (arg, ..) in entries {
+                assert_eq!(crate::codename(arg).0, Some(game), "{arg}");
+            }
+        }
+    }
+
+    #[test]
+    fn has_map_wants_the_file() {
+        let dir = std::env::temp_dir().join(format!("halo3-menu-has-map-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("folder.map")).unwrap();
+        std::fs::write(dir.join("here.map"), b"").unwrap();
+        assert!(has_map(&dir, "here"));
+        assert!(!has_map(&dir, "gone"));
+        // A folder of that name is not the map.
+        assert!(!has_map(&dir, "folder"));
+        // No maps folder (before setup) has no maps.
+        assert!(!has_map(Path::new(""), "here"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
