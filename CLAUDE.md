@@ -6,6 +6,17 @@ far, the paths on disk and the open decision.
 - **Do not launch or run the game to test** unless the user says so. Building is fine.
   The user playtests themselves; hand them a PowerShell line with the path quoted and `&`
   in front.
+- **Showing the user screenshots.** The user often reads the thread on their phone, where a
+  Markdown image of a local path (`![](D:\...\shot.png)`) does not show. Put the pictures in
+  a page instead: load `mcp__t3-code__html_preview` and `mcp__t3-code__html_render` with
+  ToolSearch, write a small HTML page with one `<img src="D:\full\path\shot.png">` per
+  picture (absolute paths; the tool inlines local images) and a short caption under each,
+  check it with `html_preview`, then show it with `html_render`, passing the
+  `contentHeight` that `html_preview` reported as `height`. Use theme CSS variables
+  (`var(--radius)`, `var(--muted-foreground)`), no page background or outer card; three or
+  four full-size PNGs per page is fine. Take the pictures headless (`halo3.exe <map> --shot
+  <dir>`, `halo3.exe --menu-shot FILE ...`, see README), never by opening a window. For
+  mock-ups before any code exists, draw them as HTML/CSS in the same kind of page.
 - **Game installs are read-only.** Never modify, patch or write into the MCC folder, the
   MW2 folder or the Skate 3 dump. Caches and outputs go inside this project.
 - **No game files in this repo.** The user brings their own copies; the code reads them at
