@@ -7,10 +7,11 @@
 //!   (`default.xex` with `data` beside it) or the disc image (`.iso`), from
 //!   which the few files skating needs are converted once with the bundled
 //!   converter;
-//! - MX vs ATV Reflex (the dirt bike's model and engine sound).
+//! - MX vs ATV Reflex, optional: the dirt bike's model and engine sound.
+//!   Without it the bike is our own model with our own engine sound.
 //!
-//! All three are required: cancelling any of them stops setup, and the game
-//! does not start. The answers go in `setup.env` (`game_paths::settings_path`)
+//! MCC and Skate 3 are required: cancelling either stops setup, and the game
+//! does not start. Going without Reflex is remembered like a folder. The answers go in `setup.env` (`game_paths::settings_path`)
 //! and every later launch goes straight in; `halo3 --setup` asks again.
 //!
 //! The model is IW4L's `launcher/src/first_run.rs`. Nothing is written into
@@ -25,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use game_paths::{Settings, key};
-use rfd::{MessageDialog, MessageLevel};
+use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 
 const TITLE: &str = "Halo 3 Rust Rewrite";
 /// The converter's file name, as IW4L ships it.
@@ -46,8 +47,8 @@ const SKATE_DISC_DIRS: [&str; 1] = ["data/anim"];
 /// What a headless run says when a game has not been set up yet.
 const RUN_SETUP: &str = "Run halo3 once with a window to set it up.";
 
-/// Makes sure MCC, Skate 3 and Reflex are all set up; an `Err` means the
-/// game must not start. With `interactive` false (headless screenshots) it
+/// Makes sure MCC and Skate 3 are set up, and Reflex is either set up or
+/// declined; an `Err` means the game must not start. With `interactive` false (headless screenshots) it
 /// never shows a dialog or writes the setup: it uses only what is saved (or
 /// the dev overrides). `redo` forgets the saved answers and asks again.
 pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
@@ -64,21 +65,21 @@ pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
         || std::env::var_os("HALO3_MAPS").is_some()
         || game_paths::saved_mcc().is_some();
     let skate_ready = game_paths::skate_assets().is_some_and(|a| game_paths::is_skate_assets(&a));
-    let reflex_ready = game_paths::reflex_root().is_some();
-    if !(mcc_ready && skate_ready && reflex_ready) {
-        if !interactive {
-            let missing: Vec<&str> = [(mcc_ready, "Halo MCC"), (skate_ready, "Skate 3"), (reflex_ready, "MX vs ATV Reflex")]
-                .into_iter()
-                .filter(|(ready, _)| !ready)
-                .map(|(_, name)| name)
-                .collect();
-            return Err(format!("{} not set up yet. {RUN_SETUP}", missing.join(", ")));
-        }
+    let reflex_ready = game_paths::reflex_root().is_some() || game_paths::reflex_skipped();
+    if !(mcc_ready && skate_ready) && !interactive {
+        let missing: Vec<&str> = [(mcc_ready, "Halo MCC"), (skate_ready, "Skate 3")]
+            .into_iter()
+            .filter(|(ready, _)| !ready)
+            .map(|(_, name)| name)
+            .collect();
+        return Err(format!("{} not set up yet. {RUN_SETUP}", missing.join(", ")));
+    }
+    if !(mcc_ready && skate_ready && reflex_ready) && interactive {
         inform(
-            "Welcome! This game is played with your own copies of three games:\n\n\
+            "Welcome! This game is played with your own copies of these games:\n\n\
              1. Halo: The Master Chief Collection (PC)\n\
              2. Skate 3 (Xbox 360): the extracted game or its disc image (.iso)\n\
-             3. MX vs ATV Reflex (PC)\n\n\
+             3. MX vs ATV Reflex (PC), optional: the dirt bike's model and engine sound\n\n\
              You will be asked for each game's folder in turn. This is asked once.",
         );
     }
@@ -89,19 +90,40 @@ pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
     prepare_reflex(&mut settings, &path, interactive)
 }
 
-/// MX vs ATV Reflex: the dirt bike's Dakumoto 450F and its engine
-/// recordings.
+/// MX vs ATV Reflex, optional: the dirt bike's Dakumoto 450F and its engine
+/// recordings. Declining is saved (`game_paths::REFLEX_SKIPPED`) so it is
+/// not asked again; without it the bike is our own.
 fn prepare_reflex(settings: &mut Settings, path: &Path, interactive: bool) -> Result<(), String> {
+    if game_paths::reflex_skipped() {
+        return Ok(());
+    }
     if std::env::var_os("REFLEX_GAME").is_some() || game_paths::saved_reflex().is_some() {
         return game_paths::reflex_root()
             .map(|_| ())
             .ok_or_else(|| "REFLEX_GAME is not an MX vs ATV Reflex folder.".to_owned());
     }
+    // Headless runs never ask or write; they ride our own bike.
     if !interactive {
-        return Err(format!("MX vs ATV Reflex is not set up yet. {RUN_SETUP}"));
+        return Ok(());
     }
-    let root = locate_reflex().ok_or("Setup cancelled: MX vs ATV Reflex is needed to play.")?;
-    settings.set_path(key::REFLEX, &root);
+    let have = MessageDialog::new()
+        .set_title(TITLE)
+        .set_description(
+            "3 of 3: MX vs ATV Reflex (optional)\n\n\
+             With your copy of Reflex the dirt bike is its Dakumoto 450F with its engine recordings. \
+             Without it the bike is our own model with our own engine sound.\n\n\
+             Do you have MX vs ATV Reflex and want to choose its folder?",
+        )
+        .set_buttons(MessageButtons::YesNo)
+        .show();
+    let root = match have {
+        MessageDialogResult::Yes => locate_reflex(),
+        _ => None,
+    };
+    match root {
+        Some(root) => settings.set_path(key::REFLEX, &root),
+        None => settings.set(key::REFLEX, game_paths::REFLEX_SKIPPED),
+    }
     settings.write(path)
 }
 

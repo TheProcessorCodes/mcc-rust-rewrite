@@ -2,7 +2,8 @@
 //! the Spartan standing on it (`physics.rs` for the bike, `pose.rs` for the
 //! rider). The bike drawn is Reflex's Dakumoto 450F in the Cortana kit,
 //! read from the user's MX vs ATV Reflex install (`model.rs`); without
-//! Reflex it is a stick model: thin unlit cylinders.
+//! Reflex it is our own stand-in motocrosser (`stand_in.rs`). Until either
+//! is built it is a stick model: thin unlit cylinders.
 //!
 //! B (or the controller's View / Back button) drops the bike under the
 //! camera and starts riding; B again goes back to flying.
@@ -32,6 +33,7 @@ pub mod model;
 pub mod physics;
 pub mod pose;
 pub mod reflex;
+pub mod stand_in;
 pub mod tune;
 pub mod unleashed;
 

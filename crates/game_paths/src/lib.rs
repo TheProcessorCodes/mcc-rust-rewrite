@@ -24,8 +24,21 @@ pub mod key {
     pub const SKATE_ASSETS: &str = "SKATE_ASSETS";
     /// The Skate 3 converter, when it is not beside the exe.
     pub const SKATE_CONVERTER: &str = "SKATE_CONVERTER";
-    /// The MX vs ATV Reflex install.
+    /// The MX vs ATV Reflex install, or [`REFLEX_SKIPPED`](super::REFLEX_SKIPPED).
     pub const REFLEX: &str = "REFLEX";
+}
+
+/// What `REFLEX` holds when the player chose to go without Reflex.
+pub const REFLEX_SKIPPED: &str = "skip";
+
+/// Whether the player chose in setup to play without Reflex (the bike is
+/// then our own model and engine sound). `REFLEX_GAME=skip` does the same
+/// for a dev run.
+pub fn reflex_skipped() -> bool {
+    match std::env::var_os("REFLEX_GAME") {
+        Some(v) => v == REFLEX_SKIPPED,
+        None => settings().get(key::REFLEX) == Some(REFLEX_SKIPPED),
+    }
 }
 
 /// Whether `root` is an MX vs ATV Reflex install (it has
@@ -35,7 +48,8 @@ pub fn is_reflex(root: &Path) -> bool {
 }
 
 /// The MX vs ATV Reflex install (the dirt bike's model and engine sound):
-/// `%REFLEX_GAME%`, else the one the player chose in setup.
+/// `%REFLEX_GAME%`, else the one the player chose in setup. Reflex is
+/// optional; `None` means the bike uses our own.
 pub fn reflex_root() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("REFLEX_GAME").map(PathBuf::from) {
         return is_reflex(&p).then_some(p);

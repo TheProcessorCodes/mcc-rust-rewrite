@@ -1,7 +1,8 @@
 //! The bike as Reflex draws it: the Dakumoto 450F with the Cortana graphics
 //! kit, read from the user's own MX vs ATV Reflex install by
 //! `reflex_assets` in the background at start-up. Without Reflex (or if it
-//! fails to read) the stick model in `lib.rs` stays.
+//! fails to read) it is our own stand-in bike (`stand_in.rs`), moved the
+//! same way; the stick model in `lib.rs` shows only until one is built.
 //!
 //! The model's bones follow the simulation: the bars and forks turn about
 //! the steering axis, the fork legs slide up it and the swingarm swings so
@@ -36,7 +37,7 @@ pub struct BikeMesh {
 }
 
 impl BikeMesh {
-    /// Whether the Reflex model is drawn (the sticks are not).
+    /// Whether a model (Reflex's or the stand-in) is drawn (the sticks are not).
     pub fn ready(&self) -> bool {
         self.built.is_some()
     }
@@ -59,13 +60,16 @@ struct Built {
     lit_at: Option<Vec3>,
 }
 
-/// Starts reading the 450F off the Reflex install, if there is one.
+/// Starts reading the 450F off the Reflex install, or hands over the
+/// stand-in when there is none.
 pub(crate) fn start(mut mesh: ResMut<BikeMesh>) {
+    let (send, receive) = channel();
+    mesh.loading = Some(Mutex::new(receive));
     let Some(root) = reflex_assets::find_reflex() else {
-        info!("bike: no MX vs ATV Reflex install found; drawing the stick bike");
+        info!("bike: no MX vs ATV Reflex; drawing our own stand-in bike");
+        let _ = send.send(Ok(super::stand_in::model()));
         return;
     };
-    let (send, receive) = channel();
     std::thread::spawn(move || {
         let started = std::time::Instant::now();
         let model = reflex_assets::bike::load(&root).map_err(|e| e.to_string());
@@ -80,7 +84,6 @@ pub(crate) fn start(mut mesh: ResMut<BikeMesh>) {
         }
         let _ = send.send(model);
     });
-    mesh.loading = Some(Mutex::new(receive));
 }
 
 /// Builds the entities once the model has arrived.
@@ -98,31 +101,41 @@ pub(crate) fn build(
     let model = match received {
         Ok(Ok(m)) => m,
         Ok(Err(e)) => {
-            warn!("bike: the Reflex 450F did not load ({e}); drawing the stick bike");
-            mesh.loading = None;
-            return;
+            warn!("bike: the Reflex 450F did not load ({e}); drawing our own stand-in bike");
+            super::stand_in::model()
         }
         Err(std::sync::mpsc::TryRecvError::Empty) => return,
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-            mesh.loading = None;
-            return;
-        }
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => super::stand_in::model(),
     };
     mesh.loading = None;
-    let find = |name: &str| model.bone(name);
-    let (Some(upper_forks), Some(lower_forks), Some(front_tyre), Some(swingarm), Some(rear_tyre)) = (
-        find("OBJ_UPR_Forks"),
-        find("OBJ_LWR_Forks"),
-        find("OBJ_FRT_Tire"),
-        find("OBJ_Swingarm"),
-        find("OBJ_BCK_Tire"),
-    ) else {
-        warn!("bike: the 450F's skeleton is not as expected; drawing the stick bike");
-        return;
+    let skeleton = |m: &BikeModel| {
+        Some((
+            m.bone("OBJ_UPR_Forks")?,
+            m.bone("OBJ_LWR_Forks")?,
+            m.bone("OBJ_FRT_Tire")?,
+            m.bone("OBJ_Swingarm")?,
+            m.bone("OBJ_BCK_Tire")?,
+        ))
+    };
+    let (model, (upper_forks, lower_forks, front_tyre, swingarm, rear_tyre)) = match skeleton(&model) {
+        Some(bones) => (model, bones),
+        None => {
+            warn!("bike: the 450F's skeleton is not as expected; drawing our own stand-in bike");
+            let m = super::stand_in::model();
+            let Some(bones) = skeleton(&m) else {
+                return;
+            };
+            (m, bones)
+        }
     };
 
+
     let root = commands
-        .spawn((Transform::default(), Visibility::Hidden, Name::new("bike: Dakumoto 450F")))
+        .spawn((Transform::default(), Visibility::Hidden, Name::new(if model.textures.contains_key(super::stand_in::PALETTE) {
+            "bike: stand-in"
+        } else {
+            "bike: Dakumoto 450F"
+        })))
         .id();
     let rest: Vec<Transform> = model
         .bones
@@ -204,7 +217,11 @@ pub(crate) fn build(
     }
     let pivot = Vec3::from(model.rest(swingarm)[3][..3].try_into().unwrap_or([0.0; 3]));
     let axle = Vec3::from(model.rest(rear_tyre)[3][..3].try_into().unwrap_or([0.0; 3]));
-    info!("bike: kit sheet {}", if textures.contains_key(KIT) { "loaded" } else { "missing" });
+    if textures.contains_key(super::stand_in::PALETTE) {
+        info!("bike: {}", model.kit);
+    } else {
+        info!("bike: kit sheet {}", if textures.contains_key(KIT) { "loaded" } else { "missing" });
+    }
     mesh.built = Some(Built {
         root,
         bones,
