@@ -818,6 +818,10 @@ impl Bike {
                 } else {
                     v_long / tyre.radius
                 };
+                // The brake locks the wheel, never turns it against the way it rolls.
+                if held.brake > 0.0 && self.wheel_spin * v_long < 0.0 {
+                    self.wheel_spin = 0.0;
+                }
             }
             self.wheels[i] = WheelState {
                 compression: depth.max(before - tyre.max_decompression_rate * dt),
@@ -1158,6 +1162,19 @@ mod tests {
         }
         assert!(frames < 240, "still at {} m/s", bike.speed());
         assert!(bike.crashed.is_none());
+    }
+
+    #[test]
+    fn braking_never_spins_the_rear_backwards() {
+        let w = floor();
+        let mut bike = Bike::dropped(&w, Vec3::new(0.0, 1.0, -350.0), 0.0);
+        ride(&w, &mut bike, Controls::default(), 0.5);
+        ride(&w, &mut bike, gas(1.0), 2.5);
+        let brake = Controls { brake: 1.0, ..default() };
+        while bike.speed() > 0.0 {
+            bike.step(&w, brake, 1.0 / 60.0);
+            assert!(bike.wheel_spin >= 0.0, "rear at {} rad/s, {} m/s", bike.wheel_spin, bike.speed());
+        }
     }
 
     #[test]
