@@ -62,11 +62,13 @@ optional.
    the only one there). From an image only
    what the converter reads is copied out (`default.xex`, four `.big` files and `data\anim`,
    about 512 MB, deleted afterwards). The
-   converter is IW4L's `iw4l-skate-convert.exe`, looked for at `skate\` beside `halo3.exe`
-   (the release layout), else the player is asked to point at it.
+   converter is IW4L's `iw4l-skate-convert.exe`, which this project does not ship: the
+   player downloads MW2 Skate 3 (the 2010 Rust Rewrite Mashup) and setup asks for its
+   folder ("Choose your MW2 Skate 3 folder") just before Skate 3's, then runs its
+   `skate\iw4l-skate-convert.exe`.
 3. **MX vs ATV Reflex** (PC, optional; the dirt bike's model and engine sound). Setup asks
    whether the player has it; if so, the folder with its `Database` folder. Without it the
-   bike is our own stand-in model (`crates/halo3_bike/src/stand_in.rs`) with the synth engine
+   bike is our own stand-in model (`crates/halo3_bike/src/stand_in.rs`) with no engine
    sound, and the answer is saved like a folder (`REFLEX=skip`).
 
 The answers and the converted Skate 3 data go in `%LOCALAPPDATA%\Halo3Rewrite` (`setup.env`,
@@ -333,6 +335,7 @@ lists all 20).
 Our own crates are Apache-2.0 (`LICENSE-APACHE`). `halo3.exe` links the Skate 3 engine in
 `third_party/skate-engine`, which is GPL-3.0-only, so `halo3` and `halo3_skate`, and any
 released `halo3.exe`, are distributed under the GNU General Public License version 3 only
-(`LICENSE`), with this source. Apache-2.0 code may be used in a GPL-3.0 work. A release also
-ships the Skate 3 converter `iw4l-skate-convert.exe` with its own licence files. None of this
+(`LICENSE`), with this source. Apache-2.0 code may be used in a GPL-3.0 work. The Skate 3
+converter `iw4l-skate-convert.exe` is not shipped; it comes from the player's MW2 Skate 3
+download, with its own licence files. None of this
 grants rights to any game's code, data, assets or trademarks; the player brings their own copies.

@@ -1,14 +1,17 @@
-//! First-launch setup: the three games this one is played with, each the
+//! First-launch setup: the games this one is played with, each the
 //! player's own copy. The player chooses each one's folder in a Windows
 //! folder picker; nothing is searched for. Asked once:
 //!
 //! - Halo: The Master Chief Collection (its Halo 3 build is checked);
+//! - MW2 Skate 3 (the 2010 Rust Rewrite Mashup), for IW4L's Skate 3
+//!   converter in it, `skate\iw4l-skate-convert.exe` (this game does not
+//!   ship it);
 //! - Skate 3 for Xbox 360: a folder holding the extracted game
 //!   (`default.xex` with `data` beside it) or the disc image (`.iso`), from
-//!   which the few files skating needs are converted once with the bundled
+//!   which the few files skating needs are converted once with that
 //!   converter;
 //! - MX vs ATV Reflex, optional: the dirt bike's model and engine sound.
-//!   Without it the bike is our own model with our own engine sound.
+//!   Without it the bike is our own model and has no engine sound.
 //!
 //! MCC and Skate 3 are required: cancelling either stops setup, and the game
 //! does not start. Going without Reflex is remembered like a folder. The answers go in `setup.env` (`game_paths::settings_path`)
@@ -78,9 +81,10 @@ pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
         inform(
             "Welcome! This game is played with your own copies of these games:\n\n\
              1. Halo: The Master Chief Collection (PC)\n\
-             2. Skate 3 (Xbox 360): the extracted game or its disc image (.iso)\n\
-             3. MX vs ATV Reflex (PC), optional: the dirt bike's model and engine sound\n\n\
-             You will be asked for each game's folder in turn. This is asked once.",
+             2. MW2 Skate 3: its folder has the Skate 3 converter (skate\\iw4l-skate-convert.exe)\n\
+             3. Skate 3 (Xbox 360): the extracted game or its disc image (.iso)\n\
+             4. MX vs ATV Reflex (PC), optional: the dirt bike's model and engine sound\n\n\
+             You will be asked for each folder in turn. This is asked once.",
         );
     }
 
@@ -109,9 +113,9 @@ fn prepare_reflex(settings: &mut Settings, path: &Path, interactive: bool) -> Re
     let have = MessageDialog::new()
         .set_title(TITLE)
         .set_description(
-            "3 of 3: MX vs ATV Reflex (optional)\n\n\
+            "MX vs ATV Reflex (optional)\n\n\
              With your copy of Reflex the dirt bike is its Dakumoto 450F with its engine recordings. \
-             Without it the bike is our own model with our own engine sound.\n\n\
+             Without it the bike is our own model and has no engine sound.\n\n\
              Do you have MX vs ATV Reflex and want to choose its folder?",
         )
         .set_buttons(MessageButtons::YesNo)
@@ -130,7 +134,7 @@ fn prepare_reflex(settings: &mut Settings, path: &Path, interactive: bool) -> Re
 fn locate_reflex() -> Option<PathBuf> {
     loop {
         let picked = rfd::FileDialog::new()
-            .set_title("3 of 3: Select your MX vs ATV Reflex folder (the one with the Database folder)")
+            .set_title("Choose your MX vs ATV Reflex folder")
             .pick_folder()?;
         if game_paths::is_reflex(&picked) {
             return Some(picked);
@@ -197,7 +201,7 @@ fn check_mcc(root: &Path) -> Result<(), String> {
 fn locate_mcc() -> Result<PathBuf, String> {
     loop {
         let picked = rfd::FileDialog::new()
-            .set_title("1 of 3: Select your Halo: The Master Chief Collection folder (the one with the halo3 folder)")
+            .set_title("Choose your Halo MCC folder")
             .pick_folder()
             .ok_or("Setup cancelled: Halo: The Master Chief Collection is needed to play.")?;
         let Some(root) = game_paths::mcc_from_pick(&picked) else {
@@ -279,7 +283,7 @@ fn convert_skate(settings: &mut Settings) -> Result<PathBuf, String> {
     let out = dir.join("skate-data");
     loop {
         let picked = rfd::FileDialog::new()
-            .set_title("2 of 3: Select your Skate 3 folder (the extracted game, or the folder with its .iso)")
+            .set_title("Choose your Skate 3 folder")
             .pick_folder()
             .ok_or(SKATE_CANCELLED)?;
         let result = skate_source(&picked).and_then(|source| match source {
@@ -305,34 +309,40 @@ fn convert_skate(settings: &mut Settings) -> Result<PathBuf, String> {
     }
 }
 
-/// The converter: beside the exe (`skate\iw4l-skate-convert.exe`, as the
-/// release ships it), `%HALO3_SKATE_CONVERTER%`, the saved one, or one the
-/// player points at (saved for next time). None when the player cancels.
+/// The converter: `%HALO3_SKATE_CONVERTER%`, the saved one, or
+/// `skate\iw4l-skate-convert.exe` in the MW2 Skate 3 folder the player
+/// chooses (saved for next time). None when the player cancels.
 fn find_converter(settings: &mut Settings) -> Result<Option<PathBuf>, String> {
-    let beside = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|d| d.join("skate").join(CONVERTER)));
-    let known = beside
+    let known = std::env::var_os("HALO3_SKATE_CONVERTER")
+        .map(PathBuf::from)
         .into_iter()
-        .chain(std::env::var_os("HALO3_SKATE_CONVERTER").map(PathBuf::from))
         .chain(settings.get(key::SKATE_CONVERTER).map(PathBuf::from))
         .find(|p| p.is_file());
     if known.is_some() {
         return Ok(known);
     }
-    inform(&format!(
-        "The Skate 3 converter ({CONVERTER}) is not beside halo3.exe in a skate folder.\n\n\
-         Select it (it comes with this game's release, and with the MW2 Skate 3 mashup)."
-    ));
-    let Some(picked) = rfd::FileDialog::new()
-        .set_title(format!("Select {CONVERTER}"))
-        .add_filter(CONVERTER, &["exe"])
-        .pick_file()
-    else {
-        return Ok(None);
-    };
-    settings.set_path(key::SKATE_CONVERTER, &picked);
-    Ok(Some(picked))
+    loop {
+        let Some(picked) = rfd::FileDialog::new().set_title("Choose your MW2 Skate 3 folder").pick_folder() else {
+            return Ok(None);
+        };
+        if let Some(converter) = converter_in(&picked) {
+            settings.set_path(key::SKATE_CONVERTER, &converter);
+            return Ok(Some(converter));
+        }
+        inform(&format!(
+            "{}\n\nhas no skate\\{CONVERTER}. Select your MW2 Skate 3 folder (the one with iw4l.exe and \
+             the skate folder).",
+            picked.display()
+        ));
+    }
+}
+
+/// The converter in a chosen MW2 Skate 3 folder, or in its `skate` folder
+/// when that was chosen.
+fn converter_in(folder: &Path) -> Option<PathBuf> {
+    [folder.join("skate").join(CONVERTER), folder.join(CONVERTER)]
+        .into_iter()
+        .find(|p| p.is_file())
 }
 
 /// Copies the files the converter reads off a Skate 3 disc image into

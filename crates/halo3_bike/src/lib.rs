@@ -18,7 +18,7 @@
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`) |
 //! | LB + d-pad up (hold) | | back to the session marker |
-//! | left stick click | H | engine sound: Reflex's 450F, synth, off (`halo3_audio::engine`) |
+//! | left stick click | H | engine sound on / off (`halo3_audio::engine`) |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! A crash shows CRASHED in orange in the lower left until the bike is

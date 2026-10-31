@@ -22,7 +22,8 @@ pub mod key {
     pub const MCC: &str = "MCC";
     /// The converted Skate 3 data (holding `private\game.json`).
     pub const SKATE_ASSETS: &str = "SKATE_ASSETS";
-    /// The Skate 3 converter, when it is not beside the exe.
+    /// The Skate 3 converter, `skate\iw4l-skate-convert.exe` in the player's
+    /// MW2 Skate 3 folder.
     pub const SKATE_CONVERTER: &str = "SKATE_CONVERTER";
     /// The MX vs ATV Reflex install, or [`REFLEX_SKIPPED`](super::REFLEX_SKIPPED).
     pub const REFLEX: &str = "REFLEX";
@@ -32,7 +33,7 @@ pub mod key {
 pub const REFLEX_SKIPPED: &str = "skip";
 
 /// Whether the player chose in setup to play without Reflex (the bike is
-/// then our own model and engine sound). `REFLEX_GAME=skip` does the same
+/// then our own model, with no engine sound). `REFLEX_GAME=skip` does the same
 /// for a dev run.
 pub fn reflex_skipped() -> bool {
     match std::env::var_os("REFLEX_GAME") {

@@ -1,24 +1,17 @@
-//! The dirt bike's engine, two ways, to compare (H, or the left stick click
-//! while riding, goes Reflex → synth → off):
+//! The dirt bike's engine (H, or the left stick click while riding, turns
+//! it off and on): the Dakumoto 450F's own recordings, read from the user's
+//! MX vs ATV Reflex install (`reflex_assets::engine_audio`), played the way
+//! Reflex plays them. Matching a recording of the game against the takes
+//! (2026-10-30) showed that Reflex never pitches them: on the gas it starts
+//! a take from its beginning at each gear change and lets it run, at the
+//! pitch and level it was recorded at, so the climb through a gear is the
+//! take's own; when a take ends the next one in the pool follows. The pools
+//! are the event file's sound definitions (four throttle pools, idle, half
+//! throttle, the limiter, decel, landing, wreck); which pool plays in which
+//! gear is ours to choose. Wind rises with speed.
 //!
-//! - **Reflex**: the Dakumoto 450F's own recordings, read from the user's
-//!   MX vs ATV Reflex install (`reflex_assets::engine_audio`), played the
-//!   way Reflex plays them. Matching a recording of the game against the
-//!   takes (2026-10-30) showed that Reflex never pitches them: on the gas
-//!   it starts a take from its beginning at each gear change and lets it
-//!   run, at the pitch and level it was recorded at, so the climb through
-//!   a gear is the take's own; when a take ends the next one in the pool
-//!   follows. The pools are the event file's sound definitions (four
-//!   throttle pools, idle, half throttle, the limiter, decel, landing,
-//!   wreck); which pool plays in which gear is ours to choose.
-//! - **Synth**: our own single-cylinder four-stroke, made from nothing: a
-//!   blow-down pulse per firing (every second turn of the crank), each one a
-//!   little different, into two pipe resonators (head pipe, silencer), the
-//!   tone opening up with throttle, intake snarl, valve ticks, a stuttering
-//!   rev limiter and pops off the throttle.
-//!
-//! Both have wind rising with speed. Without Reflex the Reflex model falls
-//! back to the synth.
+//! Without Reflex the bike is silent. (A synthesised engine was tried and
+//! dropped on 2026-10-31: it did not sound good enough.)
 
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
@@ -34,15 +27,13 @@ use crate::mixer::{Generator, Mixer, RATE, VoiceId};
 pub enum Model {
     #[default]
     Reflex,
-    Synth,
     Off,
 }
 
 impl Model {
     fn next(self) -> Model {
         match self {
-            Model::Reflex => Model::Synth,
-            Model::Synth => Model::Off,
+            Model::Reflex => Model::Off,
             Model::Off => Model::Reflex,
         }
     }
@@ -536,212 +527,8 @@ impl Wind {
 }
 
 
-/// Both models' loudness in the mix (the board's roll is 0.5).
+/// The engine's loudness in the mix (the board's roll is 0.5).
 const LEVEL: f32 = 0.55;
-
-/// The synth model: a single-cylinder four-stroke from first principles.
-pub struct Synth {
-    shared: Arc<Mutex<Input>>,
-    follow: Option<Follow>,
-    /// Through the four-stroke cycle (two turns of the crank), 0 to 1.
-    phase: f32,
-    /// Since this cycle fired, seconds.
-    since: f32,
-    /// This firing's strength and the stretch of its pulse.
-    amp: f32,
-    width: f32,
-    /// Seconds of popping left after letting go of the throttle.
-    pops: f32,
-    head: Vec<f32>,
-    silencer: Vec<f32>,
-    at: [usize; 2],
-    loop_lp: [f32; 2],
-    tone: [f32; 2],
-    intake: [f32; 2],
-    tick: f32,
-    /// Band-limited turbulence noise.
-    hiss: f32,
-    /// Three one-pole high-passes: (last input, output) each.
-    hp: [[f32; 2]; 3],
-    /// The exhaust's body resonance (a state-variable band-pass).
-    body: [f32; 2],
-    wind: Wind,
-    rng: Rng,
-}
-
-/// Tuned by `engine_measure` against Reflex's 450F takes (2026-10-31): a
-/// real single's exhaust has little at the firing note itself, its energy
-/// spread from about 150 Hz to 5 kHz, as much noise between the harmonics
-/// as on them on the gas, and firings that differ a lot one to the next.
-/// How rough the blow-down is: turbulence riding on the pulse, at no gas
-/// and at full gas.
-const ROUGH: [f32; 2] = [3.4, 4.0];
-/// Firing-to-firing spread of strength, at no gas and full gas.
-const SPREAD: [f32; 2] = [0.3, 1.3];
-/// Make-up gain for what the high-pass takes away, at no gas and full gas:
-/// keeps idle and full gas about 11 dB apart, as before and as in Reflex.
-const MAKEUP: [f32; 2] = [3.0, 1.45];
-/// The body resonance: its centre at no gas and full gas (Hz) and how much
-/// of it is added. The takes' strongest harmonics sit near 150 Hz at idle
-/// and 300-500 Hz on the gas, whatever the rpm.
-const BODY: [f32; 3] = [150.0, 320.0, 1.2];
-
-/// Head pipe and silencer lengths as delays: a round trip of about 1.1 m
-/// and 0.3 m of pipe at 343 m/s.
-const HEAD: usize = 300;
-const SILENCER: usize = 90;
-
-impl Synth {
-    pub fn new(shared: Arc<Mutex<Input>>) -> Synth {
-        Synth {
-            shared,
-            follow: None,
-            phase: 0.0,
-            since: 1.0,
-            amp: 0.0,
-            width: 0.004,
-            pops: 0.0,
-            head: vec![0.0; HEAD],
-            silencer: vec![0.0; SILENCER],
-            at: [0; 2],
-            loop_lp: [0.0; 2],
-            tone: [0.0; 2],
-            intake: [0.0; 2],
-            tick: 0.0,
-            hiss: 0.0,
-            hp: [[0.0; 2]; 3],
-            body: [0.0; 2],
-            wind: Wind { lp: [0.0; 2], rng: Rng(0x6a09_e667) },
-            rng: Rng(0xbb67_ae85),
-        }
-    }
-
-    /// A new firing: how hard, from the load, with cycle-to-cycle spread;
-    /// the limiter and a closed throttle cut some.
-    fn fire(&mut self, rpm: f32, load: f32, i: &Input) {
-        let spread = SPREAD[0] + (SPREAD[1] - SPREAD[0]) * load;
-        let mut amp = (0.5 + 0.5 * load.powf(0.8)) * (1.0 + spread * self.rng.signed()).max(0.05);
-        let hi = i.max_rpm.max(i.min_rpm + 1000.0);
-        if rpm >= hi * 0.985 && load > 0.4 && self.rng.unit() < 0.5 {
-            // The limiter cuts the spark.
-            amp *= 0.05;
-        }
-        if load < 0.05 && rpm > i.min_rpm + 1500.0 {
-            // Engine braking: weak, lean firings, and now and then the
-            // unburnt mix going off in the pipe.
-            amp = 0.07 * (1.0 + 0.5 * self.rng.signed());
-            if self.pops > 0.0 && self.rng.unit() < 0.12 {
-                amp = 0.9 + 0.5 * self.rng.unit();
-            }
-        }
-        self.amp = amp;
-        // The exhaust valve open for about 80° of crank.
-        let crank = rpm / 60.0;
-        self.width = (0.22 / crank).clamp(0.0012, 0.009) * (1.0 + 0.25 * self.rng.signed());
-        self.since = 0.0;
-    }
-}
-
-impl Generator for Synth {
-    fn render(&mut self, out: &mut [f32]) -> bool {
-        let frames = out.len() / 2;
-        let dt = 1.0 / RATE as f32;
-        let follow = self.follow.get_or_insert_with(|| Follow::new(*self.shared.lock().unwrap()));
-        let (rpm0, t0) = follow.take(&self.shared, frames as f32 * dt);
-        let (i, rpm1, t1, recent) = (follow.input, follow.rpm, follow.throttle, follow.recent);
-        follow.landings = i.landings;
-        follow.wrecks = i.wrecks;
-        if t1 < 0.1 && t0 >= 0.1 && recent > 0.4 && rpm1 > 5000.0 {
-            self.pops = 1.2;
-        }
-        self.pops -= frames as f32 * dt;
-        for f in 0..frames {
-            let a = f as f32 / frames as f32;
-            let rpm = rpm0 + (rpm1 - rpm0) * a;
-            let load = t0 + (t1 - t0) * a;
-            let cycle = rpm / 120.0;
-            let before = self.phase;
-            self.phase += cycle * dt * (1.0 + 0.01 * self.rng.signed());
-            if self.phase >= 1.0 {
-                self.phase -= 1.0;
-                self.fire(rpm, load, &i);
-            }
-            self.since += dt;
-
-            // The blow-down pulse, with turbulence riding on it.
-            let x = self.since / (self.width * 0.35);
-            let env = if x < 10.0 { x * (1.0 - x).exp() } else { 0.0 };
-            let noise = self.rng.signed();
-            self.hiss += (noise - self.hiss) * 0.45;
-            let rough = ROUGH[0] + (ROUGH[1] - ROUGH[0]) * load;
-            let src = self.amp * env * (1.0 + self.hiss * rough);
-
-            // Head pipe: the open end sends the pulse back inverted.
-            let d = self.head[self.at[0]];
-            self.loop_lp[0] += (d - self.loop_lp[0]) * 0.35;
-            let y1 = src - 0.62 * self.loop_lp[0];
-            self.head[self.at[0]] = y1;
-            self.at[0] = (self.at[0] + 1) % HEAD;
-            // Silencer chamber.
-            let d = self.silencer[self.at[1]];
-            self.loop_lp[1] += (d - self.loop_lp[1]) * 0.4;
-            let y2 = 0.5 * y1 + 0.45 * self.loop_lp[1];
-            self.silencer[self.at[1]] = y2;
-            self.at[1] = (self.at[1] + 1) % SILENCER;
-            let body = 0.55 * y1 + 0.45 * y2;
-
-            // The tone opens with the throttle: dull at idle, bright and
-            // nearly flat to a few kHz on the gas.
-            let k = one_pole((160.0 + 5200.0 * load * load + rpm * 0.05).min(9000.0));
-            self.tone[0] += (body - self.tone[0]) * k;
-            self.tone[1] += (self.tone[0] - self.tone[1]) * one_pole(9000.0);
-            let mut v = self.tone[1];
-            // The body resonance, Chamberlin state-variable filter, Q ~1.4.
-            let tune = 2.0 * (std::f32::consts::PI * (BODY[0] + (BODY[1] - BODY[0]) * load) / RATE as f32).sin();
-            let high = v - self.body[0] - 0.7 * self.body[1];
-            self.body[1] += tune * high;
-            self.body[0] += tune * self.body[1];
-            v += BODY[2] * self.body[1];
-
-            // Intake snarl while the intake valve is open, with the throttle.
-            if (0.45..0.7).contains(&self.phase) {
-                let e = ((self.phase - 0.45) / 0.25 * std::f32::consts::PI).sin();
-                let kc = one_pole(900.0 + rpm * 0.1);
-                self.intake[0] += (noise - self.intake[0]) * kc;
-                self.intake[1] += (self.intake[0] - self.intake[1]) * kc;
-                v += (self.intake[0] - self.intake[1]) * e * load * 0.5;
-            }
-            // Valve gear: a small click at each valve event, heard most off
-            // the throttle.
-            if [0.25f32, 0.5].iter().any(|&p| before < p && self.phase >= p) {
-                self.tick = 1.0;
-            }
-            if self.tick > 1e-3 {
-                v += self.rng.signed() * self.tick * (0.006 + 0.01 * (1.0 - load));
-                self.tick *= 0.85;
-            }
-
-            // A little saturation, harder with load; then the firing note
-            // and below taken down (18 dB an octave under ~150 Hz).
-            let drive = 1.3 + 1.7 * load;
-            v = (v * drive).tanh() / drive.tanh();
-            let a = (-std::f32::consts::TAU * 150.0 / RATE as f32).exp();
-            for stage in &mut self.hp {
-                let y = a * (stage[1] + v - stage[0]);
-                stage[0] = v;
-                stage[1] = y;
-                v = y;
-            }
-            // Held under full scale; barely touches the usual levels.
-            let makeup = MAKEUP[0] + (MAKEUP[1] - MAKEUP[0]) * load;
-            let engine = (v * makeup * LEVEL * 0.6).tanh();
-            let s = (engine + self.wind.sample(i.speed)) * 0.9 * i.volume;
-            out[2 * f] += s;
-            out[2 * f + 1] += s;
-        }
-        true
-    }
-}
 
 /// The engine sound's state on the main thread.
 #[derive(Resource, Default)]
@@ -779,9 +566,8 @@ pub fn bike_engine(
     if keys.just_pressed(KeyCode::KeyH) || (m.riding && click) {
         e.model = e.model.next();
         let name = match e.model {
-            Model::Reflex if e.bank.is_none() && e.tried && e.loading.is_none() => "Reflex (not found: synth)",
+            Model::Reflex if e.bank.is_none() && e.tried && e.loading.is_none() => "on (no Reflex: silent)",
             Model::Reflex => "Reflex's 450F recordings",
-            Model::Synth => "synth",
             Model::Off => "off",
         };
         info!("bike: engine sound {name}");
@@ -814,14 +600,10 @@ pub fn bike_engine(
         match got {
             Ok(bank) => {
                 if bank.is_none() {
-                    info!("bike: no Reflex engine sounds; the synth plays instead");
+                    info!("bike: no Reflex engine sounds; the bike is silent");
                 }
                 e.bank = bank.map(Arc::new);
                 e.loading = None;
-                // Restart on the recordings if the synth stood in.
-                if let Some((_, id)) = e.playing.take() {
-                    mixer.stop(id);
-                }
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(_) => e.loading = None,
@@ -845,12 +627,12 @@ pub fn bike_engine(
         e.wrecks += 1;
     }
     e.crashed = m.crashed;
-    // The synth's rpm. Pulling away on a slipping clutch the physics holds
+    // The heard rpm. Pulling away on a slipping clutch the physics holds
     // the engine at idle while the bike moves; a real one is revved over the
     // clutch, so it is heard there. The physics rpm also jumps by thousands
     // in a tenth of a second while the rear tyre spins and grips; a
     // flywheel cannot, so the heard rpm moves at most 30,000 rpm/s and is
-    // smoothed over about 0.1 s. (The Reflex model only uses it to pick the
+    // smoothed over about 0.1 s. (The recordings only use it to pick the
     // decel take.)
     let mut target = m.rpm;
     if m.clutch_slipping && m.throttle > 0.05 && !m.crashed {
@@ -877,21 +659,15 @@ pub fn bike_engine(
         s.volume = volume.map_or(EngineVolume::default().0, |v| v.0);
     }
 
-    // The voice for the model (the synth while Reflex loads or is missing).
-    let wanted = match e.model {
-        Model::Reflex if e.bank.is_some() => Some(Model::Reflex),
-        Model::Off => None,
-        _ => Some(Model::Synth),
-    };
+    // The recordings, once loaded; silence while they load, without Reflex
+    // and when switched off.
+    let wanted = (e.model == Model::Reflex && e.bank.is_some()).then_some(Model::Reflex);
     if e.playing.map(|(m, _)| m) != wanted {
         if let Some((_, id)) = e.playing.take() {
             mixer.stop(id);
         }
-        if let Some(model) = wanted {
-            let g: Box<dyn Generator> = match model {
-                Model::Reflex => Box::new(Sampled::new(e.bank.clone().unwrap(), e.shared.clone())),
-                _ => Box::new(Synth::new(e.shared.clone())),
-            };
+        if let (Some(model), Some(bank)) = (wanted, e.bank.clone()) {
+            let g: Box<dyn Generator> = Box::new(Sampled::new(bank, e.shared.clone()));
             e.playing = Some((model, mixer.add_generator(g)));
         }
     }
@@ -901,7 +677,7 @@ pub fn bike_engine(
 mod tests {
     use super::*;
 
-    /// A ride for either model: idle, full gas up through the revs, two
+    /// A ride: idle, full gas up through the revs, two
     /// shifts, off the gas, the limiter in the air, a landing, half gas.
     fn ride(g: &mut dyn Generator, shared: &Mutex<Input>) -> Vec<f32> {
         let mut out = Vec::new();
@@ -940,26 +716,6 @@ mod tests {
             out.extend_from_slice(&buf);
         }
         out
-    }
-
-    #[test]
-    fn synth_is_heard_and_stays_in_range() {
-        let shared = Arc::new(Mutex::new(Input::default()));
-        let mut s = Synth::new(shared.clone());
-        let out = ride(&mut s, &shared);
-        let peak = out.iter().fold(0f32, |m, v| m.max(v.abs()));
-        let rms = |a: usize, b: usize| {
-            let a = a * RATE as usize * 2;
-            let b = b * RATE as usize * 2;
-            (out[a..b].iter().map(|v| v * v).sum::<f32>() / (b - a) as f32).sqrt()
-        };
-        assert!(out.iter().all(|v| v.is_finite()));
-        assert!(peak < 1.0, "peak {peak}");
-        // Idle is quieter than full gas.
-        assert!(rms(0, 1) > 0.005 && rms(2, 3) > rms(0, 1) * 1.5, "idle {} gas {}", rms(0, 1), rms(2, 3));
-        if let Some(path) = std::env::var_os("HALO3_ENGINE_WAV") {
-            write_wav(&std::path::PathBuf::from(path).join("engine-synth.wav"), &out);
-        }
     }
 
     /// The Reflex model on the user's own recordings; skipped without Reflex.

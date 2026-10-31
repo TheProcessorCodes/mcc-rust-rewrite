@@ -5,7 +5,7 @@
 //! `docs/format/sound.md` has the data, `docs/viewer.md` "Sound" the rules.
 //!
 //! Keys: M music on / off, Shift+M next track, N alternate loop, K mute,
-//! `-` / `=` volume, H the bike's engine sound (Reflex, synth, off). `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
+//! `-` / `=` volume, H the bike's engine sound on / off. `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
 //! mode, where `HALO3_AUDIO_TRACE=1` runs the logic without output and
 //! logs which emitters are active at each view.
 
@@ -13,8 +13,6 @@ pub mod engine;
 pub mod halo2;
 mod library;
 mod mixer;
-#[cfg(test)]
-mod engine_measure;
 mod weapons;
 
 use std::collections::HashMap;
