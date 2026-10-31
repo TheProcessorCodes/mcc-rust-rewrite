@@ -1,11 +1,9 @@
 //! The map menu: `halo3` with no map opens it. Three tabs (Halo 3, Halo 2,
 //! Campaign) hold a grid of the maps found in the user's MCC install, each
 //! shown with MCC's own preview picture (`levelstexturepack`, read at run
-//! time, never copied into the repo). Maps not checked yet (not in [`READY`])
-//! carry a NEEDS BUILT mark but still start: the game reads every map from the
-//! MCC files, so they are tried as they are. Start Game decodes the map on a thread behind
-//! a loading screen, then puts it into this same app (`main.rs` `install`,
-//! `halo3_core::map`); Exit closes the game.
+//! time, never copied into the repo). Start Game decodes the map on a thread
+//! behind a loading screen, then puts it into this same app (`main.rs`
+//! `install`, `halo3_core::map`); Exit closes the game.
 //!
 //! Keys: arrows / WASD / d-pad / left stick move, Q / E / LB / RB change tab,
 //! Enter / Space / A start, Escape / B exit. The mouse selects a tile with a
@@ -32,27 +30,6 @@ use halo3_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady};
 
 const TABS: [&str; 3] = ["HALO 3", "HALO 2", "CAMPAIGN"];
 const COLUMNS: usize = 6;
-
-/// The maps that are built and play (README "A bare map name ..." and the
-/// 120_halo milestone); every other map shows NEEDS BUILT (and can still be tried).
-const READY: &[&str] = &[
-    "h3:riverworld",
-    "h3:cyberdyne",
-    "h3:deadlock",
-    "h3:zanzibar",
-    "h3:bunkerworld",
-    "h3:sidewinder",
-    "h3:guardian",
-    "h3:lockout",
-    "h3:chill",
-    "h3:armory",
-    "h3:shrine",
-    "h3:sandbox",
-    "h3:isolation",
-    "h2:coagulation",
-    "h2:lockout",
-    "h3:120_halo",
-];
 
 /// (map argument, shown name, MCC preview texture without `_LARGE`).
 type Entry = (&'static str, &'static str, Option<&'static str>);
@@ -150,7 +127,6 @@ const RING_SPEED: f32 = 0.6;
 struct Map {
     arg: &'static str,
     name: &'static str,
-    ready: bool,
     picture: Option<Handle<Image>>,
 }
 
@@ -373,7 +349,6 @@ impl Plugin for MenuPlugin {
                 .map(|&(arg, name, texture)| Map {
                     arg,
                     name,
-                    ready: READY.contains(&arg),
                     picture: texture.and_then(|t| pack.as_ref()?.picture(t)).map(|i| images.add(i)),
                 })
                 .collect::<Vec<_>>()
@@ -595,8 +570,8 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
     });
 }
 
-/// A map's tile: its picture (or its name on a plain card), a NEEDS BUILT
-/// mark when it has not been checked yet, and its name under it.
+/// A map's tile: its picture (or its name on a plain card) and its name
+/// under it.
 fn spawn_tile(tile: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
     tile.spawn((
         Tile(t, i),
@@ -625,35 +600,9 @@ fn spawn_tile(tile: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
                     },
                 ));
             }
-            None if map.ready => {
+            None => {
                 frame.spawn(text(&map.name.to_uppercase(), 16.0, FAINT));
             }
-            None => {}
-        }
-        if !map.ready {
-            // Dimmed, with NEEDS BUILT stamped across it at a slant.
-            frame
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.02, 0.03, 0.05, 0.45)),
-                ))
-                .with_child((
-                    Node {
-                        padding: UiRect::axes(Val::Px(14.0), Val::Px(2.0)),
-                        border: UiRect::all(Val::Px(2.0)),
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
-                    UiTransform::from_rotation(Rot2::degrees(-14.0)),
-                    children![text("NEEDS BUILT", 22.0, Color::srgba(1.0, 1.0, 1.0, 0.6))],
-                ));
         }
     });
     tile.spawn((
@@ -955,12 +904,7 @@ fn show(
         *border = BorderColor::all(if on { LIT } else { Color::NONE });
     }
     for (label, mut colour) in &mut names {
-        let map = &menu.tabs[label.0][label.1];
-        colour.0 = match (label.1 == menu.pick[label.0], map.ready) {
-            (true, _) => LIT,
-            (false, true) => DIM,
-            (false, false) => FAINT,
-        };
+        colour.0 = if label.1 == menu.pick[label.0] { LIT } else { DIM };
     }
     for mut colour in &mut start_label {
         colour.0 = if selected.is_some() { LIT } else { FAINT };
@@ -976,7 +920,6 @@ fn show(
         text.0 = match (selected, part.0) {
             (Some(map), 0) => map.name.to_string(),
             (Some(_), _) if menu.error.is_some() => menu.error.clone().unwrap_or_default(),
-            (Some(map), _) if !map.ready => format!("{}  -  needs built: plays straight from the MCC files, may not work yet", KINDS[menu.tab]),
             (Some(_), _) => KINDS[menu.tab].to_string(),
             (None, _) => String::new(),
         };
