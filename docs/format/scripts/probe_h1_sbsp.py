@@ -46,3 +46,13 @@ for bi, b in enumerate(m.bsps()):
           f"(a,c,b) agrees: {1 - agree / max(tris, 1):.4f}")
     print(f"  triangles without a lightmap page: {no_lm}; lightmap texcoords u {lmuv[0]:.3f}..{lmuv[2]:.3f} v {lmuv[1]:.3f}..{lmuv[3]:.3f}")
     print(f"  clusters {m.u32(s + 0x134)}, collision materials {m.u32(s + 0xA4)}, collision bsps {m.u32(s + 0xB0)}")
+    # Clusters (+0x134, 0x68 each): the sky index (i16 at +0, -1: none);
+    # the size is checked by the blocks inside each cluster (+0x28, +0x34,
+    # +0x44, +0x50, +0x5C portals) pointing into the chunk.
+    clusters = b.block(s + 0x134, 0x68)
+    inside = all(m.u32(c + o) == 0 or b.base <= m.u32(c + o + 4) < b.base + b.size
+                 for c in clusters for o in (0x28, 0x34, 0x44, 0x50, 0x5C))
+    skies = {}
+    for c in clusters:
+        skies[m.i16(c)] = skies.get(m.i16(c), 0) + 1
+    print(f"  clusters by sky index {skies}; inner blocks inside the chunk: {inside}")

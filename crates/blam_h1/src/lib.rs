@@ -87,6 +87,8 @@ pub struct Stats {
     /// Lightmap pages packed, and placements lit from them.
     pub lightmap_pages: usize,
     pub lightmapped: usize,
+    /// Clusters that see a sky (cluster `+0`, i16, -1: none).
+    pub outdoor_clusters: usize,
 }
 
 /// A decoded map.
@@ -177,10 +179,15 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
         decode_objects(map, scnr, &mut scene, &mut materials, &mut stats)?;
     }
     decode_spawns(scnr, &mut scene)?;
-    let fog = sky_fog(map, scnr).unwrap_or_else(|e| {
-        eprintln!("sky fog: {e}");
-        None
-    });
+    // The sky's fog is outdoor fog: a map where no cluster sees the sky
+    // (Chillout, Putput, Rat Race) has none.
+    let fog = match stats.outdoor_clusters {
+        0 => None,
+        _ => sky_fog(map, scnr).unwrap_or_else(|e| {
+            eprintln!("sky fog: {e}");
+            None
+        }),
+    };
     let mut bitmaps = HashMap::new();
     if options.textures {
         bitmaps = decode_bitmaps(map, &materials.looks, &mut stats.bitmaps_failed);
@@ -380,6 +387,13 @@ fn decode_bsp(
             cluster: None,
             fade_pixels: [0, 0],
         });
+    }
+
+    // Clusters (`+0x134`, 0x68 each): the sky they see (i16 at +0).
+    for c in sbsp.block(0x134, 0x68)? {
+        if c.i16(0)? >= 0 {
+            stats.outdoor_clusters += 1;
+        }
     }
 
     if options.collision {

@@ -36,6 +36,7 @@
 //! `halo2\h2_maps_win64_dx11` (`halo2.rs`). Halo 3's Blackout, whose file is
 //! `lockout.map`, is `blackout`.
 
+mod halo1;
 mod halo2;
 mod menu;
 mod pause;
@@ -194,6 +195,33 @@ pub(crate) fn load(map: &str) -> anyhow::Result<LoadedMap> {
         });
     }
     let path = resolve_map(map);
+    // Told by the file's own header, not its name: Halo CE's `sidewinder`
+    // and `prisoner` share their file names with other games' maps.
+    if blam_h1::is_halo1(&path) {
+        // Halo CE: decoded up front like Halo 2 (`halo1.rs`).
+        let h1 = halo1::load(&path)?;
+        if let Some(mean) = world::lighting::scene_mean_irradiance(&h1.scene, &h1.textures.lightmaps) {
+            eprintln!("halo ce lightmap: mean irradiance {mean:.3}");
+            world::lighting::set_scene_mean(mean);
+        }
+        // The rider is Halo 3's Spartan, borrowed from Valhalla as for
+        // Halo 2.
+        let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
+            .ok()
+            .and_then(|c| rider::load_chief(&c));
+        return Ok(LoadedMap {
+            scene: h1.scene,
+            textures: h1.textures,
+            chief,
+            sky: h1.sky,
+            water: world::water::WaterData::default(),
+            map_file: None,
+            arsenal: None,
+            foot_tuning: None,
+            plain_fog: h1.fog,
+            plain_sound: None,
+        });
+    }
     if blam_h2::is_halo2(&path) {
         // Halo 2: everything decoded up front, no Halo 3 cache file
         // behind it (`halo2.rs`).

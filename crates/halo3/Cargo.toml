@@ -15,6 +15,7 @@ bevy = { workspace = true, features = ["bevy_audio"] }
 blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
 blam_texture = { workspace = true }
+blam_h1 = { workspace = true }
 blam_h2 = { workspace = true }
 anyhow = { workspace = true }
 halo3_audio = { workspace = true }
