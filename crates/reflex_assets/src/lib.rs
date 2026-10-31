@@ -5,9 +5,7 @@
 //! graphics kit for `halo3_bike`; `engine_audio::load_450f` its engine
 //! recordings for `halo3_audio`.
 //!
-//! The formats were worked out in `D:\reflex-tools` (the Reflex track and
-//! skin tools); `docs/format/reflex-bike.md` has the notes this is written
-//! from.
+//! `docs/format/reflex-bike.md` has the format notes this is written from.
 
 pub mod bike;
 pub mod bxml;
