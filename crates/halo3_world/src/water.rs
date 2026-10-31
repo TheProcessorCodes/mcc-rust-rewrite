@@ -25,6 +25,7 @@ use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::render::render_resource::{
     AsBindGroup, Extent3d, TextureDataOrder, TextureDimension, TextureFormat, TextureViewDescriptor,
     TextureViewDimension,
@@ -354,9 +355,9 @@ impl Plugin for WaterPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/water.wesl");
         app.add_plugins(MaterialPlugin::<WaterMaterial>::default())
-            .init_resource::<PendingWater>()
-            .init_resource::<HasWater>()
-            .add_systems(Update, (swap_water_materials, add_depth_prepass).chain());
+            .init_map_resource::<PendingWater>()
+            .init_map_resource::<HasWater>()
+            .add_systems(Update, (swap_water_materials, add_depth_prepass).chain().run_if(halo3_core::map::ready));
     }
 }
 

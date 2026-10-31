@@ -65,6 +65,10 @@ fn prepare_reflex(settings: &mut Settings, path: &Path, interactive: bool) -> Re
         return Ok(());
     }
     if let Some(found) = game_paths::find_reflex() {
+        // Headless runs only read; Steam is searched again each time.
+        if !interactive {
+            return Ok(());
+        }
         settings.set_path(key::REFLEX, &found);
         return settings.write(path);
     }

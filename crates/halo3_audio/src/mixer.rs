@@ -192,6 +192,14 @@ impl Mixer {
         }
     }
 
+    /// Fades out every voice (the map is unloading).
+    pub fn stop_all(&self) {
+        for v in self.0.lock().unwrap().voices.values_mut() {
+            v.stopping = true;
+            v.target = [0.0; 2];
+        }
+    }
+
     pub fn is_playing(&self, id: VoiceId) -> bool {
         let s = self.0.lock().unwrap();
         s.voices.contains_key(&id) || s.generators.contains_key(&id)

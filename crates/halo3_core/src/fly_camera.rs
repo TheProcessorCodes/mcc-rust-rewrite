@@ -19,7 +19,7 @@ pub struct FlyCameraPlugin;
 
 impl Plugin for FlyCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (look, grab_cursor, fly, report).chain().run_if(running));
+        app.add_systems(Update, (look, grab_cursor, fly, report).chain().run_if(running).run_if(crate::map::ready));
     }
 }
 

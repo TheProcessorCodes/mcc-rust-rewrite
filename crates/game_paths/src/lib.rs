@@ -100,11 +100,16 @@ pub fn mcc_from_pick(picked: &Path) -> Option<PathBuf> {
     picked.ancestors().take(3).find(|p| is_mcc(p)).map(Path::to_path_buf)
 }
 
-/// The MCC install: `%HALO3_MCC%`, the saved setup, else the first Steam
-/// library holding one.
+/// The MCC install: `%HALO3_MCC%`, the install around `%HALO3_MAPS%`, the
+/// saved setup, else the first Steam library holding one.
 pub fn mcc_root() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("HALO3_MCC") {
         return Some(PathBuf::from(dir));
+    }
+    if let Some(maps) = std::env::var_os("HALO3_MAPS").map(PathBuf::from) {
+        if let Some(root) = maps.parent().and_then(Path::parent) {
+            return Some(root.to_path_buf());
+        }
     }
     saved_mcc().or_else(find_mcc)
 }

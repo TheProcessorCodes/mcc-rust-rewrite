@@ -2,6 +2,7 @@
 //! itself ([`LoadedBsps`], [`Zones`]) lives in `halo3_core::zones`.
 
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 
 pub use halo3_core::zones::*;
 
@@ -12,14 +13,14 @@ pub struct ZonesPlugin;
 
 impl Plugin for ZonesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Zones>()
-            .init_resource::<LoadedBsps>()
-            .init_resource::<ShowCollision>()
+        app.init_map_resource::<Zones>()
+            .init_map_resource::<LoadedBsps>()
+            .init_map_resource::<ShowCollision>()
             .add_systems(
                 Update,
                 (zone_keys.run_if(halo3_core::pause::running), follow_cluster)
                     .chain()
-                    .in_set(ZoneKeys),
+                    .in_set(ZoneKeys).run_if(halo3_core::map::ready),
             );
     }
 }

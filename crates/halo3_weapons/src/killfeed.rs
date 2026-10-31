@@ -11,7 +11,7 @@ pub struct KillFeedPlugin;
 
 impl Plugin for KillFeedPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn).add_systems(Update, (add, fade).chain());
+        app.add_systems(halo3_core::map::MapStartup, spawn).add_systems(Update, (add, fade).chain().run_if(halo3_core::map::ready));
     }
 }
 

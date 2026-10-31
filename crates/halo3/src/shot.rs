@@ -170,8 +170,8 @@ impl Plugin for ShotPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0.clone())
             .init_resource::<Progress>()
-            .add_systems(PostStartup, aim_at_image)
-            .add_systems(Update, step);
+            .add_systems(halo3_core::map::MapPostStartup, aim_at_image)
+            .add_systems(Update, step.run_if(halo3_core::map::ready));
         if self.0.bench > 0 {
             // Without a swap chain nothing makes the CPU wait for the GPU, and
             // frame times would only measure the CPU: wait for every frame.

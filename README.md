@@ -27,9 +27,9 @@ the format descriptions the code is written from.
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
 | `crates/game_paths` | where the player's games are: the saved setup, dev overrides (`HALO3_MAPS`, ...), Steam's library list. No dependencies; the readers' tests use it |
-| `crates/halo3_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`), convert it once, save the answers |
-| `crates/halo3` | the `halo3` binary: wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
-| `crates/halo3_core` | what the runtime crates share: coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
+| `crates/halo3_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`) and convert it once, note Reflex, save the answers |
+| `crates/halo3` | the `halo3` binary: the map menu (`menu.rs`), wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
+| `crates/halo3_core` | what the runtime crates share: the map phase (`map.rs`: a map loaded, started and unloaded inside the running app), coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
 | `crates/halo3_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
 | `crates/halo3_world` | the world on the GPU: BSP streaming, culling, lightmaps, sky, water, zone keys |
 | `crates/halo3_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
@@ -79,8 +79,21 @@ target\debug\blam.exe bitmap riverworld 112 --png out\mountains_snow.png
 target\debug\blam.exe textures riverworld
 target\debug\blam.exe sound riverworld list
 target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_music_15"
+& "target\debug\halo3.exe"
 & "target\debug\halo3.exe" riverworld
 ```
+
+`halo3.exe` with no map opens the map menu: Halo 3, Halo 2 and Campaign tabs
+with every map found in the MCC install, each shown with MCC's own preview
+picture (`Data\UI\texturepacks\levelstexturepack`, read at run time). Start
+Game loads the map into the same window behind a loading screen; Q (or View)
+in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
+left stick move, Q / E / LB / RB change tab, Enter / A start, Escape / B exit;
+the mouse picks a tile and a double click starts it. Naming a map on the
+command line skips the menu, and Q then quits. `halo3.exe --menu-shot FILE
+[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-start [--menu-back
+TAB,PICK]]` draws the menu, the loading screen or the loaded map without a
+window.
 
 A bare map name is looked up in the MCC install setup saved (`%HALO3_MAPS%`
 overrides; the `blam` tool also finds MCC through Steam). `riverworld` is Valhalla, `cyberdyne` The Pit,

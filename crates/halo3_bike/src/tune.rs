@@ -19,6 +19,7 @@ use std::path::PathBuf;
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
+use halo3_core::map::MapAppExt;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
 
@@ -33,13 +34,13 @@ pub struct TunePlugin;
 
 impl Plugin for TunePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TuneMenu>()
-            .init_resource::<Overlay>()
+        app.init_map_resource::<TuneMenu>()
+            .init_map_resource::<Overlay>()
             .insert_resource(BikeTuning(load()))
             .insert_resource(load_setups())
-            .add_systems(Startup, (spawn_menu, apply))
-            .add_systems(PreUpdate, toggle.after(InputSystems).in_set(OverlayInput))
-            .add_systems(Update, (adjust, show, apply.run_if(resource_changed::<BikeTuning>)).chain());
+            .add_systems(halo3_core::map::MapStartup, (spawn_menu, apply))
+            .add_systems(PreUpdate, toggle.after(InputSystems).in_set(OverlayInput).run_if(halo3_core::map::ready))
+            .add_systems(Update, (adjust, show, apply.run_if(resource_changed::<BikeTuning>)).chain().run_if(halo3_core::map::ready));
     }
 }
 
