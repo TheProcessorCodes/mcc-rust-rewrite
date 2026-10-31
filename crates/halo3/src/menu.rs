@@ -1,8 +1,9 @@
 //! The map menu: `halo3` with no map opens it. Three tabs (Halo 3, Halo 2,
 //! Campaign) hold a grid of the maps found in the user's MCC install, each
 //! shown with MCC's own preview picture (`levelstexturepack`, read at run
-//! time, never copied into the repo). Maps not built yet ([`READY`]) carry a
-//! TBD mark and do not start. Start Game decodes the map on a thread behind
+//! time, never copied into the repo). Maps not checked yet (not in [`READY`])
+//! carry a NEEDS BUILT mark but still start: the game reads every map from the
+//! MCC files, so they are tried as they are. Start Game decodes the map on a thread behind
 //! a loading screen, then puts it into this same app (`main.rs` `install`,
 //! `halo3_core::map`); Exit closes the game.
 //!
@@ -33,7 +34,7 @@ const TABS: [&str; 3] = ["HALO 3", "HALO 2", "CAMPAIGN"];
 const COLUMNS: usize = 6;
 
 /// The maps that are built and play (README "A bare map name ..." and the
-/// 120_halo milestone); every other map shows TBD.
+/// 120_halo milestone); every other map shows NEEDS BUILT (and can still be tried).
 const READY: &[&str] = &[
     "h3:riverworld",
     "h3:cyberdyne",
@@ -594,8 +595,8 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
     });
 }
 
-/// A map's tile: its picture (or its name on a plain card), a TBD mark when
-/// it is not built yet, and its name under it.
+/// A map's tile: its picture (or its name on a plain card), a NEEDS BUILT
+/// mark when it has not been checked yet, and its name under it.
 fn spawn_tile(tile: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
     tile.spawn((
         Tile(t, i),
@@ -630,7 +631,7 @@ fn spawn_tile(tile: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
             None => {}
         }
         if !map.ready {
-            // Dimmed, with TBD stamped across it at a slant.
+            // Dimmed, with NEEDS BUILT stamped across it at a slant.
             frame
                 .spawn((
                     Node {
@@ -641,7 +642,7 @@ fn spawn_tile(tile: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
                         align_items: AlignItems::Center,
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.02, 0.03, 0.05, 0.62)),
+                    BackgroundColor(Color::srgba(0.02, 0.03, 0.05, 0.45)),
                 ))
                 .with_child((
                     Node {
@@ -651,7 +652,7 @@ fn spawn_tile(tile: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
                     },
                     BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.35)),
                     UiTransform::from_rotation(Rot2::degrees(-14.0)),
-                    children![text("TBD", 30.0, Color::srgba(1.0, 1.0, 1.0, 0.5))],
+                    children![text("NEEDS BUILT", 22.0, Color::srgba(1.0, 1.0, 1.0, 0.6))],
                 ));
         }
     });
@@ -823,7 +824,7 @@ fn act(
 /// Starts decoding the chosen map on a thread; the loading screen shows
 /// until it is in.
 fn start(commands: &mut Commands, menu: &mut Menu) {
-    let Some(map) = menu.selected().filter(|m| m.ready) else {
+    let Some(map) = menu.selected() else {
         return;
     };
     let arg = map.arg;
@@ -865,8 +866,14 @@ fn back_to_menu(world: &mut World) {
 /// The map is decoded: put it into the app (or back to the menu with the
 /// error).
 fn finish_loading(world: &mut World) {
-    let Some(result) = world.get_resource::<Loading>().and_then(|l| l.0.lock().unwrap().try_recv().ok()) else {
+    let Some(received) = world.get_resource::<Loading>().map(|l| l.0.lock().unwrap().try_recv()) else {
         return;
+    };
+    let result = match received {
+        Ok(result) => result,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        // The loading thread died (a panic) before it sent anything.
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(anyhow::anyhow!("the map crashed while loading")),
     };
     world.remove_resource::<Loading>();
     let args = world.resource::<Menu>().args.clone();
@@ -955,9 +962,8 @@ fn show(
             (false, false) => FAINT,
         };
     }
-    let ready = selected.is_some_and(|m| m.ready);
     for mut colour in &mut start_label {
-        colour.0 = if ready { LIT } else { FAINT };
+        colour.0 = if selected.is_some() { LIT } else { FAINT };
     }
     for (part, name, mut text) in &mut texts {
         if name.is_some() {
@@ -970,7 +976,7 @@ fn show(
         text.0 = match (selected, part.0) {
             (Some(map), 0) => map.name.to_string(),
             (Some(_), _) if menu.error.is_some() => menu.error.clone().unwrap_or_default(),
-            (Some(map), _) if !map.ready => format!("{}  -  not built yet", KINDS[menu.tab]),
+            (Some(map), _) if !map.ready => format!("{}  -  needs built: plays straight from the MCC files, may not work yet", KINDS[menu.tab]),
             (Some(_), _) => KINDS[menu.tab].to_string(),
             (None, _) => String::new(),
         };
@@ -1036,7 +1042,7 @@ fn capture(
                 }
             }
         }
-        // Back on the menu with a map that does not start (TBD): the menu.
+        // Back on the menu: the menu.
         let menu_again = shot.backed_at.is_some_and(|at| shot.frames == at + 40)
             && ready.is_none()
             && menu.phase == Phase::Choosing;
