@@ -12,6 +12,7 @@
 
 pub mod ai_bridge;
 pub mod dialogue;
+pub mod ground;
 pub mod hooks;
 pub mod objects;
 pub mod setup;
