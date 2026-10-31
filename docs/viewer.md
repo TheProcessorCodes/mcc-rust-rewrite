@@ -596,8 +596,7 @@ Unleashed's stock Pro 250 (`docs/bike-unleashed.md`):
 | left stick X | A / D | handlebars (30°, less at speed); the bike leans with them, up to 45° at 35 mph |
 | right stick | arrow keys | rider: back moves the weight back, and back with gas holds a wheelie (more stick, higher); full forward on the brake holds a stoppie; in the air it pitches the bike, X turns and banks it |
 | RT | W | throttle: five-speed engine with automatic shifts, about 80 mph flat out |
-| LT | S | brakes (both wheels); in the air it drops the nose, the gas lifts it |
-| A (hold) | Space (hold) | back up, up to 10 mph |
+| LT | S | brakes (both wheels); in the air it drops the nose, the gas lifts it. Held at a standstill it backs up, up to 10 mph, until let go |
 | Y | R | stand the bike back up |
 
 Hitting the bars or the rider's head, or landing upside down, is a crash: two
