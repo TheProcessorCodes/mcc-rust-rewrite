@@ -361,6 +361,22 @@ rad, mostly small tilts on spawn points and loose crates, so HaloExport/IW4L sta
 inherit Reclaimer's order for those. Which order `halo3.dll` uses is **open** (section 7);
 the Rust port should keep the composition order switchable and check one tilted crate in game.
 
+**Settled by the map data (2026-10-30): Reclaimer's order.** 120_halo's Forward Unto Dawn
+(`trench_frigate`, a machine) is placed with yaw 180 degrees and pitch +0.0428 rad (2.45
+degrees) over the end of the Warthog run, and its hangar is the run's goal, so the fit shows
+which order the level was built with (`halo3_anim/tests/frigate.rs`):
+
+| | intrinsic `Rz(yaw) Ry(-pitch) Rx(roll)` | extrinsic (Reclaimer) `Rx(roll) Ry(-pitch) Rz(yaw)` |
+|---|---|---|
+| stern underside over the run's last ramp (lip at z -71.2) | z -72.1: the ramp runs into the hull | z -66.4: 4.9 wu clear |
+| hangar floor, mouth / inner end | -79.5 / -78.1 (tips down to the mouth) | -76.5 / -77.9 |
+| the end trigger `end_trilogy01`, model z | -16.7 .. -8.7 (half inside the stern) | -20.1 .. -12.1 (the mouth is -20 .. -12) |
+
+So `scenario::rotation` composes yaw about world Z, then pitch about world -Y, then roll about
+world X. (With yaw 180 the two orders tip the object opposite ways, which is why this
+placement tells them apart.) Riverworld's tilted spawn markers and crates did not tell them
+apart (vertex coincidence with neighbours is the same within 8 of 182,000 vertices).
+
 Full worked transform for riverworld scenery[0] (yaw -1.52768, scale 0 -> 1,
 pos (79.7632, -56.7296, 1.5002)), Reclaimer/System.Numerics layout:
 

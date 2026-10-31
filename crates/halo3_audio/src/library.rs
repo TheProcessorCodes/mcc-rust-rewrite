@@ -19,7 +19,11 @@ pub struct SoundInfo {
     pub permutations: Vec<u32>,
     /// (full-volume distance, silent distance), world units.
     pub bounds: (f32, f32),
+    /// The sound's own gain plus its class's (`SoundClass::gain_db`: music
+    /// 0 dB, dialogue -3, effects and ambience -12 to -15), dB.
     pub gain_db: f32,
+    /// Its sound class (the `sncl` index).
+    pub class: u8,
     /// The four distances in effect (the sound's own, else its class's):
     /// `blam_sound::tags::distance_gain`.
     pub distances: [f32; 4],
@@ -38,7 +42,8 @@ impl SoundInfo {
                 .filter(|id| library.sample(*id).is_some())
                 .collect(),
             bounds: snd.playback.bounds(),
-            gain_db: snd.playback.gain_db,
+            gain_db: snd.playback.gain_db + class.map_or(0.0, SoundClass::gain_db),
+            class: snd.class,
             distances: snd.playback.distances_with(class),
             per_object: class.map_or(1, |c| c.max_per_object.max(1) as usize),
         }
@@ -198,6 +203,10 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         );
     }
     wanted.extend(map.music.iter().map(|(t, _)| *t));
+    // What the scripts start: their looping sounds here, their one-shots
+    // below.
+    let is_class = |t: u32, code: &str| cache.tags.get(t).is_some_and(|e| cache.tags.class_of(e).code.as_str() == code);
+    wanted.extend(map.script_sounds.iter().copied().filter(|t| is_class(*t, "lsnd")));
     wanted.extend(weapons.values().flat_map(|w| w.all_loops()));
     let mut seen = HashSet::new();
     let mut sounds = HashMap::new();
@@ -234,7 +243,8 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         }
         loops.insert(l, looping);
     }
-    for s in weapons.values().flat_map(|w| w.all_sounds()) {
+    let one_shots = map.script_sounds.iter().copied().filter(|t| is_class(*t, "snd!"));
+    for s in weapons.values().flat_map(|w| w.all_sounds()).chain(one_shots) {
         if !sounds.contains_key(&s)
             && let Ok(snd) = tags.sound(s)
         {

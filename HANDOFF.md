@@ -45,7 +45,10 @@ A Cargo workspace (`cargo build`, `cargo test`). Crates (`README.md` "Layout" ha
 | `blam_reach` | MCC Halo: Reach maps into the same `Scene`: BSPs, instances, collision, objects, sky, spawns, lightmap texcoords (`docs/format/reach.md`); `blam_cache` and `blam_texture` read Reach's cache file, shaders and bitmaps |
 | `blam_texture` | bitmap tags to mip chains (BC kept compressed, own CPU decoders) and the shader resolver |
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
-| `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound |
+| `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound, scripts, animations |
+| `blam_script` | the scenario's HaloScript: scripts, globals, expression nodes, the names they use; decompiled to source |
+| `halo3_script` | runs a map's scripts in the game (threads, objects, devices, trigger volumes, insertions), with AI and animation hooks |
+| `blam_anim` | animation graphs (`jmad`) and their codec data; poses sampled and blended for skinning |
 | `reflex_assets` | reads the user's MX vs ATV Reflex install for the bike model (no bevy) |
 | `halo3` | the game binary (bevy 0.20): the map menu, wires the runtime crates into an app, the pause menu, headless screenshots |
 | `halo3_core`, `halo3_world`, `halo3_textures`, `halo3_audio`, `halo3_skate`, `halo3_rider`, `halo3_bike`, `halo3_foot`, `halo3_weapons`, `halo3_swim` | the runtime, split out of `halo3` on 2026-10-28 for faster rebuilds |
@@ -84,7 +87,9 @@ What the game does now:
 - **Sound.**
   - Cluster ambience with its random details, cross-faded as you move.
   - Sound scenery placed in the world and attenuated by distance.
-  - Music by hand: M, or `--music` (the Warthog run on 120_halo).
+  - Music played by Halo 3's rules (intro, looping bars, alternate loop, outro, fades), started
+    by the mission's scripts when they run, or by hand: M, or `--music` (the Warthog run on
+    120_halo).
   - Board roll, grind and landing sounds.
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
 - **Switching modes.** Jumping off the bike or the board lands you on foot with the ride's speed;
@@ -99,8 +104,10 @@ What the game does now:
   a headless load of all 47 maps not checked by hand (Halo 3 multiplayer, campaign and Halo 2) drew
   each one with textures and lighting; they have not been walked for spawns, collision or water.
   Crow's Nest has no preview picture in MCC. A map named on the command line skips the menu.
-- **Pause menu.** Escape or Start. It has tabs for free roam, dirt bike and skate controls. Q goes
-  back to the map menu (unloading the map in place), or quits when the game was started on a map.
+- **Pause menu.** Escape or Start. It has tabs for free roam, on foot, dirt bike (with the engine
+  volume slider) and skate controls, and a Sound tab with the Master / Music / Effects / Ambience /
+  Dialogue sliders. Q goes back to the map menu (unloading the map in place), or quits when the game
+  was started on a map.
 - **Window.** Opens borderless fullscreen.
 - **Headless screenshots.** `halo3.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits. Claude may run this on its own to check visuals; it never opens a window.
 
@@ -173,6 +180,8 @@ menu's Dirt bike tab (`bike-sound.json`). Still a guess: which pool plays in whi
 **Started on branches, not on master yet** (worktrees under `.claude/worktrees/`, scoped to
 120_halo; none merged as of 2026-10-30):
 
+- `halo-script` also merges `biped-anim`, `enemies-ai`, `mission-music` and `music-volume`
+  into one build for 120_halo.
 - `biped-anim`: reads `jmad` animation graphs (`blam_anim`, `blam anim`) and plays them
   (`halo3_anim`, `halo3 --anim-test`). Not yet driving the on-foot Spartan.
 - `enemies-ai`: reads the scenario's AI (squads, cells, starting locations, characters) and puts
@@ -240,12 +249,319 @@ RT as on/off are read from the Z axis). The user has been riding it: the throttl
 their playtests, and RT reading 0 or 1 turned out to be their Elite Series 2's trigger locks, not
 the game.
 
+## HaloScript and the Warthog run (2026-10-29, branch `halo-script`)
+
+The scenario's compiled scripts are read (`blam_script`, `docs/format/halo-script.md`):
+`blam scripts 120_halo` prints all 731 scripts as Lisp-like source, `--functions` the 281
+functions they call, `--grep TEXT` one topic. The game runs them (`halo3_script`) when asked:
+
+```
+& "<worktree>\out\bin\halo3.exe" 120_halo --insertion trench_run
+```
+
+runs `ins_trench_run` the way Bungie's designers did at the console: zone set
+`120_04_100_110`, the player put at the run's start flag, `mission_halo` wakes the Warthog run
+chapter. Driving into the run brings its floor plates in stretch by stretch; then rows of
+plates drop away behind and beside you every `trench_speed` ticks and others blow up ahead,
+exactly as the map's `trench_timer_*` / `trench_run_*_event_*` scripts say. Each dropped plate
+loses its collision at once (bike and Spartan at once, the skater a second later when its
+collision is rebuilt) and tumbles away. **Placed objects now collide** (their `coll` models):
+the run's plates are its only floor, so before this the whole run had no collision.
+
+Stubs and hooks: AI (`ai_place warthog01` etc.) goes to `AiHooks` (enemies agent), device
+animation (the run's two sinking islands) to `DevicePoser` (animation agent) with a made-up
+sink as the fallback, effects are stand-in flashes, cinematics / HUD are no-ops that log
+once (sound is played: see "Mission music"). Without `--insertion` / `--scripts` nothing changes from before except object collision.
+Tested headless (`halo3_script/tests/warthog_run.rs` drives the player through the run's
+volumes and checks plates drop); awaiting the user's playtest.
+
+First playtest (2026-10-29): B, J and F started back at the crash site and walking was stuck.
+Cause: the run's start flag lies inside the kill volume `kill_100_01`, which the game's scripts
+switch off when the zone set loads, but our kill volumes were always on, so every rider "fell"
+at once and went back to the map's old start (outside the loaded collision: a fall loop).
+Fixed: kill volumes follow `kill_volume_enable` / `_disable` (`halo3_core::falls`), the
+insertion runs 15 ticks before the first frame, a script teleport becomes the fallback spot,
+and the run's plate folders are no longer dropped for memory (`object_destroy_folder` only
+removes script-created objects), so the floor is there wherever you start. Checked headless
+with `HALO3_SCRIPT_TRACE=1` (player position once a second) for the bike, on foot
+(`HALO3_FOOT_WALK=0,1`) and skating, at the start flag and dropped straight onto the plates.
+## Animation (2026-10-29, branch `biped-anim`)
+
+Halo 3's own animations read from the maps: `blam_anim` (reader), `halo3_anim` (playback),
+`blam anim` (CLI), `docs/format/animation.md` (layout, byte checks), probe
+`docs/format/scripts/probe_animation.py`. Every codec found in the installed maps decodes
+(static, every-frame with i16 or f32 rotations, byte and word keyframes); 120_halo decodes 5881
+animations, the other 115 have no data shipped in that map. Checked by `cargo test -p blam_anim`
+and by headless shots (`--anim-test`): the flood combat form walking and swinging, the flood
+elite, Master Chief running with a rifle and a sentinel aiming all hold together. Not playtested;
+nothing in the game uses it yet except `--anim-test`.
+
+The API for the enemies, script and on-foot code (`crates/halo3_anim/src/lib.rs`):
+
+```rust
+// Once per object type, from the map (bipd, mach, vehi, hlmt or jmad tag):
+let model: Arc<AnimModel> = AnimModel::load(cache, tag)?;          // or load_path(cache, path)
+// The skinned mesh: joints in render model node order, inverse binds from the model.
+let joints = halo3_anim::spawn_joints(&mut commands, &model);      // AnimJoints
+let binds = model.inverse_bindposes();                             // SkinnedMeshInverseBindposes
+// The actor entity (Transform = where it stands, renderer frame) gets:
+let mut a = Animator::new(model.clone()).with_seed(n);
+a.set_stance("combat", "rifle", "ar");     // Halo's mode / weapon class / weapon type
+a.play("move_front");                      // loops, cross-fades 0.2 s, falls back to any/any
+a.play_once("melee"); a.finished();        // one-shots
+a.overlay("fire_1", false);                // overlays on top
+a.aim(yaw, pitch, moving);                 // aim grid, radians, left / up positive
+a.take_root_motion();                      // dx, dy, dz (wu, own frame), dyaw since last call
+a.set_position(0.0..=1.0);                 // device machines: device:position
+a.play_named("fall", false);               // any animation by full name
+commands.entity(actor).insert((a, joints));
+app.add_plugins(halo3_anim::AnimPlugin);   // advances and poses joints in PostUpdate
+```
+
+Without bevy, `Animator::model_matrices()` gives one model-space matrix per node (Halo model
+frame; multiply by `halo3_anim::halo_to_render()` and the actor's transform). 120_halo's
+machines with graphs all use `device:position` (doors, the `plates\island_test` and
+`plates\pillar_fall` pieces, terminals, the monitor); the island plates also carry `fall`,
+`tilt`, `tilt_up`, `other_fall`, `other_tilt` and `device:power`.
+
+Master Chief instead of the made-up gait (not done): `halo3_foot` builds a skate-skeleton pose
+that `halo3_rider` retargets. The jmad route would skip both: load
+`objects\characters\masterchief\masterchief` (campaign maps; on Valhalla `mp_masterchief` uses
+the same graph, 952 animations, and all 51 nodes match), draw him skinned the way `crates/halo3/src/anim_test.rs` does,
+and drive an `Animator` from the foot state: stance `combat:rifle:<weapon type>` (or
+`crouch:...`), `play("move_front" | "move_back" | "move_left" | "move_right" | "idle" |
+"turn_left" | "airborne" | "land_soft")`, `aim(0, pitch, moving)`, `overlay("fire_1")`. Its
+run is 2.3 wu/s of root motion, so `set_speed(ground speed / 2.3)` keeps the feet from sliding.
+
+Open: overlay rotation order and the aim grid's up/down are inferred, not proven; frame events
+(footstep sounds), IK and transitions are not read; Halo's full fallback rules are approximated.
+## Enemies and AI (2026-10-29, worktree `enemies-ai`)
+
+`crates/halo3_ai`, reader `blam_geometry::ai`, format `docs/format/ai.md`, CLI `blam ai <map>
+[--squads] [--zones] [--characters]`, tests `crates/blam_geometry/tests/ai.rs`. Built and checked
+with headless shots; not playtested.
+
+- **What 120_halo has**: 262 squads in 19 groups, 15 characters: the Flood (elite, human and brute
+  combat forms, infection forms, carriers, stalker and tank pure forms, the ranged pure form),
+  sentinel aggressors, 343 Guilty Spark (`monitor`, `monitor_combat`), Johnson, the Arbiter. Zone
+  sets 0-1 the ziggurat, 2 the control room, 3 the way out, 4-7 the Warthog run (`blam ai 120_halo`).
+- **Placement until scripts run** (`AutoPlace`, `--ai nearby|zone|off|none`): default `nearby`, a
+  squad appears the first time you come within 70 m of it, at most 40 living. Squads go when their
+  BSPs unload.
+- **Works**: real models (skinned, bind pose), weapons in hand, sight/hearing from the character
+  tags, LOS on the collision, walkers on the Spartan's capsule code, flyers hover, Flood charge and
+  melee with the biped's melee damage, ranged actors keep the character's combat range (zone firing
+  positions) and fire bursts from its firing patterns, rounds hurt actors and the player both ways
+  (damage effect numbers), shields before body, death (fall, sink, vanish; infection forms pop), the
+  player's shields (70) and body (45) from his model, recharge, red flash, death and respawn at the
+  last quiet checkpoint, HUD bars. Teams from the unit tags; Flood and Sentinels hostile to all,
+  Guilty Spark allied until a script says otherwise.
+- **Stubbed / own numbers**: run speeds (Halo uses animation root motion), head-shot double damage,
+  explosion damage 120 for rockets / grenades, no pathfinding graph (straight lines + firing
+  positions + a hop when stuck), no vehicles (Warthog / chopper crews skipped), no grenades, no
+  carrier spawns, no infection reanimating corpses, AI only fights while you are on foot (rounds fly
+  on the on-foot collision).
+
+**For the script agent** (all in `halo3_core::ai`, no dependency on `halo3_ai` needed):
+`MessageWriter<AiCommand>` with `Place { who: AiRef::named("sentinels"), count: None }` (`ai_place`;
+squad or group names, `squad/cell` takes the squad), `Erase` (`ai_erase`), `Kill` (`ai_kill`),
+`Allegiance { a, b, allied }` (`ai_allegiance`, teams in `halo3_core::ai::team`). Read
+`Res<AiCensus>` for `ai_living_count` / `ai_spawn_count` (squads and groups by name). When scripts
+start, set `ResMut<AutoPlace>` to `AutoPlace::Off`. `Res<PlayerVitality>` has the player's state.
+
+Adapter for `halo3_script` (branch `halo-script`, whose `AiHooks::call` is synchronous with no ECS
+access): take a clone of the `halo3_core::ai::AiBridge` resource (the AI plugin inits it; it is an
+`Arc<Mutex<..>>`) into a struct implementing `AiHooks`, and map `ai_place` ->
+`bridge.send(AiCommand::Place { who: AiRef::named(name), count })`, `ai_erase` / `ai_kill` likewise,
+`ai_allegiance` / `ai_allegiance_remove` -> `Allegiance`, `ai_living_count` ->
+`bridge.living_count(Some(name))`, `ai_spawn_count` -> `spawn_count`; return `None` for the rest.
+Commands go out the next frame; the census comes back every frame. `squad/location`
+(`arbiter_trench/trench`) places one actor at that named starting location; any other suffix
+(`warthog01/driver` when no location matches) places the whole squad. Known gap for the Warthog run:
+`warthog01..04`, `chopper*` and `secret_egg*` (a Mongoose) are vehicle crews with no character, so
+they place nobody until vehicles exist; `arbiter_trench/trench` places the Arbiter.
+
+**For the animation agent**: each actor root has `ActorSkeleton` (joint entities in node order, local
+`Transform` = node relative to parent in Halo model units, bind pose in `bind`, `animations` = the
+unit's `jmad` tag index) and `ActorActivity` (state Idle / Alert / Moving / Firing / Melee / Dying /
+Dead, Halo-frame velocity, yaw, aim, time in state). Write joint transforms and the skinned meshes
+follow; set `posed_externally` once you do. The dead tip over by their root transform.
+
+Adapter for `halo3_anim` (branch `biped-anim`) once both are on master: its `pose_joints` writes
+joint `GlobalTransform`s as `owner * halo_to_render() * node` after propagation, but an actor's root
+already carries the Halo axes and world-unit scale (`place::root_transform`). So at spawn, give the
+root a child with `Transform::from_matrix(halo_to_render().inverse())` holding
+`(Animator::new(AnimModel::load(cache, unit_tag)).with_seed(n), AnimJoints(skeleton.joints.clone()))`
+(the joints are already in render-model node order), set `posed_externally = true`, and each frame
+map `ActorActivity` to `set_stance` / `play` / `play_once("melee")` / `aim`; `take_root_motion()`
+can replace `ActorKind::speed`. Weapons hang off the joint entities' propagated (bind) frames, so
+they would need re-parenting to the posed hand (one `GlobalTransform` write after `AnimSystems`).
+
+## Scripts, AI and animation connected (2026-10-30, branch `halo-script`)
+
+- **Scripts -> AI**: `halo3_script::BridgeAi` (`ai_bridge.rs`) implements `AiHooks` over
+  `halo3_core::ai::AiBridge`: `ai_place` (with count), `ai_erase`, `ai_kill`, `ai_allegiance(_remove)`
+  (teams by name or enum index), `ai_living_count`, `ai_spawn_count`; `None` for the rest. `main`
+  installs it whenever scripts and the AI both run, and sets `AutoPlace::Off` while scripts run.
+  `--insertion trench_run` places `arbiter_trench/trench` (the Arbiter) at once, then the run's
+  Flood and Sentinels as the player passes their triggers (`trench_infection_100*`,
+  `trench_sentinel_100_*`, `trench_carrier_100_01`, `trench_combat_forms01..04`, ...). Vehicle crews
+  (`warthog01`, `chopper*`, `secret_egg*`) have no character and place nobody (`ai: placed warthog01
+  (0 actors)`). Without `--insertion` / `--scripts` the free-roam `AutoPlace` works as before.
+- **Animation -> actors** (`halo3_ai/src/animate.rs`): every actor whose unit has a graph with the
+  drawn skeleton (all 15 characters on 120_halo) gets an `Animator`. Instead of the child entity +
+  `AnimJoints` sketched above, the pose's local node transforms are written into the
+  `ActorSkeleton` joints' own `Transform`s (same frame as a `jmad` frame), so the skinned meshes,
+  the gun on the right hand and the head hit sphere follow through normal propagation; nothing is
+  re-parented. Stance: `combat` with the class/type the graph has for the actor's weapon (`rifle/ar`
+  becomes `pistol/ar` for Flood combat forms, `any` for the Flood elite, `unarmed` without a gun);
+  `idle`, `move_front/back/left/right` by velocity, played at actor speed / root-motion speed so the
+  feet do not slide; `play_once("melee")` on a swing; `h_kill` / `s_kill` / `landing_dead` deaths
+  (the AI then no longer tips the body over); the aim overlay towards `ActorActivity::aim`;
+  `fire_1` every 0.25 s while firing. Walkers' run speed (`ActorKind::speed`) is now their
+  `move_front` root-motion speed. Sentinels and the monitor hover with `idle` + aim.
+- **Animation -> devices** (`halo3_anim/src/devices.rs`): `MachinePoser` implements `DevicePoser`
+  for every scripted `mach`: the root node posed by the scripts' position track (`other_fall`,
+  `fall`, else `device:position`) with the overlay track (`tilt_up`, `tilt`, `other_tilt`) on top,
+  both relative to their first frames, so position 0 leaves the object where the scenario put it.
+  A falling device keeps its collision until its root node has dropped 1.5 wu (`DEVICE_DROP`); until
+  then its collision moves with it (see "Warthog run collision fixes" below). The made-up sink is now only
+  the fallback for machines without a graph.
+- Checked: `cargo test -p halo3_script` (bridge), `-p halo3_anim` (`tests/islands.rs`: 100_island01
+  tilts while solid, falls 50+ wu and stops being solid), headless `--insertion trench_run` shots
+  walking the camera through the run's triggers (squads placed, posed Flood and Sentinels, the
+  island tipping mid-fall) and a free-roam `--foot` shot at the crash site. Not playtested.
+- Not done: vehicles (so the Warthog crews), `ai_get_object` / `object_get_ai` (scripts get no
+  actor objects), command scripts (`cs_*`), turning and evade animations, frame events.
+
+## Warthog run collision fixes (2026-10-30, branch `halo-script`)
+
+Two bugs from the first bike playtest of `--insertion trench_run`:
+
+- **Dropped through the first island while riding round it.** Its collision was static at the
+  scenario's pose while the drawn island moved: on `100_island_trig01` the scripts play the
+  `tilt_up` overlay, which lifts `100_island01` about 2.7 wu (8 m) and tips it 2 degrees in the
+  first second, so the bike ended up inside the drawn island. Nothing removed its collision early
+  (it falls only on `trench_run_100_trig07`, north of the island, or after 40 s, as in the game),
+  its collision covers the whole top, and the kill volume over it (`kill_100_02a`) only comes on
+  at `trench_run_100_trig08`. Fix: solid objects a script moves publish their motion
+  (`halo3_core::objects::set_object_pose`, from `halo3_script::publish_collision`); the bike's
+  collision world (also the Spartan's, the AI's and the guns') looks their triangles up where
+  they are now, and the skater's collision is rebuilt with them a second after they settle. The
+  lurch is too fast for the bike's springs (about 2.5 wu/s up), so the bike and the Spartan are
+  also carried by what they stand on when it moves (`World::moving_ground`). All four islands
+  (`tilt_up`, `tilt`, `other_tilt`) get this. The lift itself is Bungie's animation as read
+  (frames 0-2 of `tilt_up` rise 0.96 -> 3.70 wu, then hold); not compared against the real game.
+- **Invisible wall halfway through the first tunnel.** Not a missed trigger: BSPs 100 and 110
+  meet at y = 37.5 in the tunnel and each closes its collision there with a flat cap (one facing
+  each way). The game walks through BSP seams; we collided with BSP 100's cap. Fix:
+  `Collision::of_bsps` drops pairs of BSP triangles with the same corners facing opposite ways
+  from two loaded BSPs (`drop_seams`); with only one of the two loaded its cap stays. This opens
+  every seam between loaded BSPs, on every map. Also in that tunnel: a `guard_rail` crate
+  (folder `trench_run_100_crates`) lies across the right half at y = 21; it is drawn and solid
+  here, where the game's Warthog would push the crate aside.
+- Checked: `halo3_anim/tests/warthog_run_collision.rs` (scripts headless, the bike's own world:
+  95 points round island 1 within 0.07 wu of the drawn island before, during and after the tilt
+  and 20 s riding round; a bike standing on it stays 0.22 wu above it through the lurch; floor
+  and no wall at 1 m steps through the first tunnel at x 52 and 58.7; it fails on the seam
+  without the fix), `blam_geometry/tests/objects.rs` (`seam_between_loaded_bsps_is_open`),
+  headless `--bike` runs with `HALO3_SCRIPT_TRACE=1`: through the tunnel the bike crosses
+  y = 37.5 at 100 km/h; onto island 1 it is lifted with the island (z -28.2 -> -23.5) where
+  before the carrying it fell through. Not playtested.
+
+## Mission music (2026-10-30, branch `mission-music`)
+
+The `lsnd` tags are now read in full (`docs/format/sound.md` 5 and 8, probe
+`probe_lsnd.py`, CLI `blam sound 120_halo music`): music time, "not a loop" and "stops music"
+flags, the tracks' fade-in / fade-out / cross-fade-alternate flags and cross-fade time. The
+scripts' `sound_looping_start` / `_stop` / `_stop_immediately` / `_set_alternate`,
+`sound_impulse_start` / `_stop` and `sound_class_set_gain` (music and amb) reach the sound
+through a queue in `halo3_core::script_sound` (the VM's only change: those functions, which used
+to log "not implemented"). `halo3_audio/src/music.rs` plays the pieces: intro, random loop bars
+back to back, the alternate on a bar boundary through its transition or by cross-fade, the
+outro / alternate outro / fade on stop, music time, stops-music. On the Warthog run
+(`--insertion trench_run`) `120_music_15` starts on the first stretch, goes to its alternate on
+leaving the second island and plays its 77 s finale at the last stretch
+(`halo3_script/tests/trench_music.rs`). M / Shift+M / N / `--music` still work on top. Without
+scripts nothing changes. Not done: dialogue (language banks), `lsnd` layers, the music class's
+mix level, cinematic music. Awaiting the user's playtest.
+
+## Music volume and the Sound tab (2026-10-30, branch `music-volume`)
+
+User playtest: the run's music was buried under the effects. Cause: Halo 3 mixes by sound class
+(`sncl + 0x44/0x48`, a gain range in dB, `docs/format/sound.md` 9, probe
+`probe_sound_classes.py`): music 0 dB, dialogue -3, weapons, ambience, sound scenery and most
+effects -12 to -15. We were not reading it, so effects and ambience played 9 to 12 dB too loud
+(the falling-plate loops by the run about 8 dB over the music). Now every sound gets its class
+gain (`SoundInfo::gain_db`); sound scenery a further -9 dB, weapons +6 dB (our choices,
+commented). Headless on the run: music -18 dBFS, ambience next to two plates -25 (was about
+-11). The mixer has buses (music, ambience, effects, dialogue) with per-bus volumes and level
+meters; `HALO3_AUDIO_TRACE=1` logs `audio levels` every 5 s. The pause menu has a fifth tab,
+**Sound**: Master, Music, Effects, Ambience, Dialogue sliders, 0-200 % (100 % = the game's
+mix), keyboard / pad / mouse, saved to `sound-levels.json` next to the exe
+(`halo3_audio/src/levels.rs`); `-` / `=` / K drive the same Master value. A slider multiplies
+on top of the scripts' `sound_class_set_gain` (music, amb). Awaiting the user's playtest.
+
+## The frigate, the end of the run, and `trench_end` (2026-10-30, branch `halo-script`)
+
+User playtest: the Forward Unto Dawn hung broadside across the end of the run. It is
+`trench_frigate`, a device machine (`objects\cinematics\human\frigate\frigate`), placed by the
+scenario (yaw 180, pitch 2.45 degrees); no script moves it. Two causes, both fixed from the map
+data:
+
+- **Machines stand in their animation.** The frigate's model lies nose along +Y; frame 0 of its
+  `device:position` track turns the root a quarter turn. The game never shows a machine
+  unanimated, so every machine with a graph now stands in its `device:position` pose at
+  position 0, laid over the rest pose as the clip's kind says (an overlay adds; `halo3_anim::devices::place_machines`, called in `main` before the
+  collision is built; `docs/format/animation.md` 10.3). That turns the open hangar (under the
+  stern, 13 wu wide, 8 high, 34 deep) to face the run. The islands move by about 0.3 wu with it. (Read as whole values instead, the islands sank 56 wu out of sight; the user saw them gone. `tests/machines_at_rest.rs` now pins every machine within 1 wu of its placement.)
+- **Rotation order.** Composed about the world's axes as Reclaimer does (`scenario::rotation`);
+  the other order sank the stern into the run's last ramp (`docs/format/scenario-and-tag-reading.md` 2.3).
+
+Now: the run's last ramp ends at x 370.7, z -71.3; the hangar mouth is 29.7 wu on at z -76.5,
+the stern 4.9 wu over the lip; the hangar's collision matches the drawn bay (floor, walls; open
+mouth). Its back wall is drawn but not in the collision (open into the hull).
+
+**The end.** `mission_halo` waits for a player in `end_trilogy01` (the hangar mouth, floor to
+ceiling) or one of the map's hidden small vehicles in `end_trilogy03` (over the gap), then wakes
+`cin_halo_outro`, which calls `game_award_level_complete_achievements`. The VM marks the mission
+won on that (or `game_won` / `end_mission`) and stops the thread there (no cutscene teleports, the
+frigate stays); the scripts stop. The dirt bike counts as the Mongoose (`secret_egg/mongoose`,
+`vm::PLAYER_RIDE_STANDS_IN_FOR`): headless at full throttle from `trench_end` it reaches 125 km/h,
+flies through `end_trilogy03` and only grazes `end_trilogy01`'s bottom corner, then drops just
+under the hangar's floor. `halo3/src/finish.rs` stops play and shows MISSION COMPLETE with the
+time (game time from the first frame the player is in control after loading, so pauses do not
+count and deaths do not reset it), Restart run or Quit; styled like the pause menu. Since the
+master merge (2026-10-31) Restart unloads the map and loads it again in the same window (the map
+menu's loading screen, or a plain RESTARTING screen when started from the command line); Quit
+goes back to the map menu, or closes the game when it was started on a map.
+
+**The Warthog Run mission (2026-10-31).** `main.rs` `MISSIONS`: `warthog_run` is 120_halo with
+`--insertion trench_run --zone 120_04_100_110`, and only zone sets `120_04_100_110`,
+`120_100_110`, `120_110_120`: only their BSPs (040, 100, 110, 120: indices 4, 7, 8, 9) are
+decoded, and `Zones::allowed` refuses any other zone set (trigger volumes, scripts, Page keys).
+It is a tile on the menu's Campaign tab ("The Warthog Run", MCC's Halo picture) and starts with
+`halo3.exe warthog_run`. Objects of the other BSPs are still decoded (never uploaded).
+
+**Starts.** A named insertion now starts on the dirt bike (`--foot`: on foot) where it puts the
+player. `trench_run`: the flag `trench_run_player0`, on the floor; the flag has no facing set
+(+X, into the side of the canyon the run starts in), so the start faces up the canyon to the run's
+first trigger, `120_08_trench_encounter_100` (`setup::FACE_TOWARDS`). `trench_end` (ours,
+`halo3_script::setup::insertion`): `ins_trench_run`, then zone set `120_110_120` and the run's
+last waypoint `trench_run_nav08` (75 wu before the ramp), facing `trench_run_nav09` in the
+hangar mouth; `object_management` then switches the run's kill volumes off and makes the frigate's
+lift shafts. Tests: `halo3_anim/tests/frigate.rs`.
+
+```
+& "<worktree>\out\bin\halo3.exe" 120_halo --insertion trench_end
+```
+
 ## Open questions and known gaps
 
-- **Object rotation order.** Yaw/pitch/roll are composed as Blam's intrinsic yaw, then pitch,
-  then roll (`scenario::rotation`). Reclaimer and HaloExport compose the other way round; the two
-  agree whenever only one angle is non-zero, which is almost every placement. Check one tilted
-  crate in game before trusting either (`docs/format/scenario-and-tag-reading.md` 2.3).
+- **Object rotation order.** Settled 2026-10-30 from 120_halo's frigate (yaw 180, pitch 2.45
+  degrees): yaw, pitch, roll are composed about the world's axes as Reclaimer and HaloExport do
+  (`scenario::rotation`); the other order sank the frigate's stern into the run's last ramp
+  (`docs/format/scenario-and-tag-reading.md` 2.3). Not yet compared in the real game.
 - **Instance scale.** Applied as a uniform scale on top of the 3x4 matrix, as Reclaimer does.
   Every instance checked so far has scale 1.
 - **Shader classification** in `blam_geometry` (`Material::shading`) is still by class code

@@ -6,6 +6,9 @@
 //!   decodes all its sounds) to WAV in `--out` (default `.scratch/sound`),
 //!   printing duration, rate, channels, RMS and peak
 //! - `check`: decode every sound the viewer would play and summarise
+//! - `music`: every music piece (and any other `lsnd` the scripts name)
+//!   with its rules, each slot's permutations and lengths, and the script
+//!   lines that start, switch and stop it (`sound.md` 5 and 8)
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -61,6 +64,7 @@ pub fn run(cache: &CacheFile, args: &Args) -> Result<()> {
             Ok(())
         }
         "check" => check(cache, &tags),
+        "music" => music(cache, &tags),
         _ => crate::usage(),
     }
 }
@@ -247,6 +251,109 @@ fn wav(tags: &SoundTags<'_>, lib: &Library, index: u32, out: &std::path::Path) -
                 );
             }
             Err(e) => println!("{} {}: {e}", s.name, p.name),
+        }
+    }
+    Ok(())
+}
+
+/// The map's music pieces: rules, slots with permutation lengths, and the
+/// script lines that drive them.
+fn music(cache: &CacheFile, tags: &SoundTags<'_>) -> Result<()> {
+    let lib = library(cache)?;
+    let m = tags.map_sounds()?;
+    let mut pieces: Vec<u32> = m.music.iter().map(|(t, _)| *t).collect();
+    for t in &m.script_sounds {
+        let lsnd = cache.tags.get(*t).is_some_and(|e| cache.tags.class_of(e).code.as_str() == "lsnd");
+        if lsnd && !pieces.contains(t) {
+            pieces.push(*t);
+        }
+    }
+    // Script source, one line per call, to find each piece's cues.
+    let scripts = blam_script::ScriptData::read(cache).ok();
+    let lines: Vec<(String, String)> = scripts
+        .as_ref()
+        .map(|d| {
+            let dec = blam_script::Decompiler::new(d);
+            (0..d.scripts.len())
+                .flat_map(|i| {
+                    let name = d.scripts[i].name.clone();
+                    dec.script(i)
+                        .lines()
+                        .filter(|l| l.contains("sound_looping"))
+                        .map(|l| (name.clone(), l.trim().to_string()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let seconds = |s: Option<u32>| -> Vec<String> {
+        s.and_then(|s| tags.sound(s).ok())
+            .map(|snd| {
+                snd.permutations
+                    .iter()
+                    .map(|p| match lib.sample(p.fmod_id) {
+                        Some(i) => {
+                            let smp = &lib.sfx.samples[i as usize];
+                            format!("{} {:.2} s", p.name, smp.frames as f32 / smp.rate as f32)
+                        }
+                        None => format!("{} (not in the bank)", p.name),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    println!("music: {} pieces", pieces.len());
+    for t in pieces {
+        let l = tags.looping(t)?;
+        let mut rules = Vec::new();
+        if l.not_a_loop() {
+            rules.push("plays once".to_string());
+        }
+        if l.stops_music() {
+            rules.push("stops other music".to_string());
+        }
+        if l.music_time > 0.0 {
+            rules.push(format!("ends by itself after {} s", l.music_time));
+        }
+        println!(
+            "lsnd #{t} {}: flags {:#x}, class {}{}{}",
+            l.name,
+            l.flags,
+            l.class,
+            if rules.is_empty() { "" } else { "; " },
+            rules.join(", ")
+        );
+        for tr in &l.tracks {
+            let mut how = Vec::new();
+            if tr.fades_in() {
+                how.push(format!("fades in over {} s", tr.fade_in));
+            }
+            if tr.fades_out() {
+                how.push(format!("fades out over {} s when stopped without an outro", tr.fade_out));
+            }
+            if tr.crossfades_alt() {
+                how.push(format!("cross-fades to the alternate loop over {} s", tr.alt_fade));
+            }
+            println!(
+                "  track {} flags {:#x} gain {} dB{}{}",
+                tr.name,
+                tr.flags,
+                tr.gain_db,
+                if how.is_empty() { "" } else { "; " },
+                how.join(", ")
+            );
+            for (slot, s) in ["in", "loop", "out", "alt loop", "alt out", "alt trans in", "alt trans out"]
+                .into_iter()
+                .zip(tr.sounds())
+            {
+                if s.is_some() {
+                    println!("    {slot:13} {}", name_of(cache, s));
+                    println!("                  {}", seconds(s).join(", "));
+                }
+            }
+        }
+        for (script, line) in lines.iter().filter(|(_, line)| line.contains(&l.name)) {
+            println!("  script {script}: {line}");
         }
     }
     Ok(())

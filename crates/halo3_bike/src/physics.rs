@@ -27,7 +27,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use bevy::math::{Mat3, Quat, Vec2, Vec3};
+use bevy::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 use blam_geometry::column_grid::ColumnGrid;
 
 use super::reflex::Tuning;
@@ -181,20 +181,63 @@ struct Triangle {
 pub struct World {
     triangles: Vec<Triangle>,
     grid: ColumnGrid,
+    /// Per triangle, the scene object it belongs to (`u32::MAX`: the
+    /// structure BSP's own); empty when none does. Objects whose collision
+    /// a script took away (`halo3_core::objects`) are skipped.
+    owners: Vec<u32>,
+    /// Objects a script has moved (`halo3_core::objects::object_poses`),
+    /// renderer frame: their triangles stay in the grid where the scenario
+    /// put them and are moved as they are looked at.
+    moved: RwLock<Moved>,
+}
+
+/// The moved objects as last read: the pose generation, then per object
+/// its motion and the inverse.
+#[derive(Default)]
+struct Moved {
+    generation: u64,
+    objects: Vec<(u32, Mat4, Mat4)>,
+}
+
+impl Moved {
+    fn motion(&self, owner: u32) -> Option<&Mat4> {
+        self.objects.iter().find(|(o, _, _)| *o == owner).map(|(_, m, _)| m)
+    }
+}
+
+/// Renderer frame from Halo frame, as a matrix (`halo3_core::coords::to_render`).
+fn render_from_halo() -> Mat4 {
+    let s = blam_geometry::WORLD_UNIT_METRES;
+    Mat4::from_cols(
+        Vec4::new(s, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, -s, 0.0),
+        Vec4::new(0.0, s, 0.0, 0.0),
+        Vec4::W,
+    )
 }
 
 impl World {
     /// Triangles in the renderer frame, wound counter-clockwise seen from the
     /// side you stand on, with their two-sided flag.
     pub fn new(triangles: impl IntoIterator<Item = ([Vec3; 3], bool)>) -> World {
+        let mut world = World::with_owners(triangles.into_iter().map(|(p, two)| (p, two, u32::MAX)));
+        world.owners.clear();
+        world
+    }
+
+    /// The same, with the scene object each triangle belongs to
+    /// (`u32::MAX` for none).
+    pub fn with_owners(triangles: impl IntoIterator<Item = ([Vec3; 3], bool, u32)>) -> World {
         let mut out = Vec::new();
+        let mut owners = Vec::new();
         let mut grid = ColumnGrid::new(4.0);
-        for ([a, b, c], two_sided) in triangles {
+        for ([a, b, c], two_sided, owner) in triangles {
             let normal = (b - a).cross(c - a);
             if !normal.is_finite() || normal.length_squared() < 1e-10 {
                 continue;
             }
             let i = out.len() as u32;
+            owners.push(owner);
             out.push(Triangle {
                 a,
                 b,
@@ -206,7 +249,15 @@ impl World {
             let hi = a.max(b).max(c);
             grid.insert(i, [lo.x, lo.z], [hi.x, hi.z]);
         }
-        World { triangles: out, grid }
+        if owners.iter().all(|o| *o == u32::MAX) {
+            owners.clear();
+        }
+        World {
+            triangles: out,
+            grid,
+            owners,
+            moved: RwLock::new(Moved::default()),
+        }
     }
 
     #[allow(clippy::len_without_is_empty)]
@@ -216,21 +267,122 @@ impl World {
 
     /// Triangles whose columns come within `radius` of `centre` (X, Z), once each.
     pub fn gather(&self, centre: Vec3, radius: f32, out: &mut Vec<u32>) {
+        self.gather_along(centre, radius, (centre, centre), out);
+    }
+
+    /// The same, for what lies along the segment `along` (inside the
+    /// columns round `centre`): the segment picks the cells of moved
+    /// objects, whose columns are tilted against the world's.
+    fn gather_along(&self, centre: Vec3, radius: f32, along: (Vec3, Vec3), out: &mut Vec<u32>) {
         out.clear();
         self.grid.query(
             [centre.x - radius, centre.z - radius],
             [centre.x + radius, centre.z + radius],
             |i| out.push(i),
         );
+        if !self.owners.is_empty() {
+            let reach = radius - Vec2::new(along.1.x - along.0.x, along.1.z - along.0.z).length() * 0.5;
+            self.gather_moved(along, reach.max(0.0), out);
+        }
         out.sort_unstable();
         out.dedup();
+        if !self.owners.is_empty() {
+            halo3_core::objects::retain_present(out, |i| self.owners[i as usize]);
+        }
+    }
+
+    /// Re-reads the moved objects when they changed.
+    fn refresh_moved(&self) {
+        let (generation, _) = halo3_core::objects::pose_generation();
+        if self.moved.read().unwrap_or_else(|e| e.into_inner()).generation == generation {
+            return;
+        }
+        let c = render_from_halo();
+        let c_inv = c.inverse();
+        let objects = halo3_core::objects::object_poses()
+            .into_iter()
+            .map(|(o, m)| {
+                let r = c * m * c_inv;
+                (o, r, r.inverse())
+            })
+            .collect();
+        *self.moved.write().unwrap_or_else(|e| e.into_inner()) = Moved { generation, objects };
+    }
+
+    /// Adds the triangles of moved objects that are within `radius` of the
+    /// segment `along` where the objects are now: looked up in the grid
+    /// around the segment taken back to where each object was placed (the
+    /// motions are rigid).
+    fn gather_moved(&self, along: (Vec3, Vec3), radius: f32, out: &mut Vec<u32>) {
+        self.refresh_moved();
+        let moved = self.moved.read().unwrap_or_else(|e| e.into_inner());
+        if moved.objects.is_empty() {
+            return;
+        }
+        for (object, _, inverse) in &moved.objects {
+            let (a, b) = (inverse.transform_point3(along.0), inverse.transform_point3(along.1));
+            let p = (a + b) * 0.5;
+            let radius = radius + Vec2::new(b.x - a.x, b.z - a.z).length() * 0.5;
+            self.grid.query([p.x - radius, p.z - radius], [p.x + radius, p.z + radius], |i| {
+                if self.owners[i as usize] == *object {
+                    out.push(i);
+                }
+            });
+        }
+    }
+
+    /// The object a script is moving that the ray first hits, and where
+    /// that object is now (its motion from its placement, renderer frame);
+    /// `None` when the ray hits nothing or something that does not move.
+    /// A rider on it is carried along by the change between two calls.
+    pub fn moving_ground(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<(u32, Mat4)> {
+        if self.owners.is_empty() {
+            return None;
+        }
+        let mut candidates = Vec::new();
+        let end = origin + dir * max;
+        let mid = (origin + end) * 0.5;
+        let reach = Vec2::new(end.x - origin.x, end.z - origin.z).length() * 0.5 + 0.1;
+        self.gather_along(mid, reach, (origin, end), &mut candidates);
+        let moved = self.moved.read().unwrap_or_else(|e| e.into_inner());
+        if moved.objects.is_empty() {
+            return None;
+        }
+        let hit = self.raycast(&candidates, origin, dir, max)?;
+        // The triangle that was hit: the nearest along the ray at that distance.
+        let owner = candidates.iter().copied().find(|&i| {
+            let t = self.triangle(&moved, i);
+            let n = t.normal;
+            (hit.point - t.a).dot(n).abs() < 1e-3 && closest_point(hit.point, t.a, t.b, t.c).distance_squared(hit.point) < 1e-6
+        })?;
+        let object = self.owners[owner as usize];
+        moved.motion(object).map(|m| (object, *m))
+    }
+
+    /// Triangle `i` where it is now (moved with its object).
+    fn triangle(&self, moved: &Moved, i: u32) -> Triangle {
+        let t = self.triangles[i as usize];
+        if moved.objects.is_empty() || self.owners.is_empty() {
+            return t;
+        }
+        match moved.motion(self.owners[i as usize]) {
+            Some(m) => Triangle {
+                a: m.transform_point3(t.a),
+                b: m.transform_point3(t.b),
+                c: m.transform_point3(t.c),
+                normal: m.transform_vector3(t.normal).normalize_or(t.normal),
+                two_sided: t.two_sided,
+            },
+            None => t,
+        }
     }
 
     /// The nearest front face along a ray (`dir` unit length) among `candidates`.
     pub fn raycast(&self, candidates: &[u32], origin: Vec3, dir: Vec3, max: f32) -> Option<Hit> {
         let mut best: Option<Hit> = None;
+        let moved = self.moved.read().unwrap_or_else(|e| e.into_inner());
         for &i in candidates {
-            let t = &self.triangles[i as usize];
+            let t = &self.triangle(&moved, i);
             let facing = dir.dot(t.normal);
             if facing >= 0.0 && !t.two_sided {
                 continue;
@@ -273,7 +425,7 @@ impl World {
         let end = origin + dir * max;
         let mid = (origin + end) * 0.5;
         let reach = Vec2::new(end.x - origin.x, end.z - origin.z).length() * 0.5 + 0.1;
-        self.gather(mid, reach, &mut candidates);
+        self.gather_along(mid, reach, (origin, end), &mut candidates);
         self.raycast(&candidates, origin, dir, max)
     }
 
@@ -282,8 +434,9 @@ impl World {
     /// near-parallel contacts are merged, keeping the deepest.
     pub fn sphere(&self, candidates: &[u32], centre: Vec3, radius: f32, out: &mut Vec<(Vec3, f32)>) {
         out.clear();
+        let moved = self.moved.read().unwrap_or_else(|e| e.into_inner());
         for &i in candidates {
-            let t = &self.triangles[i as usize];
+            let t = &self.triangle(&moved, i);
             let side = (centre - t.a).dot(t.normal);
             if side.abs() >= radius || (side < 0.0 && !t.two_sided) {
                 continue;
@@ -420,6 +573,9 @@ pub struct Bike {
     safe_clock: f32,
     candidates: Vec<u32>,
     contacts: Vec<(Vec3, f32)>,
+    /// The moving object under the bike and where it was last frame
+    /// (`World::moving_ground`), to carry the bike along with it.
+    platform: Option<(u32, Mat4)>,
 }
 
 /// Slower than this along the frame, m/s, is a standstill for backing up.
@@ -463,6 +619,7 @@ impl Bike {
             safe: Vec::new(),
             safe_clock: 0.0,
             candidates: Vec::new(),
+            platform: None,
             contacts: Vec::new(),
         }
     }
@@ -533,6 +690,23 @@ impl Bike {
     }
 
     /// Advances by `dt` seconds in fixed sub-steps.
+    /// Moves the bike with what it stands on when a script moves that (a
+    /// Warthog run island lurching up under it): the springs alone would
+    /// let a surface rising metres a second pass through the wheels.
+    fn ride_platform(&mut self, world: &World) {
+        let up = self.up();
+        let ground = world.moving_ground(self.position + up * 0.5, -up, 2.5);
+        if let (Some((object, now)), Some((was_on, then))) = (ground, self.platform)
+            && object == was_on
+        {
+            let delta = now * then.inverse();
+            self.position = delta.transform_point3(self.position);
+            let (_, turn, _) = delta.to_scale_rotation_translation();
+            self.rotation = (turn * self.rotation).normalize();
+        }
+        self.platform = ground;
+    }
+
     pub fn step(&mut self, world: &World, controls: Controls, dt: f32) {
         const SUB: f32 = 1.0 / 240.0;
         // A frame with no time in it (the first frame can be one) would
@@ -541,6 +715,7 @@ impl Bike {
         if dt <= 0.0 || !dt.is_finite() {
             return;
         }
+        self.ride_platform(world);
         let mut controls = controls;
         if let Some(t) = self.crashed.as_mut() {
             *t -= dt;

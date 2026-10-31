@@ -10,7 +10,7 @@ use blam_cache::{Block, CacheFile, Resources, TagEntry};
 
 use crate::materials::MaterialTable;
 use crate::render_model::{self, ModelParts};
-use crate::scene::{Kind, Placement, Scene, Spawn, SpawnKind};
+use crate::scene::{Kind, Placement, Scene, SceneObject, Spawn, SpawnKind};
 use crate::{Error, Result};
 
 /// Which placement block and palette a kind of object lives in.
@@ -64,10 +64,19 @@ pub fn is_level_vehicle(tag_path: &str) -> bool {
     tag_path.to_ascii_lowercase().starts_with(r"objects\levels\")
 }
 
-/// Blam's yaw, pitch, roll (radians, about Z, then Y nose-up, then X) as a
-/// rotation.
+/// Blam's yaw, pitch, roll (radians) as a rotation: yaw about world Z,
+/// then pitch about world -Y, then roll about world X (each about the
+/// world's axes, not the object's), as Reclaimer composes them
+/// (`docs/format/scenario-and-tag-reading.md` 2.3). The two orders agree
+/// while at most one angle is non-zero. 120_halo's Forward Unto Dawn
+/// (yaw 180 degrees, pitch 2.45) settles it: composed the other way
+/// (yaw, then pitch about the turned object's Y) its stern hangs 0.9 wu
+/// under the lip of the run's last ramp and its hangar floor tips down
+/// towards the mouth; this way the stern clears the ramp by 5 wu and the
+/// map's end trigger (`end_trilogy01`) spans the hangar mouth from floor
+/// to ceiling.
 pub fn rotation(yaw: f32, pitch: f32, roll: f32) -> Quat {
-    Quat::from_rotation_z(yaw) * Quat::from_rotation_y(-pitch) * Quat::from_rotation_x(roll)
+    Quat::from_rotation_x(roll) * Quat::from_rotation_y(-pitch) * Quat::from_rotation_z(yaw)
 }
 
 /// Counts worth printing after a decode.
@@ -158,6 +167,9 @@ pub fn decode(
             let mut r = cache.reader_at(o);
             let palette_index = r.i16()?;
             let name_index = r.i16()?;
+            let flags = r.at(o + 0x04).u32()?;
+            // The editor folder (`halo-script.md` 6), -1 for none.
+            let folder = u16::try_from(r.at(o + 0x42).i16()?).ok();
             let position = Vec3::from(r.at(o + 0x08).f32x3()?);
             let [yaw, pitch, roll] = r.at(o + 0x14).f32x3()?;
             let scale = r.at(o + 0x20).f32()?;
@@ -208,6 +220,7 @@ pub fn decode(
                         object.name().rsplit('\\').next().unwrap_or("object")
                     )
                 });
+            let first = scene.placements.len() as u32;
             for piece in &parts.pieces {
                 scene.placements.push(Placement {
                     name: name.clone(),
@@ -222,6 +235,24 @@ pub fn decode(
                     fade_pixels: [0; 2],
                 });
             }
+            scene.objects.push(SceneObject {
+                kind: k.kind,
+                name_index: u16::try_from(name_index).ok().filter(|n| (*n as usize) < names.len()),
+                name: usize::try_from(name_index)
+                    .ok()
+                    .and_then(|n| names.get(n))
+                    .filter(|n| !n.is_empty())
+                    .cloned(),
+                placement: i as u32,
+                tag: object.index,
+                tag_path: object.name().to_string(),
+                transform: world,
+                bsps,
+                folder,
+                flags,
+                placements: first..scene.placements.len() as u32,
+                dynamic: false,
+            });
             *stats.placed.entry(k.kind).or_default() += 1;
         }
     }

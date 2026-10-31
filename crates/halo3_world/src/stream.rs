@@ -410,6 +410,9 @@ pub fn upload(
         if translucent {
             entity.insert(NotShadowCaster);
         }
+        if let Some(o) = chunk.object {
+            entity.insert(halo3_core::objects::ObjectChunk(o));
+        }
         entities.push(entity.id());
     }
     done

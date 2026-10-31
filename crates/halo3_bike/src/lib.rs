@@ -166,13 +166,18 @@ fn warm_world(
 }
 
 /// Start riding at once at a Halo position (world units) facing a Halo yaw
-/// (radians), holding a steady throttle: screenshot mode.
+/// (radians). `at`: holding a steady throttle (screenshot mode);
+/// `player`: under the player's control (an insertion's start).
 #[derive(Resource, Default)]
-pub struct AutoStart(pub Option<(Vec3, f32)>);
+pub struct AutoStart(pub Option<(Vec3, f32)>, pub bool);
 
 impl AutoStart {
     pub fn at(position: Vec3, yaw: f32) -> Self {
-        AutoStart(Some((position, yaw)))
+        AutoStart(Some((position, yaw)), true)
+    }
+
+    pub fn player(position: Vec3, yaw: f32) -> Self {
+        AutoStart(Some((position, yaw)), false)
     }
 }
 
@@ -313,10 +318,11 @@ fn setup(
 pub fn build_world(collision: &Collision, mask: u32) -> World {
     let started = std::time::Instant::now();
     let loaded = collision.of_bsps(mask);
-    let world = World::new(loaded.triangles.iter().map(|t| {
+    let world = World::with_owners(loaded.triangles.iter().map(|t| {
         (
             t.points.map(to_render),
             t.flags & surface_flags::TWO_SIDED != 0,
+            t.source.object().unwrap_or(u32::MAX),
         )
     }));
     eprintln!(
@@ -328,7 +334,7 @@ pub fn build_world(collision: &Collision, mask: u32) -> World {
 }
 
 /// Halo yaw (radians, in the XY plane) to a heading about the renderer's +Y.
-fn heading_of_halo_yaw(yaw: f32) -> f32 {
+pub fn heading_of_halo_yaw(yaw: f32) -> f32 {
     let d = to_render_dir(Vec3::new(yaw.cos(), yaw.sin(), 0.0));
     d.x.atan2(d.z)
 }
@@ -433,12 +439,12 @@ fn ride(
 
     if let Some((position, yaw)) = auto.0.take() {
         riding.bike = Some(Bike::dropped(world, to_render(position) + Vec3::Y, heading_of_halo_yaw(yaw)));
-        riding.neutral = Some(
+        riding.neutral = auto.1.then(|| {
             std::env::var("HALO3_BIKE_THROTTLE")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(0.4),
-        );
+                .unwrap_or(0.4)
+        });
         riding.eye = None;
         rider.skated = 0.0;
         rider.bike = true;

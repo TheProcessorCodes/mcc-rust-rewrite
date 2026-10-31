@@ -160,11 +160,12 @@ fn lockout_weapons() {
 }
 
 /// The gravity lift (`docs/format/halo2.md` 12): the crate
-/// `lockout_lift_tube` at (-1.5, 12.53, -12.2), tilted 7 degrees by its
+/// `lockout_lift_tube` at (-1.5, 12.53, -12.2), tilted 7 degrees towards -Y by its
 /// roll, carries two phantom boxes from its physics model. The lower one
 /// (4.5 wu tall over the pad) lifts at 10 wu/s^2 to 4 wu/s with gravity off
 /// and pulls to the axis; the upper one (2 wu over that) pushes out along
-/// `upper_lift_direction`, 30 degrees below level towards -Y.
+/// `upper_lift_direction`, 37 degrees below level towards -Y (30 in its own frame, plus
+/// the lean; angles composed about the world axes, `scenario::rotation`).
 #[test]
 fn lockout_lift() {
     let Some(path) = map("lockout") else { return };
@@ -185,18 +186,18 @@ fn lockout_lift() {
 
     let (lower, upper) = (&lifts[0], &lifts[1]);
     let (centre, axes, half) = boxed(lower);
-    assert!(near(centre, [-1.774, 12.53, -9.967]), "{centre}");
+    assert!(near(centre, [-1.497, 12.253, -9.967]), "{centre}");
     assert!(near(half, [0.605, 0.605, 2.25]), "{half}");
-    assert!(near(axes[2], [-0.1217, 0.0, 0.9926]), "{:?}", axes[2]);
-    assert!(near(lower.direction, [-0.1217, 0.0, 0.9926]), "{}", lower.direction);
+    assert!(near(axes[2], [0.0, -0.1217, 0.9926]), "{:?}", axes[2]);
+    assert!(near(lower.direction, [0.0, -0.1217, 0.9926]), "{}", lower.direction);
     assert!(near(lower.origin, [-1.5, 12.52, -12.2]), "{}", lower.origin);
     assert_eq!((lower.push.direction, lower.push.axis), ((10.0, 4.0), (10.0, 10.0)));
     assert!(lower.push.negates_gravity && !lower.push.ignores_vehicles);
 
     let (centre, _, half) = boxed(upper);
-    assert!(near(centre, [-2.166, 12.527, -6.741]), "{centre}");
+    assert!(near(centre, [-1.497, 11.858, -6.741]), "{centre}");
     assert!(near(half, [0.605, 0.605, 1.0]), "{half}");
-    assert!(near(upper.direction, [0.0608, -0.866, -0.4963]), "{}", upper.direction);
+    assert!(near(upper.direction, [0.0, -0.7987, -0.6017]), "{}", upper.direction);
     assert_eq!((upper.push.direction, upper.push.axis), ((10.0, 4.0), (0.0, 0.0)));
     assert!(!upper.push.negates_gravity);
 

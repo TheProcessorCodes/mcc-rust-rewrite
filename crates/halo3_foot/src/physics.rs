@@ -11,7 +11,7 @@
 //! Halo's numbers are in world units (1 wu = 3.048 m); `Tuning::default`
 //! converts them.
 
-use bevy::math::{Vec2, Vec3};
+use bevy::math::{Mat4, Vec2, Vec3};
 
 use halo3_bike::physics::{Hit, World};
 use halo3_core::lifts::Push;
@@ -163,6 +163,9 @@ pub struct Spartan {
     pub safe: Option<(Vec3, f32)>,
     candidates: Vec<u32>,
     contacts: Vec<(Vec3, f32)>,
+    /// The moving object he stands on and where it was last frame
+    /// (`World::moving_ground`), to carry him along with it.
+    platform: Option<(u32, Mat4)>,
 }
 
 /// Coyote time: a jump still works this long after walking off a ledge.
@@ -189,6 +192,7 @@ impl Spartan {
             safe: None,
             candidates: Vec::new(),
             contacts: Vec::new(),
+            platform: None,
         }
     }
 
@@ -240,6 +244,18 @@ impl Spartan {
         if dt <= 0.0 {
             return;
         }
+        // Standing on something a script moves (a Warthog run island):
+        // move with it.
+        let ground = world.moving_ground(self.position + Vec3::Y * 0.5, -Vec3::Y, 1.5);
+        if let (Some((object, now)), Some((was_on, then))) = (ground, self.platform)
+            && object == was_on
+        {
+            let delta = now * then.inverse();
+            self.position = delta.transform_point3(self.position);
+            let f = delta.transform_vector3(heading_forward(self.heading));
+            self.heading = f.x.atan2(f.z);
+        }
+        self.platform = ground;
         // Lifts move him fast upwards too: gather for his whole speed.
         let reach = self.tuning.stand_height + self.velocity.length() * dt + 1.0;
         let mut candidates = std::mem::take(&mut self.candidates);

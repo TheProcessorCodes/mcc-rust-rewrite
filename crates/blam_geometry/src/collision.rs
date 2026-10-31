@@ -105,14 +105,14 @@ impl<'a> Resolver<'a> {
 
 /// Element sizes of a normal (16-bit) and a large (32-bit) collision BSP.
 #[derive(Clone, Copy)]
-struct Layout {
+pub(crate) struct Layout {
     surface: usize,
     edge: usize,
     vertex: usize,
     wide: bool,
 }
 
-const NORMAL: Layout = Layout {
+pub(crate) const NORMAL: Layout = Layout {
     surface: 12,
     edge: 12,
     vertex: 16,
@@ -134,10 +134,42 @@ pub struct CollisionStats {
     pub corrupt_loops: usize,
 }
 
+/// Where a collision geometry's blocks live: a resource definition (the
+/// structure BSP's collision) or ordinary tag data (an object's `coll` tag).
+pub(crate) trait GeometrySource<'a> {
+    /// The elements of the 12-byte block header at `at`.
+    fn block_elements(&self, at: usize, stride: usize, what: &str) -> Result<&'a [u8]>;
+}
+
+impl<'a> GeometrySource<'a> for Resolver<'a> {
+    fn block_elements(&self, at: usize, stride: usize, what: &str) -> Result<&'a [u8]> {
+        self.elements(self.block(at)?, stride, what)
+    }
+}
+
+/// Tag blocks in the map file (`at` is a file offset).
+pub(crate) struct TagBlocks<'a>(pub &'a CacheFile);
+
+impl<'a> GeometrySource<'a> for TagBlocks<'a> {
+    fn block_elements(&self, at: usize, stride: usize, what: &str) -> Result<&'a [u8]> {
+        let block = self.0.reader_at(at).block()?;
+        let Some(start) = block.offset else {
+            return Ok(&[]);
+        };
+        let len = (block.count as usize)
+            .checked_mul(stride)
+            .ok_or_else(|| Error::Invalid(format!("{what}: {} elements overflow", block.count)))?;
+        self.0
+            .bytes()
+            .get(start..start + len)
+            .ok_or_else(|| Error::Invalid(format!("{what}: {} elements at {start:#x} run past the file", block.count)))
+    }
+}
+
 /// Triangulates one `CollisionGeometry` (96 bytes at `at` in the
 /// definition), transforming into world space when a transform is given.
-fn triangulate(
-    res: &Resolver<'_>,
+pub(crate) fn triangulate<'a>(
+    res: &impl GeometrySource<'a>,
     at: usize,
     layout: Layout,
     transform: Option<(Mat4, bool)>,
@@ -145,9 +177,9 @@ fn triangulate(
     out: &mut Vec<CollisionTriangle>,
     stats: &mut CollisionStats,
 ) -> Result<usize> {
-    let surfaces = res.elements(res.block(at + 0x3C)?, layout.surface, "surfaces")?;
-    let edges = res.elements(res.block(at + 0x48)?, layout.edge, "edges")?;
-    let vertices = res.elements(res.block(at + 0x54)?, layout.vertex, "vertices")?;
+    let surfaces = res.block_elements(at + 0x3C, layout.surface, "surfaces")?;
+    let edges = res.block_elements(at + 0x48, layout.edge, "edges")?;
+    let vertices = res.block_elements(at + 0x54, layout.vertex, "vertices")?;
     let surface_count = surfaces.len() / layout.surface;
     let edge_count = edges.len() / layout.edge;
     let vertex_count = vertices.len() / layout.vertex;

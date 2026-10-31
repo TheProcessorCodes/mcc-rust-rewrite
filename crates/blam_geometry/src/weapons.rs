@@ -302,7 +302,8 @@ fn opt_index(v: i16) -> Option<u16> {
     u16::try_from(v).ok()
 }
 
-fn read_damage(cache: &CacheFile, jpt: &TagEntry) -> Result<Damage> {
+/// Reads a damage effect (`jpt!`) tag's radius and damage numbers.
+pub fn read_damage(cache: &CacheFile, jpt: &TagEntry) -> Result<Damage> {
     let b = cache.tag_offset(jpt)?;
     Ok(Damage {
         tag: jpt.name().to_string(),

@@ -180,6 +180,7 @@ not played); flyby sounds (read in the probe, not played).
 2. Types 16 to 22 of material effects; the impact material (assumed grass, parents by name).
 3. When the game picks the charged shot: the code takes it after a 0.6 s charge (plasma pistol)
    or always when the weapon has no plain shot (laser).
-4. How loud weapons are against the rest: class gains and the mix (`snmx`) are not decoded; the
-   code plays weapons at 0.7 and the tag gain.
+4. How loud weapons are against the rest: the class gains are read now (`sound.md` 9, weapon fire
+   -12 dB); the mix (`snmx`) is not decoded. The code plays weapons at the tag and class gains
+   plus 6 dB (`WEAPON_GAIN`).
 5. Whether the `1st_person` / `3rd_person` event names mean anything for sound parts.

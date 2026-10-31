@@ -8,6 +8,11 @@
 //! range) and is traced against the collision each frame, so the fast ones
 //! (sniper, laser) land at once and the slow ones (plasma, spikes, grenades)
 //! can be watched.
+//!
+//! Rounds hit actors too: each step is also traced against the AI's hit
+//! shapes (`halo3_core::ai::Targets`) and, for an actor's rounds, the
+//! Spartan's capsule; a hit sends a `Damage` message with the projectile's
+//! damage effect numbers. Explosives hurt everything near where they go off.
 
 use bevy::prelude::*;
 use halo3_core::map::MapAppExt;
@@ -17,6 +22,7 @@ use blam_geometry::weapons::Barrel;
 use super::assets::Kind;
 use super::enemy::{Enemy, EnemyKilled};
 use super::{WU, WeaponImpact};
+use halo3_core::ai::{Damage, DamageSource, DamageTarget, Targets, ray_capsule};
 use halo3_bike::physics::World;
 use halo3_foot::OnFoot;
 
@@ -25,6 +31,8 @@ pub struct FirePlugin;
 impl Plugin for FirePlugin {
     fn build(&self, app: &mut App) {
         app.init_map_resource::<Shots>()
+            .init_map_resource::<Targets>()
+            .add_message::<Damage>()
             .remove_on_map_unload::<Looks>()
             .add_systems(halo3_core::map::MapStartup, setup)
             .add_systems(
@@ -52,7 +60,8 @@ enum Style {
 impl Style {
     fn of(kind: &Kind) -> Style {
         let p = kind.weapon.tag_path.as_str();
-        if p.contains("laser") {
+        // The sentinels' and the monitor's beams draw as the laser does.
+        if p.contains("laser") || p.contains("sentinel_gun") || p.contains("monitor_beam") {
             Style::Laser
         } else if p.contains("plasma") || p.contains("needler") {
             Style::Plasma
@@ -110,8 +119,16 @@ struct Pending {
     pellets: u32,
     explosion: f32,
     power: f32,
-    /// Damage per round (the projectile's), and the weapon's tag path.
-    damage: f32,
+    /// An actor's shot: where it leaves and which way (renderer frame);
+    /// `None` for the player's, which go where the crosshair points.
+    aimed: Option<(Vec3, Vec3)>,
+    /// The actor that fired it (`None`: the player).
+    owner: Option<Entity>,
+    /// Damage per hit (min, max) from the projectile's damage effect.
+    damage: [f32; 2],
+    /// The enemy Spartan's damage per round (the projectile's; the laser
+    /// kills), and the weapon's tag path for the kill feed (`enemy.rs`).
+    spartan_damage: f32,
     path: String,
 }
 
@@ -125,9 +142,11 @@ struct Round {
     travelled: f32,
     explosion: f32,
     power: f32,
-    damage: f32,
+    spartan_damage: f32,
     path: String,
     tracer: Entity,
+    owner: Option<Entity>,
+    damage: [f32; 2],
 }
 
 /// What a round leaves for a moment: a flash, a spark, a mark, a beam.
@@ -169,6 +188,31 @@ impl Shots {
     /// renderer frame, `view` the camera, `spread` the error angle
     /// (radians), `power` 1 for a charged shot.
     pub fn shoot(&mut self, kind: &Kind, barrel: &Barrel, weapon_world: Mat4, view: Transform, spread: f32, power: f32) {
+        self.queue(kind, barrel, weapon_world, view, spread, power, None, None);
+    }
+
+    /// Queues an actor's shot from `from` towards `dir` (renderer frame),
+    /// spread by `spread` radians. Its rounds hit the Spartan and other
+    /// actors, never `owner`. Dropped while nobody is on foot (rounds fly
+    /// on the on-foot collision).
+    pub fn shoot_from(&mut self, kind: &Kind, barrel: &Barrel, from: Vec3, dir: Vec3, spread: f32, owner: Entity) {
+        let dir = dir.normalize_or(Vec3::NEG_Z);
+        let view = Transform::from_translation(from).looking_to(dir, Vec3::Y);
+        self.queue(kind, barrel, Mat4::from_translation(from), view, spread, 0.0, Some((from, dir)), Some(owner));
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn queue(
+        &mut self,
+        kind: &Kind,
+        barrel: &Barrel,
+        weapon_world: Mat4,
+        view: Transform,
+        spread: f32,
+        power: f32,
+        aimed: Option<(Vec3, Vec3)>,
+        owner: Option<Entity>,
+    ) {
         let style = Style::of(kind);
         let projectile = barrel.projectile.as_ref();
         let speed = projectile.map_or([300.0, 300.0], |p| {
@@ -182,12 +226,19 @@ impl Shots {
             .map_or(0.0, |d| d.radius[1])
             .max(if matches!(style, Style::Grenade | Style::Missile) { 1.0 } else { 0.0 });
         // The tag's damage; beams (the Spartan laser) carry none: it kills.
-        let damage = projectile
+        let spartan_damage = projectile
             .and_then(|p| p.damage.as_ref())
             .map_or(0.0, |d| d.upper_bound[0].max(d.upper_bound[1]));
-        let damage = if damage > 0.0 { damage } else if style == Style::Laser { 500.0 } else { 10.0 };
+        let spartan_damage = if spartan_damage > 0.0 { spartan_damage } else if style == Style::Laser { 500.0 } else { 10.0 };
         // The shotgun: Halo 3 throws fifteen pellets (not read from the tag).
         let pellets = if kind.weapon.tag_path.contains("shotgun") { 15 } else { 1 };
+        // What a round takes off: the damage effect's upper bound (min,
+        // max). Explosives without one (rockets, grenades) deal theirs by
+        // area where they go off (`EXPLOSION_DAMAGE`).
+        let damage = projectile.and_then(|p| p.damage.as_ref()).map_or([0.0, 0.0], |d| {
+            let lo = d.upper_bound[0].max(d.lower_bound);
+            [lo, d.upper_bound[1].max(lo)]
+        });
         self.pending.push(Pending {
             kind_tag: kind.weapon.tag_index,
             style,
@@ -199,9 +250,17 @@ impl Shots {
             pellets,
             explosion: explosion * WU,
             power,
+            aimed,
+            owner,
             damage,
+            spartan_damage,
             path: kind.weapon.tag_path.clone(),
         });
+    }
+
+    /// A damage number in a (min, max) range.
+    fn roll(&mut self, range: [f32; 2]) -> f32 {
+        range[0] + (range[1] - range[0]) * self.random()
     }
 
     fn random(&mut self) -> f32 {
@@ -302,14 +361,80 @@ fn blast(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32,
     }
 }
 
+/// What a round's path from `from` along `dir` (unit) meets first within
+/// `max`: an actor (not `owner`), or for an actor's round the Spartan.
+fn body_hit(
+    targets: Option<&Targets>,
+    spartan: &halo3_foot::physics::Spartan,
+    owner: Option<Entity>,
+    from: Vec3,
+    dir: Vec3,
+    max: f32,
+) -> Option<(DamageTarget, f32, bool)> {
+    let actor = targets
+        .and_then(|t| t.raycast(from, dir, max, owner))
+        .map(|h| (DamageTarget::Actor(h.entity), h.distance, h.head));
+    let player = owner.and_then(|_| {
+        let r = spartan.tuning.radius;
+        let base = spartan.position + Vec3::Y * r;
+        let top = spartan.position + Vec3::Y * (spartan.height() - r).max(r);
+        ray_capsule(from, dir, base, top, r)
+            .filter(|d| *d <= max)
+            .map(|d| (DamageTarget::Player, d, false))
+    });
+    match (actor, player) {
+        (Some(a), Some(p)) => Some(if p.1 < a.1 { p } else { a }),
+        (a, p) => a.or(p),
+    }
+}
+
+/// Damage at the centre of an explosion with no damage effect of its own
+/// (rockets, brute shot grenades), falling off to nothing at twice the
+/// round's explosion radius. Our own number: the area damage is in the
+/// detonation effect, which is not read.
+const EXPLOSION_DAMAGE: f32 = 120.0;
+
+/// Area damage round `at` (renderer frame) out to twice `radius`.
+fn explode(
+    damage: &mut MessageWriter<Damage>,
+    targets: Option<&Targets>,
+    spartan: &halo3_foot::physics::Spartan,
+    owner: Option<Entity>,
+    at: Vec3,
+    radius: f32,
+) {
+    let reach = radius * 2.0;
+    let source = owner.map_or(DamageSource::Player, DamageSource::Actor);
+    let mut hurt = |target: DamageTarget, centre: Vec3| {
+        let d = centre.distance(at);
+        if d < reach {
+            damage.write(Damage {
+                target,
+                source,
+                amount: EXPLOSION_DAMAGE * (1.0 - d / reach),
+                at: centre,
+                direction: (centre - at).normalize_or(Vec3::Y),
+                head: false,
+                melee: false,
+            });
+        }
+    };
+    for t in targets.map_or(&[][..], |t| &t.0[..]) {
+        hurt(DamageTarget::Actor(t.entity), (t.base + t.top) * 0.5);
+    }
+    hurt(DamageTarget::Player, spartan.position + Vec3::Y * spartan.height() * 0.5);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn launch(
     mut commands: Commands,
     mut shots: ResMut<Shots>,
     foot: Res<OnFoot>,
     looks: Option<Res<Looks>>,
+    targets: Option<Res<Targets>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut impacts: MessageWriter<WeaponImpact>,
+    mut damage: MessageWriter<Damage>,
     (mut enemy, mut kills): (ResMut<Enemy>, MessageWriter<EnemyKilled>),
 ) {
     let (Some(looks), Some(world), Some(spartan)) = (looks, foot.world(), foot.spartan.as_ref()) else {
@@ -319,15 +444,21 @@ fn launch(
     let eye = spartan.eye();
     let pending = std::mem::take(&mut shots.pending);
     for p in pending {
-        let target = aim_point(world, &enemy, &p.view, eye);
-        let mut from = p.muzzle.w_axis.truncate();
-        // A muzzle poking through a wall fires from the eye instead.
-        let to_muzzle = from - eye;
-        if let Some(hit) = world.raycast_far(eye, to_muzzle.normalize_or(Vec3::Y), to_muzzle.length()) {
-            from = eye + to_muzzle.normalize_or(Vec3::Y) * (hit.distance - 0.05).max(0.0);
-        }
-        let ahead = (target - from).normalize_or(p.view.forward().as_vec3());
-        let dir = if ahead.dot(p.view.forward().as_vec3()) > 0.2 { ahead } else { p.view.forward().as_vec3() };
+        let (from, dir) = match p.aimed {
+            Some(aimed) => aimed,
+            None => {
+                let target = aim_point(world, &enemy, &p.view, eye);
+                let mut from = p.muzzle.w_axis.truncate();
+                // A muzzle poking through a wall fires from the eye instead.
+                let to_muzzle = from - eye;
+                if let Some(hit) = world.raycast_far(eye, to_muzzle.normalize_or(Vec3::Y), to_muzzle.length()) {
+                    from = eye + to_muzzle.normalize_or(Vec3::Y) * (hit.distance - 0.05).max(0.0);
+                }
+                let ahead = (target - from).normalize_or(p.view.forward().as_vec3());
+                let dir = if ahead.dot(p.view.forward().as_vec3()) > 0.2 { ahead } else { p.view.forward().as_vec3() };
+                (from, dir)
+            }
+        };
         let colour = p.style.colour(p.power);
         let material = glow(&mut materials, colour);
         // Muzzle flash.
@@ -340,13 +471,31 @@ fn launch(
         ));
         if p.style == Style::Laser {
             // A beam, there at once.
+            let dir = shots.spread(dir, p.spread);
             let wall = world.raycast_far(from, dir, p.range);
-            let body = enemy.raycast(from, dir, wall.map_or(p.range, |h| h.distance));
-            let end = match (body, wall) {
-                (Some(b), _) => {
+            // The enemy Spartan stands in the way of the player's beams.
+            let spartan_hit = if p.owner.is_none() { enemy.raycast(from, dir, wall.map_or(p.range, |h| h.distance)) } else { None };
+            let reach = spartan_hit.as_ref().map_or(wall.map_or(p.range, |h| h.distance), |b| b.distance);
+            let end = match (body_hit(targets.as_deref(), spartan, p.owner, from, dir, reach), wall) {
+                (None, _) if let Some(b) = spartan_hit => {
                     impact(&mut commands, &looks, &mut shots, &material, b.point, b.normal, 0.0, true);
-                    hurt(&mut enemy, &mut kills, p.kind_tag, &p.path, p.damage, b.head);
+                    hurt(&mut enemy, &mut kills, p.kind_tag, &p.path, p.spartan_damage, b.head);
                     b.point
+                }
+                (Some((who, d, head)), _) => {
+                    let at = from + dir * d;
+                    let amount = shots.roll(p.damage);
+                    damage.write(Damage {
+                        target: who,
+                        source: p.owner.map_or(DamageSource::Player, DamageSource::Actor),
+                        amount,
+                        at,
+                        direction: dir,
+                        head,
+                        melee: false,
+                    });
+                    impact(&mut commands, &looks, &mut shots, &material, at, -dir, 0.0, true);
+                    at
                 }
                 (None, Some(hit)) => {
                     impact(&mut commands, &looks, &mut shots, &material, hit.point, hit.normal, 0.0, true);
@@ -385,9 +534,11 @@ fn launch(
                 travelled: 0.0,
                 explosion: p.explosion,
                 power: p.power,
-                damage: p.damage,
+                spartan_damage: p.spartan_damage,
                 path: p.path.clone(),
                 tracer,
+                owner: p.owner,
+                damage: p.damage,
             });
         }
     }
@@ -453,18 +604,21 @@ fn impact(
 /// Gravity on grenades, metres per second squared.
 const GRAVITY: f32 = blam_geometry::movement::GRAVITY * WU;
 
+#[allow(clippy::too_many_arguments)]
 fn fly(
     mut commands: Commands,
     mut shots: ResMut<Shots>,
     foot: Res<OnFoot>,
     looks: Option<Res<Looks>>,
+    targets: Option<Res<Targets>>,
     time: Res<Time>,
     materials: Query<&MeshMaterial3d<StandardMaterial>>,
     mut transforms: Query<&mut Transform>,
     mut impacts: MessageWriter<WeaponImpact>,
+    mut damage: MessageWriter<Damage>,
     (mut enemy, mut kills): (ResMut<Enemy>, MessageWriter<EnemyKilled>),
 ) {
-    let (Some(looks), Some(world)) = (looks, foot.world()) else {
+    let (Some(looks), Some(world), Some(spartan)) = (looks, foot.world(), foot.spartan.as_ref()) else {
         return;
     };
     let dt = time.delta_secs();
@@ -478,13 +632,39 @@ fn fly(
         let step = r.velocity * dt;
         let len = step.length();
         let from = r.position;
-        let dir_step = step / len.max(1e-6);
-        let hit = world.raycast_far(from, dir_step, len);
-        // The enemy, if he stands nearer than the wall.
-        let body = enemy.raycast(from, dir_step, hit.map_or(len, |h| h.distance));
+        let unit = step / len.max(1e-6);
+        let hit = world.raycast_far(from, unit, len);
+        // The enemy Spartan, if he stands nearer than the wall (the
+        // player's rounds only).
+        let body = if r.owner.is_none() { enemy.raycast(from, unit, hit.map_or(len, |h| h.distance)) } else { None };
+        // An actor before the wall (and the Spartan) takes the round.
+        let reach = body.as_ref().map_or(hit.map_or(len, |h| h.distance), |b| b.distance);
+        if let Some((who, d, head)) = body_hit(targets.as_deref(), spartan, r.owner, from, unit, reach) {
+            let at = from + unit * d;
+            let amount = shots.roll(r.damage);
+            if amount > 0.0 {
+                damage.write(Damage {
+                    target: who,
+                    source: r.owner.map_or(DamageSource::Player, DamageSource::Actor),
+                    amount,
+                    at,
+                    direction: unit,
+                    head,
+                    melee: false,
+                });
+            }
+            shots.hits += 1;
+            let glow = materials.get(r.tracer).map(|m| m.0.clone()).unwrap_or_else(|_| looks.spark.clone());
+            impact(&mut commands, &looks, &mut shots, &glow, at, -unit, r.explosion, r.power > 0.5);
+            if r.explosion > 0.0 {
+                explode(&mut damage, targets.as_deref(), spartan, r.owner, at, r.explosion);
+            }
+            commands.entity(r.tracer).try_despawn();
+            return false;
+        }
         let hit = match body {
             Some(b) => {
-                hurt(&mut enemy, &mut kills, r.weapon, &r.path, r.damage, b.head);
+                hurt(&mut enemy, &mut kills, r.weapon, &r.path, r.spartan_damage, b.head);
                 Some(halo3_bike::physics::Hit { distance: b.distance, point: b.point, normal: b.normal })
             }
             None => hit,
@@ -508,15 +688,21 @@ fn fly(
             let glow = materials.get(r.tracer).map(|m| m.0.clone()).unwrap_or_else(|_| looks.spark.clone());
             impact(&mut commands, &looks, &mut shots, &glow, h.point, h.normal, r.explosion, r.power > 0.5);
             impacts.write(WeaponImpact { weapon: r.weapon, at: h.point, normal: h.normal });
-            // A direct hit took its damage above.
-            if body.is_none() {
-                blast(&mut enemy, &mut kills, r.weapon, &r.path, r.damage, h.point, r.explosion);
+            if r.explosion > 0.0 {
+                explode(&mut damage, targets.as_deref(), spartan, r.owner, h.point, r.explosion);
+            }
+            // A direct hit on the enemy Spartan took its damage above.
+            if body.is_none() && r.owner.is_none() {
+                blast(&mut enemy, &mut kills, r.weapon, &r.path, r.spartan_damage, h.point, r.explosion);
             }
         } else if gone && r.explosion > 0.0 {
             // Grenades and missiles go off at the end of their range.
             let glow = materials.get(r.tracer).map(|m| m.0.clone()).unwrap_or_else(|_| looks.spark.clone());
             impact(&mut commands, &looks, &mut shots, &glow, end, Vec3::Y, r.explosion, true);
-            blast(&mut enemy, &mut kills, r.weapon, &r.path, r.damage, end, r.explosion);
+            explode(&mut damage, targets.as_deref(), spartan, r.owner, end, r.explosion);
+            if r.owner.is_none() {
+                blast(&mut enemy, &mut kills, r.weapon, &r.path, r.spartan_damage, end, r.explosion);
+            }
         }
         if gone {
             commands.entity(r.tracer).try_despawn();

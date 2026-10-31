@@ -20,13 +20,17 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use blam_sound::tags::distance_gain;
 
-use super::mixer::{Clip, Mixer, Play, VoiceId};
+use super::mixer::{Bus, Clip, Mixer, Play, VoiceId};
 use super::{Listener, Sounds, db};
 use halo3_core::weapons::{WeaponAction, WeaponEvent, WeaponImpact};
 
-/// Overall level of weapon sounds against the rest of the mix (the game's
-/// sound class gains and mix are not decoded).
-const WEAPON_GAIN: f32 = 0.7;
+/// Weapon sounds' lift over their class level (`SoundInfo::gain_db` has
+/// the class's -12 dB for gunfire): at the bare class level a rifle burst
+/// peaks barely above the music's average, much weaker than in the game,
+/// where first-person sounds get their own mix (`snmx`, not decoded). +6
+/// dB keeps gunfire punchy with the music still on top: 3 dB under where it
+/// was before the class gains were read.
+const WEAPON_GAIN: f32 = 2.0;
 /// A charge held this long makes the next shot the charged one (plasma
 /// pistol); a weapon with no plain shot (the Spartan laser) always fires
 /// charged. Not read from the tags.
@@ -146,6 +150,7 @@ fn one_shot(v: &mut WeaponVoices, cx: &Ctx, weapon: u32, own: bool, snd: u32, at
         }
     }
     voices.push_back(cx.mixer.play(Play {
+        bus: Bus::Effects,
         queue: vec![clip],
         looping: Vec::new(),
         gain,
@@ -174,6 +179,7 @@ fn hold(v: &mut WeaponVoices, cx: &Ctx, lsnd: u32, own: bool, at: Vec3) -> Optio
     };
     Some(Held {
         voice: cx.mixer.play(Play {
+            bus: Bus::Effects,
             queue,
             looping,
             gain,
@@ -196,6 +202,7 @@ fn release(v: &mut WeaponVoices, cx: &Ctx, own: bool, held: Held, at: Vec3) {
             if !clips.is_empty() {
                 let clip = clips[v.random(clips.len())].clone();
                 cx.mixer.play(Play {
+                    bus: Bus::Effects,
                     queue: vec![clip],
                     looping: Vec::new(),
                     gain,

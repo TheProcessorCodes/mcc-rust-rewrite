@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 
-use crate::mixer::{Clip, Mixer, Play, RATE, VoiceId};
+use crate::mixer::{Bus, Clip, Mixer, Play, RATE, VoiceId};
 use crate::{Listener, attenuation};
 
 /// Decoded samples of one permutation, at the sound's own rate.
@@ -294,6 +294,7 @@ pub(crate) fn play(time: Res<Time>, l: Res<Listener>, mixer: Res<Mixer>, mut s: 
                         looping.push(first.clip.clone());
                     }
                     track.voice = Some(mixer.play(Play {
+                        bus: Bus::Ambience,
                         queue: vec![first.clip],
                         looping,
                         gain: [0.0; 2],
@@ -353,6 +354,7 @@ pub(crate) fn play(time: Res<Time>, l: Res<Listener>, mixer: Res<Mixer>, mut s: 
         };
         let g = at.map_or([gain; 2], |p| l.pan(p, gain));
         let id = mixer.play(Play {
+            bus: Bus::Ambience,
             queue: vec![c.clip],
             looping: Vec::new(),
             gain: g,

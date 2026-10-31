@@ -132,6 +132,9 @@ struct Host {
     swapping: bool,
     /// Raised by the skate thread when its first session is up or it ended.
     warmed: Option<Arc<AtomicBool>>,
+    /// The removed- plus moved-objects generations the skate world was
+    /// built with (`halo3_core::objects`).
+    removed: u64,
 }
 
 impl Default for Host {
@@ -153,6 +156,7 @@ impl Default for Host {
             world: None,
             swapping: false,
             warmed: None,
+            removed: 0,
         }
     }
 }
@@ -190,7 +194,22 @@ fn skate_world(
     mask: u32,
     k: f32,
 ) -> (Vec<[[f32; 3]; 3]>, Vec<Vec<[f32; 3]>>) {
-    let loaded = collision.of_bsps(mask);
+    let mut loaded = collision.of_bsps(mask);
+    // Objects a script destroyed or dropped (`halo3_core::objects`).
+    let removed = halo3_core::objects::removed_objects();
+    if !removed.is_empty() {
+        loaded.triangles.retain(|t| t.source.object().is_none_or(|o| !removed.contains(&o)));
+    }
+    // Objects a script moved (an island tilting): where they are now.
+    let poses = halo3_core::objects::object_poses();
+    if !poses.is_empty() {
+        let poses: std::collections::HashMap<u32, bevy::math::Mat4> = poses.into_iter().collect();
+        for t in &mut loaded.triangles {
+            if let Some(m) = t.source.object().and_then(|o| poses.get(&o)) {
+                t.points = t.points.map(|p| m.transform_point3(p));
+            }
+        }
+    }
     let triangles = skate_triangles(&loaded, k);
     let (found, _) = rails::find_rails(&loaded);
     let found = rails::outside_kill_volumes(found, volumes);
@@ -516,7 +535,24 @@ fn update(
     };
     // Another zone set: rebuild the skate world from its collision.
     let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
-    let new_world = host.world != Some(mask);
+    let mut new_world = host.world != Some(mask);
+    // Floor plates a script dropped, objects it moved: rebuild once the
+    // changes settle for a second (the build runs beside the ride). Both
+    // counters only grow, so their sum changes whenever either does.
+    let (removed, changed) = halo3_core::objects::removed_generation();
+    let (posed, pose_changed) = halo3_core::objects::pose_generation();
+    let removed = removed + posed;
+    let changed = changed.max(pose_changed);
+    if removed != host.removed
+        && host.ready
+        && !host.swapping
+        && changed.is_none_or(|t| t.elapsed().as_secs_f32() > 1.0)
+    {
+        host.removed = removed;
+        if host.world.is_some() {
+            new_world = true;
+        }
+    }
     let aspect = windows
         .single()
         .map_or(16.0 / 9.0, |w| w.width() / w.height().max(1.0));
@@ -601,7 +637,7 @@ fn update(
         // swapped in; the ride goes on meanwhile.
         host.world = Some(mask);
         host.swapping = true;
-        host.status = "skate: building the new zone set's collision".into();
+        host.status = "skate: building the new collision".into();
         let _ = send.send(Job::World(mask));
     } else if new_world {
         host.world = Some(mask);

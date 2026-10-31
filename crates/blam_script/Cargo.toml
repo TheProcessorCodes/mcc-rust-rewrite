@@ -1,0 +1,11 @@
+[package]
+name = "blam_script"
+description = "Reads the HaloScript compiled into a Halo 3 scenario: scripts, globals, the expression table and the names scripts refer to"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_cache = { workspace = true }
+thiserror = { workspace = true }

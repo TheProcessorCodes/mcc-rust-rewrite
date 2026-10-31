@@ -61,6 +61,27 @@ pub fn matrix_from_rows(rows: [[f32; 3]; 3], translation: [f32; 3], scale: f32) 
     (m, rot.determinant() < 0.0)
 }
 
+/// A render model's nodes in their bind pose, model frame, in node order
+/// (the same `+48` block, 96-byte entries, that [`decode_with`] reads).
+pub fn node_frames(cache: &CacheFile, mode: &TagEntry) -> Result<Vec<Mat4>> {
+    let base = cache.tag_offset(mode)?;
+    let nodes_block = cache.reader_at(base + 48).block()?;
+    let mut frames: Vec<Mat4> = Vec::with_capacity(nodes_block.count as usize);
+    for o in nodes_block.elements(96) {
+        let mut r = cache.reader_at(o + 4);
+        let parent = r.i16()?;
+        let position = Vec3::from(r.at(o + 12).f32x3()?);
+        let q = r.at(o + 24).f32x4()?;
+        let local = Mat4::from_rotation_translation(Quat::from_xyzw(q[0], q[1], q[2], q[3]).normalize(), position);
+        let parent = usize::try_from(parent)
+            .ok()
+            .and_then(|p| frames.get(p).copied())
+            .unwrap_or(Mat4::IDENTITY);
+        frames.push(parent * local);
+    }
+    Ok(frames)
+}
+
 /// Decodes a render model's first permutation of every region into the
 /// scene's mesh list.
 pub fn decode(
