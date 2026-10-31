@@ -38,9 +38,12 @@ pub mod reflex;
 pub mod tune;
 pub mod unleashed;
 
+use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::{Arc, Mutex};
+
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
-use halo3_core::map::MapAppExt;
+use halo3_core::map::{MapAppExt, Warmup};
 use bevy::window::PrimaryWindow;
 
 use blam_geometry::Collision;
@@ -56,7 +59,111 @@ use physics::{Bike, Controls, World};
 
 /// The map's collision (Halo units), handed over by `main`.
 #[derive(Resource)]
-pub struct BikeInput(pub Collision);
+pub struct BikeInput(pub Arc<Collision>);
+
+/// The collision [`World`] of the loaded BSPs, shared by the bike, the
+/// Spartan on foot and the enemies. Built on a thread as soon as the map is
+/// in (behind the menu's loading screen, [`Warmup`]) and again when the
+/// zone set changes, so getting on the bike does not stop the game.
+#[derive(Resource, Default)]
+pub struct SharedWorld {
+    built: Option<(u32, Arc<World>)>,
+    job: Option<(u32, Mutex<Receiver<World>>)>,
+}
+
+/// The [`Warmup`] name of the shared world's first build.
+const WARMUP: &str = "bike collision";
+
+impl SharedWorld {
+    /// The world for `mask` when it is built.
+    pub fn ready(&self, mask: u32) -> Option<Arc<World>> {
+        self.built.as_ref().filter(|(m, _)| *m == mask).map(|(_, w)| Arc::clone(w))
+    }
+
+    /// The world for `mask`: built, finishing the background build of it,
+    /// or (no build of it running) built here and now.
+    pub fn wait(&mut self, collision: &Collision, mask: u32) -> Arc<World> {
+        if let Some(w) = self.ready(mask) {
+            return w;
+        }
+        if let Some((m, job)) = self.job.take() {
+            if m == mask
+                && let Ok(w) = job.into_inner().unwrap_or_else(|e| e.into_inner()).recv()
+            {
+                return self.keep(mask, w);
+            }
+        }
+        let w = build_world(collision, mask);
+        self.keep(mask, w)
+    }
+
+    fn keep(&mut self, mask: u32, world: World) -> Arc<World> {
+        let w = Arc::new(world);
+        self.built = Some((mask, Arc::clone(&w)));
+        w
+    }
+
+    /// Starts building `mask` on a thread unless it is built or building.
+    fn request(&mut self, collision: &Arc<Collision>, mask: u32) {
+        if self.ready(mask).is_some() || self.job.as_ref().is_some_and(|(m, _)| *m == mask) {
+            return;
+        }
+        let (send, receive) = std::sync::mpsc::channel();
+        let collision = Arc::clone(collision);
+        let spawned = std::thread::Builder::new()
+            .name("halo3-bike-world".into())
+            .spawn(move || {
+                let _ = send.send(build_world(&collision, mask));
+            });
+        match spawned {
+            Ok(_) => self.job = Some((mask, Mutex::new(receive))),
+            Err(e) => warn!("bike: collision thread: {e}"),
+        }
+    }
+
+    /// Takes in a finished background build.
+    fn poll(&mut self) {
+        let Some((mask, job)) = self.job.as_ref() else {
+            return;
+        };
+        let mask = *mask;
+        let received = job.lock().unwrap_or_else(|e| e.into_inner()).try_recv();
+        match received {
+            Ok(w) => {
+                self.job = None;
+                self.keep(mask, w);
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                warn!("bike: the collision build for BSP mask {mask:#x} died");
+                self.job = None;
+            }
+        }
+    }
+}
+
+/// Keeps the shared world on the loaded zone set, building in the
+/// background; holds the loading screen until the first build is in.
+fn warm_world(
+    mut shared: ResMut<SharedWorld>,
+    mut warmup: ResMut<Warmup>,
+    input: Option<Res<BikeInput>>,
+    loaded: Res<LoadedBsps>,
+) {
+    let Some(input) = input else {
+        warmup.0.remove(WARMUP);
+        return;
+    };
+    let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
+    shared.poll();
+    if shared.built.is_none() && shared.job.is_none() {
+        warmup.0.insert(WARMUP);
+    }
+    shared.request(&input.0, mask);
+    if shared.built.is_some() || shared.job.is_none() {
+        warmup.0.remove(WARMUP);
+    }
+}
 
 /// Start riding at once at a Halo position (world units) facing a Halo yaw
 /// (radians), holding a steady throttle: screenshot mode.
@@ -82,10 +189,12 @@ impl Plugin for BikePlugin {
             .init_map_resource::<SessionFlag>()
             .init_map_resource::<halo3_core::bike::BikeMotion>()
             .add_plugins(tune::TunePlugin)
-            .add_systems(halo3_core::map::MapStartup, (setup, model::start, spawn_crashed_text))
+            .init_map_resource::<SharedWorld>()
+            .add_systems(halo3_core::map::MapStartup, (setup, model::start, spawn_crashed_text, warm_world))
             .add_systems(
                 Update,
                 (
+                    warm_world,
                     ride.run_if(halo3_core::pause::running).run_if(tune::closed),
                     model::build,
                     draw_bike,
@@ -102,7 +211,7 @@ impl Plugin for BikePlugin {
 
 #[derive(Resource, Default)]
 struct Riding {
-    world: Option<World>,
+    world: Option<Arc<World>>,
     /// The BSPs `world` was built from.
     mask: Option<u32>,
     bike: Option<Bike>,
@@ -289,6 +398,7 @@ fn ride(
     (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
     mut flag: ResMut<SessionFlag>,
     input: Option<Res<BikeInput>>,
+    mut shared: ResMut<SharedWorld>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
     lifts: Option<Res<halo3_core::lifts::Lifts>>,
     fallback: Option<Res<halo3_core::falls::FallbackSpot>>,
@@ -314,7 +424,7 @@ fn ride(
     let mounting = matches!(mount.0, Some((Ride::Bike, _)));
     let wanted = riding.bike.is_some() || toggle || auto.0.is_some() || mounting;
     if wanted && riding.mask != Some(mask) {
-        riding.world = Some(build_world(&input.0, mask));
+        riding.world = Some(shared.wait(&input.0, mask));
         riding.mask = Some(mask);
     }
     let Some(world) = riding.world.as_ref() else {

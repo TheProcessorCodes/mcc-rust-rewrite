@@ -88,7 +88,7 @@ const THIRD_FOV: f32 = 60.0;
 
 #[derive(Resource, Default)]
 pub struct OnFoot {
-    world: Option<World>,
+    world: Option<std::sync::Arc<World>>,
     /// The BSPs `world` was built from.
     mask: Option<u32>,
     pub spartan: Option<Spartan>,
@@ -117,7 +117,7 @@ pub struct OnFoot {
 impl OnFoot {
     /// The collision he walks on, once built.
     pub fn world(&self) -> Option<&World> {
-        self.world.as_ref()
+        self.world.as_deref()
     }
 
     /// Where the camera looks.
@@ -157,7 +157,7 @@ pub fn walk(
     mut commands: Commands,
     mut foot: ResMut<OnFoot>,
     (mut auto, mut dismount, mut mount): (ResMut<AutoStart>, ResMut<Dismount>, ResMut<Mount>),
-    input: Option<Res<halo3_bike::BikeInput>>,
+    (input, mut shared): (Option<Res<halo3_bike::BikeInput>>, ResMut<halo3_bike::SharedWorld>),
     tuning: Res<FootTuning>,
     // Paired: a system takes at most 16 parameters.
     (kill, lifts): (Option<Res<halo3_core::falls::KillZones>>, Option<Res<halo3_core::lifts::Lifts>>),
@@ -199,7 +199,7 @@ pub fn walk(
     let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
     let wanted = foot.spartan.is_some() || toggle || auto.0.is_some() || dismount.0.is_some();
     if wanted && foot.mask != Some(mask) {
-        foot.world = Some(halo3_bike::build_world(&input.0, mask));
+        foot.world = Some(shared.wait(&input.0, mask));
         foot.mask = Some(mask);
     }
     let Some(world) = foot.world.as_ref() else {

@@ -68,7 +68,7 @@ pub struct Enemy {
     body: Option<Body>,
     /// Collision to stand him on while flying (on foot, the Spartan's is
     /// used), and the BSPs it was built from.
-    world: Option<(u32, World)>,
+    world: Option<(u32, std::sync::Arc<World>)>,
 }
 
 struct Body {
@@ -213,7 +213,7 @@ fn control(
     mut commands: Commands,
     mut enemy: ResMut<Enemy>,
     foot: Res<OnFoot>,
-    input: Option<Res<halo3_bike::BikeInput>>,
+    (input, mut shared): (Option<Res<halo3_bike::BikeInput>>, ResMut<halo3_bike::SharedWorld>),
     loaded: Res<LoadedBsps>,
     statue: Option<Res<SpartanStatue>>,
     stand: Option<Res<Stand>>,
@@ -249,9 +249,9 @@ fn control(
         let Some(input) = input else {
             return;
         };
-        enemy.world = Some((mask, halo3_bike::build_world(&input.0, mask)));
+        enemy.world = Some((mask, shared.wait(&input.0, mask)));
     }
-    let Some(world) = foot.world().or(enemy.world.as_ref().map(|(_, w)| w)) else {
+    let Some(world) = foot.world().or(enemy.world.as_ref().map(|(_, w)| &**w)) else {
         return;
     };
 

@@ -23,6 +23,7 @@ use glam::Vec3;
 
 use crate::{Collision, TriggerVolume};
 use crate::collision::surface_flags;
+use crate::column_grid::ColumnGrid;
 
 /// Inches per Halo world unit: one unit is ten feet.
 pub const INCHES_PER_WORLD_UNIT: f32 = 120.0;
@@ -268,36 +269,18 @@ fn polyline_len(points: &[Vec3]) -> f32 {
 }
 
 struct Grid {
-    cells: HashMap<(i32, i32), Vec<u32>>,
-}
-
-fn cell_of(v: f32) -> i32 {
-    (v / CELL).floor() as i32
+    columns: ColumnGrid,
 }
 
 impl Grid {
     fn build(tris: &[[Vec3; 3]]) -> Self {
-        let mut cells: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+        let mut columns = ColumnGrid::new(CELL);
         for (index, tri) in tris.iter().enumerate() {
             let min = tri[0].min(tri[1]).min(tri[2]);
             let max = tri[0].max(tri[1]).max(tri[2]);
-            // A damaged vertex far away (or not finite) would span billions
-            // of cells; no real triangle crosses more than a few thousand.
-            if !min.is_finite()
-                || !max.is_finite()
-                || (cell_of(max.x) as i64 - cell_of(min.x) as i64)
-                    * (cell_of(max.y) as i64 - cell_of(min.y) as i64)
-                    > 1_000_000
-            {
-                continue;
-            }
-            for x in cell_of(min.x)..=cell_of(max.x) {
-                for y in cell_of(min.y)..=cell_of(max.y) {
-                    cells.entry((x, y)).or_default().push(index as u32);
-                }
-            }
+            columns.insert(index as u32, [min.x, min.y], [max.x, max.y]);
         }
-        Self { cells }
+        Self { columns }
     }
 }
 
@@ -331,20 +314,14 @@ impl Probe<'_> {
             self.round = 1;
         }
         self.scratch.clear();
-        for x in cell_of(min.x)..=cell_of(max.x) {
-            for y in cell_of(min.y)..=cell_of(max.y) {
-                let Some(cell) = self.grid.cells.get(&(x, y)) else {
-                    continue;
-                };
-                for &index in cell {
-                    let seen = &mut self.stamp[index as usize];
-                    if *seen != self.round {
-                        *seen = self.round;
-                        self.scratch.push(index);
-                    }
-                }
+        let (stamp, scratch, round) = (&mut self.stamp, &mut self.scratch, self.round);
+        self.grid.columns.query([min.x, min.y], [max.x, max.y], |index| {
+            let seen = &mut stamp[index as usize];
+            if *seen != round {
+                *seen = round;
+                scratch.push(index);
             }
-        }
+        });
         self.scratch
             .iter()
             .any(|&index| ray_triangle(origin, dir, len, &self.tris[index as usize]))

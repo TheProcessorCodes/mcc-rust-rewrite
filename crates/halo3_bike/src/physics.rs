@@ -25,10 +25,10 @@
 //! - in the air the stick turns the bike against heavy damping, and let go
 //!   it levels and lines up with where it is going.
 
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use bevy::math::{Mat3, Quat, Vec2, Vec3};
+use blam_geometry::column_grid::ColumnGrid;
 
 use super::reflex::Tuning;
 use super::unleashed::{RPM, Setup, Tyre, ft, lerp_clamp};
@@ -179,18 +179,16 @@ struct Triangle {
 /// The map's collision in a flat grid of columns (X, Z), for short rays and
 /// small spheres.
 pub struct World {
-    cell: f32,
     triangles: Vec<Triangle>,
-    grid: HashMap<(i32, i32), Vec<u32>>,
+    grid: ColumnGrid,
 }
 
 impl World {
     /// Triangles in the renderer frame, wound counter-clockwise seen from the
     /// side you stand on, with their two-sided flag.
     pub fn new(triangles: impl IntoIterator<Item = ([Vec3; 3], bool)>) -> World {
-        let cell = 4.0;
         let mut out = Vec::new();
-        let mut grid: HashMap<(i32, i32), Vec<u32>> = HashMap::new();
+        let mut grid = ColumnGrid::new(4.0);
         for ([a, b, c], two_sided) in triangles {
             let normal = (b - a).cross(c - a);
             if !normal.is_finite() || normal.length_squared() < 1e-10 {
@@ -206,17 +204,9 @@ impl World {
             });
             let lo = a.min(b).min(c);
             let hi = a.max(b).max(c);
-            for x in (lo.x / cell).floor() as i32..=(hi.x / cell).floor() as i32 {
-                for z in (lo.z / cell).floor() as i32..=(hi.z / cell).floor() as i32 {
-                    grid.entry((x, z)).or_default().push(i);
-                }
-            }
+            grid.insert(i, [lo.x, lo.z], [hi.x, hi.z]);
         }
-        World {
-            cell,
-            triangles: out,
-            grid,
-        }
+        World { triangles: out, grid }
     }
 
     #[allow(clippy::len_without_is_empty)]
@@ -227,14 +217,11 @@ impl World {
     /// Triangles whose columns come within `radius` of `centre` (X, Z), once each.
     pub fn gather(&self, centre: Vec3, radius: f32, out: &mut Vec<u32>) {
         out.clear();
-        let c = self.cell;
-        for x in ((centre.x - radius) / c).floor() as i32..=((centre.x + radius) / c).floor() as i32 {
-            for z in ((centre.z - radius) / c).floor() as i32..=((centre.z + radius) / c).floor() as i32 {
-                if let Some(list) = self.grid.get(&(x, z)) {
-                    out.extend_from_slice(list);
-                }
-            }
-        }
+        self.grid.query(
+            [centre.x - radius, centre.z - radius],
+            [centre.x + radius, centre.z + radius],
+            |i| out.push(i),
+        );
         out.sort_unstable();
         out.dedup();
     }

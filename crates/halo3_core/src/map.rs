@@ -33,6 +33,13 @@ pub struct MapMenu;
 #[derive(Resource)]
 pub struct BackToMenu;
 
+/// Work the map starts in the background that the loading screen waits
+/// for (the bike's collision, the skate session), by name. Plugins add a
+/// name in [`MapStartup`] and take it out when the work is done or failed;
+/// the map menu keeps its loading screen up until the set is empty.
+#[derive(Resource, Default, Debug)]
+pub struct Warmup(pub std::collections::BTreeSet<&'static str>);
+
 /// Run once when the map is in, in place of `Startup`.
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MapStartup;
@@ -89,6 +96,7 @@ pub struct MapPhasePlugin;
 impl Plugin for MapPhasePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MapResets>()
+            .init_map_resource::<Warmup>()
             .init_schedule(MapStartup)
             .init_schedule(MapPostStartup)
             .add_systems(First, start_map);
