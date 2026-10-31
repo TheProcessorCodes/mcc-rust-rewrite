@@ -31,9 +31,9 @@
 //! lists the controls (`pause.rs`).
 //! ```
 //!
-//! The first launch asks for the player's MCC install and, optionally,
-//! their Skate 3 (`.iso` or `default.xex`), and saves the answers
-//! (`halo3_setup`); `--setup` asks again. `<map>` is looked up in that MCC's
+//! The first launch asks for the player's own MCC, Skate 3 (`.iso` or
+//! `default.xex`) and MX vs ATV Reflex, all three required, and saves the
+//! answers (`halo3_setup`); `--setup` asks again. `<map>` is looked up in that MCC's
 //! `halo3\maps` (`%HALO3_MAPS%` overrides), Halo 2 maps (`coagulation`,
 //! `lockout`, or `h2:NAME`) in its `halo2\h2_maps_win64_dx11`
 //! (`%HALO2_MAPS%`; `halo2.rs`). Halo 3's Blackout, whose file is
@@ -102,9 +102,10 @@ fn codename(arg: &str) -> (Option<u8>, &str) {
 fn main() -> anyhow::Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let help = matches!(args.first().map(String::as_str), Some("--help" | "-h"));
-    // First-run setup: MCC (required), Skate 3 and Reflex (optional), asked
-    // once and saved (`halo3_setup`); `--setup` asks again. Headless runs
-    // (`--shot`, `--menu-shot`) never show a dialog.
+    // First-run setup: MCC, Skate 3 and Reflex, all required, asked once
+    // and saved (`halo3_setup`); `--setup` asks again. Without all three the
+    // game does not start. Headless runs (`--shot`, `--menu-shot`) never show
+    // a dialog: they need the setup done (or the dev overrides).
     let redo = args.iter().any(|a| a == "--setup");
     args.retain(|a| a != "--setup");
     if !help && args.first().map(String::as_str) != Some("--test-scene") {

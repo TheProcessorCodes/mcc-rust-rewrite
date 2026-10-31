@@ -20,11 +20,9 @@ pub mod key {
     pub const MCC: &str = "MCC";
     /// The converted Skate 3 data (holding `private\game.json`).
     pub const SKATE_ASSETS: &str = "SKATE_ASSETS";
-    /// `off` when the player chose to play without Skate 3.
-    pub const SKATE: &str = "SKATE";
     /// The Skate 3 converter, when it is not beside the exe.
     pub const SKATE_CONVERTER: &str = "SKATE_CONVERTER";
-    /// The MX vs ATV Reflex install, or `off` when the player has none.
+    /// The MX vs ATV Reflex install.
     pub const REFLEX: &str = "REFLEX";
 }
 
@@ -37,8 +35,7 @@ pub fn is_reflex(root: &Path) -> bool {
     root.join("Database").join("MXs.dx9.package").is_file()
 }
 
-/// The MX vs ATV Reflex install (optional; the dirt bike's model and engine
-/// sound): `%REFLEX_GAME%`, the saved setup, else the first Steam library
+/// The MX vs ATV Reflex install (the dirt bike's model and engine sound): `%REFLEX_GAME%`, the saved setup, else the first Steam library
 /// holding one.
 pub fn reflex_root() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("REFLEX_GAME").map(PathBuf::from) {
@@ -161,8 +158,7 @@ pub fn is_skate_assets(assets: &Path) -> bool {
 }
 
 /// The converted Skate 3 data: `%HALO3_SKATE_ASSETS%` or
-/// `%IW4L_SKATE_ASSETS%`, else the saved setup. None when the player has
-/// not given Skate 3.
+/// `%IW4L_SKATE_ASSETS%`, else the saved setup. None before setup has run.
 pub fn skate_assets() -> Option<PathBuf> {
     ["HALO3_SKATE_ASSETS", "IW4L_SKATE_ASSETS"]
         .iter()
@@ -283,13 +279,13 @@ mod tests {
     fn settings_replace_keys_and_keep_other_lines() {
         let mut s = Settings { lines: vec!["# mine".into(), "MCC=\"old\"".into()] };
         s.set(key::MCC, r"E:\Games\MCC");
-        s.set(key::SKATE, "off");
+        s.set(key::REFLEX, r"E:\Games\Reflex");
         assert_eq!(s.get(key::MCC), Some(r"E:\Games\MCC"));
-        assert_eq!(s.get(key::SKATE), Some("off"));
+        assert_eq!(s.get(key::REFLEX), Some(r"E:\Games\Reflex"));
         assert_eq!(s.lines[0], "# mine");
         assert_eq!(s.lines.len(), 3);
-        s.remove(key::SKATE);
-        assert_eq!(s.get(key::SKATE), None);
+        s.remove(key::REFLEX);
+        assert_eq!(s.get(key::REFLEX), None);
     }
 
     #[test]

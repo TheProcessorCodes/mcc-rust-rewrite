@@ -131,8 +131,8 @@ checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkou
 & "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\out\bin\halo3.exe" 120_halo --zone 6 --music 120_music_15
 ```
 
-**First-run setup (2026-10-29).** The first windowed launch asks for MCC and, optionally, Skate 3
-(`.iso` or `default.xex`) and MX vs ATV Reflex, converts Skate 3 once and saves everything in
+**First-run setup (2026-10-29).** The first windowed launch asks for MCC, Skate 3
+(`.iso` or `default.xex`) and MX vs ATV Reflex, all three required, converts Skate 3 once and saves everything in
 `%LOCALAPPDATA%\Halo3Rewrite` (`crates/halo3_setup`, README "First run"). All game paths go
 through `crates/game_paths`; no code names a folder on this PC any more. Still open for a
 public release: `skate-host` is a path dependency on `mw2-skate-3-src`, the release needs

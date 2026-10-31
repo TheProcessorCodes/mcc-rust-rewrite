@@ -1,14 +1,19 @@
-//! First-launch setup: find the player's Halo MCC install, offer to take
-//! their Skate 3 (an Xbox 360 disc image or an extracted `default.xex`),
-//! convert the few Skate 3 files skating needs with the bundled converter,
-//! note MX vs ATV Reflex if the player has it, and save it all in
-//! `setup.env` (`game_paths::settings_path`). Every later launch goes
-//! straight in; `halo3 --setup` asks again.
+//! First-launch setup: the three games this one is played with, each the
+//! player's own copy, asked for once:
 //!
-//! The model is IW4L's `launcher/src/first_run.rs`. MCC is required; Skate
-//! 3 is optional (without it skating is off), and so is Reflex (without it
-//! the dirt bike is a stand-in). Nothing is written into any game's folder:
-//! the converted data goes under `game_paths::settings_dir`.
+//! - Halo: The Master Chief Collection (its Halo 3 build is checked);
+//! - Skate 3 for Xbox 360, a disc image (`.iso`) or the extracted game's
+//!   `default.xex`, from which the few files skating needs are converted
+//!   once with the bundled converter;
+//! - MX vs ATV Reflex (the dirt bike's model and engine sound).
+//!
+//! All three are required: cancelling any of them stops setup, and the game
+//! does not start. The answers go in `setup.env` (`game_paths::settings_path`)
+//! and every later launch goes straight in; `halo3 --setup` asks again.
+//!
+//! The model is IW4L's `launcher/src/first_run.rs`. Nothing is written into
+//! any game's folder: the converted data goes under
+//! `game_paths::settings_dir`.
 
 mod board;
 pub mod xiso;
@@ -36,59 +41,55 @@ const SKATE_DISC_FILES: [&str; 5] = [
 ];
 const SKATE_DISC_DIRS: [&str; 1] = ["data/anim"];
 
-/// Makes sure MCC (required) and Skate 3 (optional) are set up. With
-/// `interactive` false (headless screenshots) it never shows a dialog: it
-/// uses what is saved or found, and fails if MCC cannot be found. `redo`
-/// forgets the saved answers and asks again.
+/// What a headless run says when a game has not been set up yet.
+const RUN_SETUP: &str = "Run halo3 once with a window to set it up.";
+
+/// Makes sure MCC, Skate 3 and Reflex are all set up; an `Err` means the
+/// game must not start. With `interactive` false (headless screenshots) it
+/// never shows a dialog or writes the setup: it uses what is saved or found.
+/// `redo` forgets the saved answers and asks again.
 pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
     let path = game_paths::settings_path();
     let mut settings = Settings::read(&path);
     if redo {
-        for k in [key::MCC, key::SKATE, key::SKATE_ASSETS, key::REFLEX] {
+        for k in [key::MCC, key::SKATE_ASSETS, key::REFLEX] {
             settings.remove(k);
         }
         settings.write(&path)?;
     }
 
     prepare_mcc(&mut settings, &path, interactive)?;
-    if let Some(assets) = prepare_skate(&mut settings, &path, interactive)? {
-        board::ensure(&assets).map_err(|e| format!("Could not prepare the skateboard: {e}"))?;
-    }
+    let assets = prepare_skate(&mut settings, &path, interactive)?;
+    board::ensure(&assets).map_err(|e| format!("Could not prepare the skateboard: {e}"))?;
     prepare_reflex(&mut settings, &path, interactive)
 }
 
-/// MX vs ATV Reflex, optional: the dirt bike's Dakumoto 450F and its engine
-/// recordings. Saved without a question when Steam has it; otherwise asked
-/// once, and `off` remembers a No. Without it the bike is a stand-in.
+/// MX vs ATV Reflex: the dirt bike's Dakumoto 450F and its engine
+/// recordings. Saved without a question when Steam has it, else picked.
 fn prepare_reflex(settings: &mut Settings, path: &Path, interactive: bool) -> Result<(), String> {
     if std::env::var_os("REFLEX_GAME").is_some() || game_paths::saved_reflex().is_some() {
-        return Ok(());
+        return game_paths::reflex_root()
+            .map(|_| ())
+            .ok_or_else(|| "REFLEX_GAME is not an MX vs ATV Reflex folder.".to_owned());
     }
     if let Some(found) = game_paths::find_reflex() {
         // Headless runs only read; Steam is searched again each time.
-        if !interactive {
-            return Ok(());
+        if interactive {
+            settings.set_path(key::REFLEX, &found);
+            settings.write(path)?;
         }
-        settings.set_path(key::REFLEX, &found);
-        return settings.write(path);
-    }
-    if settings.get(key::REFLEX) == Some("off") || !interactive {
         return Ok(());
     }
-    let answer = MessageDialog::new()
-        .set_title(TITLE)
-        .set_description(
-            "Do you have MX vs ATV Reflex (PC)? It is optional.\n\n\
-             The dirt bike uses Reflex's Dakumoto 450F and its engine sounds from your own copy. \
-             Choose No to ride a stand-in bike. Run halo3 --setup to be asked again.",
-        )
-        .set_buttons(MessageButtons::YesNo)
-        .show();
-    let picked = if answer == MessageDialogResult::Yes { locate_reflex() } else { None };
-    match picked {
-        Some(root) => settings.set_path(key::REFLEX, &root),
-        None => settings.set(key::REFLEX, "off"),
+    if !interactive {
+        return Err(format!("MX vs ATV Reflex was not found. {RUN_SETUP}"));
     }
+    inform(
+        "This game also needs your own copy of MX vs ATV Reflex (PC): the dirt bike is its \
+         Dakumoto 450F, with its engine sounds.\n\n\
+         Select your MX vs ATV Reflex folder (the one containing the Database folder).",
+    );
+    let root = locate_reflex().ok_or("Setup cancelled: MX vs ATV Reflex is needed to play.")?;
+    settings.set_path(key::REFLEX, &root);
     settings.write(path)
 }
 
@@ -205,56 +206,38 @@ fn locate_mcc() -> Result<PathBuf, String> {
     }
 }
 
-/// The converted Skate 3 data, or none when the player plays without it.
-fn prepare_skate(settings: &mut Settings, path: &Path, interactive: bool) -> Result<Option<PathBuf>, String> {
+/// The converted Skate 3 data: saved (or a dev override), else converted
+/// now from the player's Skate 3.
+fn prepare_skate(settings: &mut Settings, path: &Path, interactive: bool) -> Result<PathBuf, String> {
     if let Some(assets) = game_paths::skate_assets().filter(|a| game_paths::is_skate_assets(a)) {
-        return Ok(Some(assets));
+        return Ok(assets);
     }
-    if settings.get(key::SKATE) == Some("off") || !interactive {
-        return Ok(None);
+    if !interactive {
+        return Err(format!("Skate 3 has not been set up. {RUN_SETUP}"));
     }
-    match convert_skate(settings)? {
-        Some(assets) => {
-            settings.remove(key::SKATE);
-            settings.set_path(key::SKATE_ASSETS, &assets);
-            settings.write(path)?;
-            Ok(Some(assets))
-        }
-        None => {
-            settings.set(key::SKATE, "off");
-            settings.write(path)?;
-            Ok(None)
-        }
-    }
+    let assets = convert_skate(settings)?;
+    settings.set_path(key::SKATE_ASSETS, &assets);
+    settings.write(path)?;
+    Ok(assets)
 }
 
-fn convert_skate(settings: &mut Settings) -> Result<Option<PathBuf>, String> {
-    let answer = MessageDialog::new()
-        .set_title(TITLE)
-        .set_description(
-            "Do you have Skate 3 (Xbox 360)?\n\n\
-             Skating needs a few files from your own copy: either the disc image (.iso) \
-             or the extracted game's default.xex with its data folder beside it.\n\n\
-             Choose No to play without skating. Run halo3 --setup to be asked again.",
-        )
-        .set_buttons(MessageButtons::YesNo)
-        .show();
-    if answer != MessageDialogResult::Yes {
-        return Ok(None);
-    }
-    let Some(converter) = find_converter(settings)? else {
-        return Ok(None);
-    };
+const SKATE_CANCELLED: &str = "Setup cancelled: Skate 3 is needed to play.";
+
+fn convert_skate(settings: &mut Settings) -> Result<PathBuf, String> {
+    inform(
+        "This game also needs your own copy of Skate 3 (Xbox 360): skating runs on its data.\n\n\
+         Select either the disc image (.iso) or the extracted game's default.xex with its data \
+         folder beside it. A few files are converted once and kept; the game itself is not changed.",
+    );
+    let converter = find_converter(settings)?.ok_or(SKATE_CANCELLED)?;
     let dir = game_paths::settings_dir();
     let out = dir.join("skate-data");
     loop {
-        let Some(picked) = rfd::FileDialog::new()
+        let picked = rfd::FileDialog::new()
             .set_title("Select your Skate 3 disc image (.iso) or default.xex")
             .add_filter("Skate 3 (.iso or default.xex)", &["iso", "xex"])
             .pick_file()
-        else {
-            return Ok(None);
-        };
+            .ok_or(SKATE_CANCELLED)?;
         let result = if picked.extension().is_some_and(|e| e.eq_ignore_ascii_case("iso")) {
             let staging = dir.join("skate-disc");
             let result = unpack_disc(&picked, &staging)
@@ -267,12 +250,12 @@ fn convert_skate(settings: &mut Settings) -> Result<Option<PathBuf>, String> {
         };
         match result {
             Ok(()) => break,
-            Err(e) => inform(&format!("{e}\n\nSelect Skate 3 again, or Cancel to play without skating.")),
+            Err(e) => inform(&format!("{e}\n\nSelect Skate 3 again.")),
         }
     }
     let assets = out.join("assets");
     if game_paths::is_skate_assets(&assets) {
-        Ok(Some(assets))
+        Ok(assets)
     } else {
         Err(format!("The Skate 3 conversion finished but {} is incomplete.", assets.display()))
     }
@@ -280,7 +263,7 @@ fn convert_skate(settings: &mut Settings) -> Result<Option<PathBuf>, String> {
 
 /// The converter: beside the exe (`skate\iw4l-skate-convert.exe`, as the
 /// release ships it), `%HALO3_SKATE_CONVERTER%`, the saved one, or one the
-/// player points at (saved for next time).
+/// player points at (saved for next time). None when the player cancels.
 fn find_converter(settings: &mut Settings) -> Result<Option<PathBuf>, String> {
     let beside = std::env::current_exe()
         .ok()

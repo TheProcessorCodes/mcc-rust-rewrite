@@ -22,16 +22,16 @@ far, the paths on disk and the open decision.
 - **No game files in this repo.** The user brings their own copies; the code reads them at
   runtime, the way IW4L does.
 - **Build for a public release.** Assume a stranger downloads this and has only their own
-  MCC install and their own Skate 3 copy. Nothing may depend on this PC's paths, the
+  MCC install, Skate 3 copy and MX vs ATV Reflex install. Nothing may depend on this PC's paths, the
   `mw2 skate 3` folder or game data in the repo or the release. The one-time first-run setup
-  (`crates/halo3_setup`, README "First run") finds or asks for MCC and Skate 3 (`.iso` or
-  `default.xex`), checks them, converts what it needs, and saves it all per user in
+  (`crates/halo3_setup`, README "First run") finds or asks for MCC, Skate 3 (`.iso` or
+  `default.xex`) and Reflex, all three required to play, checks them, converts what it needs, and saves it all per user in
   `%LOCALAPPDATA%\Halo3Rewrite`, so it never asks again. New code gets game paths only
   through `crates/game_paths` (`halo3_maps()`, `halo3_map(name)` for tests, `skate_assets()`,
-  ...), never a hard-coded `C:\`/`D:\` path; env vars stay as dev overrides, and a game the
-  player has not given must degrade (skating off, test skipped), not crash. Everything Halo needs is read from MCC at run time;
-  everything Skate 3 needs comes out of the user's Skate 3 copy. Don't commit files
-  extracted from either game (textures, models, audio, dumps of tag data).
+  ...), never a hard-coded `C:\`/`D:\` path; env vars stay as dev overrides. Tests skip quietly
+  when a game is not installed, and code still must not crash if a file is missing. Everything Halo needs is read from MCC at run time;
+  everything Skate 3 needs comes out of the user's Skate 3 copy, everything Reflex needs out of
+  their Reflex. Don't commit files extracted from any of them (textures, models, audio, dumps of tag data).
 - **Code elsewhere on disk is reference, not ours to edit.** `mw2-skate-3-src`,
   `D:\reflex-tools` and the Reclaimer clone belong to other work. Read them and copy what
   helps into this project; do not change them without asking.
