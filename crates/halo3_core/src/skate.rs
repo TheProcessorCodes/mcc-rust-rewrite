@@ -68,6 +68,60 @@ impl Default for RiderPose {
 #[derive(Resource, Default)]
 pub struct Respawn(pub Option<(Vec3, f32)>);
 
+/// The rider jumping off the board or the bike onto his feet, keeping the
+/// ride's momentum: set by `halo3_skate` / `halo3_bike` as the ride ends,
+/// taken by `halo3_foot`.
+#[derive(Resource, Default)]
+pub struct Dismount(pub Option<Bail>);
+
+/// Where the rider left the ride, in the renderer frame.
+#[derive(Clone, Copy, Debug)]
+pub struct Bail {
+    /// His feet, metres.
+    pub position: Vec3,
+    /// The ride's velocity, m/s.
+    pub velocity: Vec3,
+    /// Where the camera looked: `FlyCamera` yaw and pitch.
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl Bail {
+    /// From the view camera at the moment of the bail.
+    pub fn new(position: Vec3, velocity: Vec3, view: &Transform) -> Bail {
+        let f = view.forward().as_vec3();
+        Bail {
+            position,
+            velocity,
+            yaw: (-f.x).atan2(-f.z),
+            pitch: f.y.clamp(-1.0, 1.0).asin(),
+        }
+    }
+}
+
+/// The Spartan getting back on the bike or the board straight from walking:
+/// set by `halo3_foot` as he leaves his feet, taken by `halo3_bike` /
+/// `halo3_skate`. The bike keeps his momentum; the board starts from rest.
+#[derive(Resource, Default)]
+pub struct Mount(pub Option<(Ride, Bail)>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ride {
+    Bike,
+    Board,
+}
+
+/// The bail button, the same while skating and riding: G, or the d-pad's up.
+pub fn bail_pressed(keys: &ButtonInput<KeyCode>, pad: Option<&Gamepad>) -> bool {
+    keys.just_pressed(KeyCode::KeyG) || pad.is_some_and(dpad_up_alone)
+}
+
+/// The d-pad's up pressed without LB: LB + up is Skate 3's session marker,
+/// which must not also switch modes.
+pub fn dpad_up_alone(pad: &Gamepad) -> bool {
+    pad.just_pressed(GamepadButton::DPadUp) && !pad.pressed(GamepadButton::LeftTrigger)
+}
+
 /// Marks the camera while the skate engine drives it.
 #[derive(Component)]
 pub struct Skating;

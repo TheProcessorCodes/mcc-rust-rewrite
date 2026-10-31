@@ -1,14 +1,16 @@
 //! Halo 3's own sound in the viewer: the map's ambience (each cluster's
 //! background sound with its random details, sound scenery placed in the
-//! world), its music by hand, board sounds while skating, and weapon sounds
-//! (`weapons.rs`).
+//! world), its music by hand, board sounds while skating, weapon sounds
+//! (`weapons.rs`) and the dirt bike's engine (`engine.rs`).
 //! `docs/format/sound.md` has the data, `docs/viewer.md` "Sound" the rules.
 //!
 //! Keys: M music on / off, Shift+M next track, N alternate loop, K mute,
-//! `-` / `=` volume. `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
+//! `-` / `=` volume, H the bike's engine sound (Reflex, synth, off). `HALO3_AUDIO=0` turns sound off; it is off in `--shot`
 //! mode, where `HALO3_AUDIO_TRACE=1` runs the logic without output and
 //! logs which emitters are active at each view.
 
+pub mod engine;
+pub mod halo2;
 mod library;
 mod mixer;
 mod weapons;
@@ -35,6 +37,9 @@ pub struct HaloAudioPlugin {
     pub trace: bool,
     /// `--music NAME|N`: a music track to start with.
     pub music: Option<String>,
+    /// A map with no Halo 3 cache file (Halo 2): its ambience, decoded by
+    /// the caller on a thread (`halo2.rs`).
+    pub plain: Mutex<Option<halo2::PlainLoader>>,
 }
 
 /// Whether sound is wanted: not in `--shot` mode, not with `HALO3_AUDIO=0`.
@@ -49,9 +54,10 @@ pub fn trace_wanted() -> bool {
 
 impl Plugin for HaloAudioPlugin {
     fn build(&self, app: &mut App) {
-        let Some(cache) = self.cache else {
+        let plain = self.plain.lock().unwrap().take();
+        if self.cache.is_none() && plain.is_none() {
             return;
-        };
+        }
         let volume = std::env::var("HALO3_VOLUME")
             .ok()
             .and_then(|v| v.parse::<f32>().ok())
@@ -64,7 +70,34 @@ impl Plugin for HaloAudioPlugin {
                 level: volume,
                 muted: false,
             })
-            .insert_resource(Loader(Mutex::new(Some(library::load(cache)))))
+            .init_resource::<engine::EngineSound>()
+            .add_systems(Update, engine::bike_engine.before(volume_keys));
+        if let Some(cache) = self.cache {
+            self.build_halo3(app, cache);
+        } else if let Some(loader) = plain {
+            app.insert_resource(halo2::PlainState::start(loader))
+                .init_resource::<Listener>()
+                .add_systems(Update, (listener, halo2::receive, halo2::play, volume_keys).chain());
+        }
+        if self.output {
+            app.add_audio_source::<MixerAsset>()
+                .add_systems(Startup, start_output);
+        } else {
+            // No device: mix in real time anyway, so voices start and end
+            // as they would, and `HALO3_AUDIO_WAV=path` keeps what was
+            // heard (first 60 s) as a WAV for checking.
+            app.insert_resource(Headless {
+                wav: std::env::var_os("HALO3_AUDIO_WAV").map(std::path::PathBuf::from),
+                ..Default::default()
+            })
+            .add_systems(Update, headless_mix.after(volume_keys));
+        }
+    }
+}
+
+impl HaloAudioPlugin {
+    fn build_halo3(&self, app: &mut App, cache: &'static CacheFile) {
+        app.insert_resource(Loader(Mutex::new(Some(library::load(cache)))))
             .insert_resource(Trace {
                 on: self.trace,
                 ..Default::default()
@@ -98,19 +131,6 @@ impl Plugin for HaloAudioPlugin {
                     .chain()
                     .after(halo3_core::zones::ZoneKeys),
             );
-        if self.output {
-            app.add_audio_source::<MixerAsset>()
-                .add_systems(Startup, start_output);
-        } else {
-            // No device: mix in real time anyway, so voices start and end
-            // as they would, and `HALO3_AUDIO_WAV=path` keeps what was
-            // heard (first 60 s) as a WAV for checking.
-            app.insert_resource(Headless {
-                wav: std::env::var_os("HALO3_AUDIO_WAV").map(std::path::PathBuf::from),
-                ..Default::default()
-            })
-            .add_systems(Update, headless_mix.after(trace));
-        }
     }
 }
 

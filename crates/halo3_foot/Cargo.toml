@@ -12,3 +12,7 @@ blam_geometry = { workspace = true }
 halo3_bike = { workspace = true }
 halo3_core = { workspace = true }
 halo3_swim = { workspace = true }
+
+[dev-dependencies]
+game_paths = { workspace = true }
+blam_h2 = { workspace = true }

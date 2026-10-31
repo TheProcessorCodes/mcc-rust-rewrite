@@ -478,6 +478,13 @@ impl<'a> Atlas<'a> {
             };
             let i = 4 * ((y % 4) * 4 + x % 4) as usize;
             [p[i], p[i + 1], p[i + 2], p[i + 3]]
+        } else if t.format == Format::A8R8G8B8 {
+            // Halo 2's lightmaps (`halo3::halo2`): bytes B G R A.
+            let i = 4 * (y * t.width + x) as usize;
+            let Some(p) = level.get(i..i + 4) else {
+                return [0.0; 4];
+            };
+            [p[2], p[1], p[0], p[3]]
         } else {
             // Not seen on any map; decode the whole layer (slow but right).
             let Ok(p) = rgba::decode_level(t.format, t.width, t.height, level) else {

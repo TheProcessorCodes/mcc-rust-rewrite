@@ -566,7 +566,7 @@ helmet.
 
 **Weapons.** The map's weapons lie where the scenario places them (42 on
 Valhalla, nine kinds); taken ones come back after the placement's respawn
-time. He starts with the assault rifle. Walking over a weapon he lacks takes it
+time. He starts with the sniper rifle (`halo3_foot::STARTING_WEAPONS`; the assault rifle on a map without one). Walking over a weapon he lacks takes it
 into a free hand; over one he carries, takes its ammo; E swaps. Magazines,
 spare rounds, rounds per second, bursts (battle rifle), single shots,
 charging (plasma pistol, Spartan laser), spread, zoom levels, projectile
@@ -596,9 +596,9 @@ Unleashed's stock Pro 250 (`docs/bike-unleashed.md`):
 | left stick X | A / D | handlebars (30°, less at speed); the bike leans with them, up to 45° at 35 mph |
 | right stick | arrow keys | rider: back moves the weight back, and back with gas holds a wheelie (more stick, higher); full forward on the brake holds a stoppie; in the air it pitches the bike, X turns and banks it |
 | RT | W | throttle: five-speed engine with automatic shifts, about 80 mph flat out |
-| LT | S | brakes (both wheels); in the air it drops the nose, the gas lifts it |
-| A (hold) | Space (hold) | back up, up to 10 mph |
+| LT | S | brakes (both wheels); in the air it drops the nose, the gas lifts it. Held at a standstill it backs up, up to 10 mph, until let go |
 | Y | R | stand the bike back up |
+| left stick click | H | engine sound: Reflex's 450F recordings, our synth, off |
 
 Hitting the bars or the rider's head, or landing upside down, is a crash: two
 seconds later the bike comes back where it last rode well. Falling into a kill
@@ -607,6 +607,31 @@ the map" above). The rider is one
 stiff stance (attack position) kept on the pegs and grips by IK. The bike is a
 stick model of unlit cylinders for now. It rides on the loaded zone set's
 collision. Tuning constants are at the top of `physics.rs`.
+
+Engine sound (`crates/halo3_audio/src/engine.rs`), two models to compare; H or a
+click of the left stick goes Reflex → synth → off, and the log says which:
+
+- **Reflex**: the Dakumoto 450F's own 54 recordings, read from the user's Reflex install
+  (`docs/format/reflex-engine-audio.md`), played the way Reflex plays them, which a
+  recording of the game showed (2026-10-30): never pitched, always at the level they were
+  recorded at. On the gas, each gear change starts a take from the gear's pool (the event
+  file's: power in first, then the low, mid and high pools) from its beginning, so the
+  climb through a gear is the take's own; when a take ends the next one in the pool
+  follows. A little gas while riding plays the gear's takes too, quieter (up to 6 dB);
+  the half-throttle takes (low revs) only creeping with the engine under 4,800; off the gas
+  the idle, after a decel
+  sweep if the revs were up; gas held with the rear wheel free (in the air, or the bike
+  down) runs the limiter takes; a landing on the gas and a wreck have their own.
+- **Synth**: our own single-cylinder four-stroke: one blow-down pulse per firing into
+  head-pipe and silencer resonators, tone opening with throttle, intake snarl, valve ticks,
+  a stuttering limiter, pops off the throttle.
+
+Both add wind with speed. Without Reflex the Reflex choice plays the synth. The pause
+menu's Dirt bike tab has an engine volume slider (drag or click it, or d-pad up / down,
+the up / down arrows, W / S); it starts at 70 % and is saved to `bike-sound.json` next to
+the exe when the game carries on.
+`HALO3_ENGINE_WAV=DIR cargo test -p halo3_audio engine` writes both models over the same
+scripted nine-second ride to `DIR\engine-reflex.wav` and `engine-synth.wav`.
 
 Headless check: `halo3 riverworld --shot DIR --bike --view spawn50` rides from
 spawn 50 holding `HALO3_BIKE_THROTTLE` (default 0.4) for `HALO3_SKATE_FOR`
@@ -675,8 +700,7 @@ sounds to WAV (`.scratch/sound` by default) with duration, rate, RMS and peak.
 
 Not done: the sound environments (`snde` reverb) and obstruction; pitch ranges past the
 first; dialogue (the per-language banks); weapon, vehicle, footstep and impact sounds of the
-game world; HaloScript-driven music cues (music is by hand); the dirt bike's engine
-(the Mongoose engine loops are in the bank). Halo's real distance curve and the meaning of
+game world; HaloScript-driven music cues (music is by hand). Halo's real distance curve and the meaning of
 the playback parameters' first two distances are not checked against the game.
 
 ## Halo 2 maps
@@ -691,9 +715,10 @@ target\debug\halo3.exe coagulation --shot .scratch\shots\coagulation --view spaw
 ```
 
 A bare name is tried as a Halo 3 map first, then in `%HALO2_MAPS%` (default: the MCC folder
-above); `h2:NAME` asks for the Halo 2 one when both games have a map of that name (`h2:lockout`,
-`h2:zanzibar`). The header tells the two games apart (`blam_h2::is_halo2`). Only Coagulation
-has been checked. `blam info|tags|strings|geometry|rails|shader|bitmap|textures` work on Halo 2
+above); `h2:NAME` / `h3:NAME` ask for one game when both have a map of that file name
+(`h2:zanzibar`). Lockout is the exception: a bare `lockout` is Halo 2's Lockout, and Halo 3's
+Blackout (also `lockout.map`) goes by `blackout`. The header tells the two games apart (`blam_h2::is_halo2`). Only Coagulation
+has been checked. `blam info|tags|strings|geometry|rails|shader|bitmap|textures|ambience` work on Halo 2
 maps too.
 
 `crates/blam_h2` (`docs/format/halo2.md`) decodes the whole map up front into the same `Scene`
@@ -703,10 +728,29 @@ skating (J), the dirt bike (B), rails and the fall-out-of-the-world respawn work
 With no atmosphere tag the camera gets a fog that never thickens (the world shaders need the
 fog binding).
 
+Lighting: Halo 2's lightmap (`docs/format/halo2.md` 10). `blam_h2` packs each BSP's pages into
+one atlas and gives every cluster and instance with a page per-pixel lighting; the light
+fixtures and the objects take the nearest lit surface's light, as on Halo 3 maps. The pages are
+plain colours while the lightmap shader reads Halo 3's SH coefficients, so `halo3::halo2`
+writes each colour as the constant term alone, which lights every normal the same.
+`HALO2_LIGHTMAP_SCALE` (default 1.15) multiplies it. The sky's fog (`halo2.md` 7) becomes a
+linear distance fog, and its colour fills the background: Lockout's blue mist, Coagulation's
+reddish dusk.
+
 Drawn: each material's base map with its tiling and its detail map, the ground's two detail
 maps blended by the base map's alpha (through the terrain path), alpha-tested foliage and
 banners, additive glows and light bands. The rider is Halo 3's Spartan, borrowed from
-`riverworld.map` when Halo 3 is installed. Not yet: the sky (its model decodes, but its layers
+`riverworld.map` when Halo 3 is installed. Not yet: the sky model (it decodes, but its layers
 need Halo 2's sky blending; drawn as plain translucent meshes they walled the canyon in flat
-blue, so the clear colour stands in), Halo 2's lightmaps (the world is lit by the default sun
-and sky), bump and environment maps, water as water (a plain see-through surface), fog, sound.
+blue, so the fog colour stands in), the lightmaps' bump direction (buffer 4) and the sky's
+light, bump and environment maps, water as water (a plain see-through surface).
+
+Sound (`docs/format/halo2.md` 13): the BSP's background looping sound plays everywhere, not by
+cluster (on Lockout every cluster names the same one). Both its tracks loop at their -3 dB,
+the first permutation first and then the others at random, and the gust detail fires every
+40 to 50 s, placed around the listener. Sound scenery plays at its position: full volume within
+the looping sound's near distance, silent past the far one (Lockout's blowing snow, the canyon
+hawks, two machine hums on the lower level). The samples are Xbox ADPCM from
+`sounds_neutral.dat` beside the map, decoded on a thread at start (0.3 s) and played at 44.1 kHz
+through the 48 kHz mixer by rate. K, `-` and `=` work as on Halo 3 maps. Not yet: reverb (the
+sound environments), in/out and alternate tracks, scales, music.

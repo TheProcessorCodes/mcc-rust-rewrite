@@ -1,13 +1,14 @@
 //! First-launch setup: find the player's Halo MCC install, offer to take
 //! their Skate 3 (an Xbox 360 disc image or an extracted `default.xex`),
 //! convert the few Skate 3 files skating needs with the bundled converter,
-//! and save both in `setup.env` (`game_paths::settings_path`). Every later
-//! launch goes straight in; `halo3 --setup` asks again.
+//! note MX vs ATV Reflex if the player has it, and save it all in
+//! `setup.env` (`game_paths::settings_path`). Every later launch goes
+//! straight in; `halo3 --setup` asks again.
 //!
 //! The model is IW4L's `launcher/src/first_run.rs`. MCC is required; Skate
-//! 3 is optional, and without it the game plays with skating off. Nothing
-//! is written into either game's folder: the converted data goes under
-//! `game_paths::settings_dir`.
+//! 3 is optional (without it skating is off), and so is Reflex (without it
+//! the dirt bike is a stand-in). Nothing is written into any game's folder:
+//! the converted data goes under `game_paths::settings_dir`.
 
 mod board;
 pub mod xiso;
@@ -43,7 +44,7 @@ pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
     let path = game_paths::settings_path();
     let mut settings = Settings::read(&path);
     if redo {
-        for k in [key::MCC, key::SKATE, key::SKATE_ASSETS] {
+        for k in [key::MCC, key::SKATE, key::SKATE_ASSETS, key::REFLEX] {
             settings.remove(k);
         }
         settings.write(&path)?;
@@ -53,7 +54,54 @@ pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
     if let Some(assets) = prepare_skate(&mut settings, &path, interactive)? {
         board::ensure(&assets).map_err(|e| format!("Could not prepare the skateboard: {e}"))?;
     }
-    Ok(())
+    prepare_reflex(&mut settings, &path, interactive)
+}
+
+/// MX vs ATV Reflex, optional: the dirt bike's Dakumoto 450F and its engine
+/// recordings. Saved without a question when Steam has it; otherwise asked
+/// once, and `off` remembers a No. Without it the bike is a stand-in.
+fn prepare_reflex(settings: &mut Settings, path: &Path, interactive: bool) -> Result<(), String> {
+    if std::env::var_os("REFLEX_GAME").is_some() || game_paths::saved_reflex().is_some() {
+        return Ok(());
+    }
+    if let Some(found) = game_paths::find_reflex() {
+        settings.set_path(key::REFLEX, &found);
+        return settings.write(path);
+    }
+    if settings.get(key::REFLEX) == Some("off") || !interactive {
+        return Ok(());
+    }
+    let answer = MessageDialog::new()
+        .set_title(TITLE)
+        .set_description(
+            "Do you have MX vs ATV Reflex (PC)? It is optional.\n\n\
+             The dirt bike uses Reflex's Dakumoto 450F and its engine sounds from your own copy. \
+             Choose No to ride a stand-in bike. Run halo3 --setup to be asked again.",
+        )
+        .set_buttons(MessageButtons::YesNo)
+        .show();
+    let picked = if answer == MessageDialogResult::Yes { locate_reflex() } else { None };
+    match picked {
+        Some(root) => settings.set_path(key::REFLEX, &root),
+        None => settings.set(key::REFLEX, "off"),
+    }
+    settings.write(path)
+}
+
+fn locate_reflex() -> Option<PathBuf> {
+    loop {
+        let picked = rfd::FileDialog::new()
+            .set_title("Select your MX vs ATV Reflex folder")
+            .pick_folder()?;
+        if game_paths::is_reflex(&picked) {
+            return Some(picked);
+        }
+        inform(&format!(
+            "{}\n\ndoesn't look like MX vs ATV Reflex. Select the folder that contains the Database folder \
+             (with MXs.dx9.package in it).",
+            picked.display()
+        ));
+    }
 }
 
 /// Shows an error and exits.

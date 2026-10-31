@@ -2,12 +2,13 @@
 //! PC: the paths come from, in order,
 //!
 //! 1. dev overrides in the environment (`HALO3_MCC`, `HALO3_MAPS`,
-//!    `HALO2_MAPS`, `HALO3_SKATE_ASSETS`, `IW4L_SKATE_ASSETS`);
+//!    `HALO2_MAPS`, `HALO3_SKATE_ASSETS`, `IW4L_SKATE_ASSETS`,
+//!    `REFLEX_GAME`);
 //! 2. the first-run setup (`halo3_setup`), saved in `setup.env` under
 //!    [`settings_dir`] (`%LOCALAPPDATA%\Halo3Rewrite`), so it is asked once
 //!    per user however many copies of the exe there are;
-//! 3. for MCC only, Steam's own library list, so tests and the `blam` tool
-//!    work before setup has run.
+//! 3. for MCC and Reflex, Steam's own library list, so tests and the `blam`
+//!    tool work before setup has run.
 //!
 //! No bevy and no other dependencies: the `blam_*` readers' tests use it too.
 
@@ -23,6 +24,40 @@ pub mod key {
     pub const SKATE: &str = "SKATE";
     /// The Skate 3 converter, when it is not beside the exe.
     pub const SKATE_CONVERTER: &str = "SKATE_CONVERTER";
+    /// The MX vs ATV Reflex install, or `off` when the player has none.
+    pub const REFLEX: &str = "REFLEX";
+}
+
+/// Reflex's folder name under `steamapps\common`.
+pub const REFLEX_FOLDER: &str = "MX vs ATV Reflex";
+
+/// Whether `root` is an MX vs ATV Reflex install (it has
+/// `Database\MXs.dx9.package`).
+pub fn is_reflex(root: &Path) -> bool {
+    root.join("Database").join("MXs.dx9.package").is_file()
+}
+
+/// The MX vs ATV Reflex install (optional; the dirt bike's model and engine
+/// sound): `%REFLEX_GAME%`, the saved setup, else the first Steam library
+/// holding one.
+pub fn reflex_root() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("REFLEX_GAME").map(PathBuf::from) {
+        return is_reflex(&p).then_some(p);
+    }
+    saved_reflex().or_else(find_reflex)
+}
+
+/// The Reflex install the setup saved, when it is still there.
+pub fn saved_reflex() -> Option<PathBuf> {
+    settings().get(key::REFLEX).map(PathBuf::from).filter(|p| is_reflex(p))
+}
+
+/// The first Reflex found in a Steam library.
+pub fn find_reflex() -> Option<PathBuf> {
+    steam_libraries()
+        .into_iter()
+        .map(|l| l.join("steamapps").join("common").join(REFLEX_FOLDER))
+        .find(|p| is_reflex(p))
 }
 
 /// Steam's app id for Halo: The Master Chief Collection.

@@ -1,6 +1,6 @@
 [package]
 name = "halo3_bike"
-description = "The dirt bike: MX vs ATV Unleashed Pro 250 physics on Halo 3 collision"
+description = "The dirt bike: MX vs ATV Unleashed physics pulled towards Reflex, on Halo 3 collision"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,5 +10,8 @@ publish.workspace = true
 bevy = { workspace = true }
 blam_geometry = { workspace = true }
 halo3_core = { workspace = true }
+halo3_rider = { workspace = true }
+halo3_world = { workspace = true }
+reflex_assets = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

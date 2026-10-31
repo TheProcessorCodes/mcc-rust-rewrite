@@ -8,6 +8,10 @@
 //! things run only `while running`, so nothing reacts to keys behind the
 //! menu. Drawing goes on, so the frozen frame stays on screen.
 //!
+//! The dirt bike tab has the engine sound's volume slider: drag or click
+//! it, or d-pad up / down, the up / down arrows or W / S; it is saved when
+//! the game carries on (`EngineVolume`, `bike-sound.json`).
+//!
 //! The skate buttons are the stock Skate 3 layout the engine maps them
 //! through (`skate-core` `input/controller.rs` and `gameplay_map.rs`: A and
 //! X push, B brakes, Y steps off, RB grabs the world, the triggers grab).
@@ -17,6 +21,7 @@ use bevy::prelude::*;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use halo3_core::bike::EngineVolume;
 use halo3_core::pause::Paused;
 
 pub struct PausePlugin;
@@ -25,12 +30,14 @@ impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Paused>()
             .init_resource::<ShownTab>()
+            .insert_resource(EngineVolume::load())
             .add_systems(Startup, spawn_menu)
             .add_systems(
                 PreUpdate,
-                (toggle, quit, switch_tab)
+                (toggle, quit, switch_tab, engine_slider)
                     .chain()
-                    .after(InputSystems),
+                    .after(InputSystems)
+                    .after(halo3_core::pause::OverlayInput),
             );
     }
 }
@@ -50,6 +57,16 @@ struct TabPage(usize);
 #[derive(Component)]
 struct TabLabel(usize);
 
+/// The engine volume slider's bar, its filled part and its figure.
+#[derive(Component)]
+struct VolumeBar;
+#[derive(Component)]
+struct VolumeFill;
+#[derive(Component)]
+struct VolumeText;
+
+const BIKE_TAB: usize = 2;
+
 const TABS: [&str; 4] = ["Free roam", "On foot", "Dirt bike", "Skate"];
 
 /// Free-roam controls: keyboard, controller, what it does.
@@ -68,16 +85,22 @@ const FREE_ROAM: &[[&str; 3]] = &[
     ["Page Down / Page Up", "", "next / previous zone set"],
     ["Home", "", "load every BSP"],
     ["P", "", "print the camera position to the console"],
+    ["Insert", "d-pad left", "spawn the enemy Spartan where you look"],
+    ["Delete", "d-pad right", "remove the enemy Spartan"],
 ];
 
 /// On-foot controls (`foot/mod.rs`): keyboard, controller, what it does.
 const FOOT: &[[&str; 3]] = &[
     ["F", "d-pad up", "get on foot / back to flying"],
+    ["B", "View / Back", "back on the dirt bike, keeping your speed"],
+    ["J", "click both sticks", "back on the skateboard"],
     ["W A S D", "left stick", "move"],
     ["mouse", "right stick", "aim"],
     ["Space", "A", "jump"],
     ["Ctrl / C (hold)", "left stick click", "crouch"],
     ["T", "d-pad down", "first / third person"],
+    ["Insert", "d-pad left", "spawn the enemy Spartan where you look"],
+    ["Delete", "d-pad right", "remove the enemy Spartan"],
     ["Esc", "Start", "pause"],
 ];
 
@@ -89,7 +112,12 @@ const BIKE: &[[&str; 2]] = &[
     ["left trigger", "brake"],
     ["A (hold)", "back up"],
     ["Y", "stand the bike back up"],
+    ["d-pad up (G)", "jump off on foot, keeping the bike's speed"],
+    ["LB + d-pad down", "set the session marker"],
+    ["LB + d-pad up (hold)", "back to the session marker"],
     ["View / Back", "get off the bike"],
+    ["click left stick (H)", "engine sound: Reflex's 450F, synth, off"],
+    ["0 (keyboard)", "physics tuning menu"],
     ["Start", "pause"],
 ];
 
@@ -104,8 +132,11 @@ const SKATE: &[[&str; 2]] = &[
     ["RB (hold)", "grab a ledge or coping (hand plants)"],
     ["Y", "step off the board / back on"],
     ["A or X", "get up after a bail"],
+    ["LB + d-pad down", "set the session marker"],
+    ["LB + d-pad up (hold)", "back to the session marker"],
     ["off the board: X", "jump"],
     ["off the board: LT / RT", "drop / throw the board"],
+    ["d-pad up (G)", "jump off on foot, keeping the board's speed"],
     ["click both sticks", "back to flying"],
     ["Start", "pause"],
 ];
@@ -131,13 +162,14 @@ fn row(parent: &mut ChildSpawnerCommands, cells: &[&str], widths: &[f32], colour
     });
 }
 
-/// A tab page: a header row, then the controls.
+/// A tab page: a header row, then the controls, then `extra`.
 fn page<const N: usize>(
     panel: &mut ChildSpawnerCommands,
     index: usize,
     header: [&str; N],
     widths: [f32; N],
     rows: &[[&str; N]],
+    extra: impl FnOnce(&mut ChildSpawnerCommands),
 ) {
     panel
         .spawn((
@@ -154,7 +186,52 @@ fn page<const N: usize>(
             for cells in rows {
                 row(p, cells, &widths, Color::WHITE);
             }
+            extra(p);
         });
+}
+
+/// The engine volume row: a label, the bar, the figure, how to move it.
+fn volume_slider(p: &mut ChildSpawnerCommands) {
+    p.spawn(Node {
+        margin: UiRect::top(Val::Px(14.0)),
+        align_items: AlignItems::Center,
+        column_gap: Val::Px(14.0),
+        ..default()
+    })
+    .with_children(|r| {
+        r.spawn(Node {
+            width: Val::Px(246.0),
+            ..default()
+        })
+        .with_child(text("Engine volume", 18.0, LIT));
+        r.spawn((
+            VolumeBar,
+            Node {
+                width: Val::Px(240.0),
+                height: Val::Px(14.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
+        ))
+        .with_child((
+            VolumeFill,
+            Node {
+                width: Val::Percent(70.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            BackgroundColor(LIT),
+        ));
+        r.spawn((
+            VolumeText,
+            Node {
+                width: Val::Px(56.0),
+                ..default()
+            },
+            text("70 %", 18.0, Color::WHITE),
+        ));
+        r.spawn(text("d-pad up / down, or drag", 16.0, DIM));
+    });
 }
 
 fn spawn_menu(mut commands: Commands) {
@@ -214,6 +291,7 @@ fn spawn_menu(mut commands: Commands) {
                     ["Keyboard", "Controller", ""],
                     [260.0, 200.0, 320.0],
                     FREE_ROAM,
+                    |_| {},
                 );
                 page(
                     panel,
@@ -221,9 +299,10 @@ fn spawn_menu(mut commands: Commands) {
                     ["Keyboard", "Controller", ""],
                     [260.0, 200.0, 320.0],
                     FOOT,
+                    |_| {},
                 );
-                page(panel, 2, ["Controller", ""], [260.0, 520.0], BIKE);
-                page(panel, 3, ["Controller", ""], [260.0, 520.0], SKATE);
+                page(panel, BIKE_TAB, ["Controller", ""], [260.0, 520.0], BIKE, volume_slider);
+                page(panel, 3, ["Controller", ""], [260.0, 520.0], SKATE, |_| {});
             });
         });
 }
@@ -235,6 +314,7 @@ fn toggle(
     mut time: ResMut<Time<Virtual>>,
     mut menus: Query<&mut Visibility, With<PauseMenu>>,
     mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    volume: Res<EngineVolume>,
 ) {
     let pressed = keys.just_pressed(KeyCode::Escape)
         || gamepads.iter().any(|p| p.just_pressed(GamepadButton::Start));
@@ -251,6 +331,7 @@ fn toggle(
         }
     } else {
         time.unpause();
+        volume.save();
     }
     for mut v in &mut menus {
         *v = if paused.0 { Visibility::Visible } else { Visibility::Hidden };
@@ -330,6 +411,69 @@ fn switch_tab(
         };
         if colour.0 != want {
             colour.0 = want;
+        }
+    }
+}
+
+/// The engine volume slider on the dirt bike tab: a click or drag on the
+/// bar sets it; d-pad up / down, the arrows or W / S step it by 5 %.
+#[allow(clippy::too_many_arguments)]
+fn engine_slider(
+    paused: Res<Paused>,
+    shown: Res<ShownTab>,
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    bars: Query<(&ComputedNode, &UiGlobalTransform), With<VolumeBar>>,
+    mut fills: Query<&mut Node, With<VolumeFill>>,
+    mut figures: Query<&mut Text, With<VolumeText>>,
+    mut volume: ResMut<EngineVolume>,
+    mut dragging: Local<bool>,
+) {
+    if !paused.0 || shown.0 != BIKE_TAB {
+        *dragging = false;
+        return;
+    }
+    let mut v = volume.0;
+    let key = |a: KeyCode, b: KeyCode| keys.just_pressed(a) || keys.just_pressed(b);
+    let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
+    if key(KeyCode::ArrowUp, KeyCode::KeyW) || pad(GamepadButton::DPadUp) {
+        v += 0.05;
+    }
+    if key(KeyCode::ArrowDown, KeyCode::KeyS) || pad(GamepadButton::DPadDown) {
+        v -= 0.05;
+    }
+    // Node sizes and the cursor are in physical pixels.
+    let cursor = windows.single().ok().and_then(Window::physical_cursor_position);
+    if let (Some(at), Ok((node, transform))) = (cursor, bars.single()) {
+        if mouse.just_pressed(MouseButton::Left) && node.contains_point(*transform, at) {
+            *dragging = true;
+        }
+        if *dragging && mouse.pressed(MouseButton::Left) {
+            let width = node.size().x.max(1.0);
+            let left = transform.translation.x - width / 2.0;
+            v = (at.x - left) / width;
+        }
+    }
+    if !mouse.pressed(MouseButton::Left) {
+        *dragging = false;
+    }
+    // Whole per cents, so the steps land on round figures.
+    let v = ((v.clamp(0.0, 1.0) * 100.0).round() / 100.0).clamp(0.0, 1.0);
+    if v != volume.0 {
+        volume.0 = v;
+    }
+    for mut fill in &mut fills {
+        let want = Val::Percent(v * 100.0);
+        if fill.width != want {
+            fill.width = want;
+        }
+    }
+    for mut figure in &mut figures {
+        let want = format!("{:.0} %", v * 100.0);
+        if figure.0 != want {
+            figure.0 = want;
         }
     }
 }

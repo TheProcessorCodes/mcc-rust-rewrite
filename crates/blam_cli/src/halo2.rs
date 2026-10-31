@@ -11,6 +11,7 @@
 //! blam shader   <h2 map> <shad tag>
 //! blam bitmap   <h2 map> <bitm tag> [--index N] [--png PATH]
 //! blam textures <h2 map>              every material's look and its bitmaps
+//! blam ambience <h2 map> [--wav DIR]  background sounds and sound scenery, decoded
 //! ```
 
 use std::path::Path;
@@ -143,8 +144,105 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
             }
             Ok(())
         }
+        "ambience" => ambience(&map, args.flag("wav").map(Path::new)),
         _ => usage(),
     }
+}
+
+/// The map's ambience: background sounds, sound scenery, their tracks and
+/// details, each permutation decoded (length, RMS). `--wav DIR` writes each
+/// permutation and a mix of the backgrounds' loop tracks, permutations in
+/// order, as the game strings them.
+fn ambience(map: &Map, wav: Option<&Path>) -> Result<()> {
+    use blam_h2::sound::{self, Pcm, SoundFiles};
+    let a = sound::ambience(map)?;
+    let name = |id: Option<u32>| id.and_then(|i| map.tag_name(i)).unwrap_or("-").to_string();
+    for b in &a.backgrounds {
+        println!("background {:<24} {} clusters: {} (inside: {})", b.name, b.clusters, name(b.sound), name(b.inside));
+    }
+    for e in &a.emitters {
+        println!("sound scenery at {:.2?}: {}", e.position.to_array(), name(Some(e.looping)));
+    }
+    if let Some(dir) = wav {
+        std::fs::create_dir_all(dir)?;
+    }
+    let files = SoundFiles::beside(&map.path);
+    let backgrounds = sound::background_loops(&a);
+    let mut loops = backgrounds.clone();
+    for e in &a.emitters {
+        if !loops.contains(&e.looping) {
+            loops.push(e.looping);
+        }
+    }
+    let mut mix: Option<Pcm> = None;
+    for id in loops {
+        let l = sound::looping(map, id)?;
+        println!("\n{} flags {:#x} distance {:?}", l.name, l.flags, l.distance);
+        let tracks = l.tracks.iter().map(|t| (format!("track {} gain {} dB", t.name, t.gain_db), t.looped, t.gain_db, true));
+        let details = l.details.iter().map(|d| {
+            (
+                format!("detail {} every {:?} s, gain {} dB, distance {:?}", d.name, d.period, d.gain_db, d.distance),
+                d.sound,
+                d.gain_db,
+                false,
+            )
+        });
+        for (what, snd, gain_db, is_track) in tracks.chain(details).collect::<Vec<_>>() {
+            println!("  {what}");
+            let Some(snd) = snd else { continue };
+            let s = sound::sound(map, snd)?;
+            println!(
+                "    {} : {} Hz, {} ch, {:?}, gain {} dB, distance {:?}, skip {}",
+                s.name, s.rate, s.channels, s.compression, s.gain_db, s.distance, s.skip_fraction
+            );
+            let mut whole: Vec<i16> = Vec::new();
+            for (k, p) in s.permutations.iter().enumerate() {
+                match files.decode(&s, k) {
+                    Ok(pcm) => {
+                        println!(
+                            "      {:<16} skip {:.2} {} chunks: {:.2} s, RMS {:.4}",
+                            p.name,
+                            p.skip,
+                            p.chunks.len(),
+                            pcm.seconds(),
+                            pcm.rms()
+                        );
+                        if let Some(dir) = wav {
+                            let file = format!("{}_{}.wav", s.name.rsplit('\\').nth(1).unwrap_or("sound"), p.name);
+                            sound::write_wav(&dir.join(file), &pcm)?;
+                        }
+                        whole.extend_from_slice(&pcm.samples);
+                    }
+                    Err(e) => println!("      {:<16} {e}", p.name),
+                }
+            }
+            if is_track && backgrounds.contains(&id) && !whole.is_empty() {
+                let g = 10f32.powf((gain_db + s.gain_db) / 20.0);
+                let m = mix.get_or_insert_with(|| Pcm {
+                    rate: s.rate,
+                    channels: s.channels,
+                    samples: Vec::new(),
+                });
+                if m.rate == s.rate && m.channels == s.channels {
+                    if m.samples.len() < whole.len() {
+                        m.samples.resize(whole.len(), 0);
+                    }
+                    for (o, v) in m.samples.iter_mut().zip(&whole) {
+                        *o = (*o as f32 + *v as f32 * g).clamp(-32768.0, 32767.0) as i16;
+                    }
+                }
+            }
+        }
+    }
+    if let Some(m) = mix {
+        println!("\nbackground mix: {:.2} s at {} Hz, {} ch, RMS {:.4}", m.seconds(), m.rate, m.channels, m.rms());
+        if let Some(dir) = wav {
+            let path = dir.join(format!("{}_ambience.wav", map.map_name));
+            sound::write_wav(&path, &m)?;
+            println!("wrote {}", path.display());
+        }
+    }
+    Ok(())
 }
 
 fn find(map: &Map, what: &str, class: &[u8; 4]) -> Result<u32> {

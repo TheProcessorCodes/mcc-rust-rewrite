@@ -1,0 +1,73 @@
+//! Checks against the user's own Reflex install; skipped when there is none.
+
+use reflex_assets::{bike, find_reflex};
+
+#[test]
+fn the_450f_loads() {
+    let Some(root) = find_reflex() else {
+        eprintln!("no Reflex install; skipped");
+        return;
+    };
+    let m = bike::load(&root).expect("450F");
+    let names: Vec<&str> = m.bones.iter().map(|b| b.name.as_str()).collect();
+    eprintln!("kit: {}; bones {names:?}", m.kit);
+    for (i, b) in m.bones.iter().enumerate() {
+        let r = m.rest(i);
+        eprintln!("{i:2} {:<20} parent {:?} at [{:.3}, {:.3}, {:.3}] x {:.3?} y {:.3?} z {:.3?}", b.name, b.parent, r[3][0], r[3][1], r[3][2], &r[0][..3], &r[1][..3], &r[2][..3]);
+    }
+    let mut lo = [f32::MAX; 3];
+    let mut hi = [f32::MIN; 3];
+    for p in &m.parts {
+        let rest = m.rest(p.bone);
+        let (mut plo, mut phi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for &v in &p.positions {
+            let w = bike::apply(&rest, v);
+            for c in 0..3 {
+                plo[c] = plo[c].min(w[c]);
+                phi[c] = phi[c].max(w[c]);
+            }
+        }
+        for c in 0..3 {
+            lo[c] = lo[c].min(plo[c]);
+            hi[c] = hi[c].max(phi[c]);
+        }
+        eprintln!(
+            "{:<24} bone {:2} {:5} tris {:?} cut {} [{:.2} {:.2} {:.2}]..[{:.2} {:.2} {:.2}]",
+            p.slot, p.bone, p.indices.len() / 3, p.texture, p.cutout, plo[0], plo[1], plo[2], phi[0], phi[1], phi[2]
+        );
+    }
+    eprintln!("bounds [{:.3} {:.3} {:.3}]..[{:.3} {:.3} {:.3}]", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+    for (k, t) in &m.textures {
+        eprintln!("texture {k}: {}x{}", t.width, t.height);
+    }
+    assert!(m.bone("OBJ_FRT_Tire").is_some() && m.bone("OBJ_BCK_Tire").is_some());
+    assert!(m.parts.len() > 20);
+    assert!(reflex_assets::cortana::is_cortana(&m.textures[bike::KIT]));
+}
+
+#[test]
+fn the_450f_engine_decodes() {
+    let Some(root) = find_reflex() else {
+        eprintln!("no Reflex install; skipped");
+        return;
+    };
+    let engine = reflex_assets::engine_audio::load_450f(&root).unwrap();
+    let clips = &engine.clips;
+    assert_eq!(clips.len(), 54);
+    // The event file's pools: every take they name is in the bank.
+    let low = engine.defs.iter().find(|d| d.name == "MXB_450F_THROTTLE_LOW").unwrap();
+    assert_eq!(low.takes.len(), 7);
+    assert!(low.takes.contains(&"MXB_450F_THROTTLE_HIGH_01".to_string()));
+    for d in &engine.defs {
+        eprintln!("{}: {:?}", d.name, d.takes);
+        assert!(d.takes.iter().all(|t| clips.iter().any(|c| &c.name == t)), "{}", d.name);
+    }
+    assert!(engine.defs.iter().any(|d| d.name == "MXB_450F_SHIFT" && d.takes.is_empty()));
+    let idle = clips.iter().find(|c| c.name == "MXB_450F_IDLE").unwrap();
+    assert_eq!(idle.rate, 44100);
+    // 131,328 samples in the bank's header; the decoder adds its own delay.
+    assert!((131_328..131_328 + 2304).contains(&idle.samples.len()), "{}", idle.samples.len());
+    let peak = idle.samples.iter().fold(0f32, |m, v| m.max(v.abs()));
+    assert!(peak > 0.1 && peak <= 1.0, "peak {peak}");
+}
+

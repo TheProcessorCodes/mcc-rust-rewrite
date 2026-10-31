@@ -45,24 +45,55 @@ pub(crate) fn maps_dir() -> PathBuf {
 
 /// A path, or a bare name: a Halo 3 map in the player's MCC, else a Halo 2
 /// (classic) map there (`$HALO2_MAPS` overrides).
-/// `h2:NAME` asks for the Halo 2 map when both games have one by that name
-/// (`lockout`, `zanzibar`).
+/// `h2:NAME` / `h3:NAME` ask for one game when both have a map by that file
+/// name (`zanzibar`). Halo 3's Blackout is `lockout.map`, so it goes by
+/// `blackout` and a bare `lockout` is Halo 2's Lockout ([`codename`]).
 fn resolve_map(arg: &str) -> PathBuf {
     let p = PathBuf::from(arg);
     if p.exists() {
         return p;
     }
-    let (h2_only, bare) = match arg.strip_prefix("h2:") {
-        Some(rest) => (true, rest),
-        None => (false, arg),
-    };
-    let mut name = bare.to_string();
-    if !name.ends_with(".map") {
-        name.push_str(".map");
-    }
+    let (game, file) = codename(arg);
+    let name = format!("{file}.map");
     let h3 = maps_dir().join(&name);
     let h2 = game_paths::halo2_maps().unwrap_or_default().join(&name);
-    if h2_only || (!h3.exists() && h2.exists()) { h2 } else { h3 }
+    match game {
+        Some(2) => h2,
+        Some(_) => h3,
+        None if !h3.exists() && h2.exists() => h2,
+        None => h3,
+    }
+}
+
+/// A map argument to (game, file name without `.map`): `h2:` / `h3:` force
+/// the game; `blackout` is Halo 3's `lockout`, and a bare `lockout` is Halo
+/// 2's, so the two maps sharing a file name each have a plain name.
+fn codename(arg: &str) -> (Option<u8>, &str) {
+    let (game, bare) = match (arg.strip_prefix("h2:"), arg.strip_prefix("h3:")) {
+        (Some(rest), _) => (Some(2), rest),
+        (_, Some(rest)) => (Some(3), rest),
+        _ => (None, arg),
+    };
+    let bare = bare.strip_suffix(".map").unwrap_or(bare);
+    match (game, bare) {
+        (None | Some(3), "blackout") => (Some(3), "lockout"),
+        (None, "lockout") => (Some(2), "lockout"),
+        _ => (game, bare),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::codename;
+
+    #[test]
+    fn blackout_and_lockout_codenames() {
+        assert_eq!(codename("blackout"), (Some(3), "lockout"));
+        assert_eq!(codename("lockout"), (Some(2), "lockout"));
+        assert_eq!(codename("h3:lockout"), (Some(3), "lockout"));
+        assert_eq!(codename("h2:lockout.map"), (Some(2), "lockout"));
+        assert_eq!(codename("riverworld"), (None, "riverworld"));
+    }
 }
 
 pub(crate) struct Args {
@@ -91,6 +122,7 @@ impl Args {
                         | "png-dir"
                         | "index"
                         | "samples"
+                        | "wav"
                 );
                 let value = if takes_value { it.next() } else { None };
                 flags.push((name.to_string(), value));

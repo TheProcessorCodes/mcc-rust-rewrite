@@ -14,6 +14,7 @@ use bevy::prelude::*;
 use blam_geometry::weapons::Barrel;
 
 use super::assets::Kind;
+use super::enemy::{Enemy, EnemyKilled};
 use super::{WU, WeaponImpact};
 use halo3_bike::physics::World;
 use halo3_foot::OnFoot;
@@ -107,6 +108,9 @@ struct Pending {
     pellets: u32,
     explosion: f32,
     power: f32,
+    /// Damage per round (the projectile's), and the weapon's tag path.
+    damage: f32,
+    path: String,
 }
 
 struct Round {
@@ -119,6 +123,8 @@ struct Round {
     travelled: f32,
     explosion: f32,
     power: f32,
+    damage: f32,
+    path: String,
     tracer: Entity,
 }
 
@@ -173,6 +179,11 @@ impl Shots {
             .and_then(|p| p.damage.as_ref())
             .map_or(0.0, |d| d.radius[1])
             .max(if matches!(style, Style::Grenade | Style::Missile) { 1.0 } else { 0.0 });
+        // The tag's damage; beams (the Spartan laser) carry none: it kills.
+        let damage = projectile
+            .and_then(|p| p.damage.as_ref())
+            .map_or(0.0, |d| d.upper_bound[0].max(d.upper_bound[1]));
+        let damage = if damage > 0.0 { damage } else if style == Style::Laser { 500.0 } else { 10.0 };
         // The shotgun: Halo 3 throws fifteen pellets (not read from the tag).
         let pellets = if kind.weapon.tag_path.contains("shotgun") { 15 } else { 1 };
         self.pending.push(Pending {
@@ -186,6 +197,8 @@ impl Shots {
             pellets,
             explosion: explosion * WU,
             power,
+            damage,
+            path: kind.weapon.tag_path.clone(),
         });
     }
 
@@ -261,14 +274,29 @@ fn stick(a: Vec3, b: Vec3, thick: f32) -> Transform {
 }
 
 /// Where the crosshair points: the first thing along the camera's ray
-/// beyond the Spartan, or far off.
-fn aim_point(world: &World, view: &Transform, eye: Vec3) -> Vec3 {
+/// beyond the Spartan (the enemy included), or far off.
+fn aim_point(world: &World, enemy: &Enemy, view: &Transform, eye: Vec3) -> Vec3 {
     let f = view.forward().as_vec3();
     // Skip the stretch behind him (third person).
     let start = view.translation + f * (eye - view.translation).dot(f).max(0.0);
-    match world.raycast_far(start, f, 600.0) {
-        Some(hit) => hit.point,
-        None => start + f * 600.0,
+    let far = world.raycast_far(start, f, 600.0).map_or(600.0, |h| h.distance);
+    let far = enemy.raycast(start, f, far).map_or(far, |h| h.distance);
+    start + f * far
+}
+
+/// A round of `damage` from `path` (`weapon` its tag) hitting him; tells
+/// the kill feed if it killed him.
+fn hurt(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32, path: &str, damage: f32, head: bool) {
+    if enemy.damage(damage, head, path) {
+        kills.write(EnemyKilled { weapon, headshot: head });
+    }
+}
+
+/// An explosion's share of its damage on him.
+fn blast(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32, path: &str, damage: f32, at: Vec3, radius: f32) {
+    let share = enemy.splash(at, radius);
+    if share > 0.0 {
+        hurt(enemy, kills, weapon, path, damage * share, false);
     }
 }
 
@@ -280,6 +308,7 @@ fn launch(
     looks: Option<Res<Looks>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut impacts: MessageWriter<WeaponImpact>,
+    (mut enemy, mut kills): (ResMut<Enemy>, MessageWriter<EnemyKilled>),
 ) {
     let (Some(looks), Some(world), Some(spartan)) = (looks, foot.world(), foot.spartan.as_ref()) else {
         shots.pending.clear();
@@ -288,7 +317,7 @@ fn launch(
     let eye = spartan.eye();
     let pending = std::mem::take(&mut shots.pending);
     for p in pending {
-        let target = aim_point(world, &p.view, eye);
+        let target = aim_point(world, &enemy, &p.view, eye);
         let mut from = p.muzzle.w_axis.truncate();
         // A muzzle poking through a wall fires from the eye instead.
         let to_muzzle = from - eye;
@@ -309,13 +338,20 @@ fn launch(
         ));
         if p.style == Style::Laser {
             // A beam, there at once.
-            let end = match world.raycast_far(from, dir, p.range) {
-                Some(hit) => {
+            let wall = world.raycast_far(from, dir, p.range);
+            let body = enemy.raycast(from, dir, wall.map_or(p.range, |h| h.distance));
+            let end = match (body, wall) {
+                (Some(b), _) => {
+                    impact(&mut commands, &looks, &mut shots, &material, b.point, b.normal, 0.0, true);
+                    hurt(&mut enemy, &mut kills, p.kind_tag, &p.path, p.damage, b.head);
+                    b.point
+                }
+                (None, Some(hit)) => {
                     impact(&mut commands, &looks, &mut shots, &material, hit.point, hit.normal, 0.0, true);
                     impacts.write(WeaponImpact { weapon: p.kind_tag, at: hit.point, normal: hit.normal });
                     hit.point
                 }
-                None => from + dir * p.range,
+                (None, None) => from + dir * p.range,
             };
             commands.spawn((
                 Mesh3d(looks.stick.clone()),
@@ -347,6 +383,8 @@ fn launch(
                 travelled: 0.0,
                 explosion: p.explosion,
                 power: p.power,
+                damage: p.damage,
+                path: p.path.clone(),
                 tracer,
             });
         }
@@ -422,6 +460,7 @@ fn fly(
     materials: Query<&MeshMaterial3d<StandardMaterial>>,
     mut transforms: Query<&mut Transform>,
     mut impacts: MessageWriter<WeaponImpact>,
+    (mut enemy, mut kills): (ResMut<Enemy>, MessageWriter<EnemyKilled>),
 ) {
     let (Some(looks), Some(world)) = (looks, foot.world()) else {
         return;
@@ -437,7 +476,17 @@ fn fly(
         let step = r.velocity * dt;
         let len = step.length();
         let from = r.position;
-        let hit = world.raycast_far(from, step / len.max(1e-6), len);
+        let dir_step = step / len.max(1e-6);
+        let hit = world.raycast_far(from, dir_step, len);
+        // The enemy, if he stands nearer than the wall.
+        let body = enemy.raycast(from, dir_step, hit.map_or(len, |h| h.distance));
+        let hit = match body {
+            Some(b) => {
+                hurt(&mut enemy, &mut kills, r.weapon, &r.path, r.damage, b.head);
+                Some(halo3_bike::physics::Hit { distance: b.distance, point: b.point, normal: b.normal })
+            }
+            None => hit,
+        };
         let end = hit.map_or(from + step, |h| h.point);
         r.travelled += from.distance(end);
         r.position = end;
@@ -457,10 +506,15 @@ fn fly(
             let glow = materials.get(r.tracer).map(|m| m.0.clone()).unwrap_or_else(|_| looks.spark.clone());
             impact(&mut commands, &looks, &mut shots, &glow, h.point, h.normal, r.explosion, r.power > 0.5);
             impacts.write(WeaponImpact { weapon: r.weapon, at: h.point, normal: h.normal });
+            // A direct hit took its damage above.
+            if body.is_none() {
+                blast(&mut enemy, &mut kills, r.weapon, &r.path, r.damage, h.point, r.explosion);
+            }
         } else if gone && r.explosion > 0.0 {
             // Grenades and missiles go off at the end of their range.
             let glow = materials.get(r.tracer).map(|m| m.0.clone()).unwrap_or_else(|_| looks.spark.clone());
             impact(&mut commands, &looks, &mut shots, &glow, end, Vec3::Y, r.explosion, true);
+            blast(&mut enemy, &mut kills, r.weapon, &r.path, r.damage, end, r.explosion);
         }
         if gone {
             commands.entity(r.tracer).try_despawn();

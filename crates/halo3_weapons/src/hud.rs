@@ -140,7 +140,11 @@ fn update(
         if kind.weapon.magazines.is_empty() {
             format!("{name}   {:.0}%", h.ammo.energy * 100.0)
         } else {
-            format!("{name}   {} / {}", h.ammo.loaded, h.ammo.reserve)
+            if super::UNLIMITED_AMMO {
+                format!("{name}   {} / unlimited", h.ammo.loaded)
+            } else {
+                format!("{name}   {} / {}", h.ammo.loaded, h.ammo.reserve)
+            }
         }
     };
     let active = line(inv.current());
@@ -150,7 +154,7 @@ fn update(
     let prompt = match inv.current() {
         Some(h) if h.reload > 0.0 => "Reloading".to_string(),
         Some(h) if h.charge > 0.0 => "Charging".to_string(),
-        Some(h) if !armory.kinds[h.kind].weapon.magazines.is_empty() && h.ammo.loaded == 0 && h.ammo.reserve == 0 => {
+        Some(h) if !armory.kinds[h.kind].weapon.magazines.is_empty() && h.ammo.loaded == 0 && h.ammo.reserve == 0 && !super::UNLIMITED_AMMO => {
             "No ammo".to_string()
         }
         _ => inv.prompt.clone().unwrap_or_default(),
