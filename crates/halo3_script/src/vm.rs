@@ -35,8 +35,14 @@ pub trait WorldApi {
     fn teleport_player(&mut self, position: Vec3, yaw: f32);
     fn current_zone_set(&self) -> Option<usize>;
     fn switch_zone_set(&mut self, zone_set: usize);
-    /// An effect tag goes off here (drawn as a stand-in flash).
+    /// An effect tag goes off here, upright.
     fn effect(&mut self, tag: &str, at: Vec3);
+    /// An effect tag goes off here in `frame` (Halo world: x forward, z
+    /// up), from object tag `source` when an object's damage plays it.
+    fn effect_placed(&mut self, tag: &str, at: Vec3, frame: glam::Mat3, source: Option<u32>) {
+        let _ = (frame, source);
+        self.effect(tag, at);
+    }
     /// The player rides a vehicle of ours (the dirt bike). It answers for
     /// the small vehicle the map's end check accepts (see
     /// [`PLAYER_RIDE_STANDS_IN_FOR`]).
@@ -824,10 +830,16 @@ impl Runtime {
         let known = info.sections.iter().find(|s| s.name == section).cloned();
         let destroy = section.contains("destroy") || section.contains("explode");
         let at = self.objects.position(e);
-        if let Some(effect) = known.as_ref().and_then(|s| s.effect.clone()) {
-            world.effect(&effect, at);
-        } else if destroy {
-            world.effect("explosion", at);
+        // The object's own axes: a plate's effects leave along its up.
+        let m = glam::Mat3::from_mat4(self.objects.state[e].transform);
+        let frame = glam::Mat3::from_cols(
+            m.x_axis.normalize_or(glam::Vec3::X),
+            m.y_axis.normalize_or(glam::Vec3::Y),
+            m.z_axis.normalize_or(glam::Vec3::Z),
+        );
+        let source = info.tag;
+        for effect in known.as_ref().map(|s| s.effects.clone()).unwrap_or_default() {
+            world.effect_placed(&effect, at, frame, source);
         }
         if known.is_none() {
             let tag = info.tag_path.clone();

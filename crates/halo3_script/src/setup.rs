@@ -63,12 +63,14 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
                         .unwrap_or_default()
                         .into_iter()
                         .map(|s| Section {
-                            effect: s
+                            effects: s
                                 .responses
                                 .iter()
-                                .find_map(|r| r.effect.or(r.effect2))
-                                .and_then(|t| cache.tags.get(t))
-                                .map(|t| t.name().to_string()),
+                                .flat_map(|r| [r.effect, r.effect2])
+                                .flatten()
+                                .filter_map(|t| cache.tags.get(t))
+                                .map(|t| t.name().to_string())
+                                .collect(),
                             name: s.name,
                         })
                         .collect()

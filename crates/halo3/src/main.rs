@@ -227,6 +227,9 @@ pub(crate) struct MapExtras {
     ai: Option<ai::AiAssets>,
     /// A mission's zone sets: the world never switches to any other.
     zone_sets: Option<Vec<usize>>,
+    /// The effects the scripts and the objects they damage play, read
+    /// with their bitmaps (`halo3_effects`).
+    effects: Option<halo3_effects::EffectAssets>,
 }
 
 impl LoadedMap {
@@ -392,6 +395,9 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             eprintln!("object collision: {n} triangles");
         }
         extras.scripts = scripts_for(args, cache, &mut scene);
+        if let Some(s) = &extras.scripts {
+            extras.effects = Some(halo3_effects::load::load(cache, &s.effect_roots));
+        }
     }
     eprintln!(
         "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
@@ -570,6 +576,7 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         pause::PausePlugin,
         // The map's scripts, and the completion screen when they win.
         halo3_script::ScriptPlugin,
+        halo3_effects::EffectsPlugin,
         finish::FinishPlugin,
         fly_camera::FlyCameraPlugin,
         flag::SessionFlagPlugin,
@@ -728,6 +735,7 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
     }
     w.insert_resource(weapons::PendingArsenal(arsenal));
     let scripted = extras.scripts.is_some();
+    w.insert_resource(halo3_effects::PendingEffects(extras.effects));
     if let Some(ScriptStart { pending: s, devices, .. }) = extras.scripts {
         // The scripts' `ai_*` calls go to the enemies through the bridge
         // the AI plugin reads; the islands and pillars move by their own
@@ -829,10 +837,27 @@ fn scripts_for(
     let started = std::time::Instant::now();
     let devices = halo3_anim::MachinePoser::load(cache, runtime.objects.info.iter().filter(|o| o.scene.is_some()).filter_map(|o| o.tag));
     eprintln!("scripts: {} machine animations in {:.1} s", devices.len(), started.elapsed().as_secs_f32());
+    // The effects the scripts name and those of the damage sections of
+    // the objects they damage.
+    let mut effect_roots: Vec<u32> = runtime
+        .data
+        .references
+        .iter()
+        .filter(|(class, _)| class == "effe")
+        .filter_map(|(_, tag)| *tag)
+        .collect();
+    for o in &runtime.objects.info {
+        for section in &o.sections {
+            effect_roots.extend(section.effects.iter().filter_map(|n| cache.tags.find("effe", n)).map(|t| t.index));
+        }
+    }
+    effect_roots.sort_unstable();
+    effect_roots.dedup();
     Some(ScriptStart {
         pending: halo3_script::PendingScripts(Some(runtime), console, start_override),
         devices,
         start,
+        effect_roots,
     })
 }
 
@@ -842,6 +867,8 @@ struct ScriptStart {
     pending: halo3_script::PendingScripts,
     devices: halo3_anim::MachinePoser,
     start: Option<(Vec3, f32)>,
+    /// `effe` tags the scripts and their objects' damage play.
+    effect_roots: Vec<u32>,
 }
 
 /// The value after `flag`, if given.

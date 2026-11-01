@@ -28,8 +28,10 @@ const TILT_STEP: f32 = 0.002;
 #[derive(Clone, Debug)]
 pub struct Section {
     pub name: String,
-    /// The effect tag the section's response plays, by path.
-    pub effect: Option<String>,
+    /// The effect tags the section's responses play, by path: each
+    /// response's effect and its second effect (a plate's `destroy` plays
+    /// its chunks and the trench's `plate_explosion`).
+    pub effects: Vec<String>,
 }
 
 /// What does not change about an object.

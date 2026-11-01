@@ -274,10 +274,22 @@ pub fn resolve(cache: &CacheFile, tag_index: u32) -> Result<Shader> {
         .tags
         .get(tag_index)
         .ok_or_else(|| Error::Invalid(format!("no tag #{tag_index}")))?;
+    resolve_render_method(cache, tag_index, cache.tag_offset(tag)?)
+}
+
+/// Resolves a render method that sits at file offset `at` inside tag
+/// `tag_index`'s data: the start of the tag for the shader classes; +0x3C
+/// into a particle (`prt3`), +0x130 into each contrail of a `cntl`
+/// (`docs/format/effects.md` 5 and 7).
+pub fn resolve_render_method(cache: &CacheFile, tag_index: u32, at: usize) -> Result<Shader> {
+    let tag = cache
+        .tags
+        .get(tag_index)
+        .ok_or_else(|| Error::Invalid(format!("no tag #{tag_index}")))?;
     let name = tag.name().to_string();
     let class = cache.tags.class_of(tag).code.as_str().to_string();
     let n = name.as_str();
-    let s = cache.tag_offset(tag)?;
+    let s = at;
     let mut r = cache.reader_at(s);
     // Where the option list and property block sit, a property's size, a
     // texture entry's size and its tiling index byte.

@@ -27,6 +27,7 @@ halo3_setup = { workspace = true }
 halo3_audio = { workspace = true }
 halo3_bike = { workspace = true }
 halo3_core = { workspace = true }
+halo3_effects = { workspace = true }
 halo3_foot = { workspace = true }
 halo3_rider = { workspace = true }
 halo3_script = { workspace = true }

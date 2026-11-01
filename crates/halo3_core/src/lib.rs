@@ -7,6 +7,7 @@
 pub mod ai;
 pub mod bike;
 pub mod coords;
+pub mod effects;
 pub mod falls;
 pub mod flag;
 pub mod lifts;

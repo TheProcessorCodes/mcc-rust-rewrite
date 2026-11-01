@@ -219,6 +219,76 @@ fn tag_name(cache: &CacheFile, tag_index: u32) -> Result<(String, &str)> {
     Ok((tag.name().to_string(), cache.tags.class_of(tag).code.as_str()))
 }
 
+/// One sub-rectangle of a sprite sheet (`bitmap.md` 2.1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sprite {
+    /// Which bitmap of the tag it is cut from.
+    pub bitmap: i16,
+    /// UV fractions, 0..1.
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+}
+
+/// A named run of sprites (`bitmap.md` 2.1): particle sheets and UI.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sequence {
+    pub name: String,
+    pub first_bitmap: i16,
+    pub bitmap_count: i16,
+    pub sprites: Vec<Sprite>,
+}
+
+/// A Halo 3 bitmap tag's sequences (`+0x54`, 64 bytes each, sprites 32
+/// bytes each at `+0x34`). Empty for most world textures.
+pub fn sequences(cache: &CacheFile, tag_index: u32) -> Result<Vec<Sequence>> {
+    let (name, class) = tag_name(cache, tag_index)?;
+    if class != "bitm" {
+        return Err(Error::Invalid(format!("{name} is a {class} tag, not bitm")));
+    }
+    if cache.engine() != Engine::Halo3 {
+        return Ok(Vec::new());
+    }
+    let tag = cache.tags.get(tag_index).expect("checked above");
+    let base = cache.tag_offset(tag)?;
+    let block = cache.reader_at(base + 0x54).block()?;
+    if block.count > 256 {
+        return Err(Error::Invalid(format!("{name}: {} sequences", block.count)));
+    }
+    let mut out = Vec::new();
+    for o in block.elements(64) {
+        let raw = cache.reader_at(o).take(32)?;
+        let end = raw.iter().position(|&b| b == 0).unwrap_or(32);
+        let mut r = cache.reader_at(o + 0x20);
+        let (first_bitmap, bitmap_count) = (r.i16()?, r.i16()?);
+        let sprites_block = cache.reader_at(o + 0x34).block()?;
+        if sprites_block.count > 4096 {
+            return Err(Error::Invalid(format!("{name}: {} sprites", sprites_block.count)));
+        }
+        let mut sprites = Vec::new();
+        for s in sprites_block.elements(32) {
+            let mut r = cache.reader_at(s);
+            let bitmap = r.i16()?;
+            let mut r = cache.reader_at(s + 8);
+            sprites.push(Sprite {
+                bitmap,
+                left: r.f32()?,
+                right: r.f32()?,
+                top: r.f32()?,
+                bottom: r.f32()?,
+            });
+        }
+        out.push(Sequence {
+            name: String::from_utf8_lossy(&raw[..end]).into_owned(),
+            first_bitmap,
+            bitmap_count,
+            sprites,
+        });
+    }
+    Ok(out)
+}
+
 /// Reads a bitmap tag's header blocks.
 pub fn read_tag(cache: &CacheFile, tag_index: u32) -> Result<BitmapTag> {
     let (name, class) = tag_name(cache, tag_index)?;
