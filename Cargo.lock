@@ -2778,6 +2778,7 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "game_paths",
  "halo3_bike",
  "halo3_core",
  "halo3_foot",

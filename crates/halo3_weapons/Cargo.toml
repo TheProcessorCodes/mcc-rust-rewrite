@@ -16,3 +16,4 @@ halo3_foot = { workspace = true }
 halo3_rider = { workspace = true }
 halo3_textures = { workspace = true }
 halo3_world = { workspace = true }
+game_paths = { workspace = true }

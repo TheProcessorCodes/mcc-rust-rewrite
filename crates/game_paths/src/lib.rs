@@ -25,6 +25,8 @@ pub mod key {
     /// The folder the player chose for Skate 3 (the extracted game or the
     /// one holding the `.iso`), kept to show in the settings.
     pub const SKATE_SOURCE: &str = "SKATE_SOURCE";
+    /// The player's name, shown in the kill feed.
+    pub const USERNAME: &str = "USERNAME";
     /// The Skate 3 converter, `skate\iw4l-skate-convert.exe` in the player's
     /// MW2 Skate 3 folder.
     pub const SKATE_CONVERTER: &str = "SKATE_CONVERTER";
@@ -185,6 +187,35 @@ pub fn skate_assets() -> Option<PathBuf> {
         .or_else(|| settings().get(key::SKATE_ASSETS).map(PathBuf::from))
 }
 
+/// The name a player has until they choose one.
+pub const DEFAULT_USERNAME: &str = "Player1";
+/// Longest username kept, in characters.
+pub const USERNAME_MAX: usize = 24;
+
+/// A typed name made safe to keep: control characters and quotes dropped,
+/// ends trimmed, cut to [`USERNAME_MAX`]; [`DEFAULT_USERNAME`] when nothing is left.
+pub fn clean_username(typed: &str) -> String {
+    let kept: String = typed.chars().filter(|c| !c.is_control() && *c != '"').collect();
+    let name: String = kept.trim().chars().take(USERNAME_MAX).collect();
+    let name = name.trim_end().to_owned();
+    if name.is_empty() { DEFAULT_USERNAME.to_owned() } else { name }
+}
+
+/// The player's name (the kill feed): the saved one, else `Player1`.
+pub fn username() -> String {
+    clean_username(settings().get(key::USERNAME).unwrap_or(DEFAULT_USERNAME))
+}
+
+/// Saves the player's name at once and returns what was kept.
+pub fn set_username(typed: &str) -> Result<String, String> {
+    let name = clean_username(typed);
+    let path = settings_path();
+    let mut s = Settings::read(&path);
+    s.set(key::USERNAME, &name);
+    s.write(&path)?;
+    Ok(name)
+}
+
 /// `KEY=value` lines, rewritten in place: keys that are set are replaced and
 /// every other line is kept as the player left it.
 #[derive(Clone, Debug, Default)]
@@ -234,6 +265,18 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usernames_are_cleaned() {
+        assert_eq!(clean_username(""), "Player1");
+        assert_eq!(clean_username("   "), "Player1");
+        assert_eq!(clean_username("  Logan \"G\"\t"), "Logan G");
+        assert_eq!(clean_username(&"x".repeat(40)).chars().count(), USERNAME_MAX);
+        let mut s = Settings::default();
+        assert_eq!(s.get(key::USERNAME), None);
+        s.set(key::USERNAME, "Logan G");
+        assert_eq!(clean_username(s.get(key::USERNAME).unwrap()), "Logan G");
+    }
 
     #[test]
     fn settings_replace_keys_and_keep_other_lines() {
