@@ -171,9 +171,11 @@ To do:
    playtest: the scripts' lines play from MCC's language bank on the Dialogue bus (see
    "Dialogue" under the Warthog Run below). Not done: the radio / Cortana voice effects, ducking
    under lines, AI combat chatter.
-3. **Accurate explosion effects.** The plates blowing up ahead (and other script `effect_new`
-   calls) are stand-in flashes now; play Halo 3's own `effe` effects (particles, lights,
-   sounds) as the game does.
+3. ~~**Accurate explosion effects.**~~ Done 2026-10-31 on branch `explosion-effects`, awaiting
+   the user's playtest: the scripts' effects and the plates' damage sections play the map's own
+   `effe` tags (particles, contrails, light flashes, sounds; see "Explosion effects" under the
+   Warthog Run below). Not done: debris objects (the plate chunks), camera shake, screen
+   effects, decals.
 4. **Enemies must attack.** Today the AI only fights while the player is on foot (their rounds
    fly on the on-foot collision), so on the bike the run's Flood and Sentinels mostly ignore
    you. They should see, chase and shoot / hit the rider on the bike (and the skater).
@@ -313,7 +315,7 @@ the run's plates are its only floor, so before this the whole run had no collisi
 
 Stubs and hooks: AI (`ai_place warthog01` etc.) goes to `AiHooks` (enemies agent), device
 animation (the run's two sinking islands) to `DevicePoser` (animation agent) with a made-up
-sink as the fallback, effects are stand-in flashes, cinematics / HUD are no-ops that log
+sink as the fallback, effects go to `halo3_effects` (see "Explosion effects"), cinematics / HUD are no-ops that log
 once (sound is played: see "Mission music"). Without `--insertion` / `--scripts` nothing changes from before except object collision.
 Tested headless (`halo3_script/tests/warthog_run.rs` drives the player through the run's
 volumes and checks plates drop); awaiting the user's playtest.
@@ -670,6 +672,46 @@ Checked: `halo3_script/tests/trench_dialogue.rs` (the six lines at their volumes
 -18.6. Not done: the voice effects (Cortana's `cortana_mission`, the radio filters), AI combat
 chatter (`udlg`), placing `ai_play_line` lines at the actor. For the playtest: is Cortana loud
 enough over the music (the Dialogue slider goes to 200 %)?
+
+**Explosion effects (2026-10-31, branch `explosion-effects`, awaiting the user's playtest).**
+The stand-in flashes are gone. The scripts' `effect_new`, `effect_new_random`,
+`effect_new_at_ai_point`, `effect_new_on_object_marker` and the effects of the damage sections
+they hit (both of a response's effects: a plate's `destroy` plays its chunks and the trench's
+`plate_explosion`) go into `halo3_core::effects::EffectQueue`; `halo3_effects` plays them from
+the map's tags, read with their bitmaps while the map loads (`main.rs`: the scripts'
+referenced `effe` tags plus their objects' damage effects; 64 effects, 48 particles, 7
+contrails, 8 lights, 35 bitmaps on the run, 0.1 s). Reader `blam_effect`, format
+`docs/format/effects.md`, probe `docs/format/scripts/probe_effects.py`.
+
+- **Played from the data**: events one after another with their delays and durations; each
+  emitter's starting count, rate, lifespan, emission radius and angle, speed, size and scale,
+  tint, alpha and black point by the tags' own functions and random inputs; particle physics
+  (`pmov`: gravity scale, drag); the particles' bitmaps, sprite frames, palettes (the
+  fireball's base map picks colours along `explosion_animated`), billboard and sprite alpha
+  maps, billboards (camera facing, stretched along the velocity for sparks), blend modes;
+  effects a particle carries (the ejecta each carry a flaming contrail); contrails (`cntl`:
+  points a second, point life, width, colour, alpha, black point); light flashes (`ligh`) lit
+  into the world by a term added to `lightmap.wesl`; sounds (`snd!`) through `halo3_audio`.
+- **Our choices (commented in the code)**: particles at 3x their authored colour
+  (`HALO3_EFFECT_EXPOSURE`; the world's x8 exposure turned fireballs white); particles leave
+  along the effect's up axis; light falloff 4x the light's size, its strength scaled by 0.05;
+  every particle material is drawn once invisibly at the start so the first explosion is not
+  lost to shader compiles.
+- **Not done**: `bloc` debris (the plate chunks flying up, the tunnel half girders), `jpt!`
+  (shock wave, camera shake), `sefc` screen effects, `decs` decals, markers (effects play at
+  the object's origin), soft particle edges, mesh particles. The plates' `fall` effects only
+  hold a `bloc` and a `jpt!`, so a dropping plate has no effect to show (its fall is still
+  ours). The weapons' and AI's impact effects are unchanged (their stand-ins in
+  `halo3_weapons/src/fire.rs`; switching them over needs their tags read at load).
+- Checked: `blam_effect/tests/run_effects.rs` (the plate explosion's and the giant explosion's
+  layouts, every effect in 120_halo reads), `halo3_effects/tests/trench_effects.rs` (the run's
+  scripts blow up `100_001c` and the player makes the flash, 50 rising fireball particles, the
+  sounds and five to eight ejecta with contrails; the giant explosions go off at the
+  scripts' points), all `halo3_script` and `halo3_anim` tests. Headless shots:
+  `out\shots\plate_explosion\120_halo_2.png`, `_3.png` (plate `100_001c` blowing up, from the
+  run's first trigger), `out\shots\giant4\120_halo_6.png`, `_9.png` (the first giant
+  explosion in the canyon, from `120_08_trench_encounter_100`). `HALO3_EFFECT_TRACE=1` logs
+  every effect started; `HALO3_SHOT_NEXT_WAIT` spaces later `--shot` views for time series.
 
 ## Open questions and known gaps
 

@@ -312,7 +312,8 @@ scenery's `coll`, and "blow up" and "fall away" are damage sections of the plate
   fly camera, or the skater through `Respawn`), `switch_zone_set`, `current_zone_set`,
   `device_set_position`/`_immediate`/`device_animate_position`/`device_set_position_track`/
   overlay tracks/`device_get_position` (a 0..1 position animated over time), `effect_new*` at
-  flags, points and objects (drawn as a stand-in flash), `kill_volume_enable`/`_disable` (below).
+  flags, points and objects (played from the map's `effe` tags by `halo3_effects`, `effects.md`),
+  `kill_volume_enable`/`_disable` (below).
 * **Deliberate difference:** `object_destroy_folder` only removes objects that start absent.
   `object_management` drops the run's plate folders purely to save memory and
   `plate_management` brings them back as you drive in; keeping them means the floor is there
