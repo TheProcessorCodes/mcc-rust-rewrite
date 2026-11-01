@@ -61,7 +61,7 @@ pub fn prepare(interactive: bool, redo: bool) -> Result<(), String> {
     let path = game_paths::settings_path();
     let mut settings = Settings::read(&path);
     if redo {
-        for k in [key::MCC, key::SKATE_ASSETS, key::REFLEX] {
+        for k in [key::MCC, key::SKATE_ASSETS, key::SKATE_SOURCE, key::REFLEX] {
             settings.remove(k);
         }
         settings.write(&path)?;
@@ -290,18 +290,11 @@ fn convert_skate(settings: &mut Settings) -> Result<PathBuf, String> {
             .set_title("Choose your Skate 3 folder")
             .pick_folder()
             .ok_or(SKATE_CANCELLED)?;
-        let result = skate_source(&picked).and_then(|source| match source {
-            SkateSource::Iso(iso) => {
-                let staging = dir.join("skate-disc");
-                let result = unpack_disc(&iso, &staging).and_then(|xex| run_converter(&converter, &xex, &out));
-                // The copied game files are only needed for the conversion.
-                std::fs::remove_dir_all(&staging).ok();
-                result
+        match convert_source(&converter, &picked, &out) {
+            Ok(()) => {
+                settings.set_path(key::SKATE_SOURCE, &picked);
+                break;
             }
-            SkateSource::Xex(xex) => run_converter(&converter, &xex, &out),
-        });
-        match result {
-            Ok(()) => break,
             Err(e) => inform(&format!("{e}\n\nSelect Skate 3 again.")),
         }
     }
@@ -311,6 +304,93 @@ fn convert_skate(settings: &mut Settings) -> Result<PathBuf, String> {
     } else {
         Err(format!("The Skate 3 conversion finished but {} is incomplete.", assets.display()))
     }
+}
+
+/// Converts the Skate 3 in the chosen `folder` into `out`.
+fn convert_source(converter: &Path, folder: &Path, out: &Path) -> Result<(), String> {
+    match skate_source(folder)? {
+        SkateSource::Iso(iso) => {
+            let staging = game_paths::settings_dir().join("skate-disc");
+            let result = unpack_disc(&iso, &staging).and_then(|xex| run_converter(converter, &xex, out));
+            // The copied game files are only needed for the conversion.
+            std::fs::remove_dir_all(&staging).ok();
+            result
+        }
+        SkateSource::Xex(xex) => run_converter(converter, &xex, out),
+    }
+}
+
+// The settings screen's "Select" buttons. Each opens a folder picker, checks the
+// choice and saves it at once. `Ok(None)` is a cancelled picker; `Err` is a
+// message to show (nothing was changed). They block, so call them on a thread.
+
+fn save(key: &str, value: &Path) -> Result<(), String> {
+    let path = game_paths::settings_path();
+    let mut settings = Settings::read(&path);
+    settings.set_path(key, value);
+    settings.write(&path)
+}
+
+/// Choose the MCC folder.
+pub fn select_mcc() -> Result<Option<PathBuf>, String> {
+    let Some(picked) = rfd::FileDialog::new().set_title("Choose your Halo MCC folder").pick_folder() else {
+        return Ok(None);
+    };
+    let root = game_paths::mcc_from_pick(&picked).ok_or_else(|| {
+        format!(
+            "{} doesn't look like the Master Chief Collection with Halo 3 installed. \
+             Select the folder that contains halo3\\maps.",
+            picked.display()
+        )
+    })?;
+    check_mcc(&root)?;
+    save(key::MCC, &root)?;
+    Ok(Some(root))
+}
+
+/// Choose the MX vs ATV Reflex folder.
+pub fn select_reflex() -> Result<Option<PathBuf>, String> {
+    let Some(picked) = rfd::FileDialog::new().set_title("Choose your MX vs ATV Reflex folder").pick_folder() else {
+        return Ok(None);
+    };
+    if !game_paths::is_reflex(&picked) {
+        return Err(format!(
+            "{} doesn't look like MX vs ATV Reflex. Select the folder that contains the Database folder.",
+            picked.display()
+        ));
+    }
+    save(key::REFLEX, &picked)?;
+    Ok(Some(picked))
+}
+
+/// Choose the Skate 3 folder (extracted game or the one with the `.iso`).
+/// It is converted into a fresh copy first, so a failed conversion leaves the
+/// old data in use.
+pub fn select_skate() -> Result<Option<PathBuf>, String> {
+    let Some(picked) = rfd::FileDialog::new().set_title("Choose your Skate 3 folder").pick_folder() else {
+        return Ok(None);
+    };
+    skate_source(&picked)?;
+    let path = game_paths::settings_path();
+    let mut settings = Settings::read(&path);
+    let Some(converter) = find_converter(&mut settings)? else {
+        return Ok(None);
+    };
+    let dir = game_paths::settings_dir();
+    let (fresh, out) = (dir.join("skate-data-new"), dir.join("skate-data"));
+    std::fs::remove_dir_all(&fresh).ok();
+    convert_source(&converter, &picked, &fresh)?;
+    let assets = fresh.join("assets");
+    if !game_paths::is_skate_assets(&assets) {
+        return Err(format!("The Skate 3 conversion finished but {} is incomplete.", assets.display()));
+    }
+    board::ensure(&assets).map_err(|e| format!("Could not prepare the skateboard: {e}"))?;
+    std::fs::remove_dir_all(&out).ok();
+    std::fs::rename(&fresh, &out).map_err(|e| format!("cannot replace {}: {e}", out.display()))?;
+    settings.set_path(key::SKATE_ASSETS, &out.join("assets"));
+    settings.set_path(key::SKATE_SOURCE, &picked);
+    settings.write(&path)?;
+    Ok(Some(picked))
 }
 
 /// The converter: `%HALO3_SKATE_CONVERTER%`, the saved one, or

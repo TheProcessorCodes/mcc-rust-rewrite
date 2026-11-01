@@ -122,7 +122,7 @@ in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
 left stick move, Q / E / LB / RB change tab, Enter / A start, Escape / B exit;
 the mouse picks a tile and a double click starts it. Naming a map on the
 command line skips the menu, and Q then quits. `halo3.exe --menu-shot FILE
-[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-start
+[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-start
 [--menu-back TAB,PICK]]` draws the menu, the loading screen, the picked map's
 not-installed notice or the loaded map without a window (point e.g.
 `HALOREACH_MAPS` at an empty folder to see a game grayed out).

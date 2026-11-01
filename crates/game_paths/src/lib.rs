@@ -22,6 +22,9 @@ pub mod key {
     pub const MCC: &str = "MCC";
     /// The converted Skate 3 data (holding `private\game.json`).
     pub const SKATE_ASSETS: &str = "SKATE_ASSETS";
+    /// The folder the player chose for Skate 3 (the extracted game or the
+    /// one holding the `.iso`), kept to show in the settings.
+    pub const SKATE_SOURCE: &str = "SKATE_SOURCE";
     /// The Skate 3 converter, `skate\iw4l-skate-convert.exe` in the player's
     /// MW2 Skate 3 folder.
     pub const SKATE_CONVERTER: &str = "SKATE_CONVERTER";

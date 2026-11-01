@@ -208,6 +208,8 @@ enum Phase {
     Loading,
     /// The notice over the chooser: this game's map is not installed.
     Missing(Game),
+    /// The settings screen.
+    Settings,
 }
 
 /// The map file a menu entry plays: its own, or a mission's
@@ -260,6 +262,18 @@ struct Menu {
     /// The notice opened this frame: the press that opened it does not
     /// close it ([`dismiss`]).
     fresh: bool,
+    /// The settings row with the focus.
+    setting: usize,
+    /// A folder picker (and, for Skate 3, its conversion) running on its thread.
+    picking: Option<Picking>,
+    /// What the settings screen says under the rows.
+    note: String,
+}
+
+/// A settings row's folder picker, on its thread.
+struct Picking {
+    row: usize,
+    result: Mutex<Receiver<Result<Option<PathBuf>, String>>>,
 }
 
 impl Menu {
@@ -310,8 +324,44 @@ struct Notice;
 struct NoticeGame;
 #[derive(Component, Clone, Copy, PartialEq)]
 enum MenuButton {
+    Settings,
     Start,
     Exit,
+}
+/// The settings screen.
+#[derive(Component)]
+struct SettingsScreen;
+/// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3.
+#[derive(Component)]
+struct SettingRow(usize);
+#[derive(Component)]
+struct SettingValue(usize);
+/// A row's Select button, and its label.
+#[derive(Component)]
+struct SettingSelect(usize);
+#[derive(Component)]
+struct SettingSelectLabel(usize);
+#[derive(Component)]
+struct SettingsNote;
+#[derive(Component)]
+struct SettingsBack;
+
+/// The games the settings list, in row order.
+const SETTING_GAMES: [&str; 3] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3"];
+
+/// What each row shows now: the saved folder, or why there is none.
+fn setting_values() -> [String; 3] {
+    let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
+    let settings = game_paths::settings();
+    let reflex = shown(game_paths::reflex_root()).unwrap_or_else(|| {
+        if game_paths::reflex_skipped() { "Not used (optional)" } else { "Not set (optional)" }.to_string()
+    });
+    let skate = settings
+        .get(game_paths::key::SKATE_SOURCE)
+        .map(str::to_owned)
+        .or_else(|| game_paths::skate_assets().map(|_| "Set up (folder not recorded, select to choose it)".to_string()))
+        .unwrap_or_else(|| "Not set".to_string());
+    [shown(game_paths::mcc_root()).unwrap_or_else(|| "Not set".to_string()), reflex, skate]
 }
 
 /// MCC's install root, as first-run setup saved it (`game_paths`).
@@ -441,7 +491,7 @@ impl Plugin for MenuPlugin {
         let mut tab = value(args, "--menu-tab").and_then(|s| s.parse().ok()).unwrap_or(0usize).min(TABS.len() - 1);
         let pick = value(args, "--menu-pick").and_then(|s| s.parse().ok()).unwrap_or(0usize);
         let with_value = ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--size"];
-        let alone = ["--menu-loading", "--menu-start", "--menu-missing"];
+        let alone = ["--menu-loading", "--menu-start", "--menu-missing", "--menu-settings"];
         let mut pass = Vec::new();
         let mut skip = false;
         for a in args {
@@ -462,19 +512,7 @@ impl Plugin for MenuPlugin {
         if pack.is_none() {
             eprintln!("menu: no map pictures under {}", root.join(r"Data\UI\texturepacks").display());
         }
-        let mut images = app.world_mut().resource_mut::<Assets<Image>>();
-        let tabs = [HALO3, HALO2, HALO1, REACH, CAMPAIGN].map(|entries| {
-            entries
-                .iter()
-                .map(|&(arg, name, texture)| Map {
-                    arg,
-                    name,
-                    picture: texture.and_then(|t| pack.as_ref()?.picture(t)).map(|i| images.add(i)),
-                    game: game_of(arg),
-                    installed: installed(arg),
-                })
-                .collect::<Vec<_>>()
-        });
+        let tabs = build_tabs(pack.as_ref(), &mut app.world_mut().resource_mut::<Assets<Image>>());
         let count = |t: usize| format!("{}/{}", tabs[t].iter().filter(|m| m.installed).count(), tabs[t].len());
         eprintln!(
             "menu: installed {} Halo 3, {} Halo 2, {} Halo CE, {} Reach, {} campaign maps under {}",
@@ -492,11 +530,13 @@ impl Plugin for MenuPlugin {
         picks[tab] = pick.min(tabs[tab].len().saturating_sub(1));
         // `--menu-shot --menu-missing`: open on the picked map's notice.
         let phase = match tabs[tab].get(picks[tab]) {
+            _ if args.iter().any(|a| a == "--menu-settings") => Phase::Settings,
             Some(map) if shot.as_ref().is_some_and(|s| s.missing) => Phase::Missing(map.game),
             _ => Phase::Choosing,
         };
         let choosing = |menu: Res<Menu>| menu.phase == Phase::Choosing;
         let missing = |menu: Res<Menu>| matches!(menu.phase, Phase::Missing(_));
+        let settings_open = |menu: Res<Menu>| menu.phase == Phase::Settings;
         // What `install` (main.rs) puts in goes when the map is unloaded.
         app.insert_resource(MapMenu)
             .remove_on_map_unload::<crate::falls::KillZones>()
@@ -518,17 +558,47 @@ impl Plugin for MenuPlugin {
             click: None,
             error: None,
             fresh: false,
+            setting: 0,
+            picking: None,
+            note: String::new(),
         })
         .add_systems(Startup, spawn)
         .add_systems(
             Update,
-            ((navigate, mouse, act).run_if(choosing), dismiss.run_if(missing), show, show_notice, spin).chain(),
+            (
+                settings_poll.run_if(|menu: Res<Menu>| menu.picking.is_some()),
+                (navigate, mouse, act).run_if(choosing),
+                settings_input.run_if(settings_open),
+                dismiss.run_if(missing),
+                show,
+                show_notice,
+                show_settings,
+                spin,
+            )
+                .chain(),
         )
         .add_systems(Last, (back_to_menu, finish_loading, leave).chain());
         if let Some(shot) = shot {
             app.insert_resource(shot).add_systems(Update, capture.after(show));
         }
     }
+}
+
+/// Every tab's maps, with their pictures; the ones this install lacks are
+/// grayed out.
+fn build_tabs(pack: Option<&Pack>, images: &mut Assets<Image>) -> [Vec<Map>; TABS.len()] {
+    [HALO3, HALO2, HALO1, REACH, CAMPAIGN].map(|entries| {
+        entries
+            .iter()
+            .map(|&(arg, name, texture)| Map {
+                arg,
+                name,
+                picture: texture.and_then(|t| pack?.picture(t)).map(|i| images.add(i)),
+                game: game_of(arg),
+                installed: installed(arg),
+            })
+            .collect::<Vec<_>>()
+    })
 }
 
 fn text(s: &str, size: f32, colour: Color) -> impl Bundle {
@@ -600,6 +670,131 @@ fn spawn(mut commands: Commands, menu: Res<Menu>, shot: Option<ResMut<MenuShot>>
                 BackgroundColor(BACKGROUND.with_alpha(0.8)),
             ))
             .with_children(spawn_notice);
+            root.spawn((
+                SettingsScreen,
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(BACKGROUND),
+            ))
+            .with_children(spawn_settings);
+        });
+}
+
+/// The settings screen: a row per game (name, folder, Select) and Back.
+fn spawn_settings(screen: &mut ChildSpawnerCommands) {
+    screen
+        .spawn((
+            Node {
+                width: Val::Percent(92.0),
+                max_width: Val::Vh(165.0),
+                margin: UiRect::top(Val::Vh(4.0)),
+                padding: UiRect::bottom(Val::Px(10.0)),
+                border: UiRect::bottom(Val::Px(1.0)),
+                ..default()
+            },
+            BorderColor::all(LINE),
+        ))
+        .with_child(text("SETTINGS", 22.0, LIT));
+    screen.spawn((
+        Node {
+            width: Val::Percent(92.0),
+            max_width: Val::Vh(165.0),
+            margin: UiRect::new(Val::Px(0.0), Val::Px(0.0), Val::Vh(3.0), Val::Px(8.0)),
+            ..default()
+        },
+        text("GAMES", 16.0, FAINT),
+    ));
+    for (i, name) in SETTING_GAMES.iter().enumerate() {
+        screen
+            .spawn((
+                SettingRow(i),
+                Node {
+                    width: Val::Percent(92.0),
+                    max_width: Val::Vh(165.0),
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(24.0),
+                    padding: UiRect::axes(Val::Px(20.0), Val::Px(14.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(6.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                BorderColor::all(Color::NONE),
+            ))
+            .with_children(|row| {
+                row.spawn((Node { width: Val::Px(240.0), flex_shrink: 0.0, ..default() }, text(name, 22.0, Color::WHITE)));
+                row.spawn((
+                    SettingValue(i),
+                    Node { flex_grow: 1.0, flex_basis: Val::Px(0.0), ..default() },
+                    text("", 18.0, DIM),
+                ));
+                row.spawn((
+                    SettingSelect(i),
+                    Node {
+                        padding: UiRect::axes(Val::Px(26.0), Val::Px(9.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(5.0)),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                    BorderColor::all(LINE),
+                ))
+                .with_child((SettingSelectLabel(i), text("SELECT", 18.0, DIM)));
+            });
+    }
+    screen.spawn((
+        SettingsNote,
+        Node { width: Val::Percent(92.0), max_width: Val::Vh(165.0), margin: UiRect::top(Val::Px(16.0)), ..default() },
+        text("", 17.0, DIM),
+    ));
+    screen.spawn(Node { flex_grow: 1.0, ..default() });
+    screen
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Vh(11.0),
+                padding: UiRect::horizontal(Val::Percent(4.0)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::FlexEnd,
+                border: UiRect::top(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(BAR),
+            BorderColor::all(LINE),
+        ))
+        .with_children(|bar| {
+            bar.spawn((
+                SettingsBack,
+                Node {
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(10.0),
+                    padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                    ..default()
+                },
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Node {
+                        width: Val::Px(26.0),
+                        height: Val::Px(26.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border_radius: BorderRadius::MAX,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.85, 0.33, 0.31)),
+                ))
+                .with_child(text("B", 15.0, Color::BLACK));
+                b.spawn(text("BACK", 20.0, DIM));
+                b.spawn(text("(Esc)", 15.0, FAINT));
+            });
         });
 }
 
@@ -726,6 +921,7 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
                 name.spawn((Chosen(1), text("", 18.0, DIM)));
             });
         for (button, letter, colour, label, key) in [
+            (MenuButton::Settings, "X", Color::srgb(0.30, 0.55, 0.90), "SETTINGS", "F1"),
             (MenuButton::Start, "A", Color::srgb(0.37, 0.75, 0.29), "START GAME", "Enter"),
             (MenuButton::Exit, "B", Color::srgb(0.85, 0.33, 0.31), "EXIT", "Esc"),
         ] {
@@ -866,6 +1062,10 @@ fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu
     let pushed: Vec<bool> = held.iter().zip(stick.iter()).map(|(h, was)| *h && !was).collect();
     *stick = held;
 
+    if key(&[KeyCode::F1]) || pad(GamepadButton::West) {
+        open_settings(&mut menu);
+        return;
+    }
     let tabs = TABS.len();
     if key(&[KeyCode::KeyE, KeyCode::Tab]) || pad(GamepadButton::RightTrigger) {
         menu.tab = (menu.tab + 1) % tabs;
@@ -933,11 +1133,176 @@ fn mouse(
         return;
     }
     match bar.iter().find(|(_, n, t)| n.contains_point(**t, at)).map(|(b, ..)| *b) {
+        Some(MenuButton::Settings) => open_settings(&mut menu),
         Some(MenuButton::Start) => start(&mut commands, &mut menu),
         Some(MenuButton::Exit) => {
             exit.write(AppExit::Success);
         }
         None => {}
+    }
+}
+
+fn open_settings(menu: &mut Menu) {
+    menu.phase = Phase::Settings;
+    menu.setting = 0;
+    menu.note.clear();
+}
+
+/// The settings screen: up / down move between the games, Enter / A (or a
+/// click) on Select picks a new folder, Escape / B (or Back) leaves.
+#[allow(clippy::too_many_arguments)]
+fn settings_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    gamepads: Query<&Gamepad>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut menu: ResMut<Menu>,
+    selects: Query<(&SettingSelect, &ComputedNode, &UiGlobalTransform)>,
+    back: Query<(&ComputedNode, &UiGlobalTransform), With<SettingsBack>>,
+) {
+    if menu.picking.is_some() {
+        return;
+    }
+    let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
+    if keys.any_just_pressed([KeyCode::Escape, KeyCode::Backspace]) || pad(GamepadButton::East) {
+        menu.phase = Phase::Choosing;
+        return;
+    }
+    if keys.any_just_pressed([KeyCode::ArrowUp, KeyCode::KeyW]) || pad(GamepadButton::DPadUp) {
+        menu.setting = menu.setting.saturating_sub(1);
+    }
+    if keys.any_just_pressed([KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) {
+        menu.setting = (menu.setting + 1).min(SETTING_GAMES.len() - 1);
+    }
+    if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]) || pad(GamepadButton::South) {
+        let row = menu.setting;
+        select(&mut menu, row);
+        return;
+    }
+    if !buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let Some(at) = windows.single().ok().and_then(Window::physical_cursor_position) else {
+        return;
+    };
+    if let Some((s, ..)) = selects.iter().find(|(_, n, t)| n.contains_point(**t, at)) {
+        menu.setting = s.0;
+        select(&mut menu, s.0);
+    } else if back.iter().any(|(n, t)| n.contains_point(*t, at)) {
+        menu.phase = Phase::Choosing;
+    }
+}
+
+/// Opens the folder picker for a game on its own thread; the choice is
+/// checked and saved there, and [`settings_poll`] picks up the outcome.
+fn select(menu: &mut Menu, row: usize) {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = send.send(match row {
+            0 => halo3_setup::select_mcc(),
+            1 => halo3_setup::select_reflex(),
+            _ => halo3_setup::select_skate(),
+        });
+    });
+    menu.note = match row {
+        2 => "Choose your Skate 3 folder. It is converted once you have chosen, which takes a few minutes.".to_string(),
+        _ => format!("Choose your {} folder in the window that opened.", SETTING_GAMES[row]),
+    };
+    menu.picking = Some(Picking { row, result: Mutex::new(receive) });
+}
+
+/// A picker has finished: say how it went. A new MCC folder changes which
+/// maps are installed and their pictures, so the map lists are built again.
+fn settings_poll(world: &mut World) {
+    let menu = world.resource::<Menu>();
+    let Some(picking) = &menu.picking else {
+        return;
+    };
+    let row = picking.row;
+    let outcome = match picking.result.lock().unwrap().try_recv() {
+        Ok(outcome) => outcome,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("The folder picker stopped unexpectedly.".to_string()),
+    };
+    let changed = matches!(outcome, Ok(Some(_)));
+    let mut menu = world.resource_mut::<Menu>();
+    menu.picking = None;
+    menu.note = match outcome {
+        Ok(Some(path)) => {
+            eprintln!("settings: {} is now {}", SETTING_GAMES[row], path.display());
+            format!("Saved {}.", SETTING_GAMES[row])
+        }
+        Ok(None) => String::new(),
+        Err(e) => {
+            eprintln!("settings: {e}");
+            e
+        }
+    };
+    if changed && row == 0 {
+        refresh_maps(world);
+    }
+}
+
+/// Builds the map lists and the menu's screens again, from the MCC folder
+/// as saved now.
+fn refresh_maps(world: &mut World) {
+    let pack = Pack::open(&mcc_root());
+    let tabs = build_tabs(pack.as_ref(), &mut world.resource_mut::<Assets<Image>>());
+    let old: Vec<Entity> = world
+        .query_filtered::<Entity, Or<(With<MenuRoot>, With<MenuCamera>)>>()
+        .iter(world)
+        .collect();
+    for e in old {
+        world.entity_mut(e).despawn();
+    }
+    world.resource_mut::<Menu>().tabs = tabs;
+    if let Err(e) = world.run_system_cached(spawn) {
+        error!("menu: cannot rebuild the menu: {e}");
+    }
+}
+
+/// Draws the settings screen: shown in [`Phase::Settings`], the saved
+/// folders, the focused row, the note.
+#[allow(clippy::type_complexity)]
+fn show_settings(
+    menu: Res<Menu>,
+    mut screen: Query<&mut Node, With<SettingsScreen>>,
+    mut rows: Query<(&SettingRow, &mut BackgroundColor, &mut BorderColor), Without<SettingSelect>>,
+    mut values: Query<(&SettingValue, &mut Text, &mut TextColor), (Without<SettingsNote>, Without<SettingSelectLabel>)>,
+    mut selects: Query<(&SettingSelect, &mut BorderColor), Without<SettingRow>>,
+    mut labels: Query<(&SettingSelectLabel, &mut Text, &mut TextColor), (Without<SettingValue>, Without<SettingsNote>)>,
+    mut note: Query<&mut Text, (With<SettingsNote>, Without<SettingValue>, Without<SettingSelectLabel>)>,
+) {
+    if !menu.is_changed() {
+        return;
+    }
+    let open = menu.phase == Phase::Settings;
+    for mut node in &mut screen {
+        node.display = if open { Display::Flex } else { Display::None };
+    }
+    if !open {
+        return;
+    }
+    let busy = |i: usize| menu.picking.as_ref().is_some_and(|p| p.row == i);
+    for (row, mut background, mut border) in &mut rows {
+        let on = row.0 == menu.setting;
+        background.0 = if on { BAR } else { Color::NONE };
+        *border = BorderColor::all(if on { LINE } else { Color::NONE });
+    }
+    let now = setting_values();
+    for (value, mut text, mut colour) in &mut values {
+        text.0.clone_from(&now[value.0]);
+        colour.0 = if now[value.0].starts_with("Not") { FAINT } else { DIM };
+    }
+    for (select, mut border) in &mut selects {
+        *border = BorderColor::all(if select.0 == menu.setting { LIT } else { LINE });
+    }
+    for (label, mut text, mut colour) in &mut labels {
+        text.0 = if busy(label.0) { "WORKING..." } else { "SELECT" }.to_string();
+        colour.0 = if label.0 == menu.setting { LIT } else { DIM };
+    }
+    for mut text in &mut note {
+        text.0.clone_from(&menu.note);
     }
 }
 
@@ -1162,8 +1527,9 @@ fn show(
         return;
     }
     let loading_now = menu.phase == Phase::Loading;
+    let settings_now = menu.phase == Phase::Settings;
     for mut node in &mut chooser {
-        node.display = if loading_now { Display::None } else { Display::Flex };
+        node.display = if loading_now || settings_now { Display::None } else { Display::Flex };
     }
     for mut node in &mut loading {
         node.display = if loading_now { Display::Flex } else { Display::None };
