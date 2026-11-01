@@ -1771,7 +1771,8 @@ mod tests {
             (CAMPAIGN, Game::Halo3),
         ] {
             for (arg, ..) in entries {
-                assert_eq!(crate::codename(arg).0, Some(game), "{arg}");
+                // A mission (warthog_run) is its map's game.
+                assert_eq!(crate::codename(map_of(arg)).0, Some(game), "{arg}");
             }
         }
     }

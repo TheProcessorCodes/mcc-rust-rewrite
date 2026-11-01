@@ -202,15 +202,22 @@ impl SoundLevels {
 #[derive(Resource, Default)]
 pub(crate) struct SaveDelay(Option<f32>);
 
-/// Hands changed levels to the mixer and saves them a moment later.
+/// Hands changed levels to the mixer and saves them a moment later. While
+/// a map is in but play has not begun (behind the loading screen,
+/// `halo3_core::map::Playing`) the master is silent.
 pub(crate) fn apply(
     time: Res<Time<Real>>,
     levels: Res<SoundLevels>,
     mixer: Res<Mixer>,
     mut delay: ResMut<SaveDelay>,
+    installed: Option<Res<halo3_core::map::MapInstalled>>,
+    playing: Option<Res<halo3_core::map::Playing>>,
+    mut was_silent: Local<bool>,
 ) {
-    if levels.is_changed() {
-        mixer.set_master(levels.master_out());
+    let silent = installed.is_some() && playing.is_none();
+    if levels.is_changed() || silent != *was_silent {
+        *was_silent = silent;
+        mixer.set_master(if silent { 0.0 } else { levels.master_out() });
         for b in Bus::ALL {
             mixer.set_bus(b, levels.bus(b));
         }
