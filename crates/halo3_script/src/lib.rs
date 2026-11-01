@@ -164,7 +164,7 @@ impl Plugin for ScriptPlugin {
                 Update,
                 (
                     (tick.run_if(halo3_core::pause::running), apply_objects).chain(),
-                    forward_sounds.after(tick),
+                    forward_sounds.after(tick).run_if(halo3_core::pause::running),
                 )
                     .run_if(halo3_core::map::ready),
             );

@@ -39,7 +39,7 @@ impl Plugin for TunePlugin {
             .insert_resource(BikeTuning(load()))
             .insert_resource(load_setups())
             .add_systems(halo3_core::map::MapStartup, (spawn_menu, apply))
-            .add_systems(PreUpdate, toggle.after(InputSystems).in_set(OverlayInput).run_if(halo3_core::map::ready))
+            .add_systems(PreUpdate, toggle.after(InputSystems).in_set(OverlayInput).run_if(halo3_core::map::playing))
             .add_systems(Update, (adjust, show, apply.run_if(resource_changed::<BikeTuning>)).chain().run_if(halo3_core::map::ready));
     }
 }

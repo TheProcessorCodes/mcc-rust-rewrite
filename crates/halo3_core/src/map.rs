@@ -7,6 +7,12 @@
 //! Every system of the map crates is registered with `.run_if(ready)`, and
 //! their start-up systems go in [`MapStartup`] instead of `Startup`.
 //!
+//! Play itself waits longer: until the map's [`Warmup`] work is done (the
+//! bike's collision, the skate session) game time stands still and
+//! [`playing`] is false, so the scripts, the run's clock, the AI and every
+//! system that reads the controls hold behind the loading screen. Then
+//! [`Playing`] goes in and everything starts on the same frame.
+//!
 //! [`unload`] takes the map out again (back to the map menu): it despawns
 //! everything drawn in the world or on screen, removes the resources the map
 //! put in and puts the plugins' own back to their first state, as each
@@ -40,6 +46,18 @@ pub struct BackToMenu;
 #[derive(Resource, Default, Debug)]
 pub struct Warmup(pub std::collections::BTreeSet<&'static str>);
 
+/// The map's [`Warmup`] work is done (or the wait for it gave up after
+/// [`WARMUP_LIMIT`]): play has begun.
+#[derive(Resource)]
+pub struct Playing;
+
+/// Longest play waits for the map's [`Warmup`] work, in real seconds.
+pub const WARMUP_LIMIT: f32 = 180.0;
+
+/// When the map started (real seconds), for [`WARMUP_LIMIT`].
+#[derive(Resource)]
+struct WarmingSince(f32);
+
 /// Run once when the map is in, in place of `Startup`.
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MapStartup;
@@ -51,6 +69,11 @@ pub struct MapPostStartup;
 /// A run condition: a map is in and started.
 pub fn ready(ready: Option<Res<MapReady>>) -> bool {
     ready.is_some()
+}
+
+/// A run condition: play has begun ([`Playing`]).
+pub fn playing(playing: Option<Res<Playing>>) -> bool {
+    playing.is_some()
 }
 
 /// What puts each per-map resource back to its first state on [`unload`].
@@ -99,7 +122,7 @@ impl Plugin for MapPhasePlugin {
             .init_map_resource::<Warmup>()
             .init_schedule(MapStartup)
             .init_schedule(MapPostStartup)
-            .add_systems(First, start_map);
+            .add_systems(First, (start_map, begin_play).chain());
     }
 }
 
@@ -110,6 +133,33 @@ fn start_map(world: &mut World) {
     world.run_schedule(MapStartup);
     world.run_schedule(MapPostStartup);
     world.insert_resource(MapReady);
+    // Game time stands still until play begins.
+    world.resource_mut::<Time<Virtual>>().pause();
+    let now = world.resource::<Time<Real>>().elapsed_secs();
+    world.insert_resource(WarmingSince(now));
+}
+
+/// Play begins once the map's [`Warmup`] set is empty, or after
+/// [`WARMUP_LIMIT`] seconds whatever is left.
+fn begin_play(world: &mut World) {
+    let Some(since) = world.get_resource::<WarmingSince>().map(|s| s.0) else {
+        return;
+    };
+    let waited = world.resource::<Time<Real>>().elapsed_secs() - since;
+    let left = world.get_resource::<Warmup>().map_or(0, |w| w.0.len());
+    if left > 0 {
+        if waited < WARMUP_LIMIT {
+            return;
+        }
+        eprintln!("map: still preparing {:?} after {WARMUP_LIMIT} s; play begins anyway", world.resource::<Warmup>().0);
+    }
+    eprintln!("map: play begins, prepared in {waited:.1} s");
+    world.remove_resource::<WarmingSince>();
+    world.insert_resource(Playing);
+    // Not under the pause menu (opened while loading, should it ever be).
+    if !world.get_resource::<crate::pause::Paused>().is_some_and(|p| p.0) {
+        world.resource_mut::<Time<Virtual>>().unpause();
+    }
 }
 
 /// Takes the map out: its entities, its resources, its sound state. The
@@ -137,6 +187,8 @@ pub fn unload(world: &mut World) {
     }
     world.remove_resource::<MapInstalled>();
     world.remove_resource::<MapReady>();
+    world.remove_resource::<WarmingSince>();
+    world.remove_resource::<Playing>();
     world.resource_mut::<Time<Virtual>>().unpause();
     eprintln!("map unloaded: {count} entities despawned");
 }

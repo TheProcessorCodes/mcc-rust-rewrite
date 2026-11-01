@@ -4,8 +4,8 @@
 //! completion screen shows the time the run took, with a way to restart
 //! the run or quit.
 //!
-//! The clock starts the first time the player is in control after the
-//! world has loaded (riding, on foot or skating; an insertion puts him on
+//! The clock starts the first time the player is in control after play
+//! has begun (the loading screen gone, `halo3_core::map::Playing`) (riding, on foot or skating; an insertion puts him on
 //! the bike at once) and counts game time only: the pause menu stops it,
 //! and dying, falling and respawning do not touch it.
 //!
@@ -23,7 +23,7 @@ use bevy::prelude::*;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
-use halo3_core::map::{BackToMenu, MapAppExt, MapMenu, MapReady};
+use halo3_core::map::{BackToMenu, MapAppExt, MapMenu, Playing};
 use halo3_core::pause::Paused;
 use halo3_core::skate::RiderPose;
 use halo3_script::Scripts;
@@ -37,7 +37,7 @@ impl Plugin for FinishPlugin {
             .init_map_resource::<Picked>()
             .remove_on_map_unload::<CurrentMap>()
             .add_systems(halo3_core::map::MapStartup, spawn_screen)
-            .add_systems(Update, (clock, finish).chain().run_if(halo3_core::map::ready))
+            .add_systems(Update, (clock.run_if(halo3_core::pause::running), finish).chain().run_if(halo3_core::map::ready))
             .add_systems(PreUpdate, choose.after(InputSystems).run_if(halo3_core::map::ready))
             .add_systems(Last, (restart, reload_done).chain());
     }
@@ -387,9 +387,9 @@ fn restart(world: &mut World) {
 }
 
 /// A restart without the map menu: once decoded, the map goes in; once
-/// started, the plain loading screen goes.
+/// play begins (its warm-up done), the plain loading screen goes.
 fn reload_done(world: &mut World) {
-    if world.contains_resource::<MapReady>() {
+    if world.contains_resource::<Playing>() {
         let screens: Vec<Entity> = world.query_filtered::<Entity, With<ReloadScreen>>().iter(world).collect();
         for e in screens {
             world.despawn(e);

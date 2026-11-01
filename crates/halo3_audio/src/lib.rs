@@ -121,7 +121,7 @@ impl Plugin for HaloAudioPlugin {
                 details,
                 scenery,
                 music::script_requests,
-                music::hand_controls,
+                music::hand_controls.run_if(halo3_core::map::playing),
                 music::update,
                 board,
                 weapons::weapon_sounds,
