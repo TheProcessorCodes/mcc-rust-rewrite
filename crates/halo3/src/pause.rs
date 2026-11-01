@@ -6,7 +6,7 @@
 //! keys (on the Sound tab the arrows and the d-pad move the sliders; LB / RB
 //! and A / D still change tab). The same button carries on; Q, or View
 //! (Back) on a pad, goes back to the map menu (or quits the game when it
-//! was started on a map).
+//! was started on a map). On a campaign level R, or Y, restarts the level.
 //!
 //! Pausing stops virtual time, and the systems that read input or move
 //! things run only `while running`, so nothing reacts to keys behind the
@@ -42,7 +42,7 @@ impl Plugin for PausePlugin {
             .add_systems(halo3_core::map::MapStartup, spawn_menu)
             .add_systems(
                 PreUpdate,
-                (toggle, quit, switch_tab, sound_tab, engine_slider)
+                (toggle, quit, restart_level, switch_tab, sound_tab, engine_slider)
                     .chain()
                     .after(InputSystems)
                     .after(halo3_core::pause::OverlayInput).run_if(halo3_core::map::ready),
@@ -249,7 +249,9 @@ fn spawn_menu(
     mut commands: Commands,
     levels: Option<Res<SoundLevels>>,
     map_menu: Option<Res<halo3_core::map::MapMenu>>,
+    zones: Option<Res<halo3_world::zones::Zones>>,
 ) {
+    let campaign = zones.is_some_and(|z| !z.layout.zone_sets.is_empty());
     let leave = if map_menu.is_some() {
         "Q or View (Back) to go back to the map menu"
     } else {
@@ -284,6 +286,9 @@ fn spawn_menu(
                 panel.spawn(text("PAUSED", 36.0, Color::WHITE));
                 panel.spawn(text("Esc or Start to resume", 16.0, DIM));
                 panel.spawn(text(leave, 16.0, DIM));
+                if campaign {
+                    panel.spawn(text("R or Y to restart the level from the beginning", 16.0, DIM));
+                }
                 panel
                     .spawn(Node {
                         column_gap: Val::Px(12.0),
@@ -645,6 +650,24 @@ fn quit(
         } else {
             exit.write(AppExit::Success);
         }
+    }
+}
+
+/// R, or Y on a pad, on a campaign level: the level is loaded again from its
+/// start (`finish.rs` `RestartMap`), so objects, scripts, AI, music and the
+/// run's clock all begin afresh.
+fn restart_level(
+    mut commands: Commands,
+    paused: Res<Paused>,
+    zones: Option<Res<halo3_world::zones::Zones>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+) {
+    if !paused.0 || !zones.is_some_and(|z| !z.layout.zone_sets.is_empty()) {
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyR) || gamepads.iter().any(|p| p.just_pressed(GamepadButton::North)) {
+        commands.insert_resource(crate::finish::RestartMap);
     }
 }
 
