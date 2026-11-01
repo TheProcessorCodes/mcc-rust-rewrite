@@ -235,8 +235,11 @@ impl Mixer {
     }
 
     /// Fades out every voice (the map is unloading).
+    /// Generators (the bike's engine) go at once.
     pub fn stop_all(&self) {
-        for v in self.0.lock().unwrap().voices.values_mut() {
+        let mut s = self.0.lock().unwrap();
+        s.generators.clear();
+        for v in s.voices.values_mut() {
             v.stopping = true;
             v.target = [0.0; 2];
         }
