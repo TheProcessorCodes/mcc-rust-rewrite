@@ -33,6 +33,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_dis
 use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
 
+use halo3_core::units::SpeedUnit;
 use halo3_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady, Warmup};
 
 use crate::Game;
@@ -331,7 +332,7 @@ enum MenuButton {
 /// The settings screen.
 #[derive(Component)]
 struct SettingsScreen;
-/// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3.
+/// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3, 3 speed units.
 #[derive(Component)]
 struct SettingRow(usize);
 #[derive(Component)]
@@ -346,11 +347,13 @@ struct SettingsNote;
 #[derive(Component)]
 struct SettingsBack;
 
-/// The games the settings list, in row order.
-const SETTING_GAMES: [&str; 3] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3"];
+/// The settings rows, in order: three games (folders) and the speed unit.
+const SETTING_GAMES: [&str; 4] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Speedometer"];
+/// The row that is not a folder.
+const UNITS_ROW: usize = 3;
 
 /// What each row shows now: the saved folder, or why there is none.
-fn setting_values() -> [String; 3] {
+fn setting_values(unit: SpeedUnit) -> [String; 4] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
     let settings = game_paths::settings();
     let reflex = shown(game_paths::reflex_root()).unwrap_or_else(|| {
@@ -361,7 +364,7 @@ fn setting_values() -> [String; 3] {
         .map(str::to_owned)
         .or_else(|| game_paths::skate_assets().map(|_| "Set up (folder not recorded, select to choose it)".to_string()))
         .unwrap_or_else(|| "Not set".to_string());
-    [shown(game_paths::mcc_root()).unwrap_or_else(|| "Not set".to_string()), reflex, skate]
+    [shown(game_paths::mcc_root()).unwrap_or_else(|| "Not set".to_string()), reflex, skate, format!("{} (miles per hour or kilometres per hour)", unit.label())]
 }
 
 /// MCC's install root, as first-run setup saved it (`game_paths`).
@@ -712,6 +715,17 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
         text("GAMES", 16.0, FAINT),
     ));
     for (i, name) in SETTING_GAMES.iter().enumerate() {
+        if i == UNITS_ROW {
+            screen.spawn((
+                Node {
+                    width: Val::Percent(92.0),
+                    max_width: Val::Vh(165.0),
+                    margin: UiRect::new(Val::Px(0.0), Val::Px(0.0), Val::Vh(3.0), Val::Px(8.0)),
+                    ..default()
+                },
+                text("OPTIONS", 16.0, FAINT),
+            ));
+        }
         screen
             .spawn((
                 SettingRow(i),
@@ -1157,6 +1171,7 @@ fn settings_input(
     gamepads: Query<&Gamepad>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut menu: ResMut<Menu>,
+    mut unit: ResMut<SpeedUnit>,
     selects: Query<(&SettingSelect, &ComputedNode, &UiGlobalTransform)>,
     back: Query<(&ComputedNode, &UiGlobalTransform), With<SettingsBack>>,
 ) {
@@ -1176,7 +1191,7 @@ fn settings_input(
     }
     if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]) || pad(GamepadButton::South) {
         let row = menu.setting;
-        select(&mut menu, row);
+        select(&mut menu, &mut unit, row);
         return;
     }
     if !buttons.just_pressed(MouseButton::Left) {
@@ -1187,7 +1202,7 @@ fn settings_input(
     };
     if let Some((s, ..)) = selects.iter().find(|(_, n, t)| n.contains_point(**t, at)) {
         menu.setting = s.0;
-        select(&mut menu, s.0);
+        select(&mut menu, &mut unit, s.0);
     } else if back.iter().any(|(n, t)| n.contains_point(*t, at)) {
         menu.phase = Phase::Choosing;
     }
@@ -1195,7 +1210,15 @@ fn settings_input(
 
 /// Opens the folder picker for a game on its own thread; the choice is
 /// checked and saved there, and [`settings_poll`] picks up the outcome.
-fn select(menu: &mut Menu, row: usize) {
+fn select(menu: &mut Menu, unit: &mut SpeedUnit, row: usize) {
+    if row == UNITS_ROW {
+        *unit = unit.toggled();
+        menu.note = match unit.save() {
+            Ok(()) => format!("Speedometer now shows {}.", unit.label()),
+            Err(e) => e,
+        };
+        return;
+    }
     let (send, receive) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = send.send(match row {
@@ -1266,6 +1289,7 @@ fn refresh_maps(world: &mut World) {
 #[allow(clippy::type_complexity)]
 fn show_settings(
     menu: Res<Menu>,
+    unit: Res<SpeedUnit>,
     mut screen: Query<&mut Node, With<SettingsScreen>>,
     mut rows: Query<(&SettingRow, &mut BackgroundColor, &mut BorderColor), Without<SettingSelect>>,
     mut values: Query<(&SettingValue, &mut Text, &mut TextColor), (Without<SettingsNote>, Without<SettingSelectLabel>)>,
@@ -1273,7 +1297,7 @@ fn show_settings(
     mut labels: Query<(&SettingSelectLabel, &mut Text, &mut TextColor), (Without<SettingValue>, Without<SettingsNote>)>,
     mut note: Query<&mut Text, (With<SettingsNote>, Without<SettingValue>, Without<SettingSelectLabel>)>,
 ) {
-    if !menu.is_changed() {
+    if !menu.is_changed() && !unit.is_changed() {
         return;
     }
     let open = menu.phase == Phase::Settings;
@@ -1289,7 +1313,7 @@ fn show_settings(
         background.0 = if on { BAR } else { Color::NONE };
         *border = BorderColor::all(if on { LINE } else { Color::NONE });
     }
-    let now = setting_values();
+    let now = setting_values(*unit);
     for (value, mut text, mut colour) in &mut values {
         text.0.clone_from(&now[value.0]);
         colour.0 = if now[value.0].starts_with("Not") { FAINT } else { DIM };
@@ -1298,7 +1322,7 @@ fn show_settings(
         *border = BorderColor::all(if select.0 == menu.setting { LIT } else { LINE });
     }
     for (label, mut text, mut colour) in &mut labels {
-        text.0 = if busy(label.0) { "WORKING..." } else { "SELECT" }.to_string();
+        text.0 = if busy(label.0) { "WORKING..." } else if label.0 == UNITS_ROW { "CHANGE" } else { "SELECT" }.to_string();
         colour.0 = if label.0 == menu.setting { LIT } else { DIM };
     }
     for mut text in &mut note {

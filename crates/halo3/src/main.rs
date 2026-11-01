@@ -70,6 +70,7 @@ mod menu;
 mod reach;
 mod pause;
 mod shot;
+mod speedo;
 
 use halo3_ai as ai;
 use halo3_audio as audio;
@@ -568,6 +569,7 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
     app.add_plugins((
         halo3_core::map::MapPhasePlugin,
         pause::PausePlugin,
+        speedo::SpeedoPlugin,
         // The map's scripts, and the completion screen when they win.
         halo3_script::ScriptPlugin,
         finish::FinishPlugin,
