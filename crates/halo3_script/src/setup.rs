@@ -8,7 +8,7 @@ use blam_cache::CacheFile;
 use blam_geometry::{Kind, Scene};
 use blam_script::{NodeKind, ScriptData, ValueType};
 
-use crate::objects::{ObjectInfo, Objects, Section};
+use crate::objects::{ConstraintDamage, CratePhysics, Hinge, ObjectInfo, Objects, Section};
 use crate::vm::{Config, Runtime};
 
 /// The object names and folders any script constant names.
@@ -71,6 +71,13 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
                                 .filter_map(|t| cache.tags.get(t))
                                 .map(|t| t.name().to_string())
                                 .collect(),
+                            // Read as: 1, 2 destroy one / all of a group;
+                            // 3, 4 loosen one / all.
+                            constraint: s.responses.iter().find_map(|r| match r.constraint_damage {
+                                1 | 2 => Some(ConstraintDamage::Destroy),
+                                3 | 4 => Some(ConstraintDamage::Loosen),
+                                _ => None,
+                            }),
                             name: s.name,
                         })
                         .collect()
@@ -98,6 +105,7 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
             tag_path: o.tag_path.clone(),
             tag: Some(o.tag),
             contacts: Vec::new(),
+            physics: None,
         });
     }
     // Named objects nothing draws (sound scenery, bipeds, vehicles).
@@ -115,6 +123,7 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
                 tag_path: String::new(),
                 tag: None,
                 contacts: Vec::new(),
+                physics: None,
             });
         }
     }
@@ -129,8 +138,34 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
     // Crates scripts drop land on the floor under them (the tunnels'
     // girders); only when the scene has collision.
     let (contacts, ground) = crate::ground::build(&scene.collision, &info);
+    let mut physics: HashMap<u32, Option<CratePhysics>> = HashMap::new();
     for (o, c) in info.iter_mut().zip(contacts) {
+        if c.is_empty() {
+            continue;
+        }
         o.contacts = c;
+        // How it moves when let go: its physics model's numbers and the
+        // constraint its damage responses loosen or break.
+        o.physics = o.tag.and_then(|t| {
+            physics
+                .entry(t)
+                .or_insert_with(|| {
+                    let p = blam_geometry::objects::physics(cache, cache.tags.get(t)?).ok().flatten()?;
+                    Some(CratePhysics {
+                        mass: p.mass,
+                        friction: p.friction,
+                        restitution: p.restitution,
+                        hinge: p.constraints.first().map(|c| Hinge {
+                            pivot: c.pivot,
+                            twist_axis: c.twist_axis,
+                            plane_axis: c.plane_axis,
+                            cone: c.cone.1.abs().max(c.cone.0.abs()),
+                            plane: c.plane,
+                        }),
+                    })
+                })
+                .clone()
+        });
     }
     let mut objects = Objects::new(info, by_name);
     objects.ground = ground;

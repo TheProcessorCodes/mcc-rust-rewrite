@@ -1,18 +1,24 @@
-//! The girders that fall in the Warthog run's two tunnels land on the road
-//! and stay there, solid. 120_halo's own scripts run headless
-//! (`ins_trench_run`), the player is walked through the run's triggers and
-//! both tunnels, and every `tunnel_girder` crate the scripts drop
-//! (`fall_off 100_hw_ceiling02` ...) must end up resting on the road (not
-//! under it), with the bike's collision world holding it where it lies.
-//! Skips quietly when the map is not installed.
+//! The girders that come down in the Warthog run's two tunnels. 120_halo's
+//! own scripts run headless (`ins_trench_run`), the player is walked
+//! through the run's triggers and both tunnels, and:
 //!
-//! One test only: the moved and removed objects are process-wide
-//! (`halo3_core::objects`).
+//! - exactly the `tunnel_girder` crates the scripts name move (`fall_off`
+//!   in `trench_tunnel01` / `02`, and `tunnel_fall_away 100_hw_ceiling10`);
+//!   the rest stay up;
+//! - a girder whose hinge `fall` loosens swings down on it, turning as it
+//!   goes; `100_hw_ceiling10`, whose hinge `destroy` also breaks, falls
+//!   free and tumbles;
+//! - each comes to rest within a bounded time, solid, with no corner sunk
+//!   into the road, touching it or hanging at its hinge's limit, and the
+//!   bike's collision world has it where it lies.
+//!
+//! Skips quietly when the map is not installed. One test only: the moved
+//! and removed objects are process-wide (`halo3_core::objects`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use glam::{Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use halo3_anim::MachinePoser;
 use halo3_bike::physics::World;
 use halo3_core::coords::{to_halo, to_render};
@@ -47,23 +53,31 @@ fn map() -> Option<PathBuf> {
     p.exists().then_some(p)
 }
 
-/// The girders the tunnels' scripts drop (`trench_tunnel01` / `02`); the
-/// scripts also send `100_hw_ceiling10` away with `tunnel_fall_away`,
-/// which destroys it.
-const DROPPED: [&str; 12] = [
-    "100_hw_ceiling02",
-    "100_hw_ceiling04",
-    "100_hw_ceiling08",
-    "100_hw_ceiling09",
-    "100_hw_ceiling13",
-    "100_hw_ceiling14",
-    "110_hw_ceiling02",
-    "110_hw_ceiling05",
-    "110_hw_ceiling08",
-    "110_hw_ceiling10",
-    "110_hw_ceiling11",
-    "110_hw_ceiling14",
+/// What the tunnels' scripts do to girders, in order: `trench_tunnel01`
+/// (`fall_off` on reaching `trench_run_game_save01`, `tunnel01_trig01`,
+/// `tunnel01_trig03` twice a second apart, `tunnel01_trig04`,
+/// `tunnel01_trig05`; `tunnel_fall_away` on `120_08_trench_encounter_110`)
+/// and `trench_tunnel02` (`fall_off` on `trench_run_game_save03`,
+/// `tunnel02_trig02`, `tunnel02_trig04`, `tunnel02_trig05` twice,
+/// `tunnel02_trig07`). `true`: the hinge is broken too (falls free).
+const SCRIPTED: [(&str, bool); 13] = [
+    ("100_hw_ceiling02", false),
+    ("100_hw_ceiling04", false),
+    ("100_hw_ceiling08", false),
+    ("100_hw_ceiling09", false),
+    ("100_hw_ceiling10", true),
+    ("100_hw_ceiling13", false),
+    ("100_hw_ceiling14", false),
+    ("110_hw_ceiling02", false),
+    ("110_hw_ceiling05", false),
+    ("110_hw_ceiling08", false),
+    ("110_hw_ceiling10", false),
+    ("110_hw_ceiling11", false),
+    ("110_hw_ceiling14", false),
 ];
+
+/// A girder at rest must be at rest this soon after it let go, seconds.
+const REST_WITHIN: f32 = 15.0;
 
 /// The highest point of `tris` straight under (x, y) and below `top`, Halo frame.
 fn height(tris: &[[Vec3; 3]], x: f32, y: f32, top: f32) -> Option<f32> {
@@ -94,23 +108,20 @@ fn down(world: &World, p: Vec3, max: f32) -> Option<f32> {
     world.raycast_far(to_render(p), -Vec3::Y, max * 3.048).map(|h| to_halo(h.point).z)
 }
 
+/// How far an object is turned from where the scenario placed it, degrees.
+fn turned(base: Mat4, now: Mat4) -> f32 {
+    let (_, a, _) = base.to_scale_rotation_translation();
+    let (_, b, _) = now.to_scale_rotation_translation();
+    a.angle_between(b).to_degrees()
+}
 
-/// Checks a girder the moment it lands: resting on the road, not under it,
-/// solid, and in the bike's collision world where it lies. Returns a line
-/// for the log.
-fn check_landed(name: &str, e: usize, rt: &Runtime, scene: &blam_geometry::Scene, world: &World) -> String {
+/// Checks a girder the moment it comes to rest; returns a line for the log.
+fn check_rest(name: &str, e: usize, rt: &Runtime, scene: &blam_geometry::Scene, world: &World, seconds: f32) -> String {
     let (info, s) = (&rt.objects.info[e], &rt.objects.state[e]);
-    assert!(s.exists && s.solid, "{name} landed but is not solid");
+    assert!(s.exists && s.solid, "{name} came to rest but is not solid");
+    assert!(seconds <= REST_WITHIN, "{name} took {seconds:.1} s to come to rest");
     let motion = s.transform * info.base.inverse();
-    let fell = info.base.w_axis.z - s.transform.w_axis.z;
-    assert!(fell > 5.0, "{name} fell only {fell:.2} wu");
-    // It may tip over its width as it settles, but never turns.
-    let (along0, along1) = (info.base.x_axis.truncate(), s.transform.x_axis.truncate());
-    assert!(along0.truncate().perp_dot(along1.truncate()).abs() < 1e-3 * along0.length(), "{name} turned as it fell");
-    let tilt = info.base.z_axis.truncate().angle_between(s.transform.z_axis.truncate()).to_degrees();
-    // Where it lies, Halo frame: the corners and triangles of its collision.
     let corners: Vec<Vec3> = info.contacts.iter().map(|p| motion.transform_point3(*p)).collect();
-    let low = corners.iter().map(|p| p.z).fold(f32::INFINITY, f32::min);
     let tris: Vec<[Vec3; 3]> = scene
         .collision
         .triangles
@@ -119,63 +130,56 @@ fn check_landed(name: &str, e: usize, rt: &Runtime, scene: &blam_geometry::Scene
         .map(|t| t.points.map(|p| motion.transform_point3(p)))
         .collect();
 
-    // Resting on the road: with the girder itself taken out of the bike's
-    // world for a moment, the road straight under each corner (looked for
-    // from 3 wu up) is never above it, and is right at it under some.
+    // No corner in the road: with the girder taken out of the bike's world
+    // for a moment, the floor straight under each corner (looked for from
+    // where that corner hung, or is, whichever is higher) is never above
+    // it. The nearest gap says whether it touches.
     halo3_core::objects::set_collision_removed(e as u32, true);
-    let mut on = Vec::new();
-    for p in &corners {
-        let Some(road) = down(world, *p + Vec3::Z * 3.0, 50.0) else { continue };
-        assert!(road < p.z + 0.03, "{name}: a corner at {p} is {:.2} wu into the road", road - p.z);
-        if p.z - road < 0.03 {
-            on.push(*p);
-        }
+    let mut nearest = f32::INFINITY;
+    for (p, hung) in corners.iter().zip(&info.contacts) {
+        let from = Vec3::new(p.x, p.y, p.z.max(hung.z) + 0.05);
+        let Some(floor) = down(world, from, 60.0) else { continue };
+        assert!(floor < p.z + 0.05, "{name}: a corner at {p} is {:.2} wu into the floor", floor - p.z);
+        nearest = nearest.min(p.z - floor);
     }
     halo3_core::objects::set_collision_removed(e as u32, false);
-    let touching = on.len();
-    assert!(touching >= 1, "{name}: no corner on the road (lowest at {low:.2})");
-    // Held up under its middle, not balanced on one end: it touches on
-    // both sides of its middle or right under it; tipped over, at two
-    // places well apart.
-    let c = s.transform.w_axis.truncate();
-    let along = along1.normalize();
-    let span = on
-        .iter()
-        .map(|p| (*p - c).dot(along))
-        .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), d| (a.min(d), b.max(d)));
-    assert!(
-        span.0 < 0.5 && span.1 > -0.5 && (tilt < 1.0 || span.1 - span.0 > 2.0),
-        "{name}: tipped {tilt:.1} degrees, rests only between {:.1} and {:.1} along its length",
-        span.0,
-        span.1
-    );
-    // Not under the road just beside its middle (where no girder is; the
-    // plates either side can sit a little higher or lower).
-    let side = s.transform.transform_vector3(Vec3::Y).normalize();
-    let beside: Vec<f32> = [-1.5f32, 1.5].iter().filter_map(|d| down(world, c + side * *d + Vec3::Z * 6.0, 30.0)).collect();
-    assert!(!beside.is_empty(), "{name}: no road beside it");
-    let road = beside.iter().copied().fold(f32::INFINITY, f32::min);
-    let middle = corners
-        .iter()
-        .filter(|p| (p.truncate() - c.truncate()).length() < 1.0)
-        .map(|p| p.z)
-        .fold(f32::INFINITY, f32::min);
-    assert!(middle > road - 0.3, "{name}: its middle is at {middle:.2}, under the road beside it at {road:.2}");
+    let (how, touching) = match &s.motion {
+        Motion::Swinging(w) => {
+            assert!(w.resting);
+            let at_limit = (w.angle.abs() - w.limit).abs() < 0.01;
+            assert!(at_limit || nearest < 0.1, "{name}: hangs at {:.1} of {:.1} degrees, {nearest:.2} wu off the floor", w.angle.to_degrees(), w.limit.to_degrees());
+            (format!("hangs on its hinge at {:.1} degrees (limit {:.1})", w.angle.to_degrees(), w.limit.to_degrees()), nearest < 0.1)
+        }
+        Motion::Tumbling(b) => {
+            assert!(b.asleep);
+            assert!(nearest < 0.1, "{name}: asleep {nearest:.2} wu off the floor");
+            ("fell free and lies".to_string(), true)
+        }
+        m => panic!("{name}: at rest as {m:?}"),
+    };
 
-    // The bike's world has it where it lies: straight down onto its middle
-    // the bike meets its top, as drawn at rest ...
-    let top = height(&tris, c.x, c.y, c.z + 10.0).unwrap_or_else(|| panic!("{name}: nothing at its middle"));
-    let hit = down(world, Vec3::new(c.x, c.y, top + 3.0), 6.0).unwrap_or_else(|| panic!("{name}: the bike's world is empty over it"));
-    assert!((hit - top).abs() < 0.05, "{name}: lies with its top at {top:.2}, the bike meets {hit:.2}");
-    // ... and nothing is left where it hung.
-    let hung = info.base.w_axis.z;
-    let up = world.raycast_far(to_render(Vec3::new(c.x, c.y, top + 0.5)), Vec3::Y, 40.0 * 3.048).map(|h| to_halo(h.point).z);
-    assert!(up.is_none_or(|z| z > hung + 1.4), "{name}: still collides where it hung (hit at {up:?})");
-    format!("{name}: fell {fell:.1} wu, tipped {tilt:.1} degrees; middle at {middle:.2} on the road at {road:.2}; lowest corner {low:.2}, {touching} corners touching between {:.1} and {:.1} along it; top {top:.2}", span.0, span.1)
+    // The bike's world has it where it lies: straight down onto it, at
+    // every unit along it where it has a top, the bike meets that top.
+    let mut met = 0;
+    let c = s.transform.w_axis.truncate();
+    let along = s.transform.x_axis.truncate().normalize();
+    for k in -10..=10 {
+        let p = c + along * k as f32;
+        let Some(top) = height(&tris, p.x, p.y, p.z + 30.0) else { continue };
+        let hit = down(world, Vec3::new(p.x, p.y, top + 0.3), 1.0).unwrap_or_else(|| panic!("{name}: the bike's world is empty over it"));
+        assert!((hit - top).abs() < 0.05, "{name}: its top is at {top:.2} there, the bike meets {hit:.2}");
+        met += 1;
+    }
+    assert!(met >= 3, "{name}: the bike met it at only {met} points");
+    format!(
+        "{name}: {how}, turned {:.1} degrees, {} the floor (nearest corner {nearest:.2} wu), at rest {seconds:.1} s after it let go",
+        turned(info.base, s.transform),
+        if touching { "on" } else { "above" }
+    )
 }
 
 #[test]
-fn tunnel_girders_land_on_the_road() {
+fn tunnel_girders_come_down() {
     let Some(path) = map() else { return };
     let cache = blam_cache::CacheFile::open(&path).unwrap();
     let options = blam_geometry::Options {
@@ -192,24 +196,26 @@ fn tunnel_girders_land_on_the_road() {
     let poser = MachinePoser::load(&cache, rt.objects.info.iter().filter(|o| o.scene.is_some()).filter_map(|o| o.tag));
     let n = rt.objects.info.iter().filter(|o| o.scene.is_some()).count();
     let (mut solid, mut posed) = (vec![true; n], vec![false; n]);
-    // BSPs 040, 100, 110 and 120: the run's zone sets together (the second
-    // tunnel runs on into 120).
+    // BSPs 040, 100, 110 and 120: the run's zone sets together.
     let world = halo3_bike::build_world(&scene.collision, 0x390);
-    let ground = rt.objects.ground.as_ref().expect("ground under the girders");
-    eprintln!("ground: {} triangles under the crates that can land", ground.len());
 
-    let girders: Vec<(&str, usize)> = DROPPED
-        .iter()
-        .map(|&name| (name, rt.objects.by_name[data.object_index(name).unwrap()].unwrap() as usize))
+    // Every girder on the map, and the physics model's hinge.
+    let girders: Vec<(String, usize)> = (0..n)
+        .filter(|&e| rt.objects.info[e].tag_path.ends_with("tunnel_girder"))
+        .map(|e| (rt.objects.info[e].name.clone().unwrap_or_default(), e))
         .collect();
-    for &(name, e) in &girders {
-        let info = &rt.objects.info[e];
-        assert!(info.tag_path.ends_with("tunnel_girder"), "{name} is {}", info.tag_path);
-        assert!(!info.contacts.is_empty(), "{name} cannot land");
+    assert!(girders.len() >= SCRIPTED.len(), "{} girders", girders.len());
+    for (name, e) in &girders {
+        let info = &rt.objects.info[*e];
+        let physics = info.physics.as_ref().unwrap_or_else(|| panic!("{name}: no physics model"));
+        let hinge = physics.hinge.as_ref().unwrap_or_else(|| panic!("{name}: no hinge"));
+        assert!((hinge.pivot - Vec3::new(-10.75, 0.0, 2.513)).length() < 0.01, "{name}: pivot {}", hinge.pivot);
+        assert!((physics.friction - 0.8).abs() < 1e-3 && (physics.restitution - 0.35).abs() < 1e-3);
     }
-    // Floor plates still tumble away into the chasm.
-    let plate = rt.objects.by_name[data.object_index("100_001f").unwrap()].unwrap() as usize;
-    assert!(rt.objects.info[plate].contacts.is_empty(), "a floor plate must not land");
+    let scripted = |name: &str| SCRIPTED.iter().find(|(n, _)| *n == name).map(|(_, free)| *free);
+    for (name, _) in SCRIPTED {
+        assert!(girders.iter().any(|(n, _)| n == name), "no girder {name}");
+    }
 
     assert!(rt.console("ins_trench_run"));
     let mut player = Player {
@@ -217,19 +223,33 @@ fn tunnel_girders_land_on_the_road() {
         zone_set: 0,
     };
     let mut ai = NoAi;
-    // Per girder: its check when it landed; whether it ever tumbled.
-    let mut landed: Vec<Option<String>> = vec![None; girders.len()];
-    let mut tumbled: Vec<bool> = vec![false; girders.len()];
+    // Per girder: the tick it let go, the most it has turned while
+    // moving, the check when it came to rest.
+    let mut let_go: Vec<Option<u64>> = vec![None; girders.len()];
+    let mut most: Vec<f32> = vec![0.0; girders.len()];
+    let mut rested: Vec<Option<String>> = vec![None; girders.len()];
+    let mut freed: Vec<bool> = vec![false; girders.len()];
     let mut step = |rt: &mut Runtime, player: &mut Player, ticks: usize| {
         for _ in 0..ticks {
             rt.step(player, &mut ai, Some(&poser as &dyn DevicePoser));
             halo3_script::publish_collision(&rt.objects, &mut solid, &mut posed);
-            for (k, &(name, e)) in girders.iter().enumerate() {
-                match rt.objects.state[e].motion {
-                    Motion::Landed if landed[k].is_none() => landed[k] = Some(check_landed(name, e, rt, &scene, &world)),
-                    Motion::Falling { lands: false, .. } => tumbled[k] = true,
-                    Motion::Falling { .. } | Motion::Settling { .. } => assert!(!rt.objects.state[e].solid, "{name}: a falling girder is not solid"),
-                    _ => {}
+            for (k, (name, e)) in girders.iter().enumerate() {
+                let s = &rt.objects.state[*e];
+                let resting = match &s.motion {
+                    Motion::Still => continue,
+                    Motion::Swinging(w) => w.resting,
+                    Motion::Tumbling(b) => {
+                        freed[k] = true;
+                        b.asleep
+                    }
+                    m => panic!("{name}: moves as {m:?}"),
+                };
+                let start = *let_go[k].get_or_insert(rt.tick);
+                assert!(s.solid, "{name}: not solid while it moves");
+                most[k] = most[k].max(turned(rt.objects.info[*e].base, s.transform));
+                if resting && rested[k].is_none() {
+                    let seconds = (rt.tick - start) as f32 / 30.0;
+                    rested[k] = Some(check_rest(name, *e, rt, &scene, &world, seconds));
                 }
             }
         }
@@ -262,8 +282,7 @@ fn tunnel_girders_land_on_the_road() {
         step(&mut rt, &mut player, 2);
         y += 1.0;
     }
-    // On to the second tunnel: the plate folders that bring its girders in,
-    // its triggers in order, and the road between them.
+    // On to the second tunnel.
     for v in [
         "120_08_trench_encounter_110",
         "trench_run_plate_110_1_trig",
@@ -287,23 +306,25 @@ fn tunnel_girders_land_on_the_road() {
         }
         from = to;
     }
-    // Long enough for the last one to come down (25 wu: 4 s).
-    step(&mut rt, &mut player, 30 * 6);
+    step(&mut rt, &mut player, (30.0 * (REST_WITHIN + 1.0)) as usize);
 
-    for (k, &(name, e)) in girders.iter().enumerate() {
-        assert!(!tumbled[k], "{name} tumbled away instead of dropping onto the road");
-        let line = landed[k].as_deref().unwrap_or_else(|| panic!("{name} never landed: {:?}", rt.objects.state[e].motion));
-        // The run's timers drop the first tunnel's floor plates behind the
-        // player later on; a girder lying on them goes down with them.
-        let now = match rt.objects.state[e].motion {
-            Motion::Landed => "still there",
-            _ if !rt.objects.state[e].exists => "since gone down with its floor",
-            _ => "since falling with its floor",
-        };
-        eprintln!("{line}; {now}");
-    }
-    // The second tunnel's girders lie where they landed.
-    for &(name, e) in &girders[6..] {
-        assert!(matches!(rt.objects.state[e].motion, Motion::Landed), "{name} no longer lies on the road");
+    for (k, (name, e)) in girders.iter().enumerate() {
+        match scripted(name) {
+            None => {
+                // The scripts never touch it: it stays where it hangs.
+                assert!(let_go[k].is_none(), "{name} came down but no script drops it");
+                let s = &rt.objects.state[*e];
+                assert!(s.transform == rt.objects.info[*e].base, "{name} moved");
+                eprintln!("{name}: stays up (no script drops it)");
+            }
+            Some(free) => {
+                assert!(let_go[k].is_some(), "{name} never came down");
+                assert_eq!(freed[k], free, "{name}: fell free {}, the scripts say {free}", freed[k]);
+                assert!(most[k] > 5.0, "{name} turned only {:.1} degrees as it came down", most[k]);
+                let line = rested[k].as_deref().unwrap_or_else(|| panic!("{name} never came to rest: {:?}", rt.objects.state[*e].motion));
+                let now = if rt.objects.state[*e].exists { "" } else { "; since gone down with its floor" };
+                eprintln!("{line}{now}");
+            }
+        }
     }
 }

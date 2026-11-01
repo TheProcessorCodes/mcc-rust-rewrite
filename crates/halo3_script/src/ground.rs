@@ -1,16 +1,12 @@
-//! What a dropped crate lands on. 120_halo's tunnels hang `tunnel_girder`
-//! crates (`bloc`, with a `phmo`) across their ceilings; the scripts'
-//! `fall` damage section lets them go, and in the game Havok drops them
-//! onto the road. Here a crate with a floor close under it falls straight
-//! down onto it, tips over if it came down on one end only, and stays
-//! there, solid ([`crate::objects::Motion::Landed`]); if that floor drops
-//! away later (the run's plates), it falls on. This is not Havok: no
-//! bouncing, sliding or pushing, and nothing knocks a landed crate aside.
+//! What a crate scripts let go comes down on (`crate::crate_physics`).
+//! 120_halo's tunnels hang `tunnel_girder` crates (`bloc`, with a `phmo`)
+//! across their ceilings; their `fall` damage section loosens the hinge
+//! holding each up, `destroy` breaks it.
 //!
 //! The floor plates are scenery, not crates: they keep tumbling away into
-//! the chasm. Only the collision under the crates is kept here: the
-//! triangles below each one's footprint, down to [`LAND_REACH`] under its
-//! lowest point, from the structure BSPs and the other objects.
+//! the chasm. Only the collision around the crates is kept here: the
+//! triangles under and round each one's footprint, down to [`LAND_REACH`]
+//! under its lowest point, from the structure BSPs and the other objects.
 
 use std::collections::{HashMap, HashSet};
 
@@ -26,6 +22,10 @@ use crate::objects::ObjectInfo;
 /// Warthog run, so a crate over the chasm tumbles away and is gone after
 /// [`crate::objects::FALL_SECONDS`], as the floor plates do.
 pub const LAND_REACH: f32 = 40.0;
+
+/// How far round a crate's footprint its floor is kept, world units: room
+/// for it to tumble and slide (our choice).
+const REACH_ROUND: f32 = 8.0;
 
 /// Halo's object type for crates (`bloc`), as scripts number them.
 pub const CRATE: i16 = 10;
@@ -87,15 +87,15 @@ impl Ground {
     /// The highest surface straight under `p` (at most a hundredth of a
     /// unit above it), skipping triangles whose owner `skip` says to.
     pub fn below(&self, p: Vec3, skip: impl Fn(u32) -> bool) -> Option<f32> {
-        self.below_by(p, skip).map(|(z, _)| z)
+        self.below_hit(p, skip).map(|(z, _, _)| z)
     }
 
     /// The same, with who owns that surface (a scene object index,
-    /// `u32::MAX` for the structure BSP).
-    pub fn below_by(&self, p: Vec3, skip: impl Fn(u32) -> bool) -> Option<(f32, u32)> {
+    /// `u32::MAX` for the structure BSP) and its normal (facing up).
+    pub fn below_hit(&self, p: Vec3, skip: impl Fn(u32) -> bool) -> Option<(f32, u32, Vec3)> {
         let list = self.cells.get(&(cell(p.x), cell(p.y)))?;
         let q = Vec2::new(p.x, p.y);
-        let mut best: Option<(f32, u32)> = None;
+        let mut best: Option<(f32, u32, Vec3)> = None;
         for &i in list {
             let t = &self.tris[i as usize];
             let (a, b, c) = (t.a.truncate(), t.b.truncate(), t.c.truncate());
@@ -110,10 +110,11 @@ impl Ground {
                 continue;
             }
             let z = t.a.z * w0 + t.b.z * w1 + t.c.z * w2;
-            if z > p.z + 0.01 || best.is_some_and(|(b, _)| b >= z) || (t.owner != u32::MAX && skip(t.owner)) {
+            if z > p.z + 0.01 || best.is_some_and(|(b, _, _)| b >= z) || (t.owner != u32::MAX && skip(t.owner)) {
                 continue;
             }
-            best = Some((z, t.owner));
+            let n = (t.b - t.a).cross(t.c - t.a).normalize_or(Vec3::Z);
+            best = Some((z, t.owner, if n.z < 0.0 { -n } else { n }));
         }
         best
     }
@@ -127,7 +128,9 @@ pub fn build(collision: &Collision, info: &[ObjectInfo]) -> (Vec<Vec<Vec3>>, Opt
     let mut contacts: Vec<Vec<Vec3>> = vec![Vec::new(); info.len()];
     let lands = |o: u32| {
         info.get(o as usize).is_some_and(|i| {
-            i.scene == Some(o) && i.object_type == CRATE && i.sections.iter().any(|s| s.name.contains("fall"))
+            i.scene == Some(o)
+                && i.object_type == CRATE
+                && i.sections.iter().any(|s| s.name.contains("fall") || s.constraint.is_some())
         })
     };
     let mut seen: Vec<HashSet<[i32; 3]>> = vec![HashSet::new(); info.len()];
@@ -145,7 +148,7 @@ pub fn build(collision: &Collision, info: &[ObjectInfo]) -> (Vec<Vec<Vec3>>, Opt
         .map(|c| {
             let lo = c.iter().fold(Vec3::splat(f32::INFINITY), |m, p| m.min(*p));
             let hi = c.iter().fold(Vec3::splat(f32::NEG_INFINITY), |m, p| m.max(*p));
-            (lo - Vec3::new(1.0, 1.0, LAND_REACH + 1.0), hi + Vec3::ONE)
+            (lo - Vec3::new(REACH_ROUND, REACH_ROUND, LAND_REACH + 1.0), hi + Vec3::new(REACH_ROUND, REACH_ROUND, 1.0))
         })
         .collect();
     if boxes.is_empty() {

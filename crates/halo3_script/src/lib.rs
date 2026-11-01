@@ -11,6 +11,7 @@
 //! world is built), [`PendingScripts`] carries the runtime in.
 
 pub mod ai_bridge;
+pub mod crate_physics;
 pub mod dialogue;
 pub mod ground;
 pub mod hooks;

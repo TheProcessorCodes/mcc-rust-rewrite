@@ -855,7 +855,14 @@ impl Runtime {
             let exists = self.objects.state[e].exists;
             info!("script trace: tick {} {name} {section}{}", self.tick, if exists { "" } else { " (not there)" });
         }
-        if destroy {
+        // A response that acts on the physics model's constraint (the
+        // tunnel girders' hinge) moves the object rather than removing it.
+        if let Some(c) = known.as_ref().and_then(|s| s.constraint) {
+            match c {
+                crate::objects::ConstraintDamage::Loosen => self.objects.loosen(e),
+                crate::objects::ConstraintDamage::Destroy => self.objects.release(e),
+            }
+        } else if destroy {
             self.objects.destroy(e);
         } else {
             // `fall` waits a moment (its response's +0x60 is 1.0),

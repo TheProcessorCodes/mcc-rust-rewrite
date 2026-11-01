@@ -163,10 +163,10 @@ to the hangar and it all worked. What is left to call it finished:
 
 To do:
 
-1. ~~**Falling pieces in the tunnels fall through the road.**~~ Done 2026-10-31 on branch
-   `tunnel-fall-collision`, awaiting the user's playtest: they are the `tunnel_girder` crates,
-   which now drop onto the road, settle and stay solid (see "Tunnel girders land on the road"
-   below).
+1. ~~**Falling pieces in the tunnels fall through the road.**~~ Done 2026-10-31; reworked
+   on branch `girder-tumble` after the user's playtest (they plopped straight down): the
+   girders now swing down on their hinges as the map's physics model says (see "Tunnel girders
+   land on the road" below). Awaiting the user's playtest.
 2. ~~**Dialogue.**~~ Done 2026-10-31 on branch `mission-dialogue`, awaiting the user's
    playtest: the scripts' lines play from MCC's language bank on the Dialogue bus (see
    "Dialogue" under the Warthog Run below). Not done: the radio / Cortana voice effects, ducking
@@ -514,43 +514,62 @@ Two bugs from the first bike playtest of `--insertion trench_run`:
   y = 37.5 at 100 km/h; onto island 1 it is lifted with the island (z -28.2 -> -23.5) where
   before the carrying it fell through. Not playtested.
 
-## Tunnel girders land on the road (2026-10-31, branch `tunnel-fall-collision`)
+## Tunnel girders land on the road (2026-10-31, branches `tunnel-fall-collision`, `girder-tumble`)
 
 User playtest: the giant pieces falling in the tunnels went straight through the road. They are
 the run's `tunnel_girder` crates (`objects\levels\solo\120_halo\plates\tunnel_girder`, a `bloc`
-with a `phmo`, 22.5 wu long, hung across the ceiling): `100_hw_ceiling01..14` in the first
-tunnel (folder `trench_run_100_hw`) and `110_hw_ceiling01..14` in the second
-(`trench_run_110_hw`). `trench_tunnel01` / `02` drop twelve of them with `fall_off` (damage
-section `fall`) as the player passes `tunnel01_trig*` / `tunnel02_trig*`; `100_hw_ceiling10`
-gets `tunnel_fall_away`, which also destroys it. The `pillar_fall` machines (BSP 120, after
-the second tunnel) are animated machines, not these, and are unchanged. Cause: every dropped object took the floor plates' fall (a push, a
-tumble, no collision, gone after 6 s); in the game Havok drops the crates onto the road.
+with a `phmo`, 22.5 wu long, hung across the ceiling). The first fix (`tunnel-fall-collision`)
+dropped them straight onto the road. Second playtest: they "plop right on the drivable area",
+no rotation, no bounce, and maybe more fall than should.
 
-Fix (`halo3_script/src/ground.rs`, `objects.rs`): a dropped **crate** with a floor within 40 wu
-under it (`LAND_REACH`) falls straight down (no push or spin), stops when a corner of its
-collision touches the BSP or a solid object still in place, and, if it came down on one side of
-its middle only (a girder with one end on a raised plate), tips about its width onto the other
-side (`Motion::Settling`, up to `MAX_TILT`). Then it is solid again where it lies
-(`Motion::Landed`): its collision is published moved like the islands' (`publish_collision` ->
-`set_object_pose`), so the bike, the Spartan, the AI and the guns hit it at once and the skater a
-second later. If the floor under it drops later (the run's timers drop the first tunnel's plates
-behind the player) it falls on and is gone with them. The floor plates are scenery, so they keep
-their old tumbling fall. Only the collision under the crates is indexed (about 6,000 triangles).
-`HALO3_SCRIPT_TRACE=1` now also logs every object a script damages.
+**What the map says** (`docs/format/halo-script.md` 8, `probe_girder.py`): the scripts never push
+or spin them (no velocity or impulse calls); `fall_off` damages section `fall`, whose response
+*loosens* the physics model's one constraint, a hinge at the girder's end against the ceiling
+(pivot model (-10.75, 0, 2.513), cone 45, plane 30 degrees); `destroy` *breaks* it and does not
+remove the object (we used to remove it). Friction 0.8, restitution 0.35, mass 71213, all from
+the phmo.
 
-What it looks like now: the girders come down 8 to 25 wu and lie across the middle of the road
-(most level on their three feet, some tipped 3 to 31 degrees); they are 0.8 to 3.8 wu tall and
-span the flat middle of the road (the tunnels are 38 wu wall to wall, the flat middle about 17),
-so the bike has to go round through the side gutters or jump them. In the game the Warthog shoves them aside; nothing pushes them here.
+**What the scripts drop, and when** (`trench_tunnel01` / `02`, all `fall_off` unless noted):
 
-Checked: `halo3_anim/tests/tunnel_falls.rs` (scripts headless through both tunnels: all twelve
-girders land, none tumbles; at the moment each lands, the bike's own world has the road right
-under a corner and no corner in it, its middle not under the road beside it, held up on both
-sides of its middle, its top where the bike meets it, and nothing left where it hung; the
-second tunnel's six still lie there at the end), all `halo3_anim` and `halo3_script` tests.
-Headless shots in the first tunnel: `out\shots\tunnel_fall_close\before.png`, `falling.png`,
-`after.png` (`100_hw_ceiling08`), `out\shots\tunnel_fall\wide_before.png`, `wide_after.png`.
-Not playtested; the girders are drawn very dark (their material, not looked at).
+| trigger | girder |
+|---|---|
+| `trench_run_game_save01` (after `trench_run_100_trig08`) | `100_hw_ceiling02` |
+| `tunnel01_trig01` | `100_hw_ceiling04` |
+| `tunnel01_trig03` | `100_hw_ceiling08`, a second later `100_hw_ceiling09` |
+| `120_08_trench_encounter_110` | `100_hw_ceiling10` (`tunnel_fall_away`: `fall` then `destroy`) |
+| `tunnel01_trig04`, `tunnel01_trig05` | `100_hw_ceiling13`, `100_hw_ceiling14` |
+| `trench_run_game_save03` (after `trench_run_110_trig15`) | `110_hw_ceiling02` |
+| `tunnel02_trig02` / `04` | `110_hw_ceiling05` / `08` |
+| `tunnel02_trig05` | `110_hw_ceiling10`, `110_hw_ceiling11` |
+| `tunnel02_trig07` | `110_hw_ceiling14` |
+
+`110_hw_ceiling01`, `06` and `12` are never dropped and stay up. Master dropped the same twelve
+(each tumbled away and vanished after 6 s; `100_hw_ceiling10` vanished at once); the first fix
+dropped the same twelve but kept them, so more were in sight at once. Nothing drops extra:
+damage goes only to the objects a call names, and none comes down early.
+
+**Now** (`halo3_script/src/crate_physics.rs`, `objects.rs`): a loosened girder swings down about
+its hinge under gravity (sub-stepped pendulum, inertia from its collision's corners), bouncing
+off the hinge's 30 degree limit or the road with the phmo's restitution, and comes to rest
+hanging (about 6 s). `100_hw_ceiling10`, its hinge broken, falls free as a rigid body (gravity,
+corner contacts against the BSP and solid objects with the phmo's friction and restitution,
+sleeps when slow, wakes if its floor drops) and rolls onto its side. Crates without a
+constraint fall free the same way, with a small sideways push and spin of our own. Solid
+throughout; while moving their pose is published every tick, so the bike's collision follows
+them. The plates keep their old tumble. Ours, not the map's: the corners as contact points, the
+damping, the sleep thresholds, the free fall's push, and the reading of "loosen" (turns within
+its limits); not compared with the real game.
+
+What it looks like: in the first tunnel the girders hang from one wall down to 1 to 2 wu over
+the road (`100_hw_ceiling14` reaches it); in the second, where the road lies lower, they hang 8
+to 16 wu up. `HALO3_SCRIPT_TRACE=1` logs every object a script damages.
+
+Checked: `halo3_anim/tests/tunnel_falls.rs` (scripts headless through both tunnels: exactly the
+scripts' girders move, `100_hw_ceiling10` falls free, every one turns more than 5 degrees, rests
+within 15 s, solid, no corner in the floor, at its limit or on the road, the bike's world meets
+its top where it lies), the `crate_physics` unit tests (a beam swings to its limit; a dropped
+beam bounces and sleeps), all `halo3_anim`, `halo3_script`, `halo3_effects` tests. Shots:
+`out\shots\girder_swing\` in the `girder-tumble` worktree. Awaiting the user's playtest.
 
 ## Mission music (2026-10-30, branch `mission-music`)
 

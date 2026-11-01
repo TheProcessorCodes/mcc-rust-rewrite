@@ -4,6 +4,7 @@
 
 use glam::{Mat4, Quat, Vec3};
 
+use crate::crate_physics::{Body, Floor, Swing};
 use crate::ground::Ground;
 use crate::hooks::DevicePoser;
 
@@ -15,15 +16,6 @@ pub const FALL_SECONDS: f32 = 6.0;
 /// once its root has dropped this far, world units (about 4.5 m): it stays
 /// a floor while it creaks and tilts.
 pub const DEVICE_DROP: f32 = 1.5;
-/// A crate settling where it landed tips over at most this far, radians
-/// (about 57 degrees; the tunnels' girders tip up to 31 when one end comes
-/// down on a raised plate), looked at in steps of [`TILT_STEP`].
-pub const MAX_TILT: f32 = 1.0;
-/// A settling crate is held up when it touches the floor within this far
-/// of its middle, either side (world units).
-const HELD: f32 = 0.3;
-const TILT_STEP: f32 = 0.002;
-
 /// One damage section of an object's model, as the runtime needs it.
 #[derive(Clone, Debug)]
 pub struct Section {
@@ -32,6 +24,37 @@ pub struct Section {
     /// response's effect and its second effect (a plate's `destroy` plays
     /// its chunks and the trench's `plate_explosion`).
     pub effects: Vec<String>,
+    /// What its responses do to the physics model's constraint, if
+    /// anything (the tunnel girders' `fall` loosens their hinge, `destroy`
+    /// breaks it).
+    pub constraint: Option<ConstraintDamage>,
+}
+
+/// A damage response's effect on a constraint of the physics model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstraintDamage {
+    Loosen,
+    Destroy,
+}
+
+/// The physics model's numbers for a crate that can be let go.
+#[derive(Clone, Debug)]
+pub struct CratePhysics {
+    pub mass: f32,
+    pub friction: f32,
+    pub restitution: f32,
+    /// The constraint holding it up, object frame at its placement
+    /// (`base`): pivot, twist and plane axes, cone and plane limits.
+    pub hinge: Option<Hinge>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Hinge {
+    pub pivot: Vec3,
+    pub twist_axis: Vec3,
+    pub plane_axis: Vec3,
+    pub cone: f32,
+    pub plane: (f32, f32),
 }
 
 /// What does not change about an object.
@@ -53,16 +76,17 @@ pub struct ObjectInfo {
     /// frame, for a crate scripts can drop onto the floor
     /// ([`crate::ground`]); empty for anything else.
     pub contacts: Vec<Vec3>,
+    /// Its physics model, for a crate that can be let go.
+    pub physics: Option<CratePhysics>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub enum Motion {
     #[default]
     Still,
-    /// Dropped by a damage section: waits `delay`, then falls from `from`
-    /// (where it was when it let go). Over the chasm it tumbles away and is
-    /// gone after [`FALL_SECONDS`]; a crate with a floor under it
-    /// (`lands`) drops straight onto it.
+    /// Dropped by a damage section (a floor plate): waits `delay`, then
+    /// falls from `from` (where it was when it let go), pushed and
+    /// tumbling, and is gone after [`FALL_SECONDS`].
     Falling {
         delay: f32,
         t: f32,
@@ -70,15 +94,14 @@ pub enum Motion {
         velocity: Vec3,
         spin_axis: Vec3,
         spin_rate: f32,
-        lands: bool,
     },
-    /// A dropped crate that has touched the floor tipping over, from where
-    /// it touched (`from`) to where it rests (`to`) in `seconds`; not
-    /// solid until it is there.
-    Settling { from: Mat4, to: Mat4, t: f32, seconds: f32 },
-    /// A dropped crate resting on the floor it fell onto: solid again
-    /// where it lies, and falling on if that floor drops away.
-    Landed,
+    /// A crate whose constraint was loosened, swinging on its hinge (and
+    /// at rest hanging there once [`Swing::resting`]). Solid throughout.
+    Swinging(Swing),
+    /// A crate falling free, bouncing and sliding on the floor until it
+    /// sleeps ([`Body::asleep`]); on again if the floor drops away. Solid
+    /// throughout.
+    Tumbling(Body),
 }
 
 /// A device machine's position (0..1) and the animation driving it.
@@ -141,20 +164,6 @@ impl Device {
     /// Warthog run's islands: `other_fall`).
     pub fn falls(&self) -> bool {
         self.track.as_deref().is_some_and(|t| t.contains("fall"))
-    }
-}
-
-/// A crate's fall onto the floor under it: straight down from `from`, no
-/// push, no spin (it lands the way up it hung).
-fn straight_down(delay: f32, from: Mat4) -> Motion {
-    Motion::Falling {
-        delay,
-        t: 0.0,
-        from,
-        velocity: Vec3::ZERO,
-        spin_axis: Vec3::Z,
-        spin_rate: 0.0,
-        lands: true,
     }
 }
 
@@ -273,54 +282,116 @@ impl Objects {
         }
     }
 
-    /// Drops an object: its collision goes at once, it falls after `delay`.
+    /// Drops an object: a crate with a floor under it falls free onto it
+    /// ([`Self::release`]); anything else (a floor plate) loses its
+    /// collision at once and tumbles away after `delay`.
     pub fn drop_object(&mut self, i: usize, delay: f32) {
-        if !self.state[i].exists || matches!(self.state[i].motion, Motion::Falling { .. } | Motion::Settling { .. } | Motion::Landed) {
+        if !self.state[i].exists || !matches!(self.state[i].motion, Motion::Still) {
             return;
         }
-        let lands = self.clearance(i).is_some();
+        if self.clearance(i).is_some() {
+            self.release(i);
+            return;
+        }
         let (a, b, c, d) = (self.random(), self.random(), self.random(), self.random());
         let s = &mut self.state[i];
         s.solid = false;
-        s.motion = if lands {
-            straight_down(delay, s.transform)
-        } else {
-            Motion::Falling {
-                delay,
-                t: 0.0,
-                from: s.transform,
-                // A little push, mostly down.
-                velocity: Vec3::new(a - 0.5, b - 0.5, -0.5) * 1.5,
-                spin_axis: Vec3::new(c - 0.5, d - 0.5, 0.15).normalize_or(Vec3::X),
-                spin_rate: 0.6 + a * 1.4,
-                lands: false,
-            }
+        s.motion = Motion::Falling {
+            delay,
+            t: 0.0,
+            from: s.transform,
+            // A little push, mostly down.
+            velocity: Vec3::new(a - 0.5, b - 0.5, -0.5) * 1.5,
+            spin_axis: Vec3::new(c - 0.5, d - 0.5, 0.15).normalize_or(Vec3::X),
+            spin_rate: 0.6 + a * 1.4,
         };
         self.generation += 1;
     }
 
-    /// How far a crate that can land ([`ObjectInfo::contacts`]) would drop
-    /// straight down from where it is now before it touches the floor: the
-    /// structure BSPs and solid objects still where the scenario put them
-    /// (ones a script moved are not looked at). `None` without a floor
+    /// Loosens the constraint holding a crate up: it swings down on its
+    /// hinge. Without one it falls free instead.
+    pub fn loosen(&mut self, i: usize) {
+        if !self.state[i].exists || !matches!(self.state[i].motion, Motion::Still) {
+            return;
+        }
+        let info = &self.info[i];
+        let (Some(physics), false) = (info.physics.as_ref(), info.contacts.is_empty()) else {
+            return self.drop_object(i, 0.0);
+        };
+        let Some(h) = physics.hinge.as_ref() else {
+            return self.release(i);
+        };
+        let s = &self.state[i];
+        let motion = s.transform * info.base.inverse();
+        let corners: Vec<Vec3> = info.contacts.iter().map(|p| motion.transform_point3(*p)).collect();
+        let frame = s.transform;
+        let swing = Swing::new(
+            s.transform,
+            &corners,
+            frame.transform_point3(h.pivot),
+            frame.transform_vector3(h.twist_axis).normalize_or(Vec3::Z),
+            frame.transform_vector3(h.plane_axis).normalize_or(Vec3::X),
+            h.cone,
+            h.plane,
+            physics.restitution,
+        );
+        let s = &mut self.state[i];
+        s.solid = true;
+        s.motion = Motion::Swinging(swing);
+        self.generation += 1;
+    }
+
+    /// Lets a crate fall free: off its hinge if it was swinging (keeping
+    /// the swing's motion), else with a small push and spin of our own (the
+    /// scripts give none).
+    pub fn release(&mut self, i: usize) {
+        let info = &self.info[i];
+        if !self.state[i].exists || info.contacts.is_empty() || matches!(self.state[i].motion, Motion::Tumbling(_)) {
+            return;
+        }
+        let (friction, restitution) = info.physics.as_ref().map_or((0.8, 0.35), |p| (p.friction, p.restitution));
+        let s = &self.state[i];
+        let motion = s.transform * info.base.inverse();
+        let corners: Vec<Vec3> = info.contacts.iter().map(|p| motion.transform_point3(*p)).collect();
+        let middle = crate::crate_physics::centre(&corners);
+        let from = s.transform;
+        let (velocity, spin) = match &s.motion {
+            // Off its hinge: as it was swinging, nothing more.
+            Motion::Swinging(w) => (w.velocity_at(middle), w.spin()),
+            // Our own small sideways push and a spin about the vertical
+            // (none that would lift an end up through the ceiling).
+            _ => {
+                let (a, b, c) = (self.random(), self.random(), self.random());
+                (Vec3::new(a - 0.5, b - 0.5, 0.0) * 0.8, Vec3::new(0.0, 0.0, (c - 0.5) * 0.4))
+            }
+        };
+        let body = Body::new(from, &corners, velocity, spin, friction, restitution);
+        let s = &mut self.state[i];
+        s.solid = true;
+        s.motion = Motion::Tumbling(body);
+        self.generation += 1;
+    }
+
+    /// How far a crate that can be let go ([`ObjectInfo::contacts`]) would
+    /// drop straight down from where it is now before it touches the floor:
+    /// the structure BSPs and solid objects still where the scenario put
+    /// them (ones a script moved are not looked at). `None` without a floor
     /// within [`crate::ground::LAND_REACH`], and for anything else.
     pub fn clearance(&self, i: usize) -> Option<f32> {
         let at = self.state[i].transform;
-        self.clearance_at(i, at, at).filter(|c| *c <= crate::ground::LAND_REACH)
-    }
-
-    /// The same for the crate placed at `transform`, however far down;
-    /// negative when it is sunk into the floor. The floor under each corner
-    /// is looked for below where that corner is at `free` (a pose known to
-    /// be clear of the floor) or at `transform`, whichever is higher.
-    fn clearance_at(&self, i: usize, transform: Mat4, free: Mat4) -> Option<f32> {
-        self.gaps_at(i, transform, free).into_iter().map(|(_, c)| c).reduce(f32::min)
+        self.gaps_at(i, at, at)
+            .into_iter()
+            .map(|(_, g, _)| g)
+            .reduce(f32::min)
+            .filter(|c| *c <= crate::ground::LAND_REACH)
     }
 
     /// Per corner of a crate placed at `transform` that has floor under it:
-    /// where the corner is and how far above the floor (as
-    /// [`Self::clearance_at`]).
-    fn gaps_at(&self, i: usize, transform: Mat4, free: Mat4) -> Vec<(Vec3, f32)> {
+    /// where the corner is, how far above the floor (negative when sunk
+    /// in) and the floor's normal. The floor under each corner is looked
+    /// for below where that corner is at `free` (a pose known to be clear
+    /// of the floor) or at `transform`, whichever is higher.
+    pub fn gaps_at(&self, i: usize, transform: Mat4, free: Mat4) -> Vec<(Vec3, f32, Vec3)> {
         let (Some(ground), info) = (self.ground.as_ref(), &self.info[i]) else {
             return Vec::new();
         };
@@ -338,119 +409,53 @@ impl Objects {
             .filter_map(|p| {
                 let q = motion.transform_point3(*p);
                 let top = q.z.max(clear.transform_point3(*p).z);
-                ground.below(Vec3::new(q.x, q.y, top), skip).map(|z| (q, q.z - z))
+                ground.below_hit(Vec3::new(q.x, q.y, top), skip).map(|(z, _, n)| (q, q.z - z, n))
             })
             .collect()
-    }
-
-    /// Where a crate that has just touched the floor at `at` comes to rest.
-    /// Held up under its middle (the middle of its collision, along its
-    /// length) it stays as it is. Touching only to one side of its middle (a
-    /// long girder come down with one end on a raised edge) it tips over
-    /// that way, about the axis across its length, until it touches on the
-    /// other side too: at most [`MAX_TILT`]; if nothing is there by then it
-    /// stays as it touched.
-    fn rest_pose(&self, i: usize, at: Mat4) -> Mat4 {
-        let info = &self.info[i];
-        if info.contacts.is_empty() {
-            return at;
-        }
-        let local = info.base.inverse();
-        let (lo, hi) = info.contacts.iter().map(|p| local.transform_point3(*p)).fold(
-            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
-            |(lo, hi), p| (lo.min(p), hi.max(p)),
-        );
-        let size = hi - lo;
-        let (length, across) = if size.x >= size.y { (Vec3::X, Vec3::Y) } else { (Vec3::Y, Vec3::X) };
-        let mut axis = at.transform_vector3(across);
-        axis.z = 0.0;
-        let Some(axis) = axis.try_normalize() else { return at };
-        let middle = (lo + hi) * 0.5;
-        // Where along its length (from its middle) it touches the floor at
-        // `pose`: the nearest touch either side.
-        let touches = |pose: Mat4| -> Option<(f32, f32)> {
-            let c = pose.transform_point3(middle);
-            let along = pose.transform_vector3(length).normalize_or_zero();
-            self.gaps_at(i, pose, at)
-                .into_iter()
-                .filter(|(_, g)| *g < 0.03)
-                .map(|(p, _)| (p - c).dot(along))
-                .fold(None, |r: Option<(f32, f32)>, d| Some(r.map_or((d, d), |(a, b)| (a.min(d), b.max(d)))))
-        };
-        let held = |(a, b): (f32, f32)| a <= HELD && b >= -HELD;
-        let Some(first) = touches(at) else { return at };
-        if held(first) {
-            return at;
-        }
-        // The free end goes down: the side of its middle away from the touch.
-        let centre = at.transform_point3(middle);
-        let free_end = centre + at.transform_vector3(length).normalize_or_zero() * if first.1 < 0.0 { 5.0 } else { -5.0 };
-        let sign = if Mat4::from_axis_angle(axis, TILT_STEP).transform_vector3(free_end - centre).z < (free_end - centre).z {
-            1.0
-        } else {
-            -1.0
-        };
-        let steps = (MAX_TILT / TILT_STEP).round() as i32;
-        for k in 1..=steps {
-            let pose = Mat4::from_translation(centre)
-                * Mat4::from_axis_angle(axis, sign * k as f32 * TILT_STEP)
-                * Mat4::from_translation(-centre)
-                * at;
-            let Some(drop) = self.clearance_at(i, pose, at) else { continue };
-            let pose = Mat4::from_translation(Vec3::new(0.0, 0.0, -drop)) * pose;
-            if touches(pose).is_some_and(held) {
-                return pose;
-            }
-        }
-        at
     }
 
     /// Advances falls and devices by `dt` seconds.
     pub fn step(&mut self, dt: f32, poser: Option<&dyn DevicePoser>) {
         let mut changed = false;
-        // Crates that touched the floor this tick, and where.
-        let mut settle: Vec<(usize, Mat4)> = Vec::new();
         for i in 0..self.state.len() {
             let base = self.info[i].base;
             let scene = self.info[i].scene;
             let tag = self.info[i].tag;
-            // The room under a landing or landed crate, before it moves.
-            let room = match &self.state[i].motion {
-                _ if !self.state[i].exists => None,
-                Motion::Falling { lands: true, delay, .. } if *delay <= 0.0 => self.clearance(i),
-                Motion::Landed => self.clearance(i),
-                _ => None,
-            };
-            let s = &mut self.state[i];
-            if !s.exists {
+            if !self.state[i].exists {
                 continue;
             }
-            if matches!(s.motion, Motion::Landed) {
-                // The floor under it dropped away: on down.
-                if room.is_none_or(|r| r > 0.02) {
+            // A crate let go: stepped against the floor as it is now.
+            if let Motion::Swinging(_) | Motion::Tumbling(_) = &self.state[i].motion {
+                let mut motion = self.state[i].motion.clone();
+                let floor = FloorOf { objects: self, i };
+                let (pose, gone) = match &mut motion {
+                    Motion::Swinging(w) => {
+                        w.step(dt, &floor);
+                        (w.pose(), false)
+                    }
+                    Motion::Tumbling(b) => {
+                        b.step(dt, &floor);
+                        // Nothing under it within reach: gone, as a plate.
+                        (b.pose(), !b.touched && b.t > FALL_SECONDS)
+                    }
+                    _ => unreachable!(),
+                };
+                let s = &mut self.state[i];
+                if gone {
+                    s.exists = false;
                     s.solid = false;
-                    s.motion = straight_down(0.0, s.transform);
+                    s.motion = Motion::Still;
+                    changed = true;
+                    continue;
+                }
+                if pose != s.transform {
+                    s.transform = pose;
                     changed = true;
                 }
+                s.motion = motion;
                 continue;
             }
-            if let Motion::Settling { from, to, t, seconds } = &mut s.motion {
-                *t += dt;
-                let k = (*t / *seconds).min(1.0);
-                if k >= 1.0 {
-                    s.transform = *to;
-                    s.motion = Motion::Landed;
-                    s.solid = true;
-                } else {
-                    // Tipping over, faster and faster.
-                    let (scale, r0, p0) = from.to_scale_rotation_translation();
-                    let (_, r1, p1) = to.to_scale_rotation_translation();
-                    let e = k * k;
-                    s.transform = Mat4::from_scale_rotation_translation(scale, r0.slerp(r1, e), p0.lerp(p1, e));
-                }
-                changed = true;
-                continue;
-            }
+            let s = &mut self.state[i];
             if let Motion::Falling {
                 delay,
                 t,
@@ -458,41 +463,22 @@ impl Objects {
                 velocity,
                 spin_axis,
                 spin_rate,
-                lands,
             } = &mut s.motion
             {
                 if *delay > 0.0 {
                     *delay -= dt;
                     continue;
                 }
-                let before = *t;
                 *t += dt;
-                let gone = *t > FALL_SECONDS;
-                if *lands {
-                    let (d0, d1) = (0.5 * GRAVITY * before * before, 0.5 * GRAVITY * *t * *t);
-                    match room {
-                        // It reaches the floor this tick: it settles there
-                        // and is solid again.
-                        Some(r) if r <= d1 - d0 => {
-                            let at = Mat4::from_translation(Vec3::new(0.0, 0.0, -(d0 + r))) * *from;
-                            s.transform = at;
-                            settle.push((i, at));
-                            changed = true;
-                            continue;
-                        }
-                        _ => s.transform = Mat4::from_translation(Vec3::new(0.0, 0.0, -d1)) * *from,
-                    }
-                } else {
-                    let fall = *velocity * *t + Vec3::new(0.0, 0.0, -0.5 * GRAVITY * *t * *t);
-                    let spin = Quat::from_axis_angle(*spin_axis, *spin_rate * *t);
-                    let origin = from.w_axis.truncate();
-                    // Tumble about the object's own origin.
-                    s.transform = Mat4::from_translation(origin + fall)
-                        * Mat4::from_quat(spin)
-                        * Mat4::from_translation(-origin)
-                        * *from;
-                }
-                if gone {
+                let fall = *velocity * *t + Vec3::new(0.0, 0.0, -0.5 * GRAVITY * *t * *t);
+                let spin = Quat::from_axis_angle(*spin_axis, *spin_rate * *t);
+                let origin = from.w_axis.truncate();
+                // Tumble about the object's own origin.
+                s.transform = Mat4::from_translation(origin + fall)
+                    * Mat4::from_quat(spin)
+                    * Mat4::from_translation(-origin)
+                    * *from;
+                if *t > FALL_SECONDS {
                     s.exists = false;
                     s.motion = Motion::Still;
                 }
@@ -524,25 +510,6 @@ impl Objects {
                 }
             }
         }
-        for (i, at) in settle {
-            let to = self.rest_pose(i, at);
-            let (_, r0, _) = at.to_scale_rotation_translation();
-            let (_, r1, _) = to.to_scale_rotation_translation();
-            let angle = r0.angle_between(r1);
-            let s = &mut self.state[i];
-            if angle < 1e-3 {
-                s.transform = to;
-                s.motion = Motion::Landed;
-                s.solid = true;
-            } else {
-                s.motion = Motion::Settling {
-                    from: at,
-                    to,
-                    t: 0.0,
-                    seconds: 0.2 + angle * 1.2,
-                };
-            }
-        }
         if changed {
             self.generation += 1;
         }
@@ -566,4 +533,16 @@ pub fn fallback_device_pose(base: Mat4, d: &Device) -> Mat4 {
             * m;
     }
     m
+}
+
+/// The floor under crate `i` as the objects are now.
+struct FloorOf<'a> {
+    objects: &'a Objects,
+    i: usize,
+}
+
+impl Floor for FloorOf<'_> {
+    fn gaps(&self, pose: Mat4, free: Mat4) -> Vec<(Vec3, f32, Vec3)> {
+        self.objects.gaps_at(self.i, pose, free)
+    }
 }
