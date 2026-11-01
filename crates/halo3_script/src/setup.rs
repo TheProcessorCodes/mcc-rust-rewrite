@@ -218,6 +218,12 @@ pub fn insertion(data: &ScriptData, scene: &Scene, name: &str) -> Option<Inserti
                 d.y.atan2(d.x)
             })
             .unwrap_or(f.facing[0]);
+        // Turned starts begin further up the canyon (`START_AHEAD`), on the floor there.
+        if FACE_TOWARDS.iter().any(|(ins, _)| *ins == bare) {
+            let moved = at + glam::Vec3::new(yaw.cos(), yaw.sin(), 0.0) * START_AHEAD;
+            let z = floor_under(scene, moved + glam::Vec3::Z).map_or(at.z, |floor| floor + 0.1);
+            return (glam::Vec3::new(moved.x, moved.y, z), yaw);
+        }
         (at, yaw)
     });
     Some(Insertion {
@@ -277,6 +283,11 @@ pub fn height_on(t: [glam::Vec3; 3], p: glam::Vec2) -> Option<f32> {
     let w0 = 1.0 - w1 - w2;
     (w0 >= -1e-4 && w1 >= -1e-4 && w2 >= -1e-4).then(|| t[0].z * w0 + t[1].z * w1 + t[2].z * w2)
 }
+
+/// How far (wu) up the canyon a [`FACE_TOWARDS`] start is moved from the
+/// map's flag: the user's pick, the open stretch of road past the first bend
+/// (an estimate from a screenshot, 2026-11-01).
+pub const START_AHEAD: f32 = 6.0;
 
 /// Insertions whose start flag faces the wrong way for us, and the trigger
 /// volume to face instead. 120_halo's `trench_run_player0` has no facing
