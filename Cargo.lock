@@ -2712,7 +2712,6 @@ dependencies = [
  "game_paths",
  "halo3_core",
  "halo3_script",
- "halo3_world",
 ]
 
 [[package]]
