@@ -43,15 +43,33 @@ pub struct Effects {
 
 /// The images, materials and meshes the effects are drawn with.
 struct Gpu {
-    textures: HashMap<u32, Handle<Image>>,
+    /// The decoded bitmaps, uploaded on first use.
+    pixels: HashMap<u32, load::Rgba>,
+    /// Uploaded: (bitmap, sampled as sRGB colour).
+    textures: HashMap<(u32, bool), Handle<Image>>,
     mono: HashSet<u32>,
     sequences: HashMap<u32, Vec<blam_texture::bitmap::Sequence>>,
     materials: HashMap<u64, Handle<ParticleMaterial>>,
     frames: HashMap<u32, Vec<[f32; 4]>>,
     drawn: HashMap<u64, (Entity, Handle<Mesh>)>,
+    lights: HashMap<u64, Entity>,
+    /// Invisible draws of every material made at the start, so their
+    /// pipelines are compiled before the first explosion needs them (bevy
+    /// compiles them in the background; the first one would go off unseen),
+    /// and when they are taken away (seconds of map time).
+    warm: Vec<Entity>,
+    warm_until: Option<f32>,
     unknown: HashSet<String>,
     exposure: f32,
 }
+
+/// A light's intensity in the lightmap's irradiance units: our choice,
+/// so the plate explosion's flash (20 at its start) adds about one unit
+/// (the trench's mean irradiance is 0.06) where it is.
+const LIGHT_SCALE: f32 = 0.05;
+/// How far a light reaches, in multiples of its size (`ligh +0x08`): our
+/// reading; the falloff Halo uses is not decoded.
+const LIGHT_RANGE_PER_SIZE: f32 = 4.0;
 
 /// `HALO3_EFFECT_TRACE=1`: every effect started, and what it made.
 fn trace() -> bool {
@@ -80,29 +98,32 @@ impl Plugin for EffectsPlugin {
     }
 }
 
-fn start(mut commands: Commands, pending: Option<ResMut<PendingEffects>>, mut images: ResMut<Assets<Image>>) {
+fn start(mut commands: Commands, pending: Option<ResMut<PendingEffects>>) {
     let Some(mut pending) = pending else { return };
     let Some(assets) = pending.0.take() else { return };
-    let mut textures = HashMap::new();
-    let mut mono = HashSet::new();
-    for (tag, t) in &assets.textures {
-        textures.insert(*tag, images.add(draw::image(t)));
-        if t.mono {
-            mono.insert(*tag);
-        }
-    }
+    let mono = assets.textures.iter().filter(|(_, t)| t.mono).map(|(k, _)| *k).collect();
     let sequences = assets.library.sequences.clone();
     commands.insert_resource(Effects {
         sim: sim::Sim::new(assets.library.clone()),
         gpu: Gpu {
-            textures,
+            pixels: assets.textures,
+            textures: HashMap::new(),
             mono,
             sequences,
             materials: HashMap::new(),
             frames: HashMap::new(),
             drawn: HashMap::new(),
+            lights: HashMap::new(),
+            warm: Vec::new(),
+            warm_until: None,
             unknown: HashSet::new(),
-            exposure: halo3_world::lighting::exposure(),
+            // Our choice, by eye: the particles' colour times 3. The
+            // world's exposure (x8 on 120_halo) makes up for our lightmap
+            // scale; on the particles it turned every fireball white, and
+            // at 1 (the authored colour) they were faint. How Halo scales
+            // its particles against its lightmaps is not decoded.
+            // `HALO3_EFFECT_EXPOSURE` overrides.
+            exposure: std::env::var("HALO3_EFFECT_EXPOSURE").ok().and_then(|v| v.parse().ok()).unwrap_or(3.0),
         },
     });
 }
@@ -167,6 +188,7 @@ fn draw(
     cameras: Query<(&Transform, &Camera), With<Camera3d>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ParticleMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     mut visibility: Query<&mut Visibility>,
 ) {
     let Some(mut fx) = effects else { return };
@@ -180,6 +202,31 @@ fn draw(
     let Effects { sim, gpu } = &mut *fx;
     let lib = sim.lib.clone();
     let mut live = HashSet::new();
+    match gpu.warm_until {
+        None => {
+            gpu.warm_until = Some(sim.time + 20.0);
+            let at = eye.position + eye.forward * 10.0;
+            let mut shaders: Vec<(u64, &blam_texture::Shader)> =
+                lib.particles.iter().map(|(t, p)| ((*t as u64) << 8, &p.shader)).collect();
+            for (t, c) in &lib.contrails {
+                shaders.extend(c.contrails.iter().enumerate().map(|(i, c)| ((*t as u64) << 8 | (i as u64 + 1), &c.shader)));
+            }
+            for (key, shader) in shaders {
+                let material = material_for(gpu, &mut materials, &mut images, key, shader);
+                let mesh = meshes.add(draw::Quads::degenerate().into_mesh());
+                let e = commands
+                    .spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::from_translation(at), NoFrustumCulling, NotShadowCaster, NotShadowReceiver))
+                    .id();
+                gpu.warm.push(e);
+            }
+        }
+        Some(t) if sim.time > t && !gpu.warm.is_empty() => {
+            for e in gpu.warm.drain(..) {
+                commands.entity(e).despawn();
+            }
+        }
+        _ => {}
+    }
     // Emitters.
     for s in &sim.systems {
         live.insert(s.id);
@@ -195,7 +242,7 @@ fn draw(
         };
         let quads = draw::system_quads(&lib, s, &frames, &eye, origin);
         let key = (s.particle as u64) << 8;
-        let material = material_for(gpu, &mut materials, key, &prt.shader);
+        let material = material_for(gpu, &mut materials, &mut images, key, &prt.shader);
         show(&mut commands, gpu, &mut meshes, &mut visibility, s.id, origin, quads, material);
     }
     // Contrails.
@@ -206,9 +253,44 @@ fn draw(
         let origin = c.points.first().map_or(Vec3::ZERO, |p| to_render(p.position));
         let quads = draw::contrail_quads(&lib, c, &eye, origin);
         let key = (c.tag as u64) << 8 | (c.index as u64 + 1);
-        let material = material_for(gpu, &mut materials, key, &def.shader);
+        let material = material_for(gpu, &mut materials, &mut images, key, &def.shader);
         show(&mut commands, gpu, &mut meshes, &mut visibility, id, origin, quads, material);
     }
+    // Light flashes: bevy point lights the world shader reads
+    // (`lightmap.wesl` `effect_irradiance`).
+    for f in &sim.flashes {
+        let id = f.id | 1 << 61;
+        live.insert(id);
+        let Some(light) = lib.lights.get(&f.tag) else { continue };
+        let t = (f.age / light.duration.max(0.05)).clamp(0.0, 1.0);
+        let c = light.colour.function.colour(t, 0.0);
+        let intensity = light.intensity.function.scalar(t, 0.0).max(0.0) * LIGHT_SCALE;
+        let point = PointLight {
+            color: Color::linear_rgb(c[0], c[1], c[2]),
+            intensity: 4.0 * std::f32::consts::PI * intensity,
+            range: light.size.max(0.5) * LIGHT_RANGE_PER_SIZE * blam_geometry::WORLD_UNIT_METRES,
+            radius: 0.0,
+            shadow_maps_enabled: false,
+            ..default()
+        };
+        let at = Transform::from_translation(to_render(f.position));
+        match gpu.lights.get(&id) {
+            Some(e) => {
+                commands.entity(*e).insert((point, at));
+            }
+            None => {
+                let e = commands.spawn((point, at, Name::new("effect light"))).id();
+                gpu.lights.insert(id, e);
+            }
+        }
+    }
+    gpu.lights.retain(|id, e| {
+        let keep = live.contains(id);
+        if !keep {
+            commands.entity(*e).despawn();
+        }
+        keep
+    });
     gpu.drawn.retain(|id, (e, _)| {
         let keep = live.contains(id);
         if !keep {
@@ -222,13 +304,26 @@ fn draw(
 fn material_for(
     fx: &mut Gpu,
     materials: &mut Assets<ParticleMaterial>,
+    images: &mut Assets<Image>,
     key: u64,
     shader: &blam_texture::Shader,
 ) -> Handle<ParticleMaterial> {
     if let Some(m) = fx.materials.get(&key) {
         return m.clone();
     }
-    let tex = |usage: &str| shader.map(usage).and_then(|m| m.bitmap).and_then(|b| fx.textures.get(&b).cloned());
+    // A palettized shader's base map holds palette coordinates, not
+    // colour: it is sampled linear. Colour maps and palettes are sRGB.
+    let palettized = matches!(draw::albedo_mode(shader) as u32, 2 | 3 | 5);
+    let mut tex = |usage: &str, srgb: bool| -> Option<Handle<Image>> {
+        let b = shader.map(usage).and_then(|m| m.bitmap)?;
+        if let Some(h) = fx.textures.get(&(b, srgb)) {
+            return Some(h.clone());
+        }
+        let h = images.add(draw::image(fx.pixels.get(&b)?, srgb));
+        fx.textures.insert((b, srgb), h.clone());
+        Some(h)
+    };
+    let (base, alpha, palette) = (tex("base_map", !palettized), tex("alpha_map", false), tex("palette", true));
     let alpha_tag = shader.map("alpha_map").and_then(|m| m.bitmap);
     let mono = alpha_tag.is_some_and(|b| fx.mono.contains(&b));
     let black_point = shader.option("black_point") == Some("on");
@@ -244,9 +339,9 @@ fn material_for(
         },
         extension: ParticleShading {
             mode: Vec4::new(draw::albedo_mode(shader), mono as u32 as f32, black_point as u32 as f32, fx.exposure),
-            base: tex("base_map"),
-            alpha: tex("alpha_map"),
-            palette: tex("palette"),
+            base,
+            alpha,
+            palette,
         },
     });
     fx.materials.insert(key, m.clone());

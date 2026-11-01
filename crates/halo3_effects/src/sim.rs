@@ -148,6 +148,7 @@ impl ContrailPoint {
 /// A light flash.
 #[derive(Clone, Debug)]
 pub struct Flash {
+    pub id: u64,
     pub tag: u32,
     pub position: Vec3,
     pub age: f32,
@@ -453,7 +454,10 @@ impl Sim {
             let at = inst.position + inst.frame * Vec3::from(part.origin_offset);
             match class.as_str() {
                 "snd!" => self.sounds.push((tag, at)),
-                "ligh" => self.flashes.push(Flash { tag, position: at, age: 0.0 }),
+                "ligh" => {
+                    let id = self.id();
+                    self.flashes.push(Flash { id, tag, position: at, age: 0.0 });
+                }
                 "effe" => {
                     if let Some(id) = self.spawn(tag, at, inst.frame, inst.source) {
                         let follows = inst.follows;

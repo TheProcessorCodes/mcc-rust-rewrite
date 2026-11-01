@@ -32,6 +32,8 @@ import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     mesh_view_bindings::{view, fog},
 };
+@if(!PREPASS_PIPELINE)
+import bevy_pbr::render::{clustered_forward as clustering, mesh_view_bindings::clustered_lights};
 @if(PREPASS_PIPELINE)
 import bevy_pbr::{prepass::io::VertexOutput, render::pbr_prepass_functions::prepass_sample_color_and_alpha_discard};
 @if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
@@ -54,6 +56,32 @@ fn fog_position(world: vec4<f32>) -> vec4<f32> {
     let v = world.xyz - view.world_position;
     let d = length(v);
     return vec4(view.world_position + v * (max(d - start, 0.0) / max(d, 1e-4)), world.w);
+}
+
+// Light from the map's effects (explosion flashes, `halo3_effects`): bevy
+// point lights, read here as irradiance in the lightmap's units with a
+// smooth falloff to their range, half wrapped round so a flash lights the
+// ground under it. Empty (no loop) when nothing is going off.
+@if(!PREPASS_PIPELINE)
+fn effect_irradiance(world: vec4<f32>, frag: vec2<f32>, n: vec3<f32>, ortho: bool) -> vec3<f32> {
+    let view_z = dot(vec4<f32>(
+        view.view_from_world[0].z,
+        view.view_from_world[1].z,
+        view.view_from_world[2].z,
+        view.view_from_world[3].z
+    ), world);
+    let cluster = clustering::view_fragment_cluster_index(frag, view_z, ortho);
+    let ranges = clustering::unpack_clusterable_object_index_ranges(cluster);
+    var e = vec3(0.0);
+    for (var i: u32 = ranges.first_point_light_index_offset; i < ranges.first_spot_light_index_offset; i = i + 1u) {
+        let light = &clustered_lights.data[clustering::get_clusterable_object_id(i)];
+        let to_light = (*light).position_radius.xyz - world.xyz;
+        let d2 = dot(to_light, to_light);
+        let f = saturate(1.0 - d2 * (*light).color_inverse_square_range.w);
+        let facing = saturate(dot(n, to_light * inverseSqrt(max(d2, 1e-4))) * 0.5 + 0.5);
+        e = e + (*light).color_inverse_square_range.rgb * (f * f) * facing;
+    }
+    return e;
 }
 
 struct HaloLightmapParams {
@@ -431,6 +459,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 }
 }
 
+    // The albedo before any light, for the effect lights below.
+    var albedo = colour.rgb;
+@if(VERTEX_COLORS && !VERTEX_UVS_B) {
+    albedo = albedo / max(in.color.rgb, vec3(1e-3));
+}
+
 @if(VERTEX_UVS_B) {
     let l = halo_light(in.uv_b);
     let nh = to_halo_dir(n);
@@ -451,6 +485,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     colour = vec4(colour.rgb + in.color.rgb * halo.env.rgb * (0.5 * coefficient * mask), colour.a);
 }
 
+    colour = vec4(colour.rgb + albedo * effect_irradiance(in.world_position, in.position.xy, n, pbr_input.is_orthographic), colour.a);
     colour = vec4((colour.rgb + illum) * halo.extra.y, colour.a);
 @if(BLEND_MULTIPLY) {
     // Multiply decals (`rmd ` blend_mode multiply: High Ground's

@@ -141,3 +141,143 @@ fn first_plate_blows_up_with_its_own_effect() {
     }
     assert!(sim.instances.iter().all(|i| i.effect != tag), "the plate explosion ended");
 }
+
+/// Prints where the run's first triggers and the plates they blow up are,
+/// for placing headless `--shot` views (`cargo test -- --ignored
+/// --nocapture where_things_are`).
+#[test]
+#[ignore]
+fn where_things_are() {
+    let Some(path) = game_paths::halo3_maps().map(|d| d.join("120_halo.map")).filter(|p| p.exists()) else { return };
+    let cache = blam_cache::CacheFile::open(&path).unwrap();
+    let options = blam_geometry::Options { bsps: Some(vec![7, 8, 9]), collision: false, ..Default::default() };
+    let mut scene = blam_geometry::Scene::default();
+    blam_geometry::decode_into(&cache, &options, &mut scene).unwrap();
+    for name in ["120_08_trench_encounter_100", "trench_run_100_trig00", "trench_run_100_trig01", "trench_run_100_trig03", "trench_run_100_trig04", "trench_run_110_trig01"] {
+        let v = scene.trigger_volumes.iter().find(|v| v.name == name).unwrap();
+        let left = v.up.cross(v.forward);
+        let c = v.position + v.forward * v.extents.x * 0.5 + left * v.extents.y * 0.5 + v.up * v.extents.z * 0.5;
+        println!("volume {name}: centre {c:.2} extents {:.2}", v.extents);
+    }
+    for name in ["100_001c", "100_003a", "100_004d", "100_003e", "100_008a", "100_010a", "100_012b", "110_012f"] {
+        if let Some(o) = scene.objects.iter().find(|o| o.name.as_deref() == Some(name)) {
+            println!("object {name}: {:.2} {}", o.transform.w_axis.truncate(), o.tag_path);
+        }
+    }
+    let data = blam_script::ScriptData::read(&cache).unwrap();
+    for set in data.point_sets.iter().filter(|s| s.name.starts_with("big_explosions") || s.name.starts_with("blow_out")) {
+        for p in &set.points {
+            println!("point {}/{}: {:.2?}", set.name, p.name, p.position);
+        }
+    }
+}
+
+/// Prints what the plate explosion's emitters draw a moment in (debugging
+/// aid: `cargo test -- --ignored --nocapture plate_explosion_quads`).
+#[test]
+#[ignore]
+fn plate_explosion_quads() {
+    let Some(path) = game_paths::halo3_maps().map(|d| d.join("120_halo.map")).filter(|p| p.exists()) else { return };
+    let cache = blam_cache::CacheFile::open(&path).unwrap();
+    let tag = cache.tags.find("effe", PLATE_EXPLOSION).unwrap().index;
+    let lib = Arc::new(Library::load(&cache, &[tag]));
+    let mut sim = Sim::new(lib.clone());
+    sim.spawn(tag, Vec3::ZERO, Mat3::IDENTITY, None).unwrap();
+    let eye = halo3_effects::draw::Eye {
+        position: Vec3::new(0.0, 5.0, 100.0),
+        right: Vec3::X,
+        up: Vec3::Y,
+        forward: Vec3::NEG_Z,
+    };
+    for step in 0..12 {
+        sim.step(0.05);
+        if step % 3 != 1 {
+            continue;
+        }
+        println!("t = {:.2}", sim.time);
+        for s in &sim.systems {
+            let frames = halo3_effects::draw::frames(&lib, &lib.sequences, s.particle);
+            let q = halo3_effects::draw::system_quads(&lib, s, &frames, &eye, Vec3::ZERO);
+            let n = q.colours.len() / 4;
+            let name = cache.tags.get(s.particle).unwrap().name().rsplit('\\').next().unwrap().to_string();
+            let first = q.colours.first().copied();
+            let size = q.positions.get(0..4).map(|c| Vec3::from(c[0]).distance(Vec3::from(c[1])));
+            println!("  {name}: {} particles, {n} quads, colour {first:?}, width {size:?} m, uv1 {:?}", s.particles.len(), q.uv1.first());
+        }
+    }
+}
+
+/// Prints the fireball's palette rows and its base map's spread (debugging
+/// aid: `cargo test -- --ignored --nocapture fireball_palette`).
+#[test]
+#[ignore]
+fn fireball_palette() {
+    let Some(path) = game_paths::halo3_maps().map(|d| d.join("120_halo.map")).filter(|p| p.exists()) else { return };
+    let cache = blam_cache::CacheFile::open(&path).unwrap();
+    let tag = cache.tags.find("effe", PLATE_EXPLOSION).unwrap().index;
+    let assets = halo3_effects::load::load(&cache, &[tag]);
+    for (b, t) in &assets.textures {
+        let px = &t.levels[0];
+        let n = (t.width * t.height) as usize;
+        let mean = |c: usize| px.chunks_exact(4).map(|p| p[c] as f32).sum::<f32>() / n as f32;
+        println!("{b} {} {}x{} mono {} mean rgba {:.0} {:.0} {:.0} {:.0}", t.name, t.width, t.height, t.mono, mean(0), mean(1), mean(2), mean(3));
+        if t.name.ends_with("explosion_animated") {
+            for row in [0u32, 8, 16, 24, 31] {
+                let line: Vec<String> = [0u32, 32, 64, 128, 192, 255]
+                    .iter()
+                    .map(|u| {
+                        let o = ((row * t.width + u) * 4) as usize;
+                        format!("{:02x}{:02x}{:02x}/{:02x}", px[o], px[o + 1], px[o + 2], px[o + 3])
+                    })
+                    .collect();
+                println!("   row {row}: {}", line.join(" "));
+            }
+        }
+    }
+}
+
+/// The run's giant explosions far off in the canyon: `big_explosions_ambient`
+/// wakes at the run's first trigger and plays `giant_explosion` at a random
+/// point of `g_location` every 15 to 20 s.
+#[test]
+fn giant_explosions_go_off_in_the_canyon() {
+    let Some(path) = game_paths::halo3_maps().map(|d| d.join("120_halo.map")).filter(|p| p.exists()) else { return };
+    let cache = blam_cache::CacheFile::open(&path).unwrap();
+    let options = blam_geometry::Options { bsps: Some(vec![7, 8, 9]), collision: false, ..Default::default() };
+    let mut scene = blam_geometry::Scene::default();
+    blam_geometry::decode_into(&cache, &options, &mut scene).unwrap();
+    let data = Arc::new(blam_script::ScriptData::read(&cache).unwrap());
+    setup::mark_dynamic(&mut scene, &data);
+    let config = Config { editor: true, ..Default::default() };
+    let mut rt = setup::runtime(&cache, &scene, Arc::clone(&data), config);
+    assert!(rt.console("ins_trench_run"));
+    let mut world = World { player: Vec3::new(-263.64, -433.77, -5.05), zone_set: 0, effects: Vec::new() };
+    let mut ai = NoAi;
+    for _ in 0..90 {
+        rt.step(&mut world, &mut ai, None);
+    }
+    let centre = |name: &str| {
+        let v = scene.trigger_volumes.iter().find(|v| v.name == name).unwrap();
+        let left = v.up.cross(v.forward);
+        v.position + v.forward * v.extents.x * 0.5 + left * v.extents.y * 0.5 + v.up * v.extents.z * 0.5
+    };
+    world.player = centre("120_08_trench_encounter_100");
+    for _ in 0..30 {
+        rt.step(&mut world, &mut ai, None);
+    }
+    world.player = centre("trench_run_100_trig00");
+    for _ in 0..(30 * 45) {
+        rt.step(&mut world, &mut ai, None);
+    }
+    let giant: Vec<&Request> = world.effects.iter().filter(|r| r.name.ends_with("giant_explosion")).collect();
+    assert!(giant.len() >= 2, "{:?}", world.effects.iter().map(|r| &r.name).collect::<Vec<_>>());
+    let in_set = |name: &str, at: Vec3| {
+        data.point_sets.iter().find(|s| s.name == name).unwrap().points.iter().any(|p| Vec3::from(p.position) == at)
+    };
+    // The first at `g_location`'s first value, the rest where
+    // `trench_run_global` moved it as the player reached the run.
+    assert!(in_set("big_explosions_100_01", giant[0].at), "{:?}", giant[0].at);
+    for g in &giant[1..] {
+        assert!(in_set("big_explosions_100_02", g.at), "{:?}", g.at);
+    }
+}

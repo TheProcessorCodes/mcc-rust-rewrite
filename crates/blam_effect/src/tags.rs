@@ -578,6 +578,8 @@ pub struct Contrail {
     pub alpha: Property,
     /// `+0x1C0`.
     pub intensity: Property,
+    /// `+0x1E0`: alpha under this goes to 0 (`black_point` on).
+    pub black_point: Property,
 }
 
 /// A contrail system (`cntl`): its contrails (`+0x00`).
@@ -605,6 +607,7 @@ pub fn read_contrail(cache: &CacheFile, tag: u32) -> Result<ContrailSystem> {
             colour: p(0x180)?,
             alpha: p(0x1A0)?,
             intensity: p(0x1C0)?,
+            black_point: p(0x1E0)?,
         });
     }
     Ok(ContrailSystem {

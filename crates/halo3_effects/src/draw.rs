@@ -75,8 +75,9 @@ pub fn alpha_mode(s: &blam_texture::Shader) -> AlphaMode {
     }
 }
 
-/// A decoded bitmap as an image with every level, clamped at the edges.
-pub fn image(t: &Rgba) -> Image {
+/// A decoded bitmap as an image with every level, clamped at the edges;
+/// sampled as sRGB colour or as plain numbers.
+pub fn image(t: &Rgba, srgb: bool) -> Image {
     let mut data = Vec::new();
     for l in &t.levels {
         data.extend_from_slice(l);
@@ -88,7 +89,7 @@ pub fn image(t: &Rgba) -> Image {
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        TextureFormat::Rgba8UnormSrgb,
+        if srgb { TextureFormat::Rgba8UnormSrgb } else { TextureFormat::Rgba8Unorm },
         RenderAssetUsages::RENDER_WORLD,
     );
     image.texture_descriptor.mip_level_count = t.levels.len() as u32;
@@ -135,6 +136,13 @@ impl Quads {
             self.colours.push(colour);
         }
         self.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    /// One quad with no area: draws nothing, but needs the pipeline.
+    pub fn degenerate() -> Quads {
+        let mut q = Quads::default();
+        q.quad([Vec3::ZERO; 4], [0.0, 1.0, 0.0, 1.0], [0.0; 4], 0.0, 0.0, Vec3::Y);
+        q
     }
 
     pub fn into_mesh(self) -> Mesh {
@@ -265,8 +273,12 @@ pub fn contrail_quads(lib: &Library, c: &sim::Contrail, eye: &Eye, origin: Vec3)
     if n < 2 {
         return q;
     }
-    let colour = def.colour.function.colour(0.0, sim::random(c.seed, 3));
-    let intensity = def.intensity.function.scalar(0.0, sim::random(c.seed, 4));
+    // Input 7 reads as random per contrail (our reading, effects.md 7).
+    let r = sim::random(c.seed, 3);
+    let colour = def.colour.function.colour(r, r);
+    let intensity = def.intensity.function.scalar(r, r);
+    let black = def.black_point.function.scalar(r, r);
+    let kb = 2.0 * (black.clamp(0.0, 1.0) * 255.0).round();
     let mut prev_side: Option<(Vec3, Vec3, f32, f32)> = None;
     for k in 0..n {
         let p = &c.points[k];
@@ -286,10 +298,10 @@ pub fn contrail_quads(lib: &Library, c: &sim::Contrail, eye: &Eye, origin: Vec3)
             let rgba1 = [colour[0] * intensity, colour[1] * intensity, colour[2] * intensity, a1.clamp(0.0, 1.0)];
             let base = q.positions.len() as u32;
             for (pos, uv, rgba, cu) in [
-                (p0 - s0, [u0 * def.repeat[0].max(0.01), 0.0], rgba0, [0.0, 0.0]),
-                (p0 + s0, [u0 * def.repeat[0].max(0.01), 1.0], rgba0, [0.0, 1.0]),
-                (p1 + s1, [u1 * def.repeat[0].max(0.01), 1.0], rgba1, [1.0, 1.0]),
-                (p1 - s1, [u1 * def.repeat[0].max(0.01), 0.0], rgba1, [1.0, 0.0]),
+                (p0 - s0, [u0 * def.repeat[0].max(0.01), 0.0], rgba0, [0.0, kb]),
+                (p0 + s0, [u0 * def.repeat[0].max(0.01), 1.0], rgba0, [0.0, 1.0 + kb]),
+                (p1 + s1, [u1 * def.repeat[0].max(0.01), 1.0], rgba1, [1.0, 1.0 + kb]),
+                (p1 - s1, [u1 * def.repeat[0].max(0.01), 0.0], rgba1, [1.0, kb]),
             ] {
                 q.positions.push(pos.to_array());
                 q.normals.push((eye.position - at).normalize_or(Vec3::Y).to_array());

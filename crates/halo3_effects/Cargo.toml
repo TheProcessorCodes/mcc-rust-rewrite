@@ -13,7 +13,6 @@ blam_effect = { workspace = true }
 blam_geometry = { workspace = true }
 blam_texture = { workspace = true }
 halo3_core = { workspace = true }
-halo3_world = { workspace = true }
 
 [dev-dependencies]
 game_paths = { workspace = true }
