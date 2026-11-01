@@ -45,7 +45,9 @@ impl Plugin for PausePlugin {
                 (toggle, quit, restart_level, switch_tab, sound_tab, engine_slider)
                     .chain()
                     .after(InputSystems)
-                    .after(halo3_core::pause::OverlayInput).run_if(halo3_core::map::ready),
+                    .after(halo3_core::pause::OverlayInput)
+                    // Not behind the loading screen: play has not begun.
+                    .run_if(halo3_core::map::playing),
             );
     }
 }

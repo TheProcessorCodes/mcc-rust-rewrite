@@ -100,7 +100,9 @@ What the game does now:
   thread behind a Halo-ring loading screen and puts it into the same window. The screen stays
   up ("Preparing bike collision and skate") until the map's `halo3_core::map::Warmup` work is
   done: the bike / on-foot / enemy collision world (`halo3_bike::SharedWorld`, built once on a
-  thread) and the first skate session; at most 180 s. Every map is offered:
+  thread) and the first skate session; at most 180 s. Until then game time stands still and
+  nothing plays (`halo3_core::map::Playing`, 2026-11-01): no scripts or dialogue, no controls, no AI,
+  no run clock; the same on a restart. Every map is offered:
   a headless load of all 47 maps not checked by hand (Halo 3 multiplayer, campaign and Halo 2) drew
   each one with textures and lighting; they have not been walked for spawns, collision or water.
   Crow's Nest has no preview picture in MCC. A map named on the command line skips the menu.

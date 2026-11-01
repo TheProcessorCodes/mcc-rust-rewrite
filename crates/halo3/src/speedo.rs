@@ -11,7 +11,8 @@ pub struct SpeedoPlugin;
 impl Plugin for SpeedoPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SpeedUnit::load())
-            .add_systems(Startup, spawn)
+            // Per map: unloading the map (a restart, back to the menu) despawns it.
+            .add_systems(halo3_core::map::MapStartup, spawn)
             .add_systems(Update, show.run_if(halo3_core::map::ready));
     }
 }

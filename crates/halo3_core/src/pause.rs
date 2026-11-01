@@ -6,9 +6,11 @@ use bevy::prelude::*;
 #[derive(Resource, Default)]
 pub struct Paused(pub bool);
 
-/// A run condition for systems that should stop behind the menu.
-pub fn running(paused: Res<Paused>) -> bool {
-    !paused.0
+/// A run condition for systems that should stop behind the menu, and
+/// wait behind the loading screen until play begins
+/// ([`crate::map::Playing`]).
+pub fn running(paused: Res<Paused>, playing: Option<Res<crate::map::Playing>>) -> bool {
+    !paused.0 && playing.is_some()
 }
 
 
