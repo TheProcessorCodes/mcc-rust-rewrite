@@ -27,6 +27,7 @@ use std::sync::mpsc::Receiver;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
@@ -268,6 +269,8 @@ struct Menu {
     picking: Option<Picking>,
     /// What the settings screen says under the rows.
     note: String,
+    /// The username being typed (Enter saves it, Escape drops it).
+    editing: Option<String>,
 }
 
 /// A settings row's folder picker, on its thread.
@@ -331,7 +334,7 @@ enum MenuButton {
 /// The settings screen.
 #[derive(Component)]
 struct SettingsScreen;
-/// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3.
+/// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3, 3 username.
 #[derive(Component)]
 struct SettingRow(usize);
 #[derive(Component)]
@@ -346,11 +349,18 @@ struct SettingsNote;
 #[derive(Component)]
 struct SettingsBack;
 
-/// The games the settings list, in row order.
-const SETTING_GAMES: [&str; 3] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3"];
+/// The settings, in row order: three games' folders, then the username.
+const SETTING_GAMES: [&str; 4] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username"];
+/// The row holding the username.
+const USERNAME_ROW: usize = 3;
+
+/// A row's button: games pick a folder, the username is typed.
+fn button_label(row: usize) -> &'static str {
+    if row == USERNAME_ROW { "EDIT" } else { "SELECT" }
+}
 
 /// What each row shows now: the saved folder, or why there is none.
-fn setting_values() -> [String; 3] {
+fn setting_values() -> [String; 4] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
     let settings = game_paths::settings();
     let reflex = shown(game_paths::reflex_root()).unwrap_or_else(|| {
@@ -361,7 +371,7 @@ fn setting_values() -> [String; 3] {
         .map(str::to_owned)
         .or_else(|| game_paths::skate_assets().map(|_| "Set up (folder not recorded, select to choose it)".to_string()))
         .unwrap_or_else(|| "Not set".to_string());
-    [shown(game_paths::mcc_root()).unwrap_or_else(|| "Not set".to_string()), reflex, skate]
+    [shown(game_paths::mcc_root()).unwrap_or_else(|| "Not set".to_string()), reflex, skate, game_paths::username()]
 }
 
 /// MCC's install root, as first-run setup saved it (`game_paths`).
@@ -561,6 +571,7 @@ impl Plugin for MenuPlugin {
             setting: 0,
             picking: None,
             note: String::new(),
+            editing: None,
         })
         .add_systems(Startup, spawn)
         .add_systems(
@@ -702,16 +713,18 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
             BorderColor::all(LINE),
         ))
         .with_child(text("SETTINGS", 22.0, LIT));
-    screen.spawn((
-        Node {
-            width: Val::Percent(92.0),
-            max_width: Val::Vh(165.0),
-            margin: UiRect::new(Val::Px(0.0), Val::Px(0.0), Val::Vh(3.0), Val::Px(8.0)),
-            ..default()
-        },
-        text("GAMES", 16.0, FAINT),
-    ));
     for (i, name) in SETTING_GAMES.iter().enumerate() {
+        if i == 0 || i == USERNAME_ROW {
+            screen.spawn((
+                Node {
+                    width: Val::Percent(92.0),
+                    max_width: Val::Vh(165.0),
+                    margin: UiRect::new(Val::Px(0.0), Val::Px(0.0), Val::Vh(3.0), Val::Px(8.0)),
+                    ..default()
+                },
+                text(if i == 0 { "GAMES" } else { "PLAYER" }, 16.0, FAINT),
+            ));
+        }
         screen
             .spawn((
                 SettingRow(i),
@@ -746,7 +759,7 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
                     },
                     BorderColor::all(LINE),
                 ))
-                .with_child((SettingSelectLabel(i), text("SELECT", 18.0, DIM)));
+                .with_child((SettingSelectLabel(i), text(button_label(i), 18.0, DIM)));
             });
     }
     screen.spawn((
@@ -1153,6 +1166,7 @@ fn open_settings(menu: &mut Menu) {
 #[allow(clippy::too_many_arguments)]
 fn settings_input(
     keys: Res<ButtonInput<KeyCode>>,
+    mut typed: MessageReader<KeyboardInput>,
     buttons: Res<ButtonInput<MouseButton>>,
     gamepads: Query<&Gamepad>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -1160,6 +1174,11 @@ fn settings_input(
     selects: Query<(&SettingSelect, &ComputedNode, &UiGlobalTransform)>,
     back: Query<(&ComputedNode, &UiGlobalTransform), With<SettingsBack>>,
 ) {
+    if menu.editing.is_some() {
+        type_username(&mut menu, typed.read());
+        return;
+    }
+    typed.clear();
     if menu.picking.is_some() {
         return;
     }
@@ -1193,9 +1212,47 @@ fn settings_input(
     }
 }
 
+/// Keys typed into the username: letters and spaces add, Backspace removes,
+/// Enter saves it at once, Escape keeps the old name.
+fn type_username<'a>(menu: &mut Menu, events: impl Iterator<Item = &'a KeyboardInput>) {
+    for event in events.filter(|e| e.state.is_pressed()) {
+        let Some(name) = menu.editing.as_mut() else {
+            return;
+        };
+        match &event.logical_key {
+            Key::Enter => {
+                let typed = menu.editing.take().unwrap_or_default();
+                menu.note = match game_paths::set_username(&typed) {
+                    Ok(name) => format!("Saved username {name}."),
+                    Err(e) => e,
+                };
+            }
+            Key::Escape => {
+                menu.editing = None;
+                menu.note.clear();
+            }
+            Key::Backspace => {
+                name.pop();
+            }
+            Key::Space => name.push(' '),
+            Key::Character(c) => {
+                if name.chars().count() < game_paths::USERNAME_MAX {
+                    name.extend(c.chars().filter(|c| !c.is_control() && *c != '"'));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Opens the folder picker for a game on its own thread; the choice is
 /// checked and saved there, and [`settings_poll`] picks up the outcome.
 fn select(menu: &mut Menu, row: usize) {
+    if row == USERNAME_ROW {
+        menu.editing = Some(game_paths::username());
+        menu.note = "Type your name. Enter saves it, Escape cancels.".to_string();
+        return;
+    }
     let (send, receive) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = send.send(match row {
@@ -1292,13 +1349,19 @@ fn show_settings(
     let now = setting_values();
     for (value, mut text, mut colour) in &mut values {
         text.0.clone_from(&now[value.0]);
+        if value.0 == USERNAME_ROW {
+            if let Some(typing) = &menu.editing {
+                text.0 = format!("{typing}_");
+            }
+        }
         colour.0 = if now[value.0].starts_with("Not") { FAINT } else { DIM };
     }
     for (select, mut border) in &mut selects {
         *border = BorderColor::all(if select.0 == menu.setting { LIT } else { LINE });
     }
     for (label, mut text, mut colour) in &mut labels {
-        text.0 = if busy(label.0) { "WORKING..." } else { "SELECT" }.to_string();
+        let editing = label.0 == USERNAME_ROW && menu.editing.is_some();
+        text.0 = if busy(label.0) { "WORKING..." } else if editing { "ENTER" } else { button_label(label.0) }.to_string();
         colour.0 = if label.0 == menu.setting { LIT } else { DIM };
     }
     for mut text in &mut note {

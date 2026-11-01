@@ -1,5 +1,5 @@
-//! A Call of Duty style kill feed, bottom left: "The Processor [weapon]
-//! Enemy" for each kill, newest at the bottom, fading after a few seconds.
+//! A Call of Duty style kill feed, bottom left: "<username> [weapon]
+//! Enemy" for each kill (the name is the Settings one, `Player1` by default), newest at the bottom, fading after a few seconds.
 
 use bevy::prelude::*;
 
@@ -15,8 +15,6 @@ impl Plugin for KillFeedPlugin {
     }
 }
 
-/// The player's name in the feed.
-const PLAYER: &str = "The Processor";
 /// Rows kept at most, seconds a row shows, and seconds of it fading out.
 const ROWS: usize = 5;
 const SHOWN: f32 = 6.0;
@@ -80,7 +78,7 @@ fn add(
                 BackgroundColor(BACK),
             ))
             .with_children(|r| {
-                r.spawn(cell(PLAYER.to_string(), FRIEND));
+                r.spawn(cell(game_paths::username(), FRIEND));
                 r.spawn(cell(weapon, WEAPON));
                 r.spawn(cell("Enemy".to_string(), FOE));
             });
