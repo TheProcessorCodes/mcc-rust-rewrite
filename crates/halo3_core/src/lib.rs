@@ -16,5 +16,6 @@ pub mod objects;
 pub mod pause;
 pub mod script_sound;
 pub mod skate;
+pub mod units;
 pub mod weapons;
 pub mod zones;

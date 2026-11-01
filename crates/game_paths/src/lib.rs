@@ -32,6 +32,8 @@ pub mod key {
     pub const SKATE_CONVERTER: &str = "SKATE_CONVERTER";
     /// The MX vs ATV Reflex install, or [`REFLEX_SKIPPED`](super::REFLEX_SKIPPED).
     pub const REFLEX: &str = "REFLEX";
+    /// The speedometer's unit: `mph` (the default) or `kph`.
+    pub const SPEED_UNIT: &str = "SPEED_UNIT";
 }
 
 /// What `REFLEX` holds when the player chose to go without Reflex.
