@@ -3,7 +3,7 @@
 //!
 //! 1. dev overrides in the environment (`HALO3_MCC`, `HALO3_MAPS`,
 //!    `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `HALO3_SKATE_ASSETS`, `IW4L_SKATE_ASSETS`,
-//!    `REFLEX_GAME`);
+//!    `REFLEX_GAME`, `HALO3_LANGUAGE`);
 //! 2. the folders the player chose in first-run setup (`halo3_setup`),
 //!    saved in `setup.env` under [`settings_dir`]
 //!    (`%LOCALAPPDATA%\Halo3Rewrite`), so they are asked once per user
@@ -34,6 +34,9 @@ pub mod key {
     pub const REFLEX: &str = "REFLEX";
     /// The speedometer's unit: `mph` (the default) or `kph`.
     pub const SPEED_UNIT: &str = "SPEED_UNIT";
+    /// The dialogue language (`english`, `french`, ...); optional, see
+    /// [`language`](super::language).
+    pub const LANGUAGE: &str = "LANGUAGE";
 }
 
 /// What `REFLEX` holds when the player chose to go without Reflex.
@@ -151,6 +154,23 @@ pub fn reach_maps() -> Option<PathBuf> {
     std::env::var_os("HALOREACH_MAPS")
         .map(PathBuf::from)
         .or_else(|| Some(mcc_root()?.join("haloreach").join("maps")))
+}
+
+/// The dialogue languages MCC ships for Halo 3 (`halo3\fmod\pc\<name>.fsb`).
+pub const LANGUAGES: [&str; 6] = ["english", "french", "german", "italian", "mexican", "spanish"];
+
+/// The language Halo 3's dialogue plays in: `%HALO3_LANGUAGE%` (a dev
+/// override), else `LANGUAGE` in the saved setup (`key::LANGUAGE`; setup
+/// does not ask, so it is only there when written by hand), else
+/// `english`. Anything not in [`LANGUAGES`] falls back to `english`.
+pub fn language() -> &'static str {
+    let wanted = std::env::var("HALO3_LANGUAGE")
+        .ok()
+        .or_else(|| settings().get(key::LANGUAGE).map(str::to_string))
+        .map(|l| l.trim().to_ascii_lowercase());
+    wanted
+        .and_then(|w| LANGUAGES.iter().copied().find(|l| *l == w))
+        .unwrap_or("english")
 }
 
 /// A Halo 3 map by bare name (`riverworld`), when it is installed. For tests.

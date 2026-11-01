@@ -18,6 +18,7 @@ Probes (`python -I`, read-only, in `docs/format/scripts/`):
 | `probe_scripts.py <map> [text]` | every script decompiled straight from the bytes; `--stats` counts node kinds, constant types and functions |
 | `probe_script_tables.py <map>` | cutscene flags, point sets, editor folders, placement flags and folders |
 | `probe_plate_damage.py <map> [scen path]` | an object's damage sections and responses, and its `coll` model |
+| `probe_girder.py <map> [bloc path]` | the tunnel girder: every damage response field, its physics model's blocks (shapes, nodes, the hinge constraint) |
 
 Pinned by `cargo test`: `crates/blam_script/tests/maps.rs` (counts below),
 `crates/blam_geometry/tests/objects.rs` (plate collision, damage sections, no BSP floor under the
@@ -222,9 +223,8 @@ percentage, `0x0C` block of **instant responses**, `0x18..` more (not read).
 
 **Instant response, 136 bytes**: `0x00` u16 (2 on `destroy`, 0 on `fall`), `0x10` tag reference
 to an effect, `0x20` a second tag reference, `0x58` / `0x5C` string ids (marker names: `root`,
-`base_effect`), `0x60` f32 (1.0 on `fall`, 0.0 on `fall_immediate`). The rest is not decoded
-(what makes the plate come loose is not pinned: the plates have a `phmo`, so it is probably the
-physics model's constraint that the response breaks).
+`base_effect`), `0x60` f32 (1.0 on the plates' `fall`, 0.0 on `fall_immediate`). `0x02` /
+`0x04`: constraint damage (below). The rest is not decoded.
 
 Every plate model (`objects\levels\solo\120_halo\plates\*`) has the same three sections:
 
@@ -233,6 +233,27 @@ Every plate model (`objects\levels\solo\120_halo\plates\*`) has the same three s
 | `destroy` | `<plate>_explosion_chunks` (or `_explosion01`), `levels\solo\120_halo\fx\trench_run\plate_explosion\plate_explosion` | `blow_away`: the plate explodes |
 | `fall` | `<plate>_fall` | `fall_off`: the plate drops away |
 | `fall_immediate` | `<plate>_fall` | `fall_off_immediate` |
+
+**Constraint damage** (`probe_girder.py`): the response's `0x02` u16 and `0x04` string id act on a
+constraint of the physics model. The plates have 0 and none. The tunnel girder
+(`objects\levels\solo\120_halo\plates\tunnel_girder\tunnel_girder`, a `bloc`) has `fall`:
+`0x02` = 3, `0x04` = `hinge`, effect `girder_break`; `destroy`: `0x02` = 1, `0x04` = `hinge`,
+only a sound effect (the object is not removed). We read 1 / 2 as destroy one / all of the
+constraint's group and 3 / 4 as loosen one / all; only 1 and 3 are seen.
+
+**The girder's physics model** (`hlmt + 0x30` -> `phmo`): `+0x04` f32 mass, 71213 (kg). The shape
+blocks at `+0x70` (one `phys_fake` sphere on the anchor) and `+0xAC` (eleven `phys` boxes) start
+each element with name, material, `+0x08` mass scale, `+0x0C` friction (0.8), `+0x10`
+restitution (0.35), volume, mass (6020 per box). `+0x138`: nodes, 12 bytes from the name:
+node 0 (the anchor in the ceiling) and node 1, `hinge` (the girder; the render model's mesh is
+rigid on it). `+0x120`: one constraint, `b_hinge`: `+0x04` u16 node A (0), `+0x06` node B (1);
+then a frame for A at `+0x08` and for B at `+0x3C`, each scale, forward, left, up, position in
+its node's frame; `+0x78` twist min / max (-180, 180), `+0x80` cone (-45, 45), `+0x88` plane
+(-30, 30) in degrees; `+0x90` max friction torque (0). Put on the render model's bind pose the
+pivot is model (-10.75, 0, 2.513), the top of the girder's -X end against the ceiling; with A's
+twist and plane axes on that pose, a girder turning down about its hinge meets the plane limit
+at 30 degrees. The limits only matter once the constraint can move, so we take "loosen" as: the
+hinge turns, within its limits.
 
 ## 9. The Warthog run as the scripts drive it
 
@@ -312,7 +333,8 @@ scenery's `coll`, and "blow up" and "fall away" are damage sections of the plate
   fly camera, or the skater through `Respawn`), `switch_zone_set`, `current_zone_set`,
   `device_set_position`/`_immediate`/`device_animate_position`/`device_set_position_track`/
   overlay tracks/`device_get_position` (a 0..1 position animated over time), `effect_new*` at
-  flags, points and objects (drawn as a stand-in flash), `kill_volume_enable`/`_disable` (below).
+  flags, points and objects (played from the map's `effe` tags by `halo3_effects`, `effects.md`),
+  `kill_volume_enable`/`_disable` (below).
 * **Deliberate difference:** `object_destroy_folder` only removes objects that start absent.
   `object_management` drops the run's plate folders purely to save memory and
   `plate_management` brings them back as you drive in; keeping them means the floor is there

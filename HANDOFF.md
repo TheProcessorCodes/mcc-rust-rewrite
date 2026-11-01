@@ -163,16 +163,19 @@ to the hangar and it all worked. What is left to call it finished:
 
 To do:
 
-1. **Falling pieces in the tunnels fall through the road.** The big pieces that come down in
-   the tunnels drop straight through the drivable floor; they should land on it and stay there
-   (collide with the road / plates). Not looked into yet; likely the `plates\pillar_fall`
-   machines or other script-dropped objects, whose fall is posed by `halo3_anim::devices` with
-   no collision against the world (check which objects they are first).
-2. **Dialogue.** Cortana, Johnson, the Arbiter and the rest: the scripts' dialogue lines played
-   from MCC's language banks (not read yet), on the Dialogue bus that already exists.
-3. **Accurate explosion effects.** The plates blowing up ahead (and other script `effect_new`
-   calls) are stand-in flashes now; play Halo 3's own `effe` effects (particles, lights,
-   sounds) as the game does.
+1. ~~**Falling pieces in the tunnels fall through the road.**~~ Done 2026-10-31; reworked
+   on branch `girder-tumble` after the user's playtest (they plopped straight down): the
+   girders now swing down on their hinges as the map's physics model says (see "Tunnel girders
+   land on the road" below). Awaiting the user's playtest.
+2. ~~**Dialogue.**~~ Done 2026-10-31 on branch `mission-dialogue`, awaiting the user's
+   playtest: the scripts' lines play from MCC's language bank on the Dialogue bus (see
+   "Dialogue" under the Warthog Run below). Not done: the radio / Cortana voice effects, ducking
+   under lines, AI combat chatter.
+3. ~~**Accurate explosion effects.**~~ Done 2026-10-31 on branch `explosion-effects`, awaiting
+   the user's playtest: the scripts' effects and the plates' damage sections play the map's own
+   `effe` tags (particles, contrails, light flashes, sounds; see "Explosion effects" under the
+   Warthog Run below). Not done: debris objects (the plate chunks), camera shake, screen
+   effects, decals.
 4. **Enemies must attack.** Today the AI only fights while the player is on foot (their rounds
    fly on the on-foot collision), so on the bike the run's Flood and Sentinels mostly ignore
    you. They should see, chase and shoot / hit the rider on the bike (and the skater).
@@ -185,7 +188,7 @@ Skipped by the user's choice (do not do unless asked):
 - The Arbiter driving or riding with the player (`cs_*` command scripts, `ai_get_object`); he is
   placed and nothing more.
 
-Order and priorities: the user wants to discuss them before work starts.
+Order: the user approved 1, 2, 3, 4 as the priority order (2026-10-31).
 
 **Waiting on the user's playtest.** These are built but the user has not run them yet:
 
@@ -204,7 +207,8 @@ Order and priorities: the user wants to discuss them before work starts.
 - Water's painted masks; High Ground's seam between the cove and the sea.
 - The rider is lit at one level for his whole body (no per-part lighting).
 
-**Sound, still missing:** reverb from the BSP acoustics, dialogue, and the game's real mix levels.
+**Sound, still missing:** reverb from the BSP acoustics, the dialogue's voice effects and
+ducking, AI combat chatter, and the game's real mix levels.
 
 **Dirt bike engine sound** (merged 2026-10-30, user-approved): Reflex's own 450F recordings
 read from the user's install (`reflex_assets::engine_audio`, `docs/format/reflex-engine-audio.md`),
@@ -311,7 +315,7 @@ the run's plates are its only floor, so before this the whole run had no collisi
 
 Stubs and hooks: AI (`ai_place warthog01` etc.) goes to `AiHooks` (enemies agent), device
 animation (the run's two sinking islands) to `DevicePoser` (animation agent) with a made-up
-sink as the fallback, effects are stand-in flashes, cinematics / HUD are no-ops that log
+sink as the fallback, effects go to `halo3_effects` (see "Explosion effects"), cinematics / HUD are no-ops that log
 once (sound is played: see "Mission music"). Without `--insertion` / `--scripts` nothing changes from before except object collision.
 Tested headless (`halo3_script/tests/warthog_run.rs` drives the player through the run's
 volumes and checks plates drop); awaiting the user's playtest.
@@ -510,6 +514,63 @@ Two bugs from the first bike playtest of `--insertion trench_run`:
   y = 37.5 at 100 km/h; onto island 1 it is lifted with the island (z -28.2 -> -23.5) where
   before the carrying it fell through. Not playtested.
 
+## Tunnel girders land on the road (2026-10-31, branches `tunnel-fall-collision`, `girder-tumble`)
+
+User playtest: the giant pieces falling in the tunnels went straight through the road. They are
+the run's `tunnel_girder` crates (`objects\levels\solo\120_halo\plates\tunnel_girder`, a `bloc`
+with a `phmo`, 22.5 wu long, hung across the ceiling). The first fix (`tunnel-fall-collision`)
+dropped them straight onto the road. Second playtest: they "plop right on the drivable area",
+no rotation, no bounce, and maybe more fall than should.
+
+**What the map says** (`docs/format/halo-script.md` 8, `probe_girder.py`): the scripts never push
+or spin them (no velocity or impulse calls); `fall_off` damages section `fall`, whose response
+*loosens* the physics model's one constraint, a hinge at the girder's end against the ceiling
+(pivot model (-10.75, 0, 2.513), cone 45, plane 30 degrees); `destroy` *breaks* it and does not
+remove the object (we used to remove it). Friction 0.8, restitution 0.35, mass 71213, all from
+the phmo.
+
+**What the scripts drop, and when** (`trench_tunnel01` / `02`, all `fall_off` unless noted):
+
+| trigger | girder |
+|---|---|
+| `trench_run_game_save01` (after `trench_run_100_trig08`) | `100_hw_ceiling02` |
+| `tunnel01_trig01` | `100_hw_ceiling04` |
+| `tunnel01_trig03` | `100_hw_ceiling08`, a second later `100_hw_ceiling09` |
+| `120_08_trench_encounter_110` | `100_hw_ceiling10` (`tunnel_fall_away`: `fall` then `destroy`) |
+| `tunnel01_trig04`, `tunnel01_trig05` | `100_hw_ceiling13`, `100_hw_ceiling14` |
+| `trench_run_game_save03` (after `trench_run_110_trig15`) | `110_hw_ceiling02` |
+| `tunnel02_trig02` / `04` | `110_hw_ceiling05` / `08` |
+| `tunnel02_trig05` | `110_hw_ceiling10`, `110_hw_ceiling11` |
+| `tunnel02_trig07` | `110_hw_ceiling14` |
+
+`110_hw_ceiling01`, `06` and `12` are never dropped and stay up. Master dropped the same twelve
+(each tumbled away and vanished after 6 s; `100_hw_ceiling10` vanished at once); the first fix
+dropped the same twelve but kept them, so more were in sight at once. Nothing drops extra:
+damage goes only to the objects a call names, and none comes down early.
+
+**Now** (`halo3_script/src/crate_physics.rs`, `objects.rs`): a loosened girder swings down about
+its hinge under gravity (sub-stepped pendulum, inertia from its collision's corners), bouncing
+off the hinge's 30 degree limit or the road with the phmo's restitution, and comes to rest
+hanging (about 6 s). `100_hw_ceiling10`, its hinge broken, falls free as a rigid body (gravity,
+corner contacts against the BSP and solid objects with the phmo's friction and restitution,
+sleeps when slow, wakes if its floor drops) and rolls onto its side. Crates without a
+constraint fall free the same way, with a small sideways push and spin of our own. Solid
+throughout; while moving their pose is published every tick, so the bike's collision follows
+them. The plates keep their old tumble. Ours, not the map's: the corners as contact points, the
+damping, the sleep thresholds, the free fall's push, and the reading of "loosen" (turns within
+its limits); not compared with the real game.
+
+What it looks like: in the first tunnel the girders hang from one wall down to 1 to 2 wu over
+the road (`100_hw_ceiling14` reaches it); in the second, where the road lies lower, they hang 8
+to 16 wu up. `HALO3_SCRIPT_TRACE=1` logs every object a script damages.
+
+Checked: `halo3_anim/tests/tunnel_falls.rs` (scripts headless through both tunnels: exactly the
+scripts' girders move, `100_hw_ceiling10` falls free, every one turns more than 5 degrees, rests
+within 15 s, solid, no corner in the floor, at its limit or on the road, the bike's world meets
+its top where it lies), the `crate_physics` unit tests (a beam swings to its limit; a dropped
+beam bounces and sleeps), all `halo3_anim`, `halo3_script`, `halo3_effects` tests. Shots:
+`out\shots\girder_swing\` in the `girder-tumble` worktree. Awaiting the user's playtest.
+
 ## Mission music (2026-10-30, branch `mission-music`)
 
 The `lsnd` tags are now read in full (`docs/format/sound.md` 5 and 8, probe
@@ -596,6 +657,80 @@ lift shafts. Tests: `halo3_anim/tests/frigate.rs`.
 ```
 & "<worktree>\out\bin\halo3.exe" 120_halo --insertion trench_end
 ```
+
+**Dialogue (2026-10-31, branch `mission-dialogue`, awaiting the user's playtest).** The
+scripts' lines play: MCC keeps them in `halo3\fmod\pc\<language>.fsb`, one bank per language,
+laid out like `sfx.fsb` (same Vorbis setups), and the dialogue `snd!` tags store their bank ids,
+so `blam_sound::Library::add_dialog` opens the bank beside `sfx.fsb` and every dialogue tag
+decodes. The scripts name lines, not tags: the map's mission dialogue tag (`mdlg`, read
+`SoundTags::mission_dialogue`) maps `120mg_030` to its speaker (`cor`) and `snd!`.
+`ai_play_line_on_object`, `ai_play_line` and `vs_play_line` now queue the line as a one-shot and
+return its length in ticks, and `sound_impulse_language_time` returns a sound's length, from the
+language bank's `.info` (`halo3_script::dialogue`), so the scripts' `(sleep (ai_play_line...))`
+wait as long as the take. Lines play on the dialogue bus at their class and tag gains (-6 dB on
+most of Cortana's), and the other buses duck under them by the classes' dialogue ducking (music
+-3 dB, effects -6 dB). The language is English unless `setup.env` has `LANGUAGE=french` (or
+german, italian, mexican, spanish; setup does not ask) or `HALO3_LANGUAGE` overrides.
+`docs/format/sound.md` 11 has the format; `blam sound 120_halo dialogue --grep 120mg` lists the
+lines.
+
+On the run, Cortana: "There! Johnson's Warthog!" (`120mg_010`) at the start, `120mg_030` on the
+first stretch, then a line every 30 s (`120mg_040` to `090`) until the countdown takes over at
+`trench_run_110_trig09` (`120mg_100` "charging sequence at 30 percent" to `120mg_160` "floor it!
+right into the hangar!"). `md_09_cortana_hints` first waits for the hallway before the run, which
+the insertion starts past, so `trench_run` counts `120_07_c_hall_end` as passed
+(`setup::PASSED_ON_THE_WAY`). As in the map's scripts, if the player takes over 20 s to reach the
+first stretch and then crosses it within a second, `md_09`'s once-a-second check misses it and the
+hint lines stay silent until the countdown.
+
+Checked: `halo3_script/tests/trench_dialogue.rs` (the six lines at their volumes, `120mg_040`
+915 ticks plus `120mg_030`'s 64 ticks after it, `120mg_050` right after `040`),
+`blam_sound/tests/install.rs` (`english_dialogue_bank_and_mission_dialogue`), and a headless
+`warthog_run --bike --view -178,-300,-4,90` with `HALO3_AUDIO_TRACE=1`: `120mg_010`, `030`,
+`040` (32.6 s after `030`) and `050` played, Cortana about -22 to -25 dBFS against the music at
+-18.6. Not done: the voice effects (Cortana's `cortana_mission`, the radio filters), AI combat
+chatter (`udlg`), placing `ai_play_line` lines at the actor. For the playtest: is Cortana loud
+enough over the music (the Dialogue slider goes to 200 %)?
+
+**Explosion effects (2026-10-31, branch `explosion-effects`, awaiting the user's playtest).**
+The stand-in flashes are gone. The scripts' `effect_new`, `effect_new_random`,
+`effect_new_at_ai_point`, `effect_new_on_object_marker` and the effects of the damage sections
+they hit (both of a response's effects: a plate's `destroy` plays its chunks and the trench's
+`plate_explosion`) go into `halo3_core::effects::EffectQueue`; `halo3_effects` plays them from
+the map's tags, read with their bitmaps while the map loads (`main.rs`: the scripts'
+referenced `effe` tags plus their objects' damage effects; 64 effects, 48 particles, 7
+contrails, 8 lights, 35 bitmaps on the run, 0.1 s). Reader `blam_effect`, format
+`docs/format/effects.md`, probe `docs/format/scripts/probe_effects.py`.
+
+- **Played from the data**: events one after another with their delays and durations; each
+  emitter's starting count, rate, lifespan, emission radius and angle, speed, size and scale,
+  tint, alpha and black point by the tags' own functions and random inputs; particle physics
+  (`pmov`: gravity scale, drag); the particles' bitmaps, sprite frames, palettes (the
+  fireball's base map picks colours along `explosion_animated`), billboard and sprite alpha
+  maps, billboards (camera facing, stretched along the velocity for sparks), blend modes;
+  effects a particle carries (the ejecta each carry a flaming contrail); contrails (`cntl`:
+  points a second, point life, width, colour, alpha, black point); light flashes (`ligh`) lit
+  into the world by a term added to `lightmap.wesl`; sounds (`snd!`) through `halo3_audio`.
+- **Our choices (commented in the code)**: particles at 3x their authored colour
+  (`HALO3_EFFECT_EXPOSURE`; the world's x8 exposure turned fireballs white); particles leave
+  along the effect's up axis; light falloff 4x the light's size, its strength scaled by 0.05;
+  every particle material is drawn once invisibly at the start so the first explosion is not
+  lost to shader compiles.
+- **Not done**: `bloc` debris (the plate chunks flying up, the tunnel half girders), `jpt!`
+  (shock wave, camera shake), `sefc` screen effects, `decs` decals, markers (effects play at
+  the object's origin), soft particle edges, mesh particles. The plates' `fall` effects only
+  hold a `bloc` and a `jpt!`, so a dropping plate has no effect to show (its fall is still
+  ours). The weapons' and AI's impact effects are unchanged (their stand-ins in
+  `halo3_weapons/src/fire.rs`; switching them over needs their tags read at load).
+- Checked: `blam_effect/tests/run_effects.rs` (the plate explosion's and the giant explosion's
+  layouts, every effect in 120_halo reads), `halo3_effects/tests/trench_effects.rs` (the run's
+  scripts blow up `100_001c` and the player makes the flash, 50 rising fireball particles, the
+  sounds and five to eight ejecta with contrails; the giant explosions go off at the
+  scripts' points), all `halo3_script` and `halo3_anim` tests. Headless shots:
+  `out\shots\plate_explosion\120_halo_2.png`, `_3.png` (plate `100_001c` blowing up, from the
+  run's first trigger), `out\shots\giant4\120_halo_6.png`, `_9.png` (the first giant
+  explosion in the canyon, from `120_08_trench_encounter_100`). `HALO3_EFFECT_TRACE=1` logs
+  every effect started; `HALO3_SHOT_NEXT_WAIT` spaces later `--shot` views for time series.
 
 ## Open questions and known gaps
 

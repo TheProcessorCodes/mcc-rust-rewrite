@@ -8,7 +8,7 @@ use blam_cache::CacheFile;
 use blam_geometry::{Kind, Scene};
 use blam_script::{NodeKind, ScriptData, ValueType};
 
-use crate::objects::{ObjectInfo, Objects, Section};
+use crate::objects::{ConstraintDamage, CratePhysics, Hinge, ObjectInfo, Objects, Section};
 use crate::vm::{Config, Runtime};
 
 /// The object names and folders any script constant names.
@@ -63,12 +63,21 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
                         .unwrap_or_default()
                         .into_iter()
                         .map(|s| Section {
-                            effect: s
+                            effects: s
                                 .responses
                                 .iter()
-                                .find_map(|r| r.effect.or(r.effect2))
-                                .and_then(|t| cache.tags.get(t))
-                                .map(|t| t.name().to_string()),
+                                .flat_map(|r| [r.effect, r.effect2])
+                                .flatten()
+                                .filter_map(|t| cache.tags.get(t))
+                                .map(|t| t.name().to_string())
+                                .collect(),
+                            // Read as: 1, 2 destroy one / all of a group;
+                            // 3, 4 loosen one / all.
+                            constraint: s.responses.iter().find_map(|r| match r.constraint_damage {
+                                1 | 2 => Some(ConstraintDamage::Destroy),
+                                3 | 4 => Some(ConstraintDamage::Loosen),
+                                _ => None,
+                            }),
                             name: s.name,
                         })
                         .collect()
@@ -95,6 +104,8 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
             sections: secs,
             tag_path: o.tag_path.clone(),
             tag: Some(o.tag),
+            contacts: Vec::new(),
+            physics: None,
         });
     }
     // Named objects nothing draws (sound scenery, bipeds, vehicles).
@@ -111,6 +122,8 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
                 sections: Vec::new(),
                 tag_path: String::new(),
                 tag: None,
+                contacts: Vec::new(),
+                physics: None,
             });
         }
     }
@@ -122,8 +135,43 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
             list.push(i as u32);
         }
     }
-    let objects = Objects::new(info, by_name);
-    Runtime::new(data, objects, scene.trigger_volumes.clone(), folders, config)
+    // Crates scripts drop land on the floor under them (the tunnels'
+    // girders); only when the scene has collision.
+    let (contacts, ground) = crate::ground::build(&scene.collision, &info);
+    let mut physics: HashMap<u32, Option<CratePhysics>> = HashMap::new();
+    for (o, c) in info.iter_mut().zip(contacts) {
+        if c.is_empty() {
+            continue;
+        }
+        o.contacts = c;
+        // How it moves when let go: its physics model's numbers and the
+        // constraint its damage responses loosen or break.
+        o.physics = o.tag.and_then(|t| {
+            physics
+                .entry(t)
+                .or_insert_with(|| {
+                    let p = blam_geometry::objects::physics(cache, cache.tags.get(t)?).ok().flatten()?;
+                    Some(CratePhysics {
+                        mass: p.mass,
+                        friction: p.friction,
+                        restitution: p.restitution,
+                        hinge: p.constraints.first().map(|c| Hinge {
+                            pivot: c.pivot,
+                            twist_axis: c.twist_axis,
+                            plane_axis: c.plane_axis,
+                            cone: c.cone.1.abs().max(c.cone.0.abs()),
+                            plane: c.plane,
+                        }),
+                    })
+                })
+                .clone()
+        });
+    }
+    let mut objects = Objects::new(info, by_name);
+    objects.ground = ground;
+    let mut rt = Runtime::new(data, objects, scene.trigger_volumes.clone(), folders, config);
+    rt.dialogue = crate::dialogue::Dialogue::read(cache);
+    rt
 }
 
 fn kind_type(kind: Kind) -> i16 {
@@ -181,6 +229,9 @@ pub struct Insertion {
     pub start: Option<(glam::Vec3, f32)>,
     /// Applied after the script's start-up ticks.
     pub start_override: Option<StartOverride>,
+    /// Trigger volumes the player is taken to have passed through on the
+    /// way to this start (`Runtime::pass_volumes`, [`PASSED_ON_THE_WAY`]).
+    pub passed: Vec<String>,
 }
 
 /// The insertion `--insertion NAME` names: the map's own `ins_NAME`, which
@@ -199,6 +250,7 @@ pub fn insertion(data: &ScriptData, scene: &Scene, name: &str) -> Option<Inserti
             script: "ins_trench_run".into(),
             start: Some((at, yaw)),
             start_override: Some(StartOverride { zone_set, at, yaw }),
+            passed: Vec::new(),
         });
     }
     let script = format!("ins_{bare}");
@@ -234,6 +286,11 @@ pub fn insertion(data: &ScriptData, scene: &Scene, name: &str) -> Option<Inserti
         start_override: start
             .filter(|_| FACE_TOWARDS.iter().any(|(ins, _)| *ins == bare))
             .map(|(at, yaw)| StartOverride { zone_set: None, at, yaw }),
+        passed: PASSED_ON_THE_WAY
+            .iter()
+            .filter(|(ins, _)| *ins == bare)
+            .map(|(_, volume)| volume.to_string())
+            .collect(),
     })
 }
 
@@ -295,3 +352,12 @@ pub const START_AHEAD: f32 = 6.0;
 /// the canyon the run starts in; the canyon runs north to the run's first
 /// trigger, `120_08_trench_encounter_100`.
 pub const FACE_TOWARDS: &[(&str, &str)] = &[("trench_run", "120_08_trench_encounter_100")];
+
+/// Insertions that start past a trigger volume a script they wake still
+/// waits for, and that volume. 120_halo's `120_08_trench_run` wakes
+/// `md_09_cortana_hints`, whose first wait is for the end of the hallway
+/// before the run (`120_07_c_hall_end`): played through, the player has
+/// just passed it ("There! Johnson's Warthog!"), but `ins_trench_run` puts
+/// him beyond it, so without this the run's first six Cortana lines never
+/// play (`ins_trench_run` itself does nothing about it).
+pub const PASSED_ON_THE_WAY: &[(&str, &str)] = &[("trench_run", "120_07_c_hall_end")];

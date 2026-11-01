@@ -1671,6 +1671,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "blam_effect"
+version = "0.1.0"
+dependencies = [
+ "blam_cache",
+ "blam_texture",
+ "game_paths",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "blam_geometry"
 version = "0.1.0"
 dependencies = [
@@ -2605,6 +2615,7 @@ dependencies = [
  "halo3_audio",
  "halo3_bike",
  "halo3_core",
+ "halo3_effects",
  "halo3_foot",
  "halo3_rider",
  "halo3_script",
@@ -2657,6 +2668,7 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_sound",
+ "game_paths",
  "halo3_core",
  "reflex_assets",
  "serde_json",
@@ -2685,6 +2697,21 @@ dependencies = [
  "blam_geometry",
  "game_paths",
  "serde_json",
+]
+
+[[package]]
+name = "halo3_effects"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_cache",
+ "blam_effect",
+ "blam_geometry",
+ "blam_script",
+ "blam_texture",
+ "game_paths",
+ "halo3_core",
+ "halo3_script",
 ]
 
 [[package]]
@@ -2724,6 +2751,7 @@ dependencies = [
  "blam_cache",
  "blam_geometry",
  "blam_script",
+ "blam_sound",
  "game_paths",
  "glam",
  "halo3_core",

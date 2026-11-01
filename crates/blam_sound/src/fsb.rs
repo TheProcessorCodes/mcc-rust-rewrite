@@ -213,7 +213,7 @@ impl Bank {
     }
 }
 
-fn parse_info(b: &[u8]) -> Result<Vec<Info>> {
+pub(crate) fn parse_info(b: &[u8]) -> Result<Vec<Info>> {
     if !b.len().is_multiple_of(280) {
         return Err(Error::Invalid(format!(
             "info file of {} bytes is not 280-byte records",

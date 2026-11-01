@@ -28,6 +28,7 @@ the format descriptions the code is written from.
 | `crates/blam_h2` | MCC Halo 2 maps: inflated in memory, tags, `shared.map` and `textures.dat` read, BSP, collision, objects, spawns, shaders and bitmaps decoded into the same `Scene` (`docs/format/halo2.md`) |
 | `crates/blam_script` | reads the HaloScript compiled into a scenario (scripts, globals, the expression table, the names scripts use) and prints it as source (`docs/format/halo-script.md`) |
 | `crates/blam_sound` | Halo 3's sound: `snd!` / `lsnd` / sound scenery / BSP acoustics tags, and MCC's FMOD bank (FSB5 Vorbis) they play from, decoded with lewton |
+| `crates/blam_effect` | Halo 3's effects: `effe` events and parts, particle systems and emitters with their function blobs, particles (`prt3`) with their render method, particle physics (`pmov`), contrails (`cntl`), lights (`ligh`) (`docs/format/effects.md`) |
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
 | `crates/blam_reach` | MCC Halo: Reach maps: BSPs from the lightmap BSP data, instances from their resource, collision, objects, sky, spawns and lightmap texcoords into the same `Scene`; the cache file, shaders and bitmaps go through `blam_cache` / `blam_texture`, which tell Reach by its header (`docs/format/reach.md`) |
@@ -47,6 +48,7 @@ the format descriptions the code is written from.
 | `crates/halo3_foot` | the Spartan on foot |
 | `crates/halo3_weapons` | the map's weapons, carried and fired on foot |
 | `crates/halo3_script` | runs a map's own scripts: threads at 30 ticks a second, objects created, destroyed, dropped and moved, devices, trigger volumes, insertion points; hooks for the AI and device animation |
+| `crates/halo3_effects` | plays the effects the scripts and damaged objects ask for from the map's `effe` tags: particles, contrails, light flashes, sounds |
 | `crates/halo3_weapons` | the map's weapons, carried and fired on foot; rounds hit actors and the player |
 | `crates/halo3_ai` | the campaign's squads as actors: placed, drawn, hurt and fighting; the player's shields and health |
 | `crates/halo3_swim` | water, sinking and splashes |
@@ -86,7 +88,8 @@ they skip when setup has not run.
 
 Dev overrides: `HALO3_MCC`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `HALO3_SKATE_ASSETS` (or
 `IW4L_SKATE_ASSETS`), `HALO3_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
-Reflex), `HALO3_SETUP_DIR`.
+Reflex), `HALO3_SETUP_DIR`, `HALO3_LANGUAGE` (dialogue language: `english`, `french`,
+`german`, `italian`, `mexican` or `spanish`; else `LANGUAGE=` in `setup.env`, else English).
 
 ## Try it
 
@@ -103,6 +106,7 @@ target\debug\blam.exe sound riverworld list
 target\debug\blam.exe scripts 120_halo --grep trench_timer_100_001
 target\debug\blam.exe ai 120_halo --squads
 target\debug\blam.exe sound 120_halo wav "lsnd:levels\solo\120_halo\music\120_music_15"
+target\debug\blam.exe sound 120_halo dialogue --grep 120mg
 target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human"
 target\debug\blam.exe anim 120_halo "bipd:objects\characters\floodcombat_human\floodcombat_human" --anim combat:any:any:melee --frame 6
 target\debug\blam.exe anim 120_halo --all
@@ -247,7 +251,9 @@ lists all 20).
       user's `halo3.dll`), driven by the map's tags: each cluster's background
       ambience with its random details, cross-faded as you move; the sound
       scenery placed in the world, panned and attenuated by distance; music by
-      hand (M; the Warthog run on 120_halo); board roll, grind and landing
+      hand (M; the Warthog run on 120_halo); the scripts' dialogue lines
+      (Cortana, Johnson, Guilty Spark ...) from MCC's language bank
+      (`english.fsb`), on the Dialogue slider; board roll, grind and landing
       sounds while skating. K mutes, `-` / `=` volume, `HALO3_AUDIO=0` off
       (`docs/format/sound.md`, `docs/viewer.md` "Sound").
 - [x] Blackout (`blackout`, file `lockout.map`, DLC; built, awaiting a playtest): 21 clusters,
@@ -376,8 +382,16 @@ lists all 20).
       behind and around you row by row (or blow up ahead), and their
       collision goes with them so the bike, the Spartan or the skater
       falls. Placed objects now collide (`coll` models; the run's plates
-      are its only floor). AI, cinematics, sound and real effects are
-      stubs or hooks (`docs/format/halo-script.md` 10).
+      are its only floor). Cinematics are stubs (`docs/format/halo-script.md` 10).
+- [x] Explosion effects (2026-10-31; built and tested headless, awaiting a
+      playtest): the scripts' `effect_new*` calls and the damage sections of
+      the objects they damage play Halo 3's own `effe` tags: the plates
+      blowing up ahead (flash, sparks, fiery smoke, fireball, ejecta with
+      flaming contrails, a fiery plume, their light and sounds) and the giant
+      explosions far off in the canyon, from the tags' particle systems,
+      bitmaps, palettes and functions (`halo3_effects`,
+      `docs/format/effects.md`). Not drawn: debris objects, camera shake,
+      screen effects, decals. `HALO3_EFFECT_TRACE=1` logs every effect.
 
 ## Licence
 

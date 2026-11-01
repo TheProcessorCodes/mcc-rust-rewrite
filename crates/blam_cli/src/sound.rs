@@ -9,6 +9,11 @@
 //! - `music`: every music piece (and any other `lsnd` the scripts name)
 //!   with its rules, each slot's permutations and lengths, and the script
 //!   lines that start, switch and stop it (`sound.md` 5 and 8)
+//! - `dialogue [--grep TEXT]`: the mission dialogue's lines (`mdlg`): name,
+//!   speaker, effect, `snd!` and its length in the language bank
+//!   (`sound.md` 11)
+//!
+//! The dialogue bank is the setup's language (`HALO3_LANGUAGE` overrides).
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -27,11 +32,19 @@ fn library(cache: &CacheFile) -> Result<Library> {
         .map(PathBuf::from)
         .unwrap_or_else(maps_dir);
     let started = std::time::Instant::now();
-    let lib = Library::open_beside(&dir).context("opening the FMOD bank beside the maps")?;
+    let lib = Library::open_beside_with(&dir, Some(game_paths::language()))
+        .or_else(|e| {
+            eprintln!("no dialogue bank ({e})");
+            Library::open_beside(&dir)
+        })
+        .context("opening the FMOD bank beside the maps")?;
     eprintln!(
-        "bank {}: {} samples; {} Vorbis setups from halo3.dll, {} rebuilt to their CRC ({:.2} s)",
+        "bank {}: {} samples (dialogue: {}); {} Vorbis setups from halo3.dll, {} rebuilt to their CRC ({:.2} s)",
         lib.sfx.path().display(),
         lib.sfx.samples.len(),
+        lib.dialog
+            .as_ref()
+            .map_or("none".to_string(), |d| format!("{}, {} samples", d.path().display(), d.samples.len())),
         lib.setups.len(),
         lib.setups.verified_count(),
         started.elapsed().as_secs_f32()
@@ -65,8 +78,49 @@ pub fn run(cache: &CacheFile, args: &Args) -> Result<()> {
         }
         "check" => check(cache, &tags),
         "music" => music(cache, &tags),
+        "dialogue" => dialogue(&tags, &library(cache)?, args.flag("grep")),
         _ => crate::usage(),
     }
+}
+
+/// The mission dialogue's lines, with each take's length in the bank.
+fn dialogue(tags: &SoundTags<'_>, lib: &Library, grep: Option<&str>) -> Result<()> {
+    let c = tags.cache();
+    let lines = tags.mission_dialogue()?;
+    println!("{} lines", lines.len());
+    for l in &lines {
+        if grep.is_some_and(|g| !l.name.contains(g)) {
+            continue;
+        }
+        for v in &l.variants {
+            let len = v
+                .sound
+                .and_then(|s| tags.sound(s).ok())
+                .map(|snd| {
+                    snd.permutations
+                        .iter()
+                        .map(|p| match lib.find(p.fmod_id) {
+                            Some((bank, i)) => {
+                                let s = &bank.samples[i as usize];
+                                format!("{:.2} s", s.frames as f32 / s.rate as f32)
+                            }
+                            None => format!("{:#010x} not in the banks", p.fmod_id),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            println!(
+                "{:<10} {:<4} {:<16} {}  [{}]",
+                l.name,
+                v.speaker,
+                if v.effect.is_empty() { &l.effect } else { &v.effect },
+                name_of(c, v.sound),
+                len
+            );
+        }
+    }
+    Ok(())
 }
 
 fn name_of(cache: &CacheFile, i: Option<u32>) -> String {
@@ -164,14 +218,15 @@ fn show(tags: &SoundTags<'_>, lib: &Library, index: u32) -> Result<()> {
         s.tag, s.name, s.flags, s.class, s.encoding, s.max_play_ms, s.playback
     );
     for p in &s.permutations {
-        match lib.sample(p.fmod_id) {
-            Some(i) => {
-                let smp = &lib.sfx.samples[i as usize];
-                let info = &lib.sfx.infos[i as usize];
+        match lib.find(p.fmod_id) {
+            Some((bank, i)) => {
+                let smp = &bank.samples[i as usize];
+                let info = &bank.infos[i as usize];
                 println!(
-                    "  {} id {:#010x} -> sample {i}: {} Hz x{} {} frames ({:.2} s) loop end {}  {}",
+                    "  {} id {:#010x} -> {} sample {i}: {} Hz x{} {} frames ({:.2} s) loop end {}  {}",
                     p.name,
                     p.fmod_id,
+                    bank.path().file_name().map_or("?".into(), |n| n.to_string_lossy()),
                     smp.rate,
                     smp.channels,
                     smp.frames,
@@ -180,7 +235,7 @@ fn show(tags: &SoundTags<'_>, lib: &Library, index: u32) -> Result<()> {
                     info.path
                 );
             }
-            None => println!("  {} id {:#010x} -> not in the sfx bank", p.name, p.fmod_id),
+            None => println!("  {} id {:#010x} -> not in the sfx or dialogue bank", p.name, p.fmod_id),
         }
     }
     Ok(())

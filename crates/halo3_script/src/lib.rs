@@ -1,7 +1,7 @@
 //! HaloScript in the game: the map's own scripts run at 30 ticks a second
 //! (`vm.rs`) and move the world (`objects.rs`): objects are created,
 //! destroyed, dropped and moved; floor plates lose their collision so the
-//! player falls; effects go off as stand-in flashes; the player is
+//! player falls; effects are queued for `halo3_effects`; the player is
 //! teleported and zone sets switch when a script says so.
 //!
 //! The AI and animation sides are hooks (`hooks.rs`) other crates fill.
@@ -11,6 +11,9 @@
 //! world is built), [`PendingScripts`] carries the runtime in.
 
 pub mod ai_bridge;
+pub mod crate_physics;
+pub mod dialogue;
+pub mod ground;
 pub mod hooks;
 pub mod objects;
 pub mod setup;
@@ -21,6 +24,7 @@ use bevy::prelude::*;
 use halo3_core::map::MapAppExt;
 
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
+use halo3_core::effects::{EffectQueue, EffectRequest};
 use halo3_core::falls::{FallbackSpot, set_kill_volume_enabled};
 use halo3_core::fly_camera::FlyCamera;
 use halo3_core::objects::{ObjectChunk, ScriptHidden, set_collision_removed, set_object_pose};
@@ -146,7 +150,7 @@ impl Plugin for ScriptPlugin {
         // changed goes when it is unloaded (`halo3_core::map`).
         app.insert_resource(ScriptAi::new(NoAi))
             .init_map_resource::<ScriptAnimation>()
-            .init_map_resource::<FlashAssets>()
+            .init_map_resource::<EffectQueue>()
             .init_map_resource::<ScriptSounds>()
             .remove_on_map_unload::<PendingScripts>()
             .remove_on_map_unload::<Scripts>()
@@ -159,7 +163,7 @@ impl Plugin for ScriptPlugin {
             .add_systems(
                 Update,
                 (
-                    (tick.run_if(halo3_core::pause::running), apply_objects, flashes).chain(),
+                    (tick.run_if(halo3_core::pause::running), apply_objects).chain(),
                     forward_sounds.after(tick),
                 )
                     .run_if(halo3_core::map::ready),
@@ -227,7 +231,7 @@ struct Bridge {
     zone_set: Option<usize>,
     teleport: Option<(Vec3, f32)>,
     switch: Option<usize>,
-    effects: Vec<(String, Vec3)>,
+    effects: Vec<EffectRequest>,
     /// The player rides the dirt bike.
     riding: bool,
 }
@@ -248,7 +252,17 @@ impl WorldApi for Bridge {
     }
     fn effect(&mut self, tag: &str, at: Vec3) {
         if self.effects.len() < 64 {
-            self.effects.push((tag.to_string(), at));
+            self.effects.push(EffectRequest::at(tag, at));
+        }
+    }
+    fn effect_placed(&mut self, tag: &str, at: Vec3, frame: Mat3, source: Option<u32>) {
+        if self.effects.len() < 64 {
+            self.effects.push(EffectRequest {
+                name: tag.to_string(),
+                at,
+                frame,
+                source,
+            });
         }
     }
     fn player_in_vehicle(&self) -> bool {
@@ -269,9 +283,7 @@ fn tick(
     zones: Option<Res<Zones>>,
     mut loaded: ResMut<LoadedBsps>,
     mut cameras: Query<(&mut Transform, &mut FlyCamera)>,
-    assets: Res<FlashAssets>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut effects: ResMut<EffectQueue>,
 ) {
     let Some(mut scripts) = scripts else { return };
     let Ok((mut camera, mut fly)) = cameras.single_mut() else { return };
@@ -342,8 +354,8 @@ fn tick(
             camera.rotation = fly.rotation();
         }
     }
-    for (tag, at) in bridge.effects {
-        spawn_flash(&mut commands, &assets, &mut meshes, &mut materials, &tag, at);
+    for r in bridge.effects {
+        effects.push(r);
     }
 }
 
@@ -422,90 +434,5 @@ pub fn publish_collision(objects: &crate::objects::Objects, solid: &mut [bool], 
             set_object_pose(i as u32, None);
         }
         *was = moved;
-    }
-}
-
-// ---- stand-in effects ----
-
-#[derive(Resource)]
-struct FlashAssets {
-    mesh: Option<Handle<Mesh>>,
-}
-
-impl FromWorld for FlashAssets {
-    fn from_world(_: &mut World) -> Self {
-        FlashAssets { mesh: None }
-    }
-}
-
-#[derive(Component)]
-struct Flash {
-    age: f32,
-    life: f32,
-    size: f32,
-    material: Handle<StandardMaterial>,
-    colour: LinearRgba,
-}
-
-fn spawn_flash(
-    commands: &mut Commands,
-    assets: &FlashAssets,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    tag: &str,
-    at: Vec3,
-) {
-    let mesh = assets.mesh.clone().unwrap_or_else(|| meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap()));
-    let tag = tag.to_ascii_lowercase();
-    // Explosions: a big orange flash; anything else (dust as a plate
-    // drops): a small pale puff.
-    let (colour, size, life) = if tag.contains("giant") {
-        (LinearRgba::rgb(6.0, 2.4, 0.6), 25.0, 1.6)
-    } else if tag.contains("explosion") || tag.contains("explode") {
-        (LinearRgba::rgb(5.0, 2.0, 0.5), 6.0, 0.9)
-    } else {
-        (LinearRgba::rgb(0.8, 0.75, 0.7), 3.0, 0.8)
-    };
-    let material = materials.add(StandardMaterial {
-        base_color: Color::LinearRgba(colour.with_alpha(0.8)),
-        emissive: colour,
-        unlit: true,
-        alpha_mode: AlphaMode::Add,
-        ..default()
-    });
-    commands.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(material.clone()),
-        Transform::from_translation(to_render(at)).with_scale(Vec3::splat(0.1)),
-        bevy::light::NotShadowCaster,
-        Flash {
-            age: 0.0,
-            life,
-            size,
-            material,
-            colour,
-        },
-    ));
-}
-
-fn flashes(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut list: Query<(Entity, &mut Flash, &mut Transform)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    for (e, mut f, mut t) in &mut list {
-        f.age += time.delta_secs();
-        let k = f.age / f.life;
-        if k >= 1.0 {
-            commands.entity(e).despawn();
-            continue;
-        }
-        t.scale = Vec3::splat(f.size * (0.2 + 0.8 * k.sqrt()));
-        if let Some(mut m) = materials.get_mut(&f.material) {
-            let fade = (1.0 - k).powi(2);
-            m.emissive = f.colour * fade;
-            m.base_color = Color::LinearRgba(f.colour.with_alpha(0.8 * fade));
-        }
     }
 }

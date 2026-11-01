@@ -565,7 +565,8 @@ impl Plugin for MenuPlugin {
             .remove_on_map_unload::<crate::bike::BikeInput>()
             .remove_on_map_unload::<crate::swim::WaterWorld>()
             .remove_on_map_unload::<crate::swim::FallbackSpot>()
-            .remove_on_map_unload::<crate::weapons::PendingArsenal>();
+            .remove_on_map_unload::<crate::weapons::PendingArsenal>()
+            .remove_on_map_unload::<halo3_effects::PendingEffects>();
         app.insert_resource(Menu {
             tabs,
             tab,

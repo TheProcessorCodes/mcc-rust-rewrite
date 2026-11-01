@@ -1,0 +1,15 @@
+[package]
+name = "blam_effect"
+description = "Halo 3 (MCC PC) effects: effe tags with their particle systems (prt3, pmov), contrails (cntl), lights (ligh) and parts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_cache = { workspace = true }
+blam_texture = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+game_paths = { workspace = true }

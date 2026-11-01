@@ -30,7 +30,8 @@ use halo3_world::Triangles;
 
 /// Seconds to wait before the first picture, for shaders to compile (they
 /// build in the background) and meshes and textures to reach the GPU; later
-/// views only need a moment. `HALO3_SHOT_WAIT` overrides the first.
+/// views only need a moment. `HALO3_SHOT_WAIT` overrides the first,
+/// `HALO3_SHOT_NEXT_WAIT` the rest.
 const FIRST_WAIT: f32 = 12.0;
 const NEXT_WAIT: f32 = 0.5;
 /// Seconds of skating before the first `--skate` picture, and how long to
@@ -358,7 +359,13 @@ fn step(
                     place(view, &mut t);
                 }
             }
-            progress.wait = NEXT_WAIT;
+            // `HALO3_SHOT_NEXT_WAIT` spaces the later views (seconds): a
+            // run of views at one place makes a time series (an effect
+            // going off).
+            progress.wait = std::env::var("HALO3_SHOT_NEXT_WAIT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(NEXT_WAIT);
         }
         return;
     }

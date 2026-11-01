@@ -200,3 +200,47 @@ fn halo_class_gains() {
     assert_eq!(gain(23), [-15.0, -15.0]); // vehicle engines
     assert_eq!(gain(13), [-30.0, -12.0]); // physics impacts: a range
 }
+
+/// The English dialogue bank (`sound.md` 11): laid out like `sfx.fsb`, its
+/// ids are what the dialogue `snd!` tags store, and 120_halo's mission
+/// dialogue tag names the Warthog run's lines.
+#[test]
+fn english_dialogue_bank_and_mission_dialogue() {
+    let Some(maps) = maps() else { return };
+    let Ok(cache) = CacheFile::open(maps.join("120_halo.map")) else {
+        return;
+    };
+    let lib = Library::open_beside_with(&maps, Some("english")).unwrap();
+    let d = lib.dialog.as_ref().unwrap();
+    assert_eq!(d.samples.len(), 32_984);
+    assert_eq!(d.setup_crcs(), vec![0x632B_1FAC, 0xAD11_D38D]);
+    // No id is in both banks.
+    assert!(d.infos.iter().all(|i| lib.sfx.find(i.id).is_none()));
+
+    let tags = SoundTags::new(&cache).unwrap();
+    let lines = tags.mission_dialogue().unwrap();
+    assert_eq!(lines.len(), 213);
+    assert_eq!(lines.iter().filter(|l| l.variants.len() == 2).count(), 1);
+    let l = lines.iter().find(|l| l.name == "120mg_030").unwrap();
+    assert_eq!(l.effect, "cortana_mission");
+    let (snd, speaker) = l.sound().unwrap();
+    assert_eq!(speaker, "cor");
+    let snd = tags.sound(snd).unwrap();
+    assert_eq!(snd.name, r"sound\dialog\120_halo\mission\120mg_030_cor");
+    assert_eq!((snd.class, snd.max_play_ms), (47, 2133));
+    assert_eq!(snd.permutations.len(), 1);
+    let id = snd.permutations[0].fmod_id;
+    assert_eq!(id, 0x87AA_D115);
+    assert!(lib.sample(id).is_none(), "not in sfx.fsb");
+    let (bank, i) = lib.find(id).unwrap();
+    assert!(bank.path().ends_with("english.fsb"));
+    assert!(bank.infos[i as usize].path.ends_with(r"120mg_030_cor.aif"));
+    let pcm = lib.decode(id).unwrap();
+    assert_eq!((pcm.rate, pcm.channels, pcm.frames()), (48_000, 1, 102_400));
+    let (rms, peak) = pcm.rms_peak();
+    // About -16 dBFS RMS; lossy decoding overshoots full scale a little.
+    assert!(rms > 0.1 && peak < 1.2, "rms {rms} peak {peak}");
+    // The length from the `.info` alone.
+    let secs = blam_sound::info_seconds(bank.path()).unwrap();
+    assert!((secs[&id] - 102_400.0 / 48_000.0).abs() < 1e-4);
+}

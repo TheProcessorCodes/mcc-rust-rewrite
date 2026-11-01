@@ -139,6 +139,12 @@ pub fn add_collision(cache: &CacheFile, scene: &mut Scene) -> usize {
 pub struct DamageResponse {
     /// `+0x00`: 2 on the plates' `destroy`, 0 on `fall` (meaning not pinned).
     pub kind: u16,
+    /// `+0x02`: what it does to a constraint of the physics model, 0 for
+    /// nothing: 1 on the tunnel girders' `destroy` (read as "destroy"), 3
+    /// on their `fall` (read as "loosen").
+    pub constraint_damage: u16,
+    /// `+0x04`: the constraint it acts on, by name (the girders' `hinge`).
+    pub constraint: Option<String>,
     /// `+0x10`: the effect it plays (`effe`), as a tag index.
     pub effect: Option<u32>,
     /// `+0x20`: a second effect (the plates' `destroy` names the
@@ -173,6 +179,11 @@ pub fn damage_sections(cache: &CacheFile, object: &TagEntry) -> Result<Vec<Damag
         for r in block.elements(RESPONSE_SIZE) {
             responses.push(DamageResponse {
                 kind: cache.reader_at(r).u16()?,
+                constraint_damage: cache.reader_at(r + 0x02).u16()?,
+                constraint: cache
+                    .string(cache.reader_at(r + 0x04).string_id()?)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
                 effect: cache.reader_at(r + 0x10).tag_ref()?.index,
                 effect2: cache.reader_at(r + 0x20).tag_ref()?.index,
                 unknown_60: cache.reader_at(r + 0x60).f32()?,
@@ -181,6 +192,118 @@ pub fn damage_sections(cache: &CacheFile, object: &TagEntry) -> Result<Vec<Damag
         out.push(DamageSection { name, responses });
     }
     Ok(out)
+}
+
+/// `hlmt +0x30`: the physics model (`phmo`).
+const MODEL_PHYSICS: usize = 0x30;
+/// `phmo +0x04`: the whole model's mass (kg).
+const PHYSICS_MASS: usize = 0x04;
+/// `phmo +0x70` and `+0xAC`: two blocks of shapes (the girder: one small
+/// `phys_fake` sphere on its anchor, eleven `phys` boxes). Each starts with
+/// the same header: name, material, mass scale (`+0x08`), friction
+/// (`+0x0C`), restitution (`+0x10`), volume, mass.
+const PHYSICS_SHAPES: [usize; 2] = [0xAC, 0x70];
+/// `phmo +0x120`: constraints with twist, cone and plane limits (the
+/// girder's one, `b_hinge`, ties node 0 to node 1, `hinge`). Element:
+/// `+0x00` name, `+0x04` node A, `+0x06` node B, then for A at `+0x08` and
+/// B at `+0x3C` a frame (scale, forward, left, up, position, in that
+/// node's frame), `+0x78` twist min / max, `+0x80` cone min / max, `+0x88`
+/// plane min / max (degrees), `+0x90` max friction torque.
+const PHYSICS_CONSTRAINTS: usize = 0x120;
+/// `phmo +0x138`: nodes, 12 bytes (name, ...).
+const PHYSICS_NODES: usize = 0x138;
+const PHYSICS_NODE_SIZE: usize = 12;
+
+/// A constraint between two nodes of an object's physics model, in the
+/// object's own frame with its render model in the bind pose.
+#[derive(Clone, Debug)]
+pub struct PhysicsConstraint {
+    pub name: String,
+    /// Node B's name (the girder's moving part: `hinge`).
+    pub node_name: String,
+    /// The pivot: node B's frame position.
+    pub pivot: Vec3,
+    /// Node A's twist axis (its frame's forward) and plane axis (its up).
+    pub twist_axis: Vec3,
+    pub plane_axis: Vec3,
+    /// Limits, radians: cone (max angle of B's twist axis from A's) and
+    /// plane (signed angle of B's twist axis off A's plane).
+    pub cone: (f32, f32),
+    pub plane: (f32, f32),
+    pub twist: (f32, f32),
+}
+
+/// What an object's physics model says about how it moves.
+#[derive(Clone, Debug)]
+pub struct Physics {
+    pub mass: f32,
+    pub friction: f32,
+    pub restitution: f32,
+    pub constraints: Vec<PhysicsConstraint>,
+}
+
+/// The physics model of an object tag, when it has one. Reads only the
+/// first constraint (120_halo's crates have at most one).
+pub fn physics(cache: &CacheFile, object: &TagEntry) -> Result<Option<Physics>> {
+    let Some(hlmt) = model_of(cache, object)? else {
+        return Ok(None);
+    };
+    let hlmt_at = cache.tag_offset(hlmt)?;
+    let Some(phmo) = cache.reader_at(hlmt_at + MODEL_PHYSICS).tag_ref()?.index.and_then(|i| cache.tags.get(i)) else {
+        return Ok(None);
+    };
+    let base = cache.tag_offset(phmo)?;
+    let mass = cache.reader_at(base + PHYSICS_MASS).f32()?;
+    let (mut friction, mut restitution) = (0.0, 0.0);
+    for off in PHYSICS_SHAPES {
+        if let Some(e) = cache.reader_at(base + off).block()?.element(0, 1) {
+            friction = cache.reader_at(e + 0x0C).f32()?;
+            restitution = cache.reader_at(e + 0x10).f32()?;
+            break;
+        }
+    }
+    let nodes = cache.reader_at(base + PHYSICS_NODES).block()?;
+    let node_name = |i: u16| -> String {
+        nodes
+            .element(i as u32, PHYSICS_NODE_SIZE)
+            .and_then(|o| cache.reader_at(o).string_id().ok())
+            .and_then(|s| cache.string(s))
+            .unwrap_or("")
+            .to_string()
+    };
+    let mode = cache.reader_at(hlmt_at + MODEL_RENDER).tag_ref()?;
+    let frames = match mode.index.and_then(|i| cache.tags.get(i)) {
+        Some(mode) => crate::render_model::node_frames(cache, mode).unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let frame = |i: u16| frames.get(i as usize).copied().unwrap_or(glam::Mat4::IDENTITY);
+    let mut constraints = Vec::new();
+    if let Some(c) = cache.reader_at(base + PHYSICS_CONSTRAINTS).block()?.element(0, 1) {
+        let name = cache.string(cache.reader_at(c).string_id()?).unwrap_or("").to_string();
+        let (a, b) = (cache.reader_at(c + 0x04).u16()?, cache.reader_at(c + 0x06).u16()?);
+        let v = |o: usize| -> Result<Vec3> { Ok(Vec3::from(cache.reader_at(c + o).f32x3()?)) };
+        let pair = |o: usize| -> Result<(f32, f32)> {
+            let p = cache.reader_at(c + o).f32x2()?;
+            Ok((p[0].to_radians(), p[1].to_radians()))
+        };
+        let (fa, fb) = (frame(a), frame(b));
+        constraints.push(PhysicsConstraint {
+            name,
+            node_name: node_name(b),
+            pivot: fb.transform_point3(v(0x3C + 0x28)?),
+            twist_axis: fa.transform_vector3(v(0x08 + 0x04)?).normalize_or(Vec3::X),
+            plane_axis: fa.transform_vector3(v(0x08 + 0x1C)?).normalize_or(Vec3::Z),
+            twist: pair(0x78)?,
+            cone: pair(0x80)?,
+            plane: pair(0x88)?,
+        });
+    }
+    Ok(Some(Physics {
+        mass,
+        friction,
+        restitution,
+        constraints,
+    }))
 }
 
 /// The size of an object's collision, for a quick check: the box round
