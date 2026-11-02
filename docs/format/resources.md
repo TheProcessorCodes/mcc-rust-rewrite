@@ -9,8 +9,8 @@ so a reviewer can re-check it. Reclaimer lives at <https://github.com/Gravemind2
 (GPL-3.0, read-only); file paths below are relative to `Reclaimer.Blam\Blam\` unless noted.
 
 Verification was done with `tools\probe_resources.py` (run it as
-`python -I tools\probe_resources.py "<maps dir>" riverworld.map`); its full output is kept at
-`tools\probe_riverworld.txt`. All numbers marked **EXPECTED** come from that run.
+`python -I tools\probe_resources.py "<maps dir>" riverworld.map`; its output holds bytes of the
+map, so it is not kept in the repo). All numbers marked **EXPECTED** come from that run.
 
 ---
 

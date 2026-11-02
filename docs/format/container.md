@@ -8,8 +8,8 @@ TagReference, StringId).
 
 - Target: MCC Halo 3 build string `Dec 21 2023 22:31:37`, cache version 13 =
   Reclaimer `CacheType.MccHalo3U13` (enum value 22; corrected: was given as 23, see section 1).
-- Facts come from Gravemind2401's Reclaimer (GPL-3.0, clone at
-  `D:\reflex-tools\halo-tools\Reclaimer`, commit `36224d7`). Only format facts are
+- Facts come from Gravemind2401's Reclaimer (GPL-3.0, a local clone,
+  commit `36224d7`). Only format facts are
   recorded here (offsets, sizes, semantics, algorithms in our own words); no code was
   copied. Each fact names the Reclaimer file and attribute it came from so a reviewer
   can re-check it.

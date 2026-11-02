@@ -316,12 +316,12 @@ mod tests {
     fn usernames_are_cleaned() {
         assert_eq!(clean_username(""), "Player1");
         assert_eq!(clean_username("   "), "Player1");
-        assert_eq!(clean_username("  Logan \"G\"\t"), "Logan G");
+        assert_eq!(clean_username("  Player \"One\"\t"), "Player One");
         assert_eq!(clean_username(&"x".repeat(40)).chars().count(), USERNAME_MAX);
         let mut s = Settings::default();
         assert_eq!(s.get(key::USERNAME), None);
-        s.set(key::USERNAME, "Logan G");
-        assert_eq!(clean_username(s.get(key::USERNAME).unwrap()), "Logan G");
+        s.set(key::USERNAME, "Player One");
+        assert_eq!(clean_username(s.get(key::USERNAME).unwrap()), "Player One");
     }
 
     #[test]

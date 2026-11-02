@@ -147,9 +147,9 @@ Run it (build from the checkout through `.dev\build-shared.ps1`, see CLAUDE.md, 
 checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkout built last):
 
 ```
-& 'D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\.dev\build-shared.ps1'
-& "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\out\bin\halo3.exe" riverworld
-& "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\out\bin\halo3.exe" 120_halo --zone 6 --music 120_music_15
+& "$(git rev-parse --path-format=absolute --git-common-dir)/../.dev/build-shared.ps1"
+& ".\out\bin\halo3.exe" riverworld
+& ".\out\bin\halo3.exe" 120_halo --zone 6 --music 120_music_15
 ```
 
 **First-run setup (2026-10-29; in the game's own screen since 2026-11-02).** The first windowed
@@ -253,7 +253,7 @@ menu's Dirt bike tab (`bike-sound.json`). Still a guess: which pool plays in whi
 - First-person arms, thrown grenades, melee.
 - Vehicles (the Warthog), and machines and doors that move.
 - Reflex's real physics data read from the game files. The bike now uses numbers from the
-  `D:\reflex-tools\physics` docs.
+  `reflex-tools\physics` docs.
 
 Suggested order: playtest 120_halo first, then either the on-foot Spartan (to make it feel like
 Halo) or the look fixes above.
@@ -291,7 +291,7 @@ back, with Unleashed as a switch. The user has ridden it since (the throttle wor
 doc's "Reflex v1" section has the details.
 
 2026-10-29 (later): the stick bike is replaced by Reflex's Dakumoto 450F with the Cortana kit
-(the user's own design, `D:\reflex-tools\physics\reflex\master-chief-skin`), read at start-up
+(the user's own design, in their `reflex-tools` folder), read at start-up
 from the user's Reflex install; its forks, swingarm and wheels follow the physics. Reflex v1 took
 the 450F's shape: 1.46 m wheelbase (was 1.57), 0.345 / 0.335 m tyres (0.366), 29.2° rake (26.9°),
 the model's grips, pegs and probe spheres (`docs/format/reflex-bike.md`). Reflex becomes a third,
@@ -777,9 +777,9 @@ contrails, 8 lights, 35 bitmaps on the run, 0.1 s). Reader `blam_effect`, format
   Last Resort, `bunkerworld` = Standoff, `sidewinder` = Avalanche, `cyberdyne` = The Pit; campaign
   `005_intro` ... `130_epilogue`; `shared.map`, `campaign.map` hold shared resources). Build
   `Dec 21 2023 22:31:37`, Reclaimer's `MccHalo3U13`; the readers refuse other header layouts.
-- **HaloExport** (`D:\reflex-tools\halo-tools\`): the C# exporter on Reclaimer that produced the
-  reference numbers (`D:\reflex-tools\halo-exports\<map>\halo_export.json`).
-- **Reclaimer clone** at `D:\reflex-tools\halo-tools\Reclaimer` (GPL-3.0, read-only reference).
+- **HaloExport** (`reflex-tools\halo-tools\`): the C# exporter on Reclaimer that produced the
+  reference numbers (`reflex-tools\halo-exports\<map>\halo_export.json`).
+- **Reclaimer clone** at `reflex-tools\halo-tools\Reclaimer` (GPL-3.0, read-only reference).
 - **H3EK** is not installed (free on Steam); its standalone `tag_test` may have a developer camera.
 
 ## Research results (2026-10-27)

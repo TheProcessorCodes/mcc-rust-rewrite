@@ -33,7 +33,7 @@ far, the paths on disk and the open decision.
   everything Skate 3 needs comes out of the user's Skate 3 copy, everything Reflex needs out of
   their Reflex. Don't commit files extracted from any of them (textures, models, audio, dumps of tag data).
 - **Code elsewhere on disk is reference, not ours to edit.** `mw2-skate-3-src`,
-  `D:\reflex-tools` and the Reclaimer clone belong to other work. Read them and copy what
+  `reflex-tools` and the Reclaimer clone belong to other work. Read them and copy what
   helps into this project; do not change them without asking.
 - **Licenses**: Gravemind2401's Reclaimer is GPL-3.0. Porting its code line by line makes
   that code GPL-3.0. IW4L is Apache-2.0. Raise this with the user before porting Reclaimer.
@@ -53,15 +53,16 @@ far, the paths on disk and the open decision.
   uncommitted work, without asking the user.
 - **At most two builds at once.** Run every `cargo build`/`run`/`test`/`check` through
   the gate, from any worktree, using the main checkout's copy:
-  `& 'D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\.dev\build-gate.ps1' cargo build --release`
-  (from Bash: `powershell -NoProfile -File '<same path>' cargo ...`). If two builds are
+  `& "$(git rev-parse --path-format=absolute --git-common-dir)/../.dev/build-gate.ps1" cargo build --release`
+  (the git command finds the main checkout from anywhere; from Bash:
+  `powershell -NoProfile -File "$(git rev-parse --path-format=absolute --git-common-dir)/../.dev/build-gate.ps1" cargo ...`). If two builds are
   running it prints its place in the queue and waits, then runs. Give the tool call a long
   timeout or run it in the background. Notices also go to `.dev\build-gate.log`.
   `.dev\` is dev-only and not in git (listed in `.git/info/exclude`); if the script is
   missing, build normally.
 - **Every checkout builds into the main checkout's `target\`**, so bevy is compiled once.
   From inside the checkout (main or worktree) run
-  `& 'D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\.dev\build-shared.ps1'`
+  `& "$(git rev-parse --path-format=absolute --git-common-dir)/../.dev/build-shared.ps1"`
   (default `cargo build -p halo3`; pass other cargo arguments, e.g. `test -p halo3_bike`).
   It goes through the gate, rebuilds our crates from this checkout when the last build came
   from another one, and copies the exe to that checkout's `out\bin\halo3.exe`. Hand the user
