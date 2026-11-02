@@ -106,6 +106,11 @@ What the game does now:
   a headless load of all 47 maps not checked by hand (Halo 3 multiplayer, campaign and Halo 2) drew
   each one with textures and lighting; they have not been walked for spawns, collision or water.
   Crow's Nest has no preview picture in MCC. A map named on the command line skips the menu.
+- **Skating optional (2026-11-02).** Settings on the map menu has a Skating row (on by default,
+  `SKATING=off` in `setup.env`, `halo3_core::skate::SkateEnabled`). Off, a map loads no grind
+  rails, skate session or board (Valhalla ready in 0.8 s instead of 8.1 s), J does nothing on
+  foot or flying, and the pause menu's Skate tab says it is off and to turn it on in Settings.
+  Skate 3 is still required at first-run setup (the rider's and the Spartan's skeleton).
 - **Pause menu.** Escape or Start. It has tabs for free roam, on foot, dirt bike (with the engine
   volume slider) and skate controls, and a Sound tab with the Master / Music / Effects / Ambience /
   Dialogue sliders. Q goes back to the map menu (unloading the map in place), or quits when the game

@@ -555,6 +555,10 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
             music: value("--music"),
         });
     }
+    // Skating on or off (Settings; the menu changes it for the next map).
+    // A `--skate` shot needs the board, whatever the setting says.
+    let skate_shot = args.iter().any(|a| a == "--skate");
+    app.insert_resource(halo3_core::skate::SkateEnabled(skate_shot || game_paths::skating_enabled()));
     let skating = shot.as_ref().is_none_or(|p| p.rides());
     // Off the menu every map gets every mode; a map named on the command
     // line without collision has no bike, feet or weapons.

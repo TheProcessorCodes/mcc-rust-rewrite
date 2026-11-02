@@ -703,10 +703,15 @@ fn board(
     motion: Option<Res<halo3_core::skate::SkateMotion>>,
     mixer: Res<Mixer>,
     mut b: ResMut<BoardSounds>,
+    enabled: Option<Res<halo3_core::skate::SkateEnabled>>,
 ) {
     let (Some(sounds), Some(motion)) = (sounds, motion) else {
         return;
     };
+    // Skating off in Settings: no board, so none of its sounds are read.
+    if !halo3_core::skate::skating_on(enabled.as_deref()) {
+        return;
+    }
     let g = &sounds.data.gameplay;
     let state = motion.state.as_str();
     let air = motion.riding && state.contains("Air");
