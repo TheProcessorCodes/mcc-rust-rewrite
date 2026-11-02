@@ -152,8 +152,12 @@ checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkou
 & "D:\GAME ISO AND ROMS\PC - AI MASHUP\halo-3-rust-rewrite\out\bin\halo3.exe" 120_halo --zone 6 --music 120_music_15
 ```
 
-**First-run setup (2026-10-29).** The first windowed launch opens a folder picker for MCC, Skate 3
-(`.iso` or `default.xex`) and MX vs ATV Reflex (MCC and Skate 3 required, Reflex optional since
+**First-run setup (2026-10-29; in the game's own screen since 2026-11-02).** The first windowed
+launch opens the map menu on its setup screen (`crates/halo3/src/menu/setup.rs`): Halo MCC, then
+Skate 3 (the MW2 Skate 3 folder for its converter, then `.iso` or `default.xex`, converted there
+with its progress shown), then MX vs ATV Reflex or Skip, each row a folder picker; no native
+message boxes any more (`halo3_setup` returns the problems as text). It covers MCC, Skate 3
+and MX vs ATV Reflex (MCC and Skate 3 required, Reflex optional since
 2026-10-31: without it the bike is `stand_in.rs` and silent), converts Skate 3 once and saves everything in
 `%LOCALAPPDATA%\Halo3Rewrite` (`crates/halo3_setup`, README "First run"). All game paths go
 through `crates/game_paths`; no code names a folder on this PC any more. The Skate 3

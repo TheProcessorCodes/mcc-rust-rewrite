@@ -155,31 +155,41 @@ fn main() -> anyhow::Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let help = matches!(args.first().map(String::as_str), Some("--help" | "-h"));
     // First-run setup: MCC and Skate 3 (required) and Reflex (optional),
-    // asked once and saved (`halo3_setup`); `--setup` asks again. Without
-    // MCC and Skate 3 the game does not start. Headless runs (`--shot`, `--menu-shot`) never show
-    // a dialog: they need the setup done (or the dev overrides).
+    // asked once and saved (`halo3_setup`); `--setup` asks again. Until they
+    // are set up the window opens on the menu's setup screen
+    // (`menu/setup.rs`), and a map named on the command line waits for the
+    // next launch. Headless runs (`--shot`, `--menu-shot`) never ask: they
+    // need the setup done (or the dev overrides), except `--menu-setup`
+    // shots of the setup screen itself.
     let redo = args.iter().any(|a| a == "--setup");
     args.retain(|a| a != "--setup");
     if !help && args.first().map(String::as_str) != Some("--test-scene") {
         let interactive = !args.iter().any(|a| a == "--shot" || a == "--menu-shot");
-        if let Err(e) = halo3_setup::prepare(interactive, redo) {
-            if interactive {
-                halo3_setup::fail(&e);
+        if interactive {
+            if redo {
+                halo3_setup::forget().map_err(anyhow::Error::msg)?;
             }
-            anyhow::bail!(e);
+            if halo3_setup::needs_setup()
+                && let Some(map) = args.first().filter(|a| !a.starts_with("--")).cloned()
+            {
+                eprintln!("setup: the games are not set up yet; {map} can be started once they are");
+                args.remove(0);
+            }
+        } else if !args.iter().any(|a| a == "--menu-setup") {
+            halo3_setup::check().map_err(anyhow::Error::msg)?;
         }
     }
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") => {
             eprintln!("usage:
   halo3 [--foot]                                             the map menu
-  halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing] [--size WxH]
+  halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-setup [--menu-step N]] [--size WxH]
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 warthog_run [--foot] [--difficulty ...]             the Warthog run of 120_halo, timed
   halo3 <map> [--foot] [--ai nearby|zone|off|none]
   halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary] [--foot]   e.g. 120_halo --insertion trench_run (or trench_end)
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
-  halo3 --setup [<map>]                                      choose MCC, Skate 3 and Reflex again
+  halo3 --setup [<map>]                                      choose MCC, Skate 3 and Reflex again (on the setup screen)
   halo3 --test-scene");
             std::process::exit(2);
         }
