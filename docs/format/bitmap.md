@@ -13,7 +13,7 @@ level, handing raw BC1/BC2/BC3/BC5 blocks and raw RGBA/BGRA pixels to wgpu witho
   are relative to `Reclaimer.Blam\Blam\` unless they start with `Reclaimer.Core` or `Utilities`.
 - Everything marked **bytes** was found by reading the map files, not in Reclaimer. Everything marked
   **EXPECTED** was printed by `python -I docs\format\scripts\probe_bitmaps.py "<maps dir>" riverworld.map`
-  (read-only, ~40 s, output kept in `docs\format\verify\probe_bitmaps_riverworld.txt`). Primary test
+  (read-only, ~40 s; the output holds bytes of the map, so it is not kept in the repo; run it to see it). Primary test
   file `riverworld.map` (Valhalla); 4 other maps spot-checked and all 36 installed maps scanned for
   the per-map histograms in section 9.
 - Little-endian throughout. Offsets are hex / decimal. Container primitives (TagBlock 12 bytes
@@ -365,7 +365,7 @@ Notes for the Rust side:
 
 ## 8. EXPECTED VALUES on riverworld.map
 
-All from `docs\format\verify\probe_bitmaps_riverworld.txt`. "primary page 1420" is the local
+All from the output of `probe_bitmaps.py` on riverworld. "primary page 1420" is the local
 92 MB page (`riverworld.map @ 0x114000`, see `resources.md` section 10); the secondary pages are also
 local (cache index -1).
 
