@@ -15,11 +15,18 @@
 //! click and starts it with a double click. On the notice, Enter / Space /
 //! Escape / A / B or a click close it.
 //!
+//! Until the player's games are set up (`halo3_setup`) the menu opens on
+//! its setup screen instead (`setup.rs`): Halo MCC, then Skate 3, then MX vs
+//! ATV Reflex.
+//!
 //! `halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--size WxH]`
 //! draws the menu without a window into a PNG; `--menu-loading` draws the
 //! loading screen instead, `--menu-missing` the picked map's not-installed
-//! notice, and `--menu-start` loads the picked map the way Start Game does
-//! and saves the first view of it.
+//! notice, `--menu-settings` the settings, `--menu-setup [--menu-step N]` the
+//! setup screen, and `--menu-start` loads the picked map the way Start Game
+//! does and saves the first view of it.
+
+mod setup;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -213,6 +220,8 @@ enum Phase {
     Missing(Game),
     /// The settings screen.
     Settings,
+    /// The first-run setup screen (`setup.rs`).
+    Setup,
 }
 
 /// The map file a menu entry plays: its own, or a mission's
@@ -273,12 +282,27 @@ struct Menu {
     note: String,
     /// The username being typed (Enter saves it, Escape drops it).
     editing: Option<String>,
+    /// The setup screen's step: 0 Halo MCC, 1 Skate 3, 2 MX vs ATV Reflex.
+    step: usize,
+    /// `note` is a problem, not news.
+    note_is_error: bool,
+    /// Every game is set up: the setup screen gives way to the maps.
+    setup_finished: bool,
 }
 
-/// A settings row's folder picker, on its thread.
+/// A folder picker (and, for Skate 3, its conversion), on its thread.
 struct Picking {
-    row: usize,
+    what: Pick,
     result: Mutex<Receiver<Result<Option<PathBuf>, String>>>,
+}
+
+/// What a [`Picking`] is choosing for.
+#[derive(Clone, Copy, PartialEq)]
+enum Pick {
+    /// A settings row.
+    Setting(usize),
+    /// A setup screen row.
+    Setup(setup::SetupRow),
 }
 
 impl Menu {
@@ -524,8 +548,8 @@ impl Plugin for MenuPlugin {
         });
         let mut tab = value(args, "--menu-tab").and_then(|s| s.parse().ok()).unwrap_or(0usize).min(TABS.len() - 1);
         let pick = value(args, "--menu-pick").and_then(|s| s.parse().ok()).unwrap_or(0usize);
-        let with_value = ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--size"];
-        let alone = ["--menu-loading", "--menu-start", "--menu-missing", "--menu-settings"];
+        let with_value = ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--menu-step", "--size"];
+        let alone = ["--menu-loading", "--menu-start", "--menu-missing", "--menu-settings", "--menu-setup"];
         let mut pass = Vec::new();
         let mut skip = false;
         for a in args {
@@ -563,7 +587,11 @@ impl Plugin for MenuPlugin {
         let mut picks = [0; TABS.len()];
         picks[tab] = pick.min(tabs[tab].len().saturating_sub(1));
         // `--menu-shot --menu-missing`: open on the picked map's notice.
+        // The games not set up yet: the setup screen first (`--menu-setup`
+        // draws it in a shot).
+        let first_run = args.iter().any(|a| a == "--menu-setup") || (!headless(args) && halo3_setup::needs_setup());
         let phase = match tabs[tab].get(picks[tab]) {
+            _ if first_run => Phase::Setup,
             _ if args.iter().any(|a| a == "--menu-settings") => Phase::Settings,
             Some(map) if shot.as_ref().is_some_and(|s| s.missing) => Phase::Missing(map.game),
             _ => Phase::Choosing,
@@ -571,6 +599,7 @@ impl Plugin for MenuPlugin {
         let choosing = |menu: Res<Menu>| menu.phase == Phase::Choosing;
         let missing = |menu: Res<Menu>| matches!(menu.phase, Phase::Missing(_));
         let settings_open = |menu: Res<Menu>| menu.phase == Phase::Settings;
+        let setup_open = |menu: Res<Menu>| menu.phase == Phase::Setup;
         // What `install` (main.rs) puts in goes when the map is unloaded.
         app.insert_resource(MapMenu)
             .remove_on_map_unload::<crate::falls::KillZones>()
@@ -584,7 +613,7 @@ impl Plugin for MenuPlugin {
             .remove_on_map_unload::<crate::swim::FallbackSpot>()
             .remove_on_map_unload::<crate::weapons::PendingArsenal>()
             .remove_on_map_unload::<halo3_effects::PendingEffects>();
-        app.insert_resource(Menu {
+        let mut menu = Menu {
             tabs,
             tab,
             pick: picks,
@@ -597,7 +626,14 @@ impl Plugin for MenuPlugin {
             picking: None,
             note: String::new(),
             editing: None,
-        })
+            step: 0,
+            note_is_error: false,
+            setup_finished: false,
+        };
+        if first_run {
+            setup::open(&mut menu, value(args, "--menu-step").and_then(|s| s.parse().ok()));
+        }
+        app.insert_resource(menu)
         .add_systems(Startup, spawn)
         .add_systems(
             Update,
@@ -605,10 +641,13 @@ impl Plugin for MenuPlugin {
                 settings_poll.run_if(|menu: Res<Menu>| menu.picking.is_some()),
                 (navigate, mouse, act).run_if(choosing),
                 settings_input.run_if(settings_open),
+                setup::input.run_if(setup_open),
+                setup::finish.run_if(|menu: Res<Menu>| menu.setup_finished),
                 dismiss.run_if(missing),
                 show,
                 show_notice,
                 show_settings,
+                setup::show,
                 spin,
             )
                 .chain(),
@@ -720,6 +759,20 @@ fn spawn(mut commands: Commands, menu: Res<Menu>, shot: Option<ResMut<MenuShot>>
                 BackgroundColor(BACKGROUND),
             ))
             .with_children(spawn_settings);
+            root.spawn((
+                setup::SetupScreen,
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(BACKGROUND),
+            ))
+            .with_children(setup::spawn);
         });
 }
 
@@ -1308,7 +1361,7 @@ fn select(menu: &mut Menu, unit: &mut SpeedUnit, skate: &mut SkateEnabled, row: 
         2 => "Choose your Skate 3 folder. It is converted once you have chosen, which takes a few minutes.".to_string(),
         _ => format!("Choose your {} folder in the window that opened.", SETTING_GAMES[row]),
     };
-    menu.picking = Some(Picking { row, result: Mutex::new(receive) });
+    menu.picking = Some(Picking { what: Pick::Setting(row), result: Mutex::new(receive) });
 }
 
 /// A picker has finished: say how it went. A new MCC folder changes which
@@ -1318,7 +1371,7 @@ fn settings_poll(world: &mut World) {
     let Some(picking) = &menu.picking else {
         return;
     };
-    let row = picking.row;
+    let what = picking.what;
     let outcome = match picking.result.lock().unwrap().try_recv() {
         Ok(outcome) => outcome,
         Err(std::sync::mpsc::TryRecvError::Empty) => return,
@@ -1327,6 +1380,13 @@ fn settings_poll(world: &mut World) {
     let changed = matches!(outcome, Ok(Some(_)));
     let mut menu = world.resource_mut::<Menu>();
     menu.picking = None;
+    let row = match what {
+        Pick::Setting(row) => row,
+        Pick::Setup(row) => {
+            setup::picked(&mut menu, row, outcome);
+            return;
+        }
+    };
     menu.note = match outcome {
         Ok(Some(path)) => {
             eprintln!("settings: {} is now {}", SETTING_GAMES[row], path.display());
@@ -1385,7 +1445,7 @@ fn show_settings(
     if !open {
         return;
     }
-    let busy = |i: usize| menu.picking.as_ref().is_some_and(|p| p.row == i);
+    let busy = |i: usize| menu.picking.as_ref().is_some_and(|p| p.what == Pick::Setting(i));
     for (row, mut background, mut border) in &mut rows {
         let on = row.0 == menu.setting;
         background.0 = if on { BAR } else { Color::NONE };
@@ -1622,9 +1682,9 @@ fn show(
         return;
     }
     let loading_now = menu.phase == Phase::Loading;
-    let settings_now = menu.phase == Phase::Settings;
+    let over = matches!(menu.phase, Phase::Settings | Phase::Setup);
     for mut node in &mut chooser {
-        node.display = if loading_now || settings_now { Display::None } else { Display::Flex };
+        node.display = if loading_now || over { Display::None } else { Display::Flex };
     }
     for mut node in &mut loading {
         node.display = if loading_now { Display::Flex } else { Display::None };

@@ -270,8 +270,9 @@ pub struct Settings {
 
 impl Settings {
     pub fn read(path: &Path) -> Self {
+        // An editor may have saved it with a byte order mark.
         let lines = std::fs::read_to_string(path)
-            .map(|text| text.lines().map(str::to_owned).collect())
+            .map(|text| text.trim_start_matches('\u{feff}').lines().map(str::to_owned).collect())
             .unwrap_or_default();
         Self { lines }
     }

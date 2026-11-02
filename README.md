@@ -58,10 +58,13 @@ the format descriptions the code is written from.
 ## First run
 
 Nothing from any of the three games ships with this project. The first time `halo3` opens a
-window it asks for the player's own copies, once: a Windows folder picker for each game in
-turn. Nothing is searched for; the game uses only the folders the player chooses. MCC and
-Skate 3 are required: cancelling either stops setup and the game does not start. Reflex is
-optional.
+window it opens on its setup screen (`crates/halo3/src/menu/setup.rs`, in the map menu's own
+look) and asks for the player's own copies, once, one step per game: each row's Select opens a
+Windows folder picker, and problems are shown on the screen. Nothing is searched for; the
+game uses only the folders the player chooses. MCC and Skate 3 are required: the game stays on
+the setup screen until both are set up (B / Escape on the first step closes it). Reflex is
+optional (Skip). A map named on the command line before setup is done waits for the next
+launch.
 
 1. **Halo: The Master Chief Collection.** The MCC folder (or its `halo3` / `halo3\maps`
    folder); the Halo 3 build is checked.
@@ -74,15 +77,20 @@ optional.
    player downloads MW2 Skate 3 (the 2010 Rust Rewrite Mashup, from the Releases page of
    https://github.com/chasmlol/2010-rust-rewrite-mashup) and setup asks for its
    folder ("Choose your MW2 Skate 3 folder") just before Skate 3's, then runs its
-   `skate\iw4l-skate-convert.exe`.
-3. **MX vs ATV Reflex** (PC, optional; the dirt bike's model and engine sound). Setup asks
-   whether the player has it; if so, the folder with its `Database` folder. Without it the
+   `skate\iw4l-skate-convert.exe`. The conversion runs on the setup screen, which shows the
+   converter's progress.
+3. **MX vs ATV Reflex** (PC, optional; the dirt bike's model and engine sound). The folder
+   with its `Database` folder, or Skip. Without it the
    bike is our own stand-in model (`crates/halo3_bike/src/stand_in.rs`) with no engine
    sound, and the answer is saved like a folder (`REFLEX=skip`).
 
 The answers and the converted Skate 3 data go in `%LOCALAPPDATA%\Halo3Rewrite` (`setup.env`,
-`skate-data\`), per user, so every copy of the exe shares them. `halo3 --setup` asks again.
-Headless `--shot` and `--menu-shot` runs never show a dialog or write the setup: they use only what
+`skate-data\`), per user, so every copy of the exe shares them. `halo3 --setup` asks again
+(the converted Skate 3 data is replaced only once a new conversion succeeds); Settings on the
+map menu changes one game at a time. Headless `--shot` and `--menu-shot` runs never ask or
+write the setup (except `--menu-shot --menu-setup [--menu-step N]`, which draws the setup
+screen from whatever is saved; point `HALO3_SETUP_DIR` at an empty folder for a fresh one):
+they use only what
 is saved (or the dev overrides) and stop with a message if anything is missing. So do tests:
 they skip when setup has not run.
 
@@ -134,7 +142,7 @@ in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
 left stick move, Q / E / LB / RB change tab, Enter / A start, Escape / B exit;
 the mouse picks a tile and a double click starts it. Naming a map on the
 command line skips the menu, and Q then quits. `halo3.exe --menu-shot FILE
-[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-start
+[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-setup | --menu-start
 [--menu-back TAB,PICK]]` draws the menu, the loading screen, the picked map's
 not-installed notice or the loaded map without a window (point e.g.
 `HALOREACH_MAPS` at an empty folder to see a game grayed out).
