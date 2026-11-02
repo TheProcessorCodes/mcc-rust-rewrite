@@ -16,6 +16,9 @@
 //! it, or d-pad up / down, the up / down arrows or W / S; it is saved when
 //! the game carries on (`EngineVolume`, `bike-sound.json`).
 //!
+//! With skating turned off in Settings (`SkateEnabled`), the Skate tab says
+//! so and where to turn it back on, instead of listing the buttons.
+//!
 //! The skate buttons are the stock Skate 3 layout the engine maps them
 //! through (`skate-core` `input/controller.rs` and `gameplay_map.rs`: A and
 //! X push, B brakes, Y steps off, RB grabs the world, the triggers grab).
@@ -49,6 +52,24 @@ impl Plugin for PausePlugin {
                     // Not behind the loading screen: play has not begun.
                     .run_if(halo3_core::map::playing),
             );
+        if std::env::var_os("HALO3_SHOT_PAUSE_TAB").is_some() {
+            app.add_systems(Update, draw_on_shot_camera.run_if(halo3_core::map::ready));
+        }
+    }
+}
+
+/// `HALO3_SHOT_PAUSE_TAB` (dev): a headless shot draws into an image, not a
+/// window, so the menu is put on the 3D camera to be in the picture.
+fn draw_on_shot_camera(
+    mut commands: Commands,
+    menus: Query<Entity, (With<PauseMenu>, Without<UiTargetCamera>)>,
+    cameras: Query<Entity, With<Camera3d>>,
+) {
+    let Some(camera) = cameras.iter().next() else {
+        return;
+    };
+    for menu in &menus {
+        commands.entity(menu).insert(UiTargetCamera(camera));
     }
 }
 
@@ -76,6 +97,8 @@ struct VolumeFill;
 struct VolumeText;
 
 const BIKE_TAB: usize = 2;
+/// The Skate tab's index in `TABS`.
+const SKATE_TAB: usize = 3;
 
 const TABS: [&str; 5] = ["Free roam", "On foot", "Dirt bike", "Skate", "Sound"];
 
@@ -175,10 +198,13 @@ fn row(parent: &mut ChildSpawnerCommands, cells: &[&str], widths: &[f32], colour
     });
 }
 
-/// A tab page: a header row, then the controls, then `extra`.
+/// A tab page: a header row, then the controls, then `extra`. Shown when
+/// `index` is `shown`.
+#[allow(clippy::too_many_arguments)]
 fn page<const N: usize>(
     panel: &mut ChildSpawnerCommands,
     index: usize,
+    shown: usize,
     header: [&str; N],
     widths: [f32; N],
     rows: &[[&str; N]],
@@ -190,7 +216,7 @@ fn page<const N: usize>(
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(6.0),
-                display: if index == 0 { Display::Flex } else { Display::None },
+                display: if index == shown { Display::Flex } else { Display::None },
                 ..default()
             },
         ))
@@ -247,12 +273,58 @@ fn volume_slider(p: &mut ChildSpawnerCommands) {
     });
 }
 
+/// The Skate tab while skating is off: what happened and how to turn it on.
+fn skate_off_notice(p: &mut ChildSpawnerCommands) {
+    p.spawn((
+        Node {
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(10.0),
+            margin: UiRect::top(Val::Px(6.0)),
+            padding: UiRect::axes(Val::Px(20.0), Val::Px(16.0)),
+            border: UiRect::left(Val::Px(3.0)),
+            ..default()
+        },
+        BorderColor::all(LIT),
+        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.05)),
+    ))
+    .with_children(|n| {
+        n.spawn(text("Skating is turned off", 24.0, LIT));
+        n.spawn(text("This map was loaded without the skateboard or its grind rails.", 18.0, Color::WHITE));
+        n.spawn(text(
+            "To skate, go back to the map menu, open Settings (F1 or X) and turn Skating on.",
+            18.0,
+            Color::WHITE,
+        ));
+        n.spawn(text("It takes effect on the next map you load.", 16.0, DIM));
+    });
+}
+
+/// A controls list with the skateboard's rows (J) marked as off.
+fn without_skating<const N: usize>(rows: &[[&'static str; N]], on: bool) -> Vec<[&'static str; N]> {
+    rows.iter()
+        .map(|r| {
+            let mut r = *r;
+            if !on && r[0] == "J" {
+                r[N - 1] = "skateboard (skating is off in Settings)";
+            }
+            r
+        })
+        .collect()
+}
+
 fn spawn_menu(
     mut commands: Commands,
     levels: Option<Res<SoundLevels>>,
     map_menu: Option<Res<halo3_core::map::MapMenu>>,
     zones: Option<Res<halo3_world::zones::Zones>>,
+    skate: Option<Res<halo3_core::skate::SkateEnabled>>,
 ) {
+    let skating = halo3_core::skate::skating_on(skate.as_deref());
+    // `HALO3_SHOT_PAUSE_TAB=N` (dev, for headless shots): the menu is drawn
+    // open on tab N (the game is not paused).
+    let open_on = std::env::var("HALO3_SHOT_PAUSE_TAB").ok().and_then(|s| s.parse::<usize>().ok()).filter(|&t| t < SOUND_TAB);
+    let shown = open_on.unwrap_or(0);
+    commands.insert_resource(ShownTab(shown));
     let campaign = zones.is_some_and(|z| !z.layout.zone_sets.is_empty());
     let leave = if map_menu.is_some() {
         "Q or View (Back) to go back to the map menu"
@@ -271,7 +343,7 @@ fn spawn_menu(
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
             GlobalZIndex(100),
-            Visibility::Hidden,
+            if open_on.is_some() { Visibility::Visible } else { Visibility::Hidden },
         ))
         .with_children(|root| {
             root.spawn((
@@ -307,7 +379,7 @@ fn spawn_menu(
                                     padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                                     ..default()
                                 },
-                                text(name, 22.0, if i == 0 { LIT } else { DIM }),
+                                text(name, 22.0, if i == shown { LIT } else { DIM }),
                             ));
                         }
                         tabs.spawn(text("RB", 16.0, DIM));
@@ -315,21 +387,27 @@ fn spawn_menu(
                 page(
                     panel,
                     0,
+                    shown,
                     ["Keyboard", "Controller", ""],
                     [260.0, 200.0, 320.0],
-                    FREE_ROAM,
+                    &without_skating(FREE_ROAM, skating),
                     |_| {},
                 );
                 page(
                     panel,
                     1,
+                    shown,
                     ["Keyboard", "Controller", ""],
                     [260.0, 200.0, 320.0],
-                    FOOT,
+                    &without_skating(FOOT, skating),
                     |_| {},
                 );
-                page(panel, BIKE_TAB, ["Controller", ""], [260.0, 520.0], BIKE, volume_slider);
-                page(panel, 3, ["Controller", ""], [260.0, 520.0], SKATE, |_| {});
+                page(panel, BIKE_TAB, shown, ["Controller", ""], [260.0, 520.0], BIKE, volume_slider);
+                if skating {
+                    page(panel, SKATE_TAB, shown, ["Controller", ""], [260.0, 520.0], SKATE, |_| {});
+                } else {
+                    page(panel, SKATE_TAB, shown, [], [], &[], skate_off_notice);
+                }
                 sound_page(panel, levels.as_deref());
             });
         });

@@ -86,10 +86,18 @@ Headless `--shot` and `--menu-shot` runs never show a dialog or write the setup:
 is saved (or the dev overrides) and stop with a message if anything is missing. So do tests:
 they skip when setup has not run.
 
+Skate 3 stays required at setup (the rider's skeleton and the on-foot Spartan's rig come
+from it), but skating itself can be turned off on the menu's Settings screen (Skating,
+saved as `SKATING=off`). Maps then load without grind rails, the skate session or the board
+(a map is ready several seconds sooner), J does nothing, and the pause menu's Skate tab says
+skating is off and where to turn it on. The choice applies from the next map loaded.
+
 Dev overrides: `HALO3_MCC`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `HALO3_SKATE_ASSETS` (or
 `IW4L_SKATE_ASSETS`), `HALO3_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
 Reflex), `HALO3_SETUP_DIR`, `HALO3_LANGUAGE` (dialogue language: `english`, `french`,
-`german`, `italian`, `mexican` or `spanish`; else `LANGUAGE=` in `setup.env`, else English).
+`german`, `italian`, `mexican` or `spanish`; else `LANGUAGE=` in `setup.env`, else English),
+`HALO3_SKATING` (`off` / `on`, over the saved Skating setting; `--skate` shots always skate),
+`HALO3_SHOT_PAUSE_TAB=N` (a `--shot` draws the pause menu open on tab N).
 
 ## Try it
 

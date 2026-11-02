@@ -39,7 +39,7 @@ use halo3_bike::physics::World;
 use halo3_bike::pose::Rig;
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, Skating, assets_root, dpad_up_alone};
+use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, dpad_up_alone, skating_on};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Controls, Spartan};
@@ -158,8 +158,8 @@ pub fn walk(
     mut foot: ResMut<OnFoot>,
     (mut auto, mut dismount, mut mount): (ResMut<AutoStart>, ResMut<Dismount>, ResMut<Mount>),
     (input, mut shared): (Option<Res<halo3_bike::BikeInput>>, ResMut<halo3_bike::SharedWorld>),
-    tuning: Res<FootTuning>,
     // Paired: a system takes at most 16 parameters.
+    (tuning, skate_on): (Res<FootTuning>, Option<Res<SkateEnabled>>),
     (kill, lifts): (Option<Res<halo3_core::falls::KillZones>>, Option<Res<halo3_core::lifts::Lifts>>),
     water: Option<Res<halo3_swim::WaterWorld>>,
     fallback: Option<Res<halo3_core::falls::FallbackSpot>>,
@@ -181,11 +181,12 @@ pub fn walk(
     // The bike's and the board's own buttons get back on from walking.
     let ride = if keys.just_pressed(KeyCode::KeyB) || pad.is_some_and(|p| p.just_pressed(B::Select)) {
         Some(Ride::Bike)
-    } else if keys.just_pressed(KeyCode::KeyJ)
-        || pad.is_some_and(|p| {
-            (p.just_pressed(B::LeftThumb) && p.pressed(B::RightThumb))
-                || (p.just_pressed(B::RightThumb) && p.pressed(B::LeftThumb))
-        })
+    } else if skating_on(skate_on.as_deref())
+        && (keys.just_pressed(KeyCode::KeyJ)
+            || pad.is_some_and(|p| {
+                (p.just_pressed(B::LeftThumb) && p.pressed(B::RightThumb))
+                    || (p.just_pressed(B::RightThumb) && p.pressed(B::LeftThumb))
+            }))
     {
         Some(Ride::Board)
     } else {

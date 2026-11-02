@@ -33,7 +33,7 @@ use halo3_core::coords::{to_halo_dir, to_render};
 use halo3_core::flag::SessionFlag;
 use halo3_core::fly_camera::FlyCamera;
 pub use halo3_core::skate::{Respawn, RiderPose, SkateMotion, Skating, assets_root, scale};
-use halo3_core::skate::{Bail, Dismount, Mount, Ride, bail_pressed};
+use halo3_core::skate::{Bail, Dismount, Mount, Ride, SkateEnabled, bail_pressed, skating_on};
 use halo3_core::zones::LoadedBsps;
 
 /// The map data the skate world is built from, handed over by `main`: the
@@ -247,12 +247,20 @@ fn start_worker(
     mut input: ResMut<SkateInput>,
     loaded: Res<LoadedBsps>,
     mut warmup: ResMut<Warmup>,
+    enabled: Option<Res<SkateEnabled>>,
 ) {
     let volumes = std::mem::take(&mut input.1);
     let water = std::mem::take(&mut input.2);
     let Some(collision) = input.0.take() else {
         return;
     };
+    // Skating turned off in Settings: no grind rails, no skate world, no
+    // session thread, nothing to wait for on the loading screen.
+    if !skating_on(enabled.as_deref()) {
+        host.status = "skating is off (Settings)".into();
+        info!("skate: off in Settings; no rails or skate session for this map");
+        return;
+    }
     let root = assets_root();
     if !root.join("private").join("game.json").exists() {
         host.status = format!("skate assets not found at {}", root.display());

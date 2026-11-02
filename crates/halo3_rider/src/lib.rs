@@ -38,7 +38,7 @@ use blam_geometry::{Scene, WORLD_UNIT_METRES};
 use blam_texture::{Texture, rgba};
 
 use halo3_core::coords::to_halo;
-use halo3_core::skate::{RiderPose, assets_root};
+use halo3_core::skate::{RiderPose, SkateEnabled, assets_root, skating_on};
 use halo3_textures::MaterialTextures;
 use halo3_world::lighting::{SceneLights, default_light, exposure};
 
@@ -402,6 +402,7 @@ fn spawn_rider(
     mut images: ResMut<Assets<Image>>,
     mut binds: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut pose: ResMut<RiderPose>,
+    enabled: Option<Res<SkateEnabled>>,
 ) {
     let chief = pending.and_then(|mut p| p.0.take());
     if let Some(chief) = &chief {
@@ -420,9 +421,11 @@ fn spawn_rider(
     let mut rider = Rider::default();
     let hidden = Visibility::Hidden;
 
-    // The board.
-    match read_json::<BoardFile>(&root.join("board.json")) {
-        Ok(board) => {
+    // The board, unless skating is off in Settings.
+    let board = skating_on(enabled.as_deref()).then(|| read_json::<BoardFile>(&root.join("board.json")));
+    match board {
+        None => {}
+        Some(Ok(board)) => {
             let mut inverse = Vec::new();
             let mut entities = Vec::new();
             for j in &board.joints {
@@ -510,7 +513,7 @@ fn spawn_rider(
                 }
             }
         }
-        Err(e) => warn!("rider: {e}; no board"),
+        Some(Err(e)) => warn!("rider: {e}; no board"),
     }
 
     // The Spartan.

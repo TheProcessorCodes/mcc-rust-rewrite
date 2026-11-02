@@ -37,6 +37,9 @@ pub mod key {
     /// The dialogue language (`english`, `french`, ...); optional, see
     /// [`language`](super::language).
     pub const LANGUAGE: &str = "LANGUAGE";
+    /// Whether skating is on: `off` turns it off; anything else, or no
+    /// line, leaves it on. See [`skating_enabled`](super::skating_enabled).
+    pub const SKATING: &str = "SKATING";
 }
 
 /// What `REFLEX` holds when the player chose to go without Reflex.
@@ -207,6 +210,26 @@ pub fn skate_assets() -> Option<PathBuf> {
         .find_map(std::env::var_os)
         .map(PathBuf::from)
         .or_else(|| settings().get(key::SKATE_ASSETS).map(PathBuf::from))
+}
+
+/// Whether skating is on (the default). Off, maps load no grind rails, no
+/// skate session and no board, and J does nothing; setup still asks for
+/// Skate 3, as the rider's skeleton comes from it. `HALO3_SKATING=off` (or
+/// `on`) overrides the saved choice for a dev run.
+pub fn skating_enabled() -> bool {
+    let off = |v: &str| v.trim().eq_ignore_ascii_case("off");
+    match std::env::var("HALO3_SKATING") {
+        Ok(v) => !off(&v),
+        Err(_) => !settings().get(key::SKATING).is_some_and(off),
+    }
+}
+
+/// Saves whether skating is on.
+pub fn set_skating_enabled(on: bool) -> Result<(), String> {
+    let path = settings_path();
+    let mut s = Settings::read(&path);
+    s.set(key::SKATING, if on { "on" } else { "off" });
+    s.write(&path)
 }
 
 /// The name a player has until they choose one.

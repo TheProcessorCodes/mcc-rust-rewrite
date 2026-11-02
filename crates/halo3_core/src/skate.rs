@@ -10,6 +10,25 @@ use bevy::prelude::*;
 /// What IW4L ships: a Spartan-sized skater (`docs/skate-interface.md` 10).
 pub const DEFAULT_SCALE: f32 = 33.0 * 0.0254;
 
+/// Whether skating is on (Settings on the main menu, `game_paths::skating_enabled`).
+/// Read as a map starts: off, `halo3_skate` builds no grind rails or skate
+/// session, `halo3_rider` loads no board, and J does nothing. `main` inserts
+/// it and the menu's settings screen changes it; without it, skating is on.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkateEnabled(pub bool);
+
+impl SkateEnabled {
+    /// The saved choice.
+    pub fn load() -> SkateEnabled {
+        SkateEnabled(game_paths::skating_enabled())
+    }
+}
+
+/// Whether skating is on, for systems that take `Option<Res<SkateEnabled>>`.
+pub fn skating_on(enabled: Option<&SkateEnabled>) -> bool {
+    enabled.is_none_or(|e| e.0)
+}
+
 /// How the ride is going, for the board sounds (`audio/`): whether the
 /// skater is riding, the board speed in m/s and the engine's state name.
 #[derive(Resource, Default, Clone, Debug)]

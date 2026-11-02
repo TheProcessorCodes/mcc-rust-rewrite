@@ -34,6 +34,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_dis
 use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
 
+use halo3_core::skate::SkateEnabled;
 use halo3_core::units::SpeedUnit;
 use halo3_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady, Playing, Warmup};
 
@@ -335,7 +336,8 @@ enum MenuButton {
 /// The settings screen.
 #[derive(Component)]
 struct SettingsScreen;
-/// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3, 3 username, 4 speed units.
+/// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3, 3 username, 4 speed units,
+/// 5 skating on / off.
 #[derive(Component)]
 struct SettingRow(usize);
 #[derive(Component)]
@@ -350,35 +352,50 @@ struct SettingsNote;
 #[derive(Component)]
 struct SettingsBack;
 
-/// The settings, in row order: three games' folders, the username, the speed unit.
-const SETTING_GAMES: [&str; 5] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username", "Speedometer"];
+/// The settings, in row order: three games' folders, the username, the speed
+/// unit, skating on or off.
+const SETTING_GAMES: [&str; 6] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username", "Speedometer", "Skating"];
 /// The row holding the username.
 const USERNAME_ROW: usize = 3;
 /// The row holding the speedometer's unit.
 const UNITS_ROW: usize = 4;
+/// The row turning skating on and off.
+const SKATING_ROW: usize = 5;
 
 /// A row's button: games pick a folder, the username is typed, the unit changes.
 fn button_label(row: usize) -> &'static str {
     match row {
         USERNAME_ROW => "EDIT",
-        UNITS_ROW => "CHANGE",
+        UNITS_ROW | SKATING_ROW => "CHANGE",
         _ => "SELECT",
     }
 }
 
 /// What each row shows now: the saved folder, or why there is none.
-fn setting_values(unit: SpeedUnit) -> [String; 5] {
+fn setting_values(unit: SpeedUnit, skate: SkateEnabled) -> [String; 6] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
     let settings = game_paths::settings();
     let reflex = shown(game_paths::reflex_root()).unwrap_or_else(|| {
         if game_paths::reflex_skipped() { "Not used (optional)" } else { "Not set (optional)" }.to_string()
     });
-    let skate = settings
+    let skate_folder = settings
         .get(game_paths::key::SKATE_SOURCE)
         .map(str::to_owned)
         .or_else(|| game_paths::skate_assets().map(|_| "Set up (folder not recorded, select to choose it)".to_string()))
         .unwrap_or_else(|| "Not set".to_string());
-    [shown(game_paths::mcc_root()).unwrap_or_else(|| "Not set".to_string()), reflex, skate, game_paths::username(), format!("{} (miles per hour or kilometres per hour)", unit.label())]
+    let skating = if skate.0 {
+        "On (skateboard and grind rails on every map)"
+    } else {
+        "Off (maps load without the skateboard or grind rails)"
+    };
+    [
+        shown(game_paths::mcc_root()).unwrap_or_else(|| "Not set".to_string()),
+        reflex,
+        skate_folder,
+        game_paths::username(),
+        format!("{} (miles per hour or kilometres per hour)", unit.label()),
+        skating.to_string(),
+    ]
 }
 
 /// MCC's install root, as first-run setup saved it (`game_paths`).
@@ -1179,7 +1196,7 @@ fn settings_input(
     gamepads: Query<&Gamepad>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut menu: ResMut<Menu>,
-    mut unit: ResMut<SpeedUnit>,
+    (mut unit, mut skate): (ResMut<SpeedUnit>, ResMut<SkateEnabled>),
     selects: Query<(&SettingSelect, &ComputedNode, &UiGlobalTransform)>,
     back: Query<(&ComputedNode, &UiGlobalTransform), With<SettingsBack>>,
 ) {
@@ -1204,7 +1221,7 @@ fn settings_input(
     }
     if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]) || pad(GamepadButton::South) {
         let row = menu.setting;
-        select(&mut menu, &mut unit, row);
+        select(&mut menu, &mut unit, &mut skate, row);
         return;
     }
     if !buttons.just_pressed(MouseButton::Left) {
@@ -1215,7 +1232,7 @@ fn settings_input(
     };
     if let Some((s, ..)) = selects.iter().find(|(_, n, t)| n.contains_point(**t, at)) {
         menu.setting = s.0;
-        select(&mut menu, &mut unit, s.0);
+        select(&mut menu, &mut unit, &mut skate, s.0);
     } else if back.iter().any(|(n, t)| n.contains_point(*t, at)) {
         menu.phase = Phase::Choosing;
     }
@@ -1256,7 +1273,16 @@ fn type_username<'a>(menu: &mut Menu, events: impl Iterator<Item = &'a KeyboardI
 
 /// Opens the folder picker for a game on its own thread; the choice is
 /// checked and saved there, and [`settings_poll`] picks up the outcome.
-fn select(menu: &mut Menu, unit: &mut SpeedUnit, row: usize) {
+fn select(menu: &mut Menu, unit: &mut SpeedUnit, skate: &mut SkateEnabled, row: usize) {
+    if row == SKATING_ROW {
+        skate.0 = !skate.0;
+        menu.note = match game_paths::set_skating_enabled(skate.0) {
+            Ok(()) if skate.0 => "Skating is on. J (or both sticks clicked) gets on the board.".to_string(),
+            Ok(()) => "Skating is off. Maps load without the skateboard or grind rails.".to_string(),
+            Err(e) => e,
+        };
+        return;
+    }
     if row == UNITS_ROW {
         *unit = unit.toggled();
         menu.note = match unit.save() {
@@ -1341,6 +1367,7 @@ fn refresh_maps(world: &mut World) {
 fn show_settings(
     menu: Res<Menu>,
     unit: Res<SpeedUnit>,
+    skate: Res<SkateEnabled>,
     mut screen: Query<&mut Node, With<SettingsScreen>>,
     mut rows: Query<(&SettingRow, &mut BackgroundColor, &mut BorderColor), Without<SettingSelect>>,
     mut values: Query<(&SettingValue, &mut Text, &mut TextColor), (Without<SettingsNote>, Without<SettingSelectLabel>)>,
@@ -1348,7 +1375,7 @@ fn show_settings(
     mut labels: Query<(&SettingSelectLabel, &mut Text, &mut TextColor), (Without<SettingValue>, Without<SettingsNote>)>,
     mut note: Query<&mut Text, (With<SettingsNote>, Without<SettingValue>, Without<SettingSelectLabel>)>,
 ) {
-    if !menu.is_changed() && !unit.is_changed() {
+    if !menu.is_changed() && !unit.is_changed() && !skate.is_changed() {
         return;
     }
     let open = menu.phase == Phase::Settings;
@@ -1364,7 +1391,7 @@ fn show_settings(
         background.0 = if on { BAR } else { Color::NONE };
         *border = BorderColor::all(if on { LINE } else { Color::NONE });
     }
-    let now = setting_values(*unit);
+    let now = setting_values(*unit, *skate);
     for (value, mut text, mut colour) in &mut values {
         text.0.clone_from(&now[value.0]);
         if value.0 == USERNAME_ROW {
