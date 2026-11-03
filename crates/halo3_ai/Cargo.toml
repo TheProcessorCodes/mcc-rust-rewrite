@@ -10,6 +10,7 @@ publish.workspace = true
 bevy = { workspace = true }
 blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
+blam_texture = { workspace = true }
 halo3_bike = { workspace = true }
 halo3_core = { workspace = true }
 halo3_foot = { workspace = true }
@@ -18,3 +19,8 @@ halo3_textures = { workspace = true }
 halo3_weapons = { workspace = true }
 halo3_world = { workspace = true }
 halo3_anim = { workspace = true }
+
+[dev-dependencies]
+game_paths = { workspace = true }
+halo3_script = { workspace = true }
+blam_script = { workspace = true }

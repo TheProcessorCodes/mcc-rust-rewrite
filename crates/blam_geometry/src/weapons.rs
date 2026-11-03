@@ -313,6 +313,50 @@ pub fn read_damage(cache: &CacheFile, jpt: &TagEntry) -> Result<Damage> {
     })
 }
 
+/// What a vehicle running into a unit deals (`docs/format/weapons.md` 6a):
+/// the global collision damage effect's numbers, and the vehicle's
+/// collision damage (`cddf`) scale and speed band.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VehicleCollision {
+    /// `globals\collision_damage\collision` (`jpt!`): damage (min, max).
+    pub damage: [f32; 2],
+    /// The vehicle's `cddf` +0x00 (inferred: damage scale).
+    pub scale: f32,
+    /// The vehicle's `cddf` +0x08, +0x0C (inferred: the speed band, wu/s,
+    /// over which a hit goes from nothing to the full damage).
+    pub speeds: [f32; 2],
+    /// The two tags read.
+    pub effect_tag: String,
+    pub vehicle_tag: String,
+}
+
+/// The splatter numbers for a vehicle (`vehi` tag path, e.g. the Mongoose):
+/// the collision damage reference at +0x54 of its object block, and the
+/// global `globals\collision_damage\collision` damage effect.
+pub fn read_vehicle_collision(cache: &CacheFile, vehicle: &str) -> Result<Option<VehicleCollision>> {
+    let Some(effect) = cache.tags.find("jpt!", r"globals\collision_damage\collision") else {
+        return Ok(None);
+    };
+    let Some(vehi) = cache.tags.find("vehi", vehicle) else {
+        return Ok(None);
+    };
+    let Some(cddf) = tag_at(cache, cache.tag_offset(vehi)? + 0x54)? else {
+        return Ok(None);
+    };
+    if cache.tags.class_of(cddf).code.as_str() != "cddf" {
+        return Ok(None);
+    }
+    let d = read_damage(cache, effect)?;
+    let c = cache.tag_offset(cddf)?;
+    Ok(Some(VehicleCollision {
+        damage: [d.upper_bound[0].max(d.lower_bound), d.upper_bound[1].max(d.upper_bound[0])],
+        scale: cache.reader_at(c).f32()?,
+        speeds: cache.reader_at(c + 0x08).f32x2()?,
+        effect_tag: effect.name().to_string(),
+        vehicle_tag: cddf.name().to_string(),
+    }))
+}
+
 fn read_projectile(cache: &CacheFile, proj: &TagEntry) -> Result<Projectile> {
     let b = cache.tag_offset(proj)?;
     let damage = match tag_at(cache, b + 0x1F0)? {

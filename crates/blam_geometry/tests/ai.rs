@@ -187,3 +187,12 @@ fn multiplayer_maps_have_no_squads() {
     let data = ai::read(&cache).expect("AI read");
     assert!(data.squads.is_empty());
 }
+
+/// The globals' first difficulty row: the damage enemies deal to the player.
+#[test]
+fn enemy_damage_by_difficulty() {
+    let Some(path) = map("120_halo") else { return };
+    let cache = CacheFile::open(&path).expect("120_halo opens");
+    let s = ai::enemy_damage_scales(&cache).expect("read").expect("a difficulty block");
+    assert_eq!(s, [0.1, 0.775, 1.0, 1.6]);
+}

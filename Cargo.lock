@@ -2646,11 +2646,15 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "blam_script",
+ "blam_texture",
+ "game_paths",
  "halo3_anim",
  "halo3_bike",
  "halo3_core",
  "halo3_foot",
  "halo3_rider",
+ "halo3_script",
  "halo3_textures",
  "halo3_weapons",
  "halo3_world",
@@ -2793,6 +2797,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "blam_geometry",
+ "game_paths",
  "halo3_core",
  "skate-host",
 ]

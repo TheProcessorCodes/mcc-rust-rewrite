@@ -16,6 +16,7 @@
 //! | LT | S | brake; held at a standstill, back up to 10 mph |
 //! | Y | R | stand the bike back up |
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
+//! | both sticks clicked | J | onto the skateboard, keeping the bike's speed (`halo3_skate`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`) |
 //! | LB + d-pad up (hold) | | back to the session marker |
 //! | left stick click | H | engine sound on / off (`halo3_audio::engine`) |
@@ -54,7 +55,9 @@ use blam_geometry::collision::surface_flags;
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::flag::SessionFlag;
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, Skating, assets_root, bail_pressed};
+use halo3_core::skate::{
+    Bail, Dismount, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, bail_pressed, board_pressed, skating_on,
+};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Bike, Controls, World};
@@ -185,6 +188,13 @@ impl AutoStart {
 
 pub struct BikePlugin;
 
+/// The bike's systems (riding, drawing, publishing [`BikeMotion`]); the AI
+/// reads the rider after them.
+///
+/// [`BikeMotion`]: halo3_core::bike::BikeMotion
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BikeSet;
+
 impl Plugin for BikePlugin {
     fn build(&self, app: &mut App) {
         app.init_map_resource::<Riding>()
@@ -197,6 +207,7 @@ impl Plugin for BikePlugin {
             .init_map_resource::<halo3_core::bike::BikeMotion>()
             .add_plugins(tune::TunePlugin)
             .init_map_resource::<SharedWorld>()
+            .init_map_resource::<halo3_core::ai::PlayerRespawn>()
             .add_systems(halo3_core::map::MapStartup, (setup, model::start, spawn_crashed_text, warm_world))
             .add_systems(
                 Update,
@@ -211,7 +222,9 @@ impl Plugin for BikePlugin {
                     show_crashed,
                     publish_motion,
                 )
-                    .chain().run_if(halo3_core::map::ready),
+                    .chain()
+                    .in_set(BikeSet)
+                    .run_if(halo3_core::map::ready),
             );
     }
 }
@@ -251,6 +264,10 @@ fn publish_motion(riding: Res<Riding>, mut motion: ResMut<halo3_core::bike::Bike
                 crashed: b.crashed.is_some(),
                 clutch_slipping: !b.engine.locked,
                 rear_sliding: b.wheels[0].sliding && b.wheels[0].contact.is_some(),
+                position: b.position,
+                velocity: b.velocity,
+                heading: b.heading(),
+                upright: b.crashed.is_none() && b.grounded() == 2 && b.up().y > 0.8,
             }
         }
         None => halo3_core::bike::BikeMotion::default(),
@@ -404,13 +421,13 @@ fn ride(
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
     (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
-    mut flag: ResMut<SessionFlag>,
+    (mut flag, skate_on): (ResMut<SessionFlag>, Option<Res<SkateEnabled>>),
     input: Option<Res<BikeInput>>,
     mut shared: ResMut<SharedWorld>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
     lifts: Option<Res<halo3_core::lifts::Lifts>>,
     fallback: Option<Res<halo3_core::falls::FallbackSpot>>,
-    mut rider: ResMut<RiderPose>,
+    (mut rider, mut player): (ResMut<RiderPose>, ResMut<halo3_core::ai::PlayerRespawn>),
     loaded: Res<LoadedBsps>,
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -452,7 +469,8 @@ fn ride(
         rider.bike = true;
         commands.entity(camera).insert(Skating);
     } else if mounting {
-        // Straight from walking: the bike under him, with his momentum.
+        // Straight from walking or off the board: the bike under him, with
+        // his momentum.
         let Some((_, bail)) = mount.0.take() else {
             return;
         };
@@ -495,10 +513,7 @@ fn ride(
             return;
         }
         if rider.active {
-            // On foot, B is his to hand over (`Mount`).
-            if !rider.foot {
-                warn!("bike: stop skating first (J), or jump off (G)");
-            }
+            // On foot or on the board, B is theirs to hand over (`Mount`).
             return;
         }
         let f = transform.forward().as_vec3();
@@ -520,8 +535,23 @@ fn ride(
         rider.active = false;
         rider.bones.clear();
         rider.camera = None;
-        commands.entity(camera).remove::<Skating>();
+        // The camera keeps `Skating`: the Spartan takes it over (`Dismount`).
         dismount.0 = Some(Bail::new(bike.position, bike.velocity, &transform));
+        return;
+    }
+    // Straight onto the board, keeping the bike's momentum: `halo3_skate`
+    // takes the `Mount`.
+    if riding.neutral.is_none()
+        && skating_on(skate_on.as_deref())
+        && board_pressed(&keys, pad)
+        && let Some(bike) = riding.bike.take()
+    {
+        rider.bike = false;
+        rider.active = false;
+        rider.bones.clear();
+        rider.camera = None;
+        // The camera keeps `Skating`: the board takes it over (`Mount`).
+        mount.0 = Some((Ride::Board, Bail::new(bike.position, bike.velocity, &transform)));
         return;
     }
     let Some(bike) = riding.bike.as_mut() else {
@@ -532,7 +562,16 @@ fn ride(
     if reset {
         bike.reset_here(world);
     }
+    // The rider died (`halo3_ai`): the bike rolls on with nobody at the
+    // controls, then comes back under him at his last quiet checkpoint.
+    if let Some((at, heading)) = player.bike.take() {
+        *bike = Bike::dropped(world, at + Vec3::Y, heading);
+        riding.eye = None;
+        riding.look = Vec3::ZERO;
+        info!("bike: back at the checkpoint");
+    }
     let controls = match riding.neutral {
+        _ if player.dead => Controls::default(),
         Some(throttle) => Controls {
             throttle,
             ..default()

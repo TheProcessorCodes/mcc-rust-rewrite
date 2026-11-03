@@ -119,6 +119,30 @@ Damage effect:
 These are the tag's raw numbers. What a hit takes off a target is further scaled by the target's
 shield and body material responses (not read).
 
+### 6a. Vehicle collision damage (`cddf`), the splatter
+
+Every object block carries a collision damage reference at **+0x54** (tag ref, group `cddf`, the
+index at +0x60): the Mongoose (`objects\vehicles\mongoose\mongoose`, `vehi`) points at
+`globals\collision_damage\vehicle_small`, the Flood combat elite at another. The global damage effect
+for collisions is `jpt! globals\collision_damage\collision`: radius 0.5 / 0.7, damage upper bound
+**100 / 100** (the layout above). `blam_geometry::weapons::read_vehicle_collision` reads both.
+
+`cddf`, the first ten floats as found on 120_halo (field meanings beyond "scale" and "a pair of
+bounds" are inferred, not confirmed):
+
+| tag | +0x00 | +0x04 | +0x08, +0x0C | +0x10, +0x14 | +0x18, +0x1C | +0x20, +0x24 |
+|---|---|---|---|---|---|---|
+| `vehicle_small` (Mongoose) | 1.2 | 1.0 | 3, 8 | 0, 0 | 0, 0 | 0, 0 |
+| `vehicle_medium` | 1.2 | 1.0 | 3, 8 | 0, 0 | 8, 14 | 0, 0 |
+| `biped` | 0.5 | 0.25 | 0, 0 | 0, 0 | 6.5, 8.5 | 0, 0 |
+| `object_fragile` | 0 | 0 | 0, 0 | 0, 0 | 0.025, 0.5 | 0, 0 |
+
+Our reading, used by `halo3_ai` for the dirt bike running into actors: +0x00 is the damage scale
+the vehicle applies (1.2) and +0x08 / +0x0C a speed band in wu/s (3 to 8, about 33 to 88 km/h)
+over which a hit goes from no damage to the full `collision` effect. So a bike hit deals
+`100 x 1.2 x clamp((closing speed - 3) / (8 - 3), 0, 1)`. The engine's own use of acceleration,
+mass and the victim's `cddf` is not reproduced.
+
 ## 7. Markers on weapon models, and the Spartan's
 
 Markers use the render model layout in `scenario-and-tag-reading.md` G3.8: groups of 16 bytes

@@ -93,7 +93,11 @@ What the game does now:
   - Board roll, grind and landing sounds.
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
 - **Switching modes.** Jumping off the bike or the board lands you on foot with the ride's speed;
-  getting back on from walking keeps it too.
+  getting back on from walking keeps it too. Bike and board swap straight over (2026-11-03): J or
+  both sticks on the bike puts you on the board, B or View / Back on the board puts you on the
+  bike, each at the other's speed (the board takes it along the ground; `Session::launch` in the
+  vendored skate-host seeds the board and skater with it, tested in `halo3_skate`). If the skate
+  session is not ready, a swap to the board lands you on foot instead. Not playtested yet.
 - **Map menu (2026-10-31).** `halo3.exe` with no map opens it (`halo3/src/menu.rs`): Halo 3, Halo 2
   and Campaign tabs listing every map in the user's MCC install, with MCC's own preview pictures
   read from `Data\UI\texturepacks\levelstexturepack` at run time. Start Game decodes the map on a
@@ -188,9 +192,12 @@ To do:
    `effe` tags (particles, contrails, light flashes, sounds; see "Explosion effects" under the
    Warthog Run below). Not done: debris objects (the plate chunks), camera shake, screen
    effects, decals.
-4. **Enemies must attack.** Today the AI only fights while the player is on foot (their rounds
-   fly on the on-foot collision), so on the bike the run's Flood and Sentinels mostly ignore
-   you. They should see, chase and shoot / hit the rider on the bike (and the skater).
+4. ~~**Enemies must attack.**~~ Done 2026-11-03 on branch `enemies-attack-rider`, awaiting the
+   user's playtest: the Flood and Sentinels see, chase, shoot and hit the rider on the bike and
+   the skater as on foot, he dies and comes back on the bike, and the bike splatters them (see
+   "Enemies attack the rider" under the Warthog Run below). After the first playtest (no Flood
+   seen): the Flood fix, Halo 3's shield meter and the shield sounds (see "The missing Flood"
+   below).
 
 Skipped by the user's choice (do not do unless asked):
 
@@ -418,8 +425,8 @@ with headless shots; not playtested.
 - **Stubbed / own numbers**: run speeds (Halo uses animation root motion), head-shot double damage,
   explosion damage 120 for rockets / grenades, no pathfinding graph (straight lines + firing
   positions + a hop when stuck), no vehicles (Warthog / chopper crews skipped), no grenades, no
-  carrier spawns, no infection reanimating corpses, AI only fights while you are on foot (rounds fly
-  on the on-foot collision).
+  carrier spawns, no infection reanimating corpses. (Until 2026-11-03 the AI only fought while you
+  were on foot; it now fights you on the bike and the board too, see "Enemies attack the rider".)
 
 **For the script agent** (all in `halo3_core::ai`, no dependency on `halo3_ai` needed):
 `MessageWriter<AiCommand>` with `Place { who: AiRef::named("sentinels"), count: None }` (`ai_place`;
@@ -907,6 +914,124 @@ sounds (in no bank). Awaiting the user's playtest.
 Also fixed on this branch: a headless `--shot` without `--bike` / `--skate` / `--foot`
 crashed on every map (the speedometer read the bike's resources, which such a shot does not
 load).
+**Enemies attack the rider (2026-11-03, branch `enemies-attack-rider`, awaiting the user's
+playtest).** The AI fought only the Spartan on foot; on the bike the run's Flood and Sentinels
+ignored you. Now:
+
+- **One body for the player** (`halo3_core::ai::PlayerBody`, written by `halo3_ai/src/player.rs`
+  every frame from the Spartan, the bike's `BikeMotion` or the skater's `SkateMotion`): feet, a
+  hit capsule, velocity. The brain sees, hears, chases, leads and swings at it; the actors' rounds
+  (`halo3_weapons/src/fire.rs`) hit it and fly on the shared collision (`SharedWorld`, the one
+  the bike rides), not only the on-foot one; the damage goes to the same shields and health.
+  On the bike the capsule stands round the rider (2.5 m, radius 0.63; ours): hits on the bike
+  count as hits on him, the bike has no health of its own.
+- **Firing at a fast rider**, from the tags: the lead is the firing pattern's target leading
+  times his velocity times the round's flight time (beams lead 0; they are instant), and the
+  aim now follows a moving target only as well as the pattern's **target tracking** (0.5 for
+  every 120_halo character): the aimed point trails him by `(1 - tracking) x 0.3 s` (the 0.3 s
+  and this reading of the field are ours). It applies on foot too. `blam ai --characters` now
+  prints tracking and leading.
+- **Difficulty**: what actors deal the player is scaled by the globals' first difficulty row
+  (`matg` +0x410: 0.1 / 0.775 / 1.0 / 1.6 for easy / normal / heroic / legendary; our reading,
+  `docs/format/ai.md` 8), by `--difficulty` (`halo3_core::ai::Difficulty`, normal by default).
+  On foot too.
+- **The engine is heard**: a moving bike is heard like gunfire within half the character's
+  hearing distance (our share), so a squad you pass behind turns and fights. Without it a
+  squad facing away never saw a rider going by (sight is the character's 50 deg cone).
+- **Death and respawn on the bike**: health decides; a hit does not knock him off (Halo 3's
+  vehicles do not throw their drivers). While he is dead the bike's controls go dead
+  (`halo3_core::ai::PlayerRespawn::dead`) and it rolls on; after 3 s it is put down at his last
+  quiet checkpoint (`PlayerRespawn::bike`, taken by `halo3_bike`) with full shields and health.
+  Checkpoints are taken on the bike while it is upright on both wheels and no enemy has seen him
+  for 3 s. On the board he comes back through the skate engine's respawn
+  (`halo3_core::skate::Respawn`). The HUD bars, the red flash and "You died" show in all three.
+- **Splatter**: the bike hurts what it runs into (`player.rs` `ram`, a capsule along the bike,
+  swept from last frame so a fast bike cannot skip a small actor). From the map: the global
+  `jpt! globals\collision_damage\collision` (100) times the Mongoose's `cddf`
+  (`globals\collision_damage\vehicle_small`) scale 1.2, ramped by closing speed over its 3 to 8
+  wu/s band (33 to 88 km/h): 120 at full speed, a Flood combat form (40 hp) dies from about
+  50 km/h. The scale and the band are our reading of the `cddf` floats
+  (`docs/format/weapons.md` 6a, `blam_geometry::weapons::read_vehicle_collision`). Slower,
+  the bike only shoves them aside. The body is thrown along the bike's way. The bike does not
+  slow down, the rider takes nothing, and actors are not solid to the bike's physics.
+- Checked: `halo3_ai/tests/rider.rs` (120_halo's AI and weapons in a bare app on the run's
+  collision, the rider stood in by `BikeMotion`): `trench_sentinel_100_1` hears the bike going
+  past at 8 m/s, fires its beams and hurts him within the first 30 s, kills him, the bike's
+  controls go dead and he is sent back to his checkpoint with full shields and health; riding
+  at 20 m/s into a `trench_combat_forms01` elite kills it. `blam_geometry/tests/weapons.rs`
+  `mongoose_collision_damage` and `ai.rs` `enemy_damage_by_difficulty` pin the numbers. Unit tests for the segment distance and the
+  ramp. All `halo3_ai`, `halo3_script`, `halo3_anim` (but `frigate`, see below) and
+  `halo3_effects` tests pass.
+- Rounds that hit a body (an actor or the rider) no longer leave a scorch mark hanging in the air.
+- Headless shots (`HALO3_AI_PLACE=squad,...` places squads as play begins whatever the scripts do,
+  a dev hook for this; `HALO3_AI_TRACE=1` logs every hit on the player and every splatter):
+  `out\shots\sentinel_beams\120_halo_0.png`, `_1.png` (`trench_sentinel_100_1`'s beams on a
+  stopped rider, from `warthog_run --bike --view 92,-147,-29,180,0`, `HALO3_GOD=1
+  HALO3_BIKE_THROTTLE=0 HALO3_SKATE_FOR=4`), `out\shots\flood_charge_4\120_halo_0.png`
+  (`trench_combat_forms01` charging and swinging at him in the first tunnel, `--view
+  55,-2,-33,90,0`), in the worktree. A ride at throttle 0.4 into all eight combat forms of
+  `01` and `02` killed him within two seconds at normal before the difficulty scale (they fire
+  head-on at a capsule they cannot miss); riding past the sentinels at 80 km/h drew no hits
+  (most were beyond the sentinel gun's 8 wu range).
+- **Still not right**: enemies on foot cannot keep up with the bike (combat forms run at their
+  run animation's speed, about 2 wu/s), so the Flood mostly gets one swing or one burst as you
+  pass; they have no pathfinding to cut you off. Sentinel beams are the tag's 4 damage at 30 a
+  second, so a few sentinels together drain a standing rider in two or three seconds (the
+  targets' material responses and the difficulty scaling are not read; the same on foot).
+  Carriers do not spawn infection forms; no grenades; the Flood do not leap onto the bike. The
+  rider's death has no animation; the bike just rolls on. `halo3_anim/tests/frigate.rs` does
+  not build on master (it uses `setup::START_AHEAD`, which no longer exists); not touched here.
+
+**The missing Flood, Halo 3's shield meter and its sounds (2026-11-03, branch
+`enemies-attack-rider`, after the user's playtest; awaiting the next one).** The user saw only
+Sentinels on the run, for several builds.
+
+- **Why there were no Flood**: the scripts place them (`100_trench_run_encounters01` and on,
+  checked by `halo3_ai/tests/warthog_flood.rs`, which runs `ins_trench_run` and rides the
+  trigger volumes in order with the AI in a bare app). The first tunnel's twelve combat forms
+  (`trench_combat_forms01..03`, placed at `tunnel01_trig01`) are put among the six
+  `trench_sentinel_100_4` (placed earlier, at `trench_run_100_trig08`, in the same room): a
+  scripted Flood-Sentinel fight for the rider to ride into. At full damage the sentinel beams
+  (4 a hit, 30 hits a second) killed all twelve within a second of their placement
+  (`HALO3_AI_TRACE=1` now logs who killed whom), seconds before the rider got there; the same
+  for the later tunnels (`trench_combat_forms04` with `trench_sentinel_110_11`, 06..08 with
+  `trench_sentinel_110_1`). Fix: actors hurting actors deal 0.2 of the damage effect's number
+  (`vitality.rs` `AI_VS_AI`; ours: the material responses that make such fights last in the
+  game are not read). The player's damage to actors and theirs to him are unchanged. The test
+  asserts at least four live, drawn combat forms on the floor within 40 wu of the rider when he
+  reaches the tunnel (twelve, now) and `trench_combat_forms04` standing ahead.
+- The run's earlier infection and carrier squads (`trench_infection_100`, `_100_02`, `_100_03`,
+  `trench_carrier_100_01`, and the `100_sentinel_patrols` points their command scripts swarm
+  from and to) stand in open air over the trench centre (around x -20..16, y -17..18, z 3..6):
+  no render or collision geometry, no object, under them in BSPs 040, 100 and 110. They are
+  placed (14 infection forms, 2 carriers) and hang there unseen, far from the route. Not fixed;
+  `cs_swarm_from` / `cs_swarm_to` are not run either.
+- **Shield meter** (`halo3_ai/src/hud.rs`): the map's own bitmaps of the Spartan HUD
+  (`chdt ui\chud\spartan`), `ui\chud\bitmaps\shield_meter` and `shield_border`, decoded with
+  `blam_texture`. They are chud shader masks: alpha the shape, green the shading, the meter's
+  blue a ramp left to right (16..239) that the chud shader compares with the shield fraction, so
+  the bar empties from the right (`hud::fill_columns`). Not decoded: the `chdt` widget layout and
+  the chud globals' colours, so the place (top middle, the bitmaps' own size on a 720-line
+  screen), the tints (pale blue, red under a quarter) and the border flashing red four times a
+  second while the shields are empty are ours. Halo 3 shows no health meter for the Chief, so
+  the placeholder health bar is gone; the red flash and "You died" stay. On foot, bike and board
+  alike. `HALO3_SHIELD=0.2` (dev) pins the shields for pictures.
+- **Shield sounds**: the HUD globals' sound list (20-byte entries next to `chgd
+  ui\chud\globals`, a tag ref and a flag each): `sound\game_sfx\ui\shield_hit` (snd!),
+  `shield_charge\shield_charge`, `shield_low\shield_low` and `shield_depleted\shield_depleted`
+  (lsnd); the list's next four are the rocket and missile launchers' lock tones, and there is no
+  low-health sound. `halo3_core::ai::ShieldSounds`; `halo3_audio` loads them with the map,
+  `hud.rs` plays them through the script sound queue (the tags' sound classes pick bus and
+  gain): the hit one-shot as the shields drop, the charge loop while they fill, low under a
+  quarter, depleted while empty (thresholds ours). Not found: the block header that points at the
+  list (it is reached by name).
+- Checked: `tests/warthog_flood.rs`, `tests/shield_hud.rs` (meter and border 312 x 28, the
+  ramp's half point near the middle, the four sound tags and their classes), unit tests for the
+  fill columns and the loop choice. Shots: `out\shots\shield_1\120_halo_0.png` (full),
+  `out\shots\shield_0.2\120_halo_0.png` (low), `out\shots\shield_0\120_halo_0.png` (empty), from
+  `warthog_run --bike --view -174.5,-351.4,-1.7,92,0` with `HALO3_SHIELD`.
+- Also seen: a plain `--shot` with no ride (`riverworld --shot DIR`) panics on a missing
+  resource, on master too; not touched.
 
 ## Open questions and known gaps
 

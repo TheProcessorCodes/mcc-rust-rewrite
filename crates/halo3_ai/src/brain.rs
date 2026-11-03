@@ -1,6 +1,7 @@
 //! The first brain: see, choose, move, shoot, hit.
 //!
-//! * **Seeing.** A hostile (the Spartan, or an actor of an enemy team) is
+//! * **Seeing.** A hostile (the player on foot, on the bike or on the
+//!   board, `halo3_core::ai::PlayerBody`, or an actor of an enemy team) is
 //!   seen inside the character's vision distance and angle, or inside its
 //!   peripheral distance whatever the angle, with a clear line from the
 //!   eye to its chest on the collision. Gunfire within hearing distance and
@@ -23,13 +24,28 @@
 //!   burst origin radius and walks on, leading by the target-leading
 //!   share, spread by the projectile error. Rounds are the weapons' own
 //!   (`halo3_weapons::fire`), so they fly, hit walls and hurt.
+//!
+//! A fast rider is fought with the same numbers: the lead is the firing
+//! pattern's target-leading share of his real velocity times the round's
+//! flight time, and the aim follows him only as well as the pattern's
+//! target tracking says (0.5 for every 120_halo character): the aimed point
+//! trails the target with a lag of `(1 - tracking) x TRACK_LAG` seconds
+//! (our reading of the field; `TRACK_LAG` is ours). So a rider crossing in
+//! front of a squad at speed draws fire that lands behind him, one coming
+//! at them or going away gets hit. Walkers chase him at their run speed and fall behind.
+//! The bike's engine is heard like gunfire, out to half the character's
+//! hearing distance while it moves (our number: Halo's AI hears vehicles,
+//! the share is not read), so a rider passing behind a squad turns it.
 
 use bevy::prelude::*;
 use halo3_core::map::MapAppExt;
 
 use halo3_bike::physics::World;
+use std::sync::Arc;
+
 use halo3_core::ai::{
-    ActorActivity, ActorState, Allegiances, Damage, DamageSource, DamageTarget, PlayerVitality, Target, Targets, team,
+    ActorActivity, ActorState, Allegiances, Damage, DamageSource, DamageTarget, PlayerBody, PlayerVitality, Target, Targets,
+    team,
 };
 use halo3_core::coords::{to_halo, to_halo_dir, to_render};
 use halo3_core::fly_camera::FlyCamera;
@@ -37,6 +53,7 @@ use halo3_core::weapons::{WeaponAction, WeaponEvent};
 use halo3_core::zones::LoadedBsps;
 use halo3_foot::OnFoot;
 use halo3_foot::physics::{Controls, Spartan, Tuning};
+use halo3_bike::SharedWorld;
 use halo3_weapons::Armory;
 use halo3_weapons::Shots;
 
@@ -65,6 +82,12 @@ const ACTIVE_RANGE: f32 = 120.0;
 const THINK: f32 = 0.3;
 /// Seconds an actor keeps after a foe it lost sight of.
 const MEMORY: f32 = 8.0;
+/// The bike's engine is heard this share of the hearing distance away,
+/// while it goes faster than `ENGINE_HEARD_ABOVE` m/s. Ours.
+const ENGINE_HEARING: f32 = 0.5;
+const ENGINE_HEARD_ABOVE: f32 = 2.0;
+/// Seconds the aim trails a moving target at target tracking 0; none at 1.
+const TRACK_LAG: f32 = 0.3;
 
 /// Who an actor is after.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +118,8 @@ pub(crate) struct Brain {
     shot_wait: f32,
     /// Where the burst starts relative to the target, metres.
     burst_offset: Vec3,
+    /// The point it aims at, trailing the target (`TRACK_LAG`).
+    aim: Option<Vec3>,
     melee_wait: f32,
     /// Sideways while in range: +1 / -1, and seconds until it turns.
     strafe: f32,
@@ -127,6 +152,7 @@ impl Brain {
             burst_wait: 1.0,
             shot_wait: 0.0,
             burst_offset: Vec3::ZERO,
+            aim: None,
             melee_wait: 0.0,
             strafe: 1.0,
             strafe_time: 0.0,
@@ -161,32 +187,27 @@ impl Brain {
     }
 }
 
-/// The collision the actors walk on while nobody is on foot (on foot they
-/// share the Spartan's).
+/// The collision the actors walk on and see through: the shared world of
+/// the loaded BSPs (`halo3_bike::SharedWorld`, the same the Spartan walks
+/// and the bike rides on, with the scripts' moving objects).
 #[derive(Resource, Default)]
 pub(crate) struct AiWorld {
-    world: Option<World>,
+    world: Option<Arc<World>>,
     mask: Option<u32>,
 }
 
-fn follow_world(
-    mut own: ResMut<AiWorld>,
-    foot: Option<Res<OnFoot>>,
-    input: Option<Res<halo3_bike::BikeInput>>,
-    loaded: Res<LoadedBsps>,
-    actors: Query<(), With<Actor>>,
-) {
-    let on_foot = foot.as_deref().is_some_and(|f| f.spartan.is_some() && f.world().is_some());
-    if on_foot || actors.is_empty() {
+fn follow_world(mut own: ResMut<AiWorld>, foot: Option<Res<OnFoot>>, shared: Res<SharedWorld>, loaded: Res<LoadedBsps>) {
+    let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
+    if own.mask == Some(mask) && own.world.is_some() {
         return;
     }
-    let Some(input) = input else {
-        return;
-    };
-    let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
-    if own.mask != Some(mask) {
-        own.world = Some(halo3_bike::build_world(&input.0, mask));
+    if let Some(w) = shared.ready(mask) {
+        own.world = Some(w);
         own.mask = Some(mask);
+    } else if own.world.is_none()
+        && let Some(w) = foot.as_deref().and_then(OnFoot::shared_world)
+    {
+        own.world = Some(w);
     }
 }
 
@@ -261,6 +282,7 @@ fn think(
     ai: Option<Res<Ai>>,
     own: Res<AiWorld>,
     foot: Option<Res<OnFoot>>,
+    player: Res<PlayerBody>,
     armory: Option<Res<Armory>>,
     shots: Option<ResMut<Shots>>,
     allegiances: Res<Allegiances>,
@@ -278,13 +300,11 @@ fn think(
     };
     let dt = time.delta_secs().min(0.1);
     let mut shots = shots;
-    let spartan = foot.as_deref().and_then(|f| f.spartan.as_ref());
-    let world: Option<&World> = match (spartan, foot.as_deref().and_then(|f| f.world())) {
-        (Some(_), Some(w)) => Some(w),
-        _ => own.world.as_ref(),
-    };
-    let viewer = spartan
-        .map(|s| s.position)
+    let player = player.0.as_ref();
+    let on_foot = foot.as_deref().and_then(|f| f.spartan.as_ref().and(f.world()));
+    let world: Option<&World> = on_foot.or(own.world.as_deref());
+    let viewer = player
+        .map(|b| b.feet)
         .or_else(|| cameras.iter().next().map(|t| t.translation));
     // The player's gunfire, heard.
     let mut noise: Option<Vec3> = None;
@@ -293,19 +313,22 @@ fn think(
             noise = Some(e.at);
         }
     }
+    let engine = player
+        .filter(|b| b.mode == halo3_core::ai::PlayerMode::Bike && b.velocity.length() > ENGINE_HEARD_ABOVE)
+        .map(|b| b.feet);
 
     // Everyone who can be fought, this frame.
     let mut bodies: Vec<Seen> = Vec::new();
-    if let Some(s) = spartan
+    if let Some(b) = player
         && vitality.dead.is_none()
     {
         bodies.push(Seen {
             foe: Foe::Player,
             team: team::PLAYER,
-            feet: s.position,
-            chest: s.position + Vec3::Y * s.height() * 0.7,
-            velocity: s.velocity,
-            radius: s.tuning.radius,
+            feet: b.feet,
+            chest: b.chest(),
+            velocity: b.velocity,
+            radius: b.radius,
         });
     }
     for (e, a, _) in &actors {
@@ -345,8 +368,11 @@ fn think(
         let fwd = forward_of(actor.heading);
 
         // Hearing and pain.
-        if let Some(at) = noise
-            && at.distance(actor.position) < ch.perception.hearing_distance * WU
+        let hearing = ch.perception.hearing_distance * WU;
+        let heard = noise
+            .filter(|at| at.distance(actor.position) < hearing)
+            .or_else(|| engine.filter(|at| at.distance(actor.position) < hearing * ENGINE_HEARING));
+        if let Some(at) = heard
             && bodies.iter().any(|b| b.foe == Foe::Player && !allegiances.allied(actor.team, b.team))
         {
             if brain.foe.is_none() {
@@ -517,14 +543,14 @@ fn think(
                     if at.distance(actor.position) < 1.5 {
                         brain.last_seen = None;
                     }
-                } else if let Some(s) = spartan
+                } else if let Some(b) = player
                     && allegiances.allied(actor.team, team::PLAYER)
                     && vitality.dead.is_none()
                 {
                     // Allies keep up with the player.
-                    let d = s.position.distance(actor.position);
+                    let d = b.feet.distance(actor.position);
                     if d > 8.0 && d < 60.0 {
-                        goal = Some(s.position);
+                        goal = Some(b.feet);
                     }
                 }
             }
@@ -593,6 +619,21 @@ fn think(
                 .or(k.weapon.barrels.first());
             if let Some(barrel) = barrel {
                 let brain = &mut actor.brain;
+                // Lead the target, and follow it as well as the pattern
+                // tracks.
+                let speed = barrel
+                    .projectile
+                    .as_ref()
+                    .map_or(300.0, |p| p.initial_velocity.max(1.0))
+                    * WU;
+                let lead = f.chest + f.velocity * (eye.distance(f.chest) / speed) * pattern.target_leading;
+                let lag = (1.0 - pattern.target_tracking.clamp(0.0, 1.0)) * TRACK_LAG;
+                let tracked = match brain.aim {
+                    Some(a) if a.distance(lead) < 20.0 && lag > 1e-3 => a + (lead - a) * (1.0 - (-dt / lag).exp()),
+                    Some(_) | None if lag > 1e-3 => lead - f.velocity * lag,
+                    _ => lead,
+                };
+                brain.aim = Some(tracked);
                 let rate = if pattern.rate_of_fire > 0.0 {
                     pattern.rate_of_fire
                 } else {
@@ -610,15 +651,9 @@ fn think(
                             .and_then(|m| globals.get(m).ok())
                             .map(|gt| (Mat4::from(gt.affine()) * k.muzzle).w_axis.truncate())
                             .unwrap_or(eye);
-                        // Lead the target, and walk the burst onto it.
-                        let speed = barrel
-                            .projectile
-                            .as_ref()
-                            .map_or(300.0, |p| p.initial_velocity.max(1.0))
-                            * WU;
-                        let flight = muzzle.distance(f.chest) / speed;
+                        // Walk the burst onto the tracked point.
                         let walk = if brain.burst_length > 0.0 { (brain.burst_left / brain.burst_length).clamp(0.0, 1.0) } else { 0.0 };
-                        let aim = f.chest + f.velocity * flight * pattern.target_leading + brain.burst_offset * walk;
+                        let aim = tracked + brain.burst_offset * walk;
                         let spread = pattern.projectile_error.max(barrel.minimum_error)
                             + pattern.max_error_angle * 0.25 * brain.random();
                         shots.shoot_from(k, barrel, muzzle, aim - muzzle, spread, entity);
@@ -636,6 +671,10 @@ fn think(
                     }
                 }
             }
+        }
+
+        if !want_fire {
+            actor.brain.aim = None;
         }
 
         // Swinging.

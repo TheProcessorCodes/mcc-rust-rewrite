@@ -265,6 +265,12 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
     let is_class = |t: u32, code: &str| cache.tags.get(t).is_some_and(|e| cache.tags.class_of(e).code.as_str() == code);
     wanted.extend(map.script_sounds.iter().copied().filter(|t| is_class(*t, "lsnd")));
     wanted.extend(weapons.values().flat_map(|w| w.all_loops()));
+    // The HUD's shield sounds (`halo3_core::ai::ShieldSounds`).
+    let shield: Vec<u32> = halo3_core::ai::ShieldSounds::ALL
+        .iter()
+        .filter_map(|(class, name)| cache.tags.find(class, name).map(|t| t.index))
+        .collect();
+    wanted.extend(shield.iter().copied().filter(|t| is_class(*t, "lsnd")));
     let mut seen = HashSet::new();
     let mut sounds = HashMap::new();
     for l in wanted {
@@ -306,6 +312,7 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         .script_sounds
         .iter()
         .copied()
+        .chain(shield.iter().copied())
         .filter(|t| is_class(*t, "snd!"))
         .chain(dialogue.iter().flat_map(|l| l.variants.iter().filter_map(|v| v.sound)));
     for s in weapons.values().flat_map(|w| w.all_sounds()).chain(one_shots) {

@@ -815,6 +815,25 @@ const MODEL_DAMAGE_INFO: usize = 0x88;
 const DAMAGE_BODY: usize = 0x0C;
 const DAMAGE_SHIELD: usize = 0x20;
 
+/// The globals' (`matg`) difficulty block (`docs/format/ai.md` 9).
+const GLOBALS_DIFFICULTY: usize = 0x410;
+
+/// The globals' first difficulty row, easy / normal / heroic / legendary:
+/// the scale on the damage enemies deal to the player (inferred from the
+/// pattern, 0.1 / 0.775 / 1.0 / 1.6 on 120_halo). `None` without a
+/// difficulty block.
+pub fn enemy_damage_scales(cache: &CacheFile) -> Result<Option<[f32; 4]>> {
+    let Some(g) = cache.tags.of_class("matg").next() else {
+        return Ok(None);
+    };
+    let b = cache.reader_at(cache.tag_offset(g)? + GLOBALS_DIFFICULTY).block()?;
+    let Some(o) = b.offset else {
+        return Ok(None);
+    };
+    let mut r = cache.reader_at(o);
+    Ok(Some([r.f32()?, r.f32()?, r.f32()?, r.f32()?]))
+}
+
 /// Body and shield hit points from a model's (`hlmt`) damage info.
 pub fn model_vitality(cache: &CacheFile, hlmt: &TagEntry) -> Result<(f32, f32)> {
     let b = cache.reader_at(cache.tag_offset(hlmt)? + MODEL_DAMAGE_INFO).block()?;

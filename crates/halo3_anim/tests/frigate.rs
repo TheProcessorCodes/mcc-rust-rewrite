@@ -313,9 +313,9 @@ fn trench_run_starts_on_the_floor_facing_the_run() {
     assert!(ins.start_override.as_ref().is_some_and(|s| s.zone_set.is_none() && s.at == ins.start.unwrap().0));
     let (at, yaw) = ins.start.unwrap();
     let flag = data.cutscene_flags.iter().find(|f| f.name == "trench_run_player0").unwrap();
-    // `START_AHEAD` up the canyon from the flag, along the start's facing.
-    let ahead = Vec3::from(flag.position).truncate() + glam::Vec2::new(yaw.cos(), yaw.sin()) * setup::START_AHEAD;
-    assert!(at.truncate().distance(ahead) < 1e-3, "trench_run at {at}, expected {ahead} ({} wu past the flag)", setup::START_AHEAD);
+    // `START_RIGHT` to the start's right of the flag.
+    let right = Vec3::from(flag.position).truncate() + glam::Vec2::new(yaw.sin(), -yaw.cos()) * setup::START_RIGHT;
+    assert!(at.truncate().distance(right) < 1e-3, "trench_run at {at}, expected {right} ({} wu right of the flag)", setup::START_RIGHT);
     let floor = setup::floor_under(&scene, at).expect("floor under trench_run");
     assert!((-0.5..1.5).contains(&(at.z - floor)), "trench_run at {at}, floor {floor}");
     // Up the canyon: ground all the way to the first trigger, 60 wu on.

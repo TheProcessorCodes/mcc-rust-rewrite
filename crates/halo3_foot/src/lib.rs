@@ -39,7 +39,7 @@ use halo3_bike::physics::World;
 use halo3_bike::pose::Rig;
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, dpad_up_alone, skating_on};
+use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, board_pressed, dpad_up_alone, skating_on};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Controls, Spartan};
@@ -120,6 +120,11 @@ impl OnFoot {
         self.world.as_deref()
     }
 
+    /// The same, shared (it is the bike's `SharedWorld` build).
+    pub fn shared_world(&self) -> Option<std::sync::Arc<World>> {
+        self.world.clone()
+    }
+
     /// Where the camera looks.
     pub fn aim_rotation(&self) -> Quat {
         Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0)
@@ -181,13 +186,7 @@ pub fn walk(
     // The bike's and the board's own buttons get back on from walking.
     let ride = if keys.just_pressed(KeyCode::KeyB) || pad.is_some_and(|p| p.just_pressed(B::Select)) {
         Some(Ride::Bike)
-    } else if skating_on(skate_on.as_deref())
-        && (keys.just_pressed(KeyCode::KeyJ)
-            || pad.is_some_and(|p| {
-                (p.just_pressed(B::LeftThumb) && p.pressed(B::RightThumb))
-                    || (p.just_pressed(B::RightThumb) && p.pressed(B::LeftThumb))
-            }))
-    {
+    } else if skating_on(skate_on.as_deref()) && board_pressed(&keys, pad) {
         Some(Ride::Board)
     } else {
         None
@@ -247,15 +246,18 @@ pub fn walk(
         info!("on foot: jumped off at {:.1} m/s", Vec2::new(v.x, v.z).length());
     } else if toggle || (ride.is_some() && foot.spartan.is_some()) {
         if let Some(spartan) = foot.spartan.take() {
-            if let Some(ride) = ride {
-                let view = rider.camera.map_or(*transform, |(v, _)| v);
-                mount.0 = Some((ride, Bail::new(spartan.position, spartan.velocity, &view)));
-            }
+            let view = rider.camera.map_or(*transform, |(v, _)| v);
             rider.foot = false;
             rider.first_person = false;
             rider.active = false;
             rider.bones.clear();
             rider.camera = None;
+            if let Some(ride) = ride {
+                // The camera keeps `Skating`: the ride takes it over
+                // (`Mount`).
+                mount.0 = Some((ride, Bail::new(spartan.position, spartan.velocity, &view)));
+                return;
+            }
             commands.entity(camera).remove::<Skating>();
             // Fly on from where the camera was.
             fly.yaw = foot.yaw;

@@ -12,7 +12,6 @@ use halo3_core::ai::{ActorActivity, ActorSkeleton, ActorTag, AiBridge, AiCensus,
 use halo3_core::coords::{to_halo, to_render};
 use halo3_core::fly_camera::FlyCamera;
 use halo3_core::zones::LoadedBsps;
-use halo3_foot::OnFoot;
 use halo3_weapons::Armory;
 
 use crate::brain::Brain;
@@ -25,7 +24,7 @@ impl Plugin for PlacePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(halo3_core::map::MapStartup, setup).add_systems(
             Update,
-            (bridge_in, commands_in, auto_place, unload, census, bridge_out)
+            (dev_place, bridge_in, commands_in, auto_place, unload, census, bridge_out)
                 .chain()
                 .in_set(AiSet::Place)
                 .run_if(halo3_core::pause::running)
@@ -135,6 +134,17 @@ fn setup(
         vitality.shield = shield;
     }
     vitality.god = std::env::var("HALO3_GOD").is_ok_and(|v| v == "1");
+    match assets.splatter.as_ref() {
+        Some(c) => {
+            let s = crate::player::Splatter::from_tags(c);
+            eprintln!(
+                "ai: bike splatter {:.0} damage ({} x {}), from {:.1} to {:.1} wu/s ({})",
+                s.damage, c.damage[1], c.scale, s.speeds[0], s.speeds[1], c.vehicle_tag
+            );
+            commands.insert_resource(s);
+        }
+        None => eprintln!("ai: no Mongoose collision damage on this map; the bike's splatter uses our own numbers"),
+    }
     let n = assets.data.squads.len();
     commands.insert_resource(Ai {
         assets,
@@ -305,6 +315,26 @@ fn spawn_actor(
     Some(root)
 }
 
+/// `HALO3_AI_PLACE=squad,squad,...` places those squads (or groups) as play
+/// begins, whatever the scripts do: a developer's hook for headless shots
+/// of a fight (`--shot`), not used by the game.
+fn dev_place(ai: Option<Res<Ai>>, mut done: Local<bool>, mut out: MessageWriter<AiCommand>) {
+    if *done || ai.is_none() {
+        return;
+    }
+    *done = true;
+    let Ok(list) = std::env::var("HALO3_AI_PLACE") else {
+        return;
+    };
+    for name in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        info!("ai: HALO3_AI_PLACE places {name}");
+        out.write(AiCommand::Place {
+            who: AiRef::named(name),
+            count: None,
+        });
+    }
+}
+
 /// Script commands: place, erase, kill, allegiances.
 #[allow(clippy::too_many_arguments)]
 fn commands_in(
@@ -376,7 +406,7 @@ fn auto_place(
     armory: Option<Res<Armory>>,
     mode: Res<AutoPlace>,
     loaded: Res<LoadedBsps>,
-    foot: Option<Res<OnFoot>>,
+    player: Res<halo3_core::ai::PlayerBody>,
     cameras: Query<&Transform, With<FlyCamera>>,
     actors: Query<&Actor>,
     time: Res<Time>,
@@ -395,9 +425,9 @@ fn auto_place(
     }
     ai.next_check = now + 0.5;
     let shown = loaded.shown;
-    let viewer = foot
-        .as_deref()
-        .and_then(|f| f.spartan.as_ref().map(|s| s.position))
+    let viewer = player
+        .0
+        .map(|b| b.feet)
         .or_else(|| cameras.iter().next().map(|t| t.translation));
     let living = actors.iter().filter(|a| a.alive()).count() as u32;
     let data = &ai.assets.data;

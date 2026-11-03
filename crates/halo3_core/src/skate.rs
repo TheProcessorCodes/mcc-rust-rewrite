@@ -36,6 +36,10 @@ pub struct SkateMotion {
     pub riding: bool,
     pub speed: f32,
     pub state: String,
+    /// The skater's feet (renderer frame, m) and velocity (m/s), for the
+    /// AI (`halo3_core::ai::PlayerBody`).
+    pub feet: Vec3,
+    pub velocity: Vec3,
 }
 
 /// The latest pose for drawing the rider, in skate space (`docs/skate-interface.md`
@@ -90,6 +94,11 @@ pub struct Respawn(pub Option<(Vec3, f32)>);
 /// The rider jumping off the board or the bike onto his feet, keeping the
 /// ride's momentum: set by `halo3_skate` / `halo3_bike` as the ride ends,
 /// taken by `halo3_foot`.
+///
+/// Handing over (this and `Mount`), the ride being left does not take
+/// `Skating` off the camera; the next ride inserts it from a system running
+/// beside it, and Bevy may apply that insert before the remove, leaving the
+/// fly camera fighting the ride's camera (the bike shook up and down).
 #[derive(Resource, Default)]
 pub struct Dismount(pub Option<Bail>);
 
@@ -118,9 +127,10 @@ impl Bail {
     }
 }
 
-/// The Spartan getting back on the bike or the board straight from walking:
-/// set by `halo3_foot` as he leaves his feet, taken by `halo3_bike` /
-/// `halo3_skate`. The bike keeps his momentum; the board starts from rest.
+/// Getting on the bike or the board straight from walking or from the other
+/// ride: set by `halo3_foot`, `halo3_bike` or `halo3_skate` as he leaves what
+/// he was on, taken by the ride named. Both keep his momentum (the board
+/// along the ground).
 #[derive(Resource, Default)]
 pub struct Mount(pub Option<(Ride, Bail)>);
 
@@ -128,6 +138,16 @@ pub struct Mount(pub Option<(Ride, Bail)>);
 pub enum Ride {
     Bike,
     Board,
+}
+
+/// The board's own button, which also gets on it from foot or the bike: J,
+/// or both sticks clicked.
+pub fn board_pressed(keys: &ButtonInput<KeyCode>, pad: Option<&Gamepad>) -> bool {
+    keys.just_pressed(KeyCode::KeyJ)
+        || pad.is_some_and(|p| {
+            (p.just_pressed(GamepadButton::LeftThumb) && p.pressed(GamepadButton::RightThumb))
+                || (p.just_pressed(GamepadButton::RightThumb) && p.pressed(GamepadButton::LeftThumb))
+        })
 }
 
 /// The bail button, the same while skating and riding: G, or the d-pad's up.
