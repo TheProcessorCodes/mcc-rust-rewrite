@@ -30,7 +30,7 @@ use blam_geometry::{Kind, Lighting, Placement, Scene, Shading, WORLD_UNIT_METRES
 
 use super::lighting::{self, SurfaceLights};
 use super::zones::BspMember;
-use super::{is_editor_only, to_render, to_render_dir};
+use super::{is_editor_only, to_halo, to_render, to_render_dir};
 use halo3_textures::Look;
 
 /// Grid cell size for splitting the world into chunks, world units
@@ -81,6 +81,8 @@ pub struct BuildInput {
     /// The open map: each unit decodes the bitmaps and lightmap it needs
     /// (`None`: everything was decoded up front, `WorldSource`).
     pub cache: Option<&'static blam_cache::CacheFile>,
+    /// The reflection cube maps' capture points (`reflections.rs`).
+    pub cubes: super::reflections::CubeIndex,
 }
 
 impl BuildInput {
@@ -115,6 +117,9 @@ pub struct BuiltChunk {
     /// The scene object it draws alone (`SceneObject::dynamic`), for
     /// scripts to move and hide (`halo3_core::objects::ObjectChunk`).
     pub object: Option<u32>,
+    /// The reflection cubes it blends between (`CubeIndex::tag`), its
+    /// mesh tag.
+    pub reflection: u32,
 }
 
 pub struct BuiltUnit {
@@ -195,7 +200,7 @@ fn cell_of(p: Vec3) -> [i32; 3] {
 /// Whether ordinary shaders get their tangents (normal maps).
 fn bumped(look: Option<&Look>) -> bool {
     look.is_some_and(|l| {
-        l.surface.bump.is_some() || l.terrain.as_ref().is_some_and(|t| t.layers.iter().flatten().any(|x| x.bump.is_some()))
+        l.surface.bump.is_some() || l.surface.parallax.is_some() || l.terrain.as_ref().is_some_and(|t| t.layers.iter().flatten().any(|x| x.bump.is_some()))
     })
 }
 
@@ -439,6 +444,10 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
         let triangles = (batch.indices.len() / 3) as u32;
         let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
         let vertices = batch.positions.len();
+        let (chunk_lo, chunk_hi) = batch.positions.iter().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(a, b), p| (a.min(Vec3::from(*p)), b.max(Vec3::from(*p))),
+        );
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, batch.positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, batch.uvs);
         if !batch.lightmap_uvs.is_empty() {
@@ -469,6 +478,16 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
             Unit::Bsp(b) if !clusters.is_empty() => Some(b),
             _ => None,
         };
+        let reflection = if sky {
+            0
+        } else {
+            let centre = to_halo((chunk_lo + chunk_hi) * 0.5);
+            let home = match unit {
+                Unit::Bsp(b) => Some(b),
+                Unit::Global => None,
+            };
+            input.cubes.tag(home, &clusters, centre)
+        };
         chunks.push(BuiltChunk {
             lit: key.lit,
             material: key.material,
@@ -482,6 +501,7 @@ pub fn build_unit(input: &BuildInput, unit: Unit) -> BuiltUnit {
                 fade_pixels: key.fade as f32,
             },
             object: key.object,
+            reflection,
         });
     }
     let mut lit_counts: Vec<_> = lit_counts.into_iter().collect();

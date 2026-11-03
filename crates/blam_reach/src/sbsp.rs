@@ -393,6 +393,8 @@ pub fn decode(
         clusters: cluster_info,
         portals: Vec::new(),
         locator: None,
+        cubemap_bitmap: None,
+        cubemaps: Vec::new(),
     });
     Ok(stats)
 }

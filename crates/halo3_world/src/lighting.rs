@@ -225,7 +225,9 @@ pub struct HaloLightmap {
     /// Ranges of c0..c3.
     #[uniform(100)]
     pub scales: Vec4,
-    /// x: dominant light intensity range, y: exposure.
+    /// x: dominant light intensity range, y: exposure, z: reflection mode
+    /// (`reflections::mode`), w: cube texel brightness
+    /// (`reflections::cube_scale`).
     #[uniform(100)]
     pub extra: Vec4,
     #[texture(101, dimension = "2d_array")]
@@ -310,7 +312,8 @@ pub struct HaloLightmap {
     /// F0; w: model (0 diffuse, 1 phong, 2 cook-torrance, 3 glass).
     #[uniform(100)]
     pub f0: Vec4,
-    /// Reflection colour: environment tint times contribution.
+    /// Reflection colour: environment tint times contribution; w: the cube
+    /// mip level to reflect at (rougher surfaces, blurrier reflections).
     #[uniform(100)]
     pub env: Vec4,
     /// x: self-illumination mode (0 off, 1 map, 2 map x detail, 3 from
@@ -346,6 +349,16 @@ pub struct HaloLightmap {
     pub alpha_flags: Vec4,
     #[uniform(100)]
     pub alpha_xform: Vec4,
+    /// Rows of the matrix from a Halo-frame direction to the direction a
+    /// reflection cube is looked up with (`reflections::cube_axes`).
+    #[uniform(100)]
+    pub cube_axes: [Vec4; 3],
+    /// Parallax: x the steps (0 off, 1 `simple`, 2 `interpolated`), y
+    /// `height_scale`; the height map's xform after it.
+    #[uniform(100)]
+    pub parallax: Vec4,
+    #[uniform(100)]
+    pub height_xform: Vec4,
 
     /// A 1x1 image that only carries the repeating, anisotropic sampler
     /// every map below is read with.
@@ -374,6 +387,18 @@ pub struct HaloLightmap {
     pub terrain_bump_3: Option<Handle<Image>>,
     #[texture(127)]
     pub alpha_map: Option<Handle<Image>>,
+
+    /// Every reflection cube of the map (`reflections.rs`), shared by all
+    /// materials; a chunk's mesh tag says which it blends.
+    #[texture(128, dimension = "cube_array")]
+    #[sampler(129)]
+    pub cubes: Option<Handle<Image>>,
+    /// The cubes' capture points: render-frame position, cube in w.
+    #[texture(130, sample_type = "float", filterable = false)]
+    pub cube_points: Option<Handle<Image>>,
+    /// The parallax height map (`parallax`), linear.
+    #[texture(131)]
+    pub height_map: Option<Handle<Image>>,
 }
 
 /// Halo's detail-map multiplier: a detail map multiplies the base so that

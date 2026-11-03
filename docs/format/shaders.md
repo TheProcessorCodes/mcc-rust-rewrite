@@ -817,8 +817,10 @@ colour = albedo * E + spec * specular_coefficient * mask + self_illum
 
 Only per-pixel lightmapped surfaces (the BSP) get bump and specular; objects lit per vertex keep
 their vertex irradiance and flat normals, and get `0.5 * E_vertex * env_tint * env_contribution *
-specular_coefficient * mask` as their reflection. `per_pixel` cube maps are not sampled; the SH towards
-the reflection stands in for both kinds of environment map.
+specular_coefficient * mask` as their reflection. Since 2026-11-02 `ambient(r)` in the
+environment term is the level's reflection cube maps where the chunk has one (both
+`dynamic` and `per_pixel`; `cubemaps.md`), and for objects lit per vertex the cube scaled by
+`E_vertex / pi` replaces `0.5 * E_vertex`.
 
 ### 11.6 Plasma (`self_illumination plasma`, 2026-10-28)
 

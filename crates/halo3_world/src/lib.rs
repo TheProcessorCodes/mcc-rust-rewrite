@@ -29,6 +29,7 @@ use halo3_textures::{Look, MaterialTextures};
 pub mod build;
 pub mod culling;
 pub mod lighting;
+pub mod reflections;
 pub mod sky;
 pub mod stream;
 pub mod water;
@@ -555,6 +556,12 @@ pub(crate) fn apply_surface(
             e.surface.y = s.bump_detail.map_or(0.0, |d| d.2);
         }
     }
+    if let Some((h, x, _)) = get(s.parallax.map(|p| p.0).filter(|_| parallax_on()), Upload::Linear) {
+        let (_, scale, interpolated) = s.parallax.expect("just read");
+        e.height_map = Some(h);
+        e.height_xform = x;
+        e.parallax = Vec4::new(if interpolated { 2.0 } else { 1.0 }, scale, 0.0, 0.0);
+    }
     e.surface.w = match s.spec_mask {
         SpecMask::None => 0.0,
         SpecMask::BaseAlpha => 1.0,
@@ -578,7 +585,7 @@ pub(crate) fn apply_surface(
         e.tint_normal = Vec3::from(s.tint[0]).extend(s.analytical);
         e.tint_glancing = Vec3::from(s.tint[1]).extend(s.area);
         e.f0 = Vec3::from(s.f0).extend(model);
-        e.env = (Vec3::from(s.env_tint) * s.env).extend(0.0);
+        e.env = (Vec3::from(s.env_tint) * s.env).extend(s.env_lod);
     }
     let mut mode = match s.illum {
         Illum::Off => 0.0,
@@ -654,6 +661,12 @@ fn specular_gain() -> f32 {
     std::env::var("HALO3_SPECULAR").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0)
 }
 
+/// Whether `parallax` shaders move their texcoords (the default);
+/// `HALO3_PARALLAX=0` draws them flat, for comparisons.
+fn parallax_on() -> bool {
+    std::env::var("HALO3_PARALLAX").map_or(true, |v| v != "0")
+}
+
 /// Scales self-illumination (`HALO3_SELF_ILLUM`, default 1).
 fn illum_gain() -> f32 {
     std::env::var("HALO3_SELF_ILLUM").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0)
@@ -706,6 +719,8 @@ fn spawn_world(
         bitmaps,
         lightmaps,
     } = textures;
+    let cubes = reflections::CubeIndex::new(&scene);
+    let reflection_images = reflection_images(&cubes, pending.2, &mut images);
     let source = stream::WorldSource {
         input: Arc::new(BuildInput {
             scene,
@@ -713,10 +728,12 @@ fn spawn_world(
             lightmap_ok,
             surface: Arc::clone(&surface),
             cache: pending.2,
+            cubes,
         }),
         bitmaps,
         lightmaps,
         bc,
+        reflections: reflection_images,
     };
     let scene = &source.input.scene;
 
@@ -835,6 +852,31 @@ fn spawn_world(
         source.bitmaps.clear();
     }
     commands.insert_resource(source);
+}
+
+/// The reflection cubes and their capture points on the GPU, or `None`
+/// without cubes (`reflections.rs`).
+fn reflection_images(
+    cubes: &reflections::CubeIndex,
+    cache: Option<&'static blam_cache::CacheFile>,
+    images: &mut Assets<Image>,
+) -> Option<(Handle<Image>, Handle<Image>)> {
+    if cubes.is_empty() || reflections::mode() == 0.0 {
+        return None;
+    }
+    let started = std::time::Instant::now();
+    let (array, stats) = cubes.cube_array(cache?)?;
+    let bytes = array.data.as_ref().map_or(0, Vec::len);
+    info!(
+        "reflections: {} cubes ({} decoded) at {}x{}, {:.1} MiB, in {:.2} s",
+        cubes.len(),
+        stats.decoded,
+        stats.size,
+        stats.size,
+        bytes as f64 / (1 << 20) as f64,
+        started.elapsed().as_secs_f32()
+    );
+    Some((images.add(array), images.add(cubes.points_image(&stats.brightness))))
 }
 
 /// Builds the collision shell the first time V asks for it (120_halo's is
