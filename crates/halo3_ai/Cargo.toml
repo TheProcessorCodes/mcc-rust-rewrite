@@ -21,3 +21,5 @@ halo3_anim = { workspace = true }
 
 [dev-dependencies]
 game_paths = { workspace = true }
+halo3_script = { workspace = true }
+blam_script = { workspace = true }

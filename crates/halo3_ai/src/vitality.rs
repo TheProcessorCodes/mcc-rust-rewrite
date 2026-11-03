@@ -64,6 +64,15 @@ fn trace() -> bool {
     *ON
 }
 
+/// Actors hurting actors deal this share of the damage effect's number.
+/// Ours, where the game leaves it to engine behaviour we cannot read (the
+/// targets' material responses): at the full number 120_halo's sentinel
+/// beams (4 a hit, 30 a second) cut down the run's scripted Flood fights
+/// (`trench_combat_forms01..03` placed among `trench_sentinel_100_4`) in
+/// under a second, long before the rider gets there; the player's damage
+/// to actors and theirs to him are not scaled by this.
+const AI_VS_AI: f32 = 0.2;
+
 /// Seconds a dead player waits before coming back.
 const RESPAWN_AFTER: f32 = 3.0;
 
@@ -84,6 +93,10 @@ fn hurt(
         .and_then(|ai| ai.assets.enemy_damage)
         .map_or(1.0, |s| s[difficulty.0.min(3)]);
     for d in reader.read() {
+        let source_kind = match d.source {
+            DamageSource::Actor(e) => actors.get(e).ok().map(|a| a.kind),
+            _ => None,
+        };
         let source_team = match d.source {
             DamageSource::Actor(e) => actors.get(e).ok().map(|a| a.team),
             DamageSource::Player => Some(team::PLAYER),
@@ -146,8 +159,9 @@ fn hurt(
                     continue;
                 }
                 let kind = ai.as_deref().and_then(|ai| ai.assets.kinds.get(a.kind)).and_then(Option::as_ref);
+                let scale = if matches!(d.source, DamageSource::Actor(_)) { AI_VS_AI } else { 1.0 };
                 let headless = kind.is_none_or(|k| matches!(k.unit.team, team::FLOOD | team::SENTINEL | team::GUILTY));
-                let mut amount = d.amount;
+                let mut amount = d.amount * scale;
                 if a.shield > 0.0 {
                     let soak = a.shield.min(amount);
                     a.shield -= soak;
@@ -161,6 +175,19 @@ fn hurt(
                 if a.health <= 0.0 {
                     a.health = 0.0;
                     a.dead = Some(0.0);
+                    if trace() {
+                        let name = |k: usize| {
+                            ai.as_deref()
+                                .and_then(|ai| ai.assets.kinds.get(k)?.as_ref())
+                                .map_or(String::from("?"), |k| k.character.tag_path.rsplit('\\').next().unwrap_or("").to_string())
+                        };
+                        let by = match d.source {
+                            DamageSource::Actor(_) => source_kind.map_or(String::from("an actor"), name),
+                            DamageSource::Player => String::from("the player"),
+                            DamageSource::World => String::from("the world"),
+                        };
+                        info!("ai: {} killed by {by}{}", name(a.kind), if d.melee { " (melee)" } else { "" });
+                    }
                     // Its body flies the way the blow went, a little.
                     a.velocity = d.direction * 1.5;
                 }
