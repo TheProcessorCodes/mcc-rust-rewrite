@@ -24,6 +24,9 @@ setup.
 - `skate-host/src/physics/bridge.rs`: `Session::session_marker()`, and
   `skate-host/src/session_marker/mod.rs`: `Runtime::position()`. Both report where the
   session marker is, for the session flag `halo3_skate` draws (2026-10-30).
+- `skate-host/src/physics/bridge.rs`: `Session::launch(velocity)`, which gives the board, its
+  hook and the skater's body a velocity right after `activate`, so halo3 can put the rider on
+  the board moving (off the bike or from a run) (2026-11-03).
 - `license` fields in the four `Cargo.toml`s, and this folder's `Cargo.toml` (the mashup's
   `skate/Cargo.toml` with a new header).
 

@@ -93,7 +93,11 @@ What the game does now:
   - Board roll, grind and landing sounds.
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
 - **Switching modes.** Jumping off the bike or the board lands you on foot with the ride's speed;
-  getting back on from walking keeps it too.
+  getting back on from walking keeps it too. Bike and board swap straight over (2026-11-03): J or
+  both sticks on the bike puts you on the board, B or View / Back on the board puts you on the
+  bike, each at the other's speed (the board takes it along the ground; `Session::launch` in the
+  vendored skate-host seeds the board and skater with it, tested in `halo3_skate`). If the skate
+  session is not ready, a swap to the board lands you on foot instead. Not playtested yet.
 - **Map menu (2026-10-31).** `halo3.exe` with no map opens it (`halo3/src/menu.rs`): Halo 3, Halo 2
   and Campaign tabs listing every map in the user's MCC install, with MCC's own preview pictures
   read from `Data\UI\texturepacks\levelstexturepack` at run time. Start Game decodes the map on a

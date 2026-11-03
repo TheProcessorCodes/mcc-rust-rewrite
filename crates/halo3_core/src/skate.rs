@@ -118,9 +118,10 @@ impl Bail {
     }
 }
 
-/// The Spartan getting back on the bike or the board straight from walking:
-/// set by `halo3_foot` as he leaves his feet, taken by `halo3_bike` /
-/// `halo3_skate`. The bike keeps his momentum; the board starts from rest.
+/// Getting on the bike or the board straight from walking or from the other
+/// ride: set by `halo3_foot`, `halo3_bike` or `halo3_skate` as he leaves what
+/// he was on, taken by the ride named. Both keep his momentum (the board
+/// along the ground).
 #[derive(Resource, Default)]
 pub struct Mount(pub Option<(Ride, Bail)>);
 
@@ -128,6 +129,16 @@ pub struct Mount(pub Option<(Ride, Bail)>);
 pub enum Ride {
     Bike,
     Board,
+}
+
+/// The board's own button, which also gets on it from foot or the bike: J,
+/// or both sticks clicked.
+pub fn board_pressed(keys: &ButtonInput<KeyCode>, pad: Option<&Gamepad>) -> bool {
+    keys.just_pressed(KeyCode::KeyJ)
+        || pad.is_some_and(|p| {
+            (p.just_pressed(GamepadButton::LeftThumb) && p.pressed(GamepadButton::RightThumb))
+                || (p.just_pressed(GamepadButton::RightThumb) && p.pressed(GamepadButton::LeftThumb))
+        })
 }
 
 /// The bail button, the same while skating and riding: G, or the d-pad's up.

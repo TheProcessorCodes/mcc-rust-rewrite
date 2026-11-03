@@ -16,6 +16,7 @@
 //! | LT | S | brake; held at a standstill, back up to 10 mph |
 //! | Y | R | stand the bike back up |
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`halo3_foot`) |
+//! | both sticks clicked | J | onto the skateboard, keeping the bike's speed (`halo3_skate`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`) |
 //! | LB + d-pad up (hold) | | back to the session marker |
 //! | left stick click | H | engine sound on / off (`halo3_audio::engine`) |
@@ -54,7 +55,9 @@ use blam_geometry::collision::surface_flags;
 use halo3_core::coords::{to_halo, to_render, to_render_dir};
 use halo3_core::flag::SessionFlag;
 use halo3_core::fly_camera::FlyCamera;
-use halo3_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, Skating, assets_root, bail_pressed};
+use halo3_core::skate::{
+    Bail, Dismount, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, bail_pressed, board_pressed, skating_on,
+};
 use halo3_core::zones::LoadedBsps;
 
 use physics::{Bike, Controls, World};
@@ -404,7 +407,7 @@ fn ride(
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
     (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
-    mut flag: ResMut<SessionFlag>,
+    (mut flag, skate_on): (ResMut<SessionFlag>, Option<Res<SkateEnabled>>),
     input: Option<Res<BikeInput>>,
     mut shared: ResMut<SharedWorld>,
     kill: Option<Res<halo3_core::falls::KillZones>>,
@@ -452,7 +455,8 @@ fn ride(
         rider.bike = true;
         commands.entity(camera).insert(Skating);
     } else if mounting {
-        // Straight from walking: the bike under him, with his momentum.
+        // Straight from walking or off the board: the bike under him, with
+        // his momentum.
         let Some((_, bail)) = mount.0.take() else {
             return;
         };
@@ -495,10 +499,7 @@ fn ride(
             return;
         }
         if rider.active {
-            // On foot, B is his to hand over (`Mount`).
-            if !rider.foot {
-                warn!("bike: stop skating first (J), or jump off (G)");
-            }
+            // On foot or on the board, B is theirs to hand over (`Mount`).
             return;
         }
         let f = transform.forward().as_vec3();
@@ -522,6 +523,21 @@ fn ride(
         rider.camera = None;
         commands.entity(camera).remove::<Skating>();
         dismount.0 = Some(Bail::new(bike.position, bike.velocity, &transform));
+        return;
+    }
+    // Straight onto the board, keeping the bike's momentum: `halo3_skate`
+    // takes the `Mount`.
+    if riding.neutral.is_none()
+        && skating_on(skate_on.as_deref())
+        && board_pressed(&keys, pad)
+        && let Some(bike) = riding.bike.take()
+    {
+        rider.bike = false;
+        rider.active = false;
+        rider.bones.clear();
+        rider.camera = None;
+        commands.entity(camera).remove::<Skating>();
+        mount.0 = Some((Ride::Board, Bail::new(bike.position, bike.velocity, &transform)));
         return;
     }
     let Some(bike) = riding.bike.as_mut() else {
