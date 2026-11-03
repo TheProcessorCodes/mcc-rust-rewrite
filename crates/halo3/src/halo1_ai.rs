@@ -157,6 +157,12 @@ pub(crate) fn load(map: &blam_h1::Map, difficulty: i16) -> Option<H1Ai> {
             kinds,
             models,
             player_vitality,
+            // Not read from Halo CE yet: the bike splatters with the
+            // default numbers, enemies deal their damage unscaled, and
+            // there is no shield meter.
+            splatter: None,
+            enemy_damage: None,
+            hud: None,
         },
         arsenal,
         moves,

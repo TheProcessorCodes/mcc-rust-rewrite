@@ -55,10 +55,14 @@ fn take(rt: &mut Runtime, tick: u64, heard: &mut Vec<(u64, String)>) {
             SoundRequest::LoopStart { name, .. } => format!("start {}", last(&name)),
             SoundRequest::LoopStop { tag, .. } => format!("stop #{tag}"),
             SoundRequest::LoopAlternate { tag, on } => format!("alt #{tag} {on}"),
-            SoundRequest::Impulse { name, at, .. } => {
+            // Lines are heard everywhere; sound effects play at the object
+            // they are started on (the Pelican's `burn_pel_out`), now the
+            // scripts find Halo CE's objects.
+            SoundRequest::Impulse { name, at, .. } if name.contains(r"\dialog\") => {
                 assert!(at.is_none(), "{name} is placed");
                 format!("line {}", last(&name))
             }
+            SoundRequest::Impulse { name, .. } => format!("sfx {}", last(&name)),
             SoundRequest::ImpulseStop { tag } => format!("cut #{tag}"),
             SoundRequest::ClassGain { class, gain, .. } => format!("class {class} {gain}"),
         };
