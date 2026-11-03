@@ -15,6 +15,7 @@
 //! ```
 
 pub mod ai;
+pub mod animation;
 pub mod bitmap;
 pub mod cache;
 pub mod collision;

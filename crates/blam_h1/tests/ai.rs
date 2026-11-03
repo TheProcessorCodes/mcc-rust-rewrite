@@ -139,3 +139,40 @@ fn the_maw_skeletons_stand_up() {
         .count();
     assert!(far * 20 < mesh.positions.len(), "{far} of {} vertices far from their node", mesh.positions.len());
 }
+
+#[test]
+fn the_maw_animation_graphs_read() {
+    let Some(path) = d40() else { return };
+    let map = blam_h1::Map::open(&path).unwrap();
+    let ai = ai::read(&map).unwrap();
+    let mut graphs = BTreeSet::new();
+    for v in ai.palette.iter().flatten() {
+        if let Some(u) = v.unit.and_then(|u| ai::unit(&map, u).ok()) {
+            graphs.extend(u.animations.map(|a| (a, u.model)));
+        }
+    }
+    for (antr, mode) in graphs {
+        let g = blam_h1::animation::read(&map, antr).unwrap();
+        let read = g.animations.iter().flatten().count();
+        assert_eq!(read, g.animations.len(), "{}: {} of {} read", map.tag_name(antr).unwrap(), read, g.animations.len());
+        // The graph's nodes are the model's, in order.
+        let nodes = blam_h1::skeleton::nodes(&map, mode.unwrap()).unwrap();
+        assert!(g.nodes.iter().zip(&nodes).all(|(a, b)| *a == b.name), "{}", map.tag_name(antr).unwrap());
+        for a in g.animations.iter().flatten() {
+            assert!(a.frames.iter().all(|p| (p.rotation.length() - 1.0).abs() < 1e-3), "{}", a.name);
+        }
+        println!("{:55} {} nodes, {} animations", map.tag_name(antr).unwrap(), g.nodes.len(), read);
+    }
+    // The Flood combat elite: its idle stands where its model stands, its
+    // run moves it forward.
+    let antr = map.find(b"antr", r"characters\floodcombat elite\floodcombat elite").unwrap().id;
+    let g = blam_h1::animation::read(&map, antr).unwrap();
+    let idle = g.animations[g.find("stand pistol idle").unwrap()].as_ref().unwrap();
+    let pelvis = idle.pose(0)[0].translation;
+    assert!(pelvis.distance(glam::Vec3::new(0.015, 0.0, 0.44)) < 0.15, "{pelvis:?}");
+    let run = g.animations[g.find("stand pistol move-front").unwrap()].as_ref().unwrap();
+    let speed = run.root_speed();
+    assert!((0.5..5.0).contains(&speed), "{speed}");
+    assert!(run.root_motion.iter().map(|m| m[0]).sum::<f32>() > 0.0);
+    println!("flood elite run: {speed:.2} wu/s");
+}

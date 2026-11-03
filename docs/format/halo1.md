@@ -315,9 +315,152 @@ The countdown the Warthog run races (`timer_begin`, `endgame_cinematics`): `hud_
 minutes seconds` sets it, `hud_get_timer_ticks` reads it in 30ths of a second,
 `pause_hud_timer`, `show_hud_timer`, `hud_set_timer_warning_time` (1:00 on `d40`).
 
+## 13. AI: encounters and actor variants
+
+Checked on `d40` with `probe_h1_ai.py` (`python -I probe_h1_ai.py d40 enc6_1`); read by
+`blam_h1::ai`, placed as `halo3_ai` actors by `crates/halo3/src/halo1_ai.rs`. Where to look
+came from general knowledge of the HEK scenario layout; every offset below was confirmed on
+the bytes (counts, names, positions on the run's road, values that match their meaning).
+
+| scenario offset | what |
+|---|---|
+| 0x420 | actor variant palette, 0x10 each: an `actv` reference (`d40`: 35) |
+| 0x42C | encounters, 0xB0 each (`d40`: 56) |
+| 0x438 | command lists, 0x60 each, the name first |
+
+**Encounter** (0xB0): name (char[32]), flags (u32 +0x20; bit 0: not created when its BSP
+loads, the scripts place it; every run encounter has it), team (u16 +0x24; 0 = each
+actor's unit's own, on every `d40` encounter), manual BSP (u16 +0x2A, used when flag 0x40
+is set), the precomputed BSP (u16 +0x7E: 5 for `enc6_0`..`enc6_4`, 6 for `enc6_5`, 7 for
+`enc6_8`, `enc6_9`, `enc7_*`), squads (block +0x80, 0xE8 each), platoons (block +0x8C,
+0xAC each, the name first), firing positions (block +0x98, 0x18 each).
+
+**Squad** (0xE8): name (char[32]), actor variant (i16 +0x20, palette index; -1: each
+starting location names its own), platoon (i16 +0x22), initial and return state (u16
++0x24, +0x26), flags (u32 +0x28), actors on normal (i16 +0x7C) and on legendary (i16 +0x7E),
+starting locations (block +0xD0, 0x1C each). Our difficulty rule (not checked against the
+game): the normal count on easy and normal, the legendary count on legendary, halfway
+(rounded up) on heroic.
+
+**Starting location** (0x1C): position (vec3), facing (f32 +0xC, radians), cluster (i16
++0x10), actor variant (i16 +0x18, -1: the squad's), command list (i16 +0x1A).
+
+**Firing position** (0x18): position (vec3), group letter (u16 +0xC, 0 = A), cluster (i16
++0xE).
+
+**Names.** Scripts name a squad `encounter/squad`, a platoon `encounter/platoon` and a whole
+encounter by its name, in lower case (`enc6_1_flood/squada` for the squad stored as
+`squadA`; `ai_defend enc6_5_cov/evacs` names a platoon of `evacs1` and `evacs2`). The AI
+constants are the scripts' nodes of value type ai (17, section 12) with that text; every one
+of `d40`'s resolves (`blam_h1/tests/ai.rs`). In `halo3_ai` each encounter is a squad group and
+an AI zone, each platoon a group under it, each squad a squad named `encounter/squad`.
+
+**Actor variant** (`actv`):
+
+| offset | what |
+|---|---|
+| +0x04 | actor (`actr`) |
+| +0x14 | unit (`bipd`, or a vehicle for turret gunners) |
+| +0x24 | major variant (`actv`) |
+| +0x64 | weapon (`weap`) |
+| +0x74 | maximum firing distance (wu) |
+| +0x78 | rate of fire (shots a second) |
+| +0x7C | projectile error (radians) |
+| +0x80, +0x84 | first burst delay (s, min, max) |
+| +0x9C, +0xA0 | desired combat range (wu, min, max) |
+| +0xBC, +0xC0 | target tracking, target leading (0..1) |
+| +0xCC, +0xD0 | burst origin radius (wu) and angle (radians) |
+| +0xE0, +0xE4 | burst duration (s) |
+| +0xE8, +0xEC | burst separation (s) |
+| +0x200, +0x204 | body and shield vitality (0: the unit's own) |
+
+`d40`: Flood combat elite with an assault rifle 120 body, 12 wu, 6 shots/s, combat range 4..8;
+elite spec-ops 125 body, 200 shield; grunt spec-ops 75; hunter 225; carrier 50; infection
+form 0.01; sentinel 80 (its unit's shield 80).
+
+**Actor** (`actr`): type (u16 +0x14: 0 elite, 1 jackal, 2 grunt, 3 hunter, 4 engineer, 5
+assassin, 6 player, 7 marine, 8 crew, 9 combat form, 10 infection form, 11 carrier form, 12
+monitor, 13 sentinel, 14 none, 15 mounted weapon), maximum vision distance (+0x18, wu),
+central and maximum vision angle (+0x1C, +0x20), peripheral vision angle (+0x28), peripheral
+distance (+0x2C), hearing distance (+0x4C).
+
+**Unit and biped** (`bipd`, past the object's 0x17C bytes): model (`mod2` +0x28), animation
+graph (`antr` +0x38), collision model (`coll` +0x70), default team (u16 +0x180: 1 player, 2
+human, 3 covenant, 4 flood, 5 sentinel; Halo 3's numbers for these), melee damage (`jpt!`
++0x288); biped standing camera height (+0x400), standing collision height (+0x424) and
+collision radius (+0x42C): the Flood elite 0.60, 0.70, 0.20; the infection form and the
+sentinel store no height (taken from the model's bounds). The collision model (`coll`) holds
+the maximum body vitality (+0x8) and shield vitality (+0xCC): the cyborg (the player) 75 and
+75.
+
+**Weapon** (`weap`): model (+0x28), triggers (block +0x4FC, 0x114 each): rounds per second
+(+0x4, +0x8), projectiles per shot (i16 +0x6E; the shotgun 15), minimum error (+0x78), error
+angle (+0x7C, +0x80), projectile (`proj` +0x94). **Projectile** (`proj`): maximum range
+(+0x1C8), initial and final velocity (+0x1E4, +0x1E8) **per tick** (x30 for per second: the
+assault rifle's bullet 10.8 = 324 wu/s, the plasma rifle's bolt 50), attached detonation
+damage (`jpt!` +0x214), impact damage (+0x224). **Damage** (`jpt!`): radius (+0x0, +0x4),
+damage lower bound (+0x1D0), upper bounds (+0x1D4, +0x1D8): the assault rifle bullet 10, the
+sentinel beam 1 (30 a second), the Flood elite's melee 10..16.
+
+**Model nodes and markers** (`mod2`): nodes (block +0xB8, 0x9C each): name, next sibling
+(i16 +0x20), first child (+0x22), parent (+0x24), translation (+0x28), rotation (+0x34, i j k
+w), distance from parent (+0x44). Parents come before children. **Rotations are stored
+conjugated**: read as stored, the Flood elite's `bip01 spine` (+0.038 along its parent's X)
+would sit beside the pelvis, whose stored rotation is (0.5, 0.5, 0.5, 0.5); conjugated it
+sits above it, the thighs to either side, the head 0.69 wu up, the feet at 0.11. Markers
+(block +0xAC, 0x40 each): name, instances (block +0x34, 0x20 each): region, permutation and
+node (i8 +0, +1, +2), translation (+0x4), rotation (+0x10, conjugated too). Bipeds hold their
+weapon at `right hand`; weapons fire from `primary trigger`.
+
+**Skinning.** A model vertex's two node indices (i16 +56, +58) and weights (f32 +60, +64,
+section 9) are the model's node numbers, except in parts with flag 0x2 (u32 +0 of the part),
+which index the part's own table of node numbers (u8 x 22 at part +0x6C). With that, 95 % or
+more of the Flood elite's vertices lie within 0.6 wu of their first node.
+
+## 14. Animation graphs (`antr`)
+
+Checked with `probe_h1_ai.py` and `blam_h1/tests/ai.rs`; read by `blam_h1::animation`, played
+by `crates/halo3/src/halo1_anim.rs`.
+
+| offset | what |
+|---|---|
+| +0x0C | units, 0x64 each (labels and per-weapon action tables; not read) |
+| +0x68 | nodes, 0x40 each: name first (the model's nodes, same order) |
+| +0x74 | animations, 0xB4 each |
+
+**Animation** (0xB4): name (char[32]; `stand pistol move-front`, `alert unarmed idle%1`; the
+`%N` suffix numbers variants), type (u16 +0x20: 0 base, 1 overlay, 2 replacement), frame
+count (+0x22), frame size (+0x24), frame info type (+0x26), node count (+0x2C), loop frame
+(+0x2E), frame info (data field +0x48), translation flags (two u32 +0x5C), rotation flags (two
+u32 +0x6C), scale flags (two u32 +0x7C), offset to compressed data (+0x88; 0 on every
+animation of the run's actors), default data (data field +0x8C), frame data (data field
++0xA0). A data field is 20 bytes: size (+0), then its address at +0xC (tag data addresses,
+section 2); the file offset at +0x8 is not one in the map.
+
+Frame data: frame after frame, node after node: the node's rotation (4 x i16 over 32767, i j k
+w, conjugated as the model's) if its rotation bit is set, translation (3 x f32) if its
+translation bit is, scale (f32) if its scale bit is. The frame size is exactly 8, 12 and 4 per
+set bit (the Flood elite's idle: 34 rotations, 1 translation, 284 bytes). Grouped by kind
+instead, the quaternions come out with lengths 0.6 to 1.5; interleaved they are all 1.000.
+Default data: what the clear bits leave out, once, laid out the same way (676 bytes for that
+idle: 6 rotations, 39 translations, 40 scales). Frame info, per frame: dx, dy (type 1, 8 bytes),
+dx, dy, dyaw (type 2), dx, dy, dz, dyaw (type 3): the root's motion over the ground, world
+units and radians; its mean over a run is the walking speed.
+
+Which animation an actor plays: `<mode> <class> <action>`. Modes `stand`, `alert`,
+`crouch`, `flee`, `flaming`, seats (`CD-passengerL01`, `GT-gunner`); classes as the graph has
+them, which are not the weapons' names: the Flood combat forms and the Covenant hold their
+guns under `pistol`, the grunt's fuel rod under `missle`, the elite's sword under `sword`, the
+sentinel under `fixed`, the infection and carrier forms and the hunter under `unarmed`.
+Actions: `idle`, `move-front/back/left/right`, `turn-left/right`, `melee`, `airborne`,
+`land-soft/hard`, `<weapon> fire-1` (`ar`, `pp`, `pr`, `ne`, `sg`, `fr`), and unit-wide
+`h-kill front gut`, `s-ping left gut`, `stand landing-dead`...
+
 ## What is not read yet
 
 Weapons on foot (netgame equipment through item collections to `weap` tags), sound
-(`sounds.map`), campaign vehicles, bipeds and AI (encounters), object collision, the netgame flags (teleporters, CTF flags), the multipurpose map's specular
+(`sounds.map`), campaign vehicles, the AI's command lists, platoons' behaviour, actor
+states, grenades and the `actr` behaviour numbers beyond perception, compressed animations,
+the graph's unit and weapon action tables, object collision, the netgame flags (teleporters, CTF flags), the multipurpose map's specular
 and self-illumination, micro detail, bump and reflection maps, water animation, the indoor fog,
 the decals and detail objects.
