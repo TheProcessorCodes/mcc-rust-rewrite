@@ -15,6 +15,7 @@ blam_texture = { workspace = true }
 halo3_core = { workspace = true }
 
 [dev-dependencies]
+blam_h1 = { workspace = true }
 game_paths = { workspace = true }
 blam_script = { workspace = true }
 halo3_script = { workspace = true }

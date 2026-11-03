@@ -796,9 +796,25 @@ worktree); the floor traced along the run's line (y = -4) has no gap wider than 
 slots in the middle of the road. The run's haze is the map's own: the run's clusters see
 `skyofdoom`, whose fog reaches 60 % at 20 wu.
 
+**Explosion effects** (2026-11-03, branch `h1-effects`): the run's `effect_new` explosions play
+with Halo CE's own tags from `d40.map` (`docs/format/halo1.md` 13). `blam_h1::effect` reads
+`effe`, `part`, `pctl` (particle systems: fire turning to smoke), `ligh`, `pphy` and bitmap
+sequences; `blam_h1::effect_library` turns them into Halo 3's effect types, so
+`halo3_effects` plays them with its renderer unchanged (`halo3/src/halo1_effects.rs` loads the
+11 effects the scripts name, with their bitmaps as atlases, 0.1 s). Seen: the light flash
+lighting the trench orange, the fire puffs (added), the smoke plume they turn into (blended),
+the drifting smoke, the panel debris specks. The scripts' ambient explosions also go off along
+the run, as in the game. The effects' sounds go to `halo3_core::script_sound` as impulses with
+the Halo CE `snd!` tag index, path and position: the hook for Halo CE sound playback. Not played:
+debris objects (`garb`), decals, damage (`jpt!`: no area damage to the rider), lens flares.
+Headless: `HALO3_SHOT_EFFECT='effects\explosions\large explosion@x,y,z'` sets an effect off
+before the first `--shot` picture (`shot.rs`). Tests: `blam_h1/tests/effects.rs`,
+`halo3_effects/tests/h1_run_effects.rs` (driven through the run, every explosion the scripts set
+off is a converted effect at a cutscene flag; a large explosion plays its flash, sound, fire,
+smoke).
+
 Not done (Halo CE sides with nothing behind them yet; the scripts' calls log once and do
-nothing): enemies (`ai_place` of the run's Flood, Covenant and Sentinels), effects (the run's
-explosions, `effect_new`), sound, music (`d40_07` .. `d40_09`) and Cortana's lines, doors and
+nothing): enemies (`ai_place` of the run's Flood, Covenant and Sentinels), sound, music (`d40_07` .. `d40_09`) and Cortana's lines, doors and
 other objects' collision (they are drawn and passable), the scripted objects themselves
 (object calls find nothing).
 

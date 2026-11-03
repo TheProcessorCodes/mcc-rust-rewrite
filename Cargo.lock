@@ -1694,6 +1694,8 @@ dependencies = [
 name = "blam_h1"
 version = "0.1.0"
 dependencies = [
+ "blam_cache",
+ "blam_effect",
  "blam_geometry",
  "blam_h2",
  "blam_script",
@@ -2709,6 +2711,7 @@ dependencies = [
  "blam_cache",
  "blam_effect",
  "blam_geometry",
+ "blam_h1",
  "blam_script",
  "blam_texture",
  "game_paths",

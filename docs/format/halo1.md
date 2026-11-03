@@ -315,6 +315,190 @@ The countdown the Warthog run races (`timer_begin`, `endgame_cinematics`): `hud_
 minutes seconds` sets it, `hud_get_timer_ticks` reads it in 30ths of a second,
 `pause_hud_timer`, `show_hud_timer`, `hud_set_timer_warning_time` (1:00 on `d40`).
 
+## 13. Effects (`effe`, `part`, `pctl`, `ligh`, `pphy`)
+
+Checked on `d40` with `probe_h1_effects.py` (`python -I probe_h1_effects.py d40 [effect path]`
+prints an effect and everything it reaches; `--pctl` every particle system; `--hex PATH [SIZE]`
+dumps a tag). Code: `blam_h1::effect` (reader), `blam_h1::effect_library` (into Halo 3's
+effect types, 13.6). Tests: `blam_h1/tests/effects.rs`, `halo3_effects/tests/h1_run_effects.rs`.
+
+The Warthog run's scripts name their explosions through effect globals (`(global effect
+explosion_large "effects\explosions\large explosion")`, `effect_new explosion_large
+enc6_2_blast1`): `explosion_small` (`effects\small explosion`), `explosion_grenade` (`weapons\frag
+grenade\effects\explosion`), `explosion_medium` / `_no` (`effects\explosions\medium explosion` /
+`... no objects`), `explosion_large` / `_no`, `explosion_steam` / `_no`; the `no objects` ones
+leave out the debris (`garb`) parts. The scenario's script references (12, `+0x4B4`) list every
+effect the scripts can name: 11 on `d40`. The second argument is a cutscene flag (12).
+
+### 13.1 `effe` (0x40)
+
+| offset | what |
+|---|---|
+| 0x00 | flags (u32; 4 on every explosion) |
+| 0x04, 0x06 | loop start, loop stop event (i16, -1: no loop) |
+| 0x28 | locations, 0x20 each: a marker name (`''` the origin, `normal`, `gravity`) |
+| 0x34 | events, 0x44 each, played one after another |
+
+**Event** (0x44): skip fraction (f32 +0x04), delay bounds (+0x08), duration bounds (+0x10; 0 on
+every explosion: one burst), parts (block +0x2C, 0x68 each), particles (block +0x38, 0xE8 each).
+
+**Part** (0x68): create in environment, violence mode (u16 +0, +2), location (i16 +4), flags
+(u16 +6), the tag (reference +0x18: `snd!`, `ligh`, `pctl`, `jpt!`, `deca`, `garb`, `effe`),
+velocity bounds (+0x40, wu/s), velocity cone (+0x48, rad), angular velocity bounds (+0x4C),
+radius modifier bounds (+0x54), A and B scale flags (u32 +0x60, +0x64).
+
+**Particle** (0xE8): create in (u16 +0, +2), camera mode (u16 +4), location (i16 +8),
+direction yaw, pitch (+0x0C), offset (vec3 +0x14), the direction as a vector (+0x20, worked out;
+`(1,0,0)` on every run effect), the `part` (reference +0x54), flags (u32 +0x64), distribution
+function (u16 +0x68: when in the event particles are made), count bounds (i16 +0x6C, +0x6E),
+distribution radius bounds (+0x70), velocity bounds (+0x84, wu/s), velocity cone (+0x8C, rad; pi
+every way), angular velocity bounds (+0x90, rad/s), radius bounds (+0xA0, wu), tint lower and
+upper (argb reals, +0xB0, +0xC0).
+
+The large explosion: a `jpt!` damage, its sound, a shock wave `jpt!`, the `pctl` fireball, a
+scorch decal (at location `gravity`), three `garb` debris, the light; particles: drifting smoke
+(15 to 20), panel impacts and panel debris.
+
+### 13.2 `part` (0x164)
+
+| offset | what |
+|---|---|
+| 0x00 | flags (u32) |
+| 0x04 | bitmap (reference) |
+| 0x14 | point physics (`pphy` reference) |
+| 0x24 | a `foot` reference |
+| 0x38 | lifespan bounds, seconds |
+| 0x40, 0x44 | fade in time, fade out time, seconds (drifting smoke: 0.3 and 3 of a 2 to 4 s life) |
+| 0x48, 0x58 | collision effect, death effect (references; `effe` or `snd!`) |
+| 0x68 | minimum size |
+| 0x74 | radius animation bounds: the radius is multiplied from the first to the second over the life |
+| 0x80 | animation rate bounds, frames a second (0: one frame) |
+| 0x88 | contact deterioration |
+| 0x8C, 0x90 | fade start size, fade end size (pixels) |
+| 0x98 .. 0x9E | first sequence, initial, looping and final sequence counts (i16 each) |
+| 0xAC | orientation (u16): 0 screen facing, 1 parallel to direction, 2 perpendicular to it |
+| 0xD4 | the particle shader (13.4) |
+
+Values at 0x6C..0x73 are big-endian leftovers in padding. 0xA8 is a worked-out float.
+
+### 13.3 `pctl` (0x68): particles that pass through states
+
+The explosions' fireballs: each particle is fire for a moment, turns to a smoke plume, then
+fades into `death`.
+
+| offset | what |
+|---|---|
+| 0x38 | point physics (reference) |
+| 0x50 | physics constants, 4 bytes each |
+| 0x5C | particle types, 0x80 each |
+
+**Type** (0x80): name (char[32]; `fire to smoke`), flags (u32 +0x20), initial particle count (i16
++0x24; 30 on the large explosion), complex sprite render mode (u16 +0x28), radius (+0x2C; 1.5 wu,
+where particles are made), particle creation physics (u16 +0x54; 1 explosion on all fifteen of
+`d40`'s), physics flags (u32 +0x58), physics constants (block +0x5C, 4 bytes; for explosion
+creation the first two read as speed bounds in wu a tick: 0.07 and 0.125 on the large explosion,
+0.015 and 0.04 on the small; our reading), states (block +0x68, 0xC0 each), particle states
+(block +0x74, 0x178 each).
+
+**State** of the system (0xC0): name (`birth`, `death`), duration bounds (+0x20), transition
+bounds (+0x28), nine multipliers from +0x34 (1 in `birth`; `death` has zeros among them; their
+order not settled), creation physics (u16 +0xB0), physics constants (block +0xB4). Not used.
+
+**Particle state** (0x178):
+
+| offset | what |
+|---|---|
+| 0x00 | name (`fire`, `smoke plume`, `death`) |
+| 0x20 | duration bounds, seconds in this state |
+| 0x28 | transition bounds, seconds to become the next state |
+| 0x30 | bitmap (reference) |
+| 0x40 | sequence index (i16) |
+| 0x48 | scale bounds: **world units per pixel** of the sprite (fire cloud sprites are about 36 pixels: 0.04 to 0.07 makes the large explosion's fire 1.4 to 2.5 wu across) |
+| 0x50 | animation rate bounds (frames a second) |
+| 0x58 | rotation rate bounds (rad/s) |
+| 0x60, 0x70 | colour 1, colour 2 (argb reals; picked between) |
+| 0x80 | radius multiplier |
+| 0x84 | point physics (reference) |
+| 0xDC | the particle shader (13.4) |
+| 0x168 | creation physics (u16), then physics constants (block +0x16C) |
+
+The large explosion: `fire` 0.1 to 0.3 s, turning over 0.8 to 1 s into `smoke plume` (1 to 2 s,
+then 0.8 to 1.5 s into `death`, alpha 0). Fire is added (colour `1.0 0.9 0.55` to `0.93 0.57
+0.35`, alpha 0), smoke alpha blended (light grey, alpha 0.2 to 0.3).
+
+### 13.4 The particle shader (0x2C, in `part` at 0xD4 and particle states at 0xDC)
+
+| offset | what |
+|---|---|
+| +0x00 | 1 on every one seen (not used) |
+| +0x04 | shader flags (u16: sort bias, nonlinear tint, don't overdraw first-person weapon) |
+| +0x06 | framebuffer blend function (u16): 0 alpha blend, 1 multiply, 2 double multiply, 3 add, 4 subtract, 5 component min, 6 component max, 7 alpha-multiply add |
+| +0x08 | framebuffer fade mode (u16): 0 none, 1 fade when perpendicular, 2 when parallel |
+| +0x0A | map flags (u16) |
+| +0x28 | secondary map (reference; a `zmap` on steam) |
+
+The shader's map animation functions follow (u16 function, period, phase, scale ...); all zero on
+the run's particles.
+
+### 13.5 `ligh`, `pphy`, bitmap sequences
+
+**`ligh`**: flags (u32 +0), radius (+0x04, 10 wu on the explosions), radius modifier bounds
+(+0x08), falloff and cutoff angles (+0x10, +0x14), colour interpolation flags (u32 +0x34), colour
+lower and upper (argb reals +0x38, +0x48), gel map (reference +0x64), lens flare (reference
++0xAC), **duration in ticks** (+0xF4: 30 on the explosions, 4.5 on the grenade's quick flash,
+180 on the reactor's), falloff function (u16 +0xFA: 0 linear, 1 early, 2 very early, 3 late, 4
+very late, 5 cosine). The explosions' lights have an orange upper colour (`1.0 0.8 0.18`) and a
+black lower one: we play a light from the upper colour to the lower as the falloff runs out
+(`effect_library::falloff`, our reading of the function names: early loses its light early).
+Lights not made by effects (flashlights, glows) have a duration of 0.
+
+**`pphy`**: flags (u32 +0), density (+0x20, g/ml; air 0.0011, smoke 0.0004 to 0.0015, stones
+2.4), air friction, water friction, surface friction, elasticity (+0x24 .. +0x30). Worked out by
+the tools, and settled by their numbers on all 25 of `d40`'s: +0x04 the density times 118,625;
++0x08 `(1 - density) / (1 + density)` (buoyancy in water); **+0x0C `(0.0011 - density) / (0.0011
++ density)`**: the share of gravity that lifts it in air (smoke 0.16 to 0.47, stones -0.999).
+
+**Bitmap sequences** (`bitm` +0x54, 0x40 each): name (char[32]), first bitmap and bitmap count
+(i16 +0x20, +0x22; sequences of whole images, the lens flares), sprites (block +0x34, 0x20 each:
+image index i16 +0, left, right, top, bottom as fractions of that image +0x08). A sprite sheet
+(bitmap type 3) has its sprites spread over its images: `fire cloud`'s sequence 0 has 60 sprites
+on image 0, sequence 1 four on image 1.
+
+### 13.6 How they are played (`effect_library`)
+
+Halo CE's tags are turned into Halo 3's (`effects.md`), and `halo3_effects` plays them:
+
+- **Events** as they are. **Parts**: `snd!` stays a sound part (`halo3_effects` hands it to
+  `halo3_core::script_sound` as an impulse with the Halo CE tag index and path and where the
+  effect is: the hook for Halo CE sound), `ligh` becomes a light flash, `effe` a child effect,
+  `jpt!` a camera-shake request (not used), `pctl` systems (below); `deca` and `garb` stay parts
+  that are not played.
+- **Event particles**: one emitter of `count` particles, placed out to the distribution radius,
+  leaving in the cone at the velocity, `2 x radius` across, the radius animation over the life,
+  tinted between the two tints, alpha from the fade in and out (as shares of the mean life),
+  spinning at the angular velocity, the `part`'s bitmap and blend.
+- **A `pctl` type** becomes one emitter per particle state but the last: all made at once, `initial
+  count` of them in the type's radius, leaving every way at the creation speed. On the timeline at
+  the states' mean durations each state's emitter is fully seen for its duration, fades out over
+  its transition while the next one fades in (sizes moving towards the next state's), and the
+  last seen state fades into `death`. The two emitters' particles are not the same particles (our
+  renderer draws one blend mode per emitter): the fire puffs and the smoke puffs are made apart,
+  with the same spread.
+- **Sizes**: a particle state's scale times the mean sprite width in pixels of its sequence.
+- **Physics**: gravity scale is minus the air buoyancy (+0x0C), drag the air friction over the
+  worked-out mass (+0x04): the fireball's `fire explosion` physics stops a particle within a
+  tenth of a second, drifting smoke rises slowly, stones fly (our reading).
+- **Lights**: the `ligh` radius is the reach, intensity `LIGHT_INTENSITY` (our choice by eye)
+  times the colour from upper to lower.
+- **Bitmaps** become one atlas per tag (every 2D image stacked, mips by averaging), every
+  sequence a run of sprites on it, so sprite sheets and image sequences draw alike.
+- **Colours** are real colours in gamma space, made linear, times `COLOUR_SCALE` (1/3: undoes
+  `halo3_effects`' x3 exposure, so a colour reaches the screen as the tag has it).
+
+Not played: decals (`deca`), debris objects (`garb`), damage (`jpt!`), lens flares on lights,
+`part` collision effects, the system states, distribution functions over an event's duration,
+looping effects, the particles' secondary (`zmap`) maps, fade modes and map animations.
+
 ## What is not read yet
 
 Weapons on foot (netgame equipment through item collections to `weap` tags), sound
