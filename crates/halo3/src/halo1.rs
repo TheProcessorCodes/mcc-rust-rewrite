@@ -59,6 +59,9 @@ pub struct Loaded {
     pub start: Option<(Vec3, f32)>,
     /// A mission's scripts.
     pub scripts: Option<blam_script::ScriptData>,
+    /// The map, for what is read after the world (the encounters,
+    /// `halo1_ai.rs`).
+    pub map: blam_h1::Map,
 }
 
 pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded> {
@@ -144,6 +147,7 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
         sky,
         start,
         scripts,
+        map,
     })
 }
 

@@ -38,6 +38,10 @@ use blam_cache::CacheFile;
 use blam_geometry::ai::{self as tags, AiData, Character, Unit};
 use blam_geometry::weapons::Damage as DamageEffect;
 
+/// A unit's model, CPU side: Halo CE's bipeds are built outside
+/// (`halo3::halo1_ai`).
+pub use model::ModelData;
+
 pub use halo3_core::ai::{
     ActorActivity, ActorSkeleton, ActorState, ActorTag, AiBridge, AiCensus, AiCommand, AiRef, Allegiances, AutoPlace, Damage,
     PlayerVitality, Targets,

@@ -68,6 +68,8 @@ mod anim_test;
 mod countdown;
 mod finish;
 mod halo1;
+mod halo1_ai;
+mod halo1_anim;
 mod halo2;
 mod menu;
 mod reach;
@@ -245,6 +247,8 @@ pub(crate) struct MapExtras {
     /// The effects the scripts and the objects they damage play, read
     /// with their bitmaps (`halo3_effects`).
     effects: Option<halo3_effects::EffectAssets>,
+    /// Halo CE actors' animations (`halo1_anim.rs`).
+    h1_moves: Option<halo1_anim::H1Moves>,
 }
 
 impl LoadedMap {
@@ -345,6 +349,16 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
         let insertion = mission.and_then(|m| m.h1.as_ref());
         let mut h1 = halo1::load(&path, insertion)?;
         let mut extras = MapExtras::default();
+        // A mission's encounters, placed by its scripts (`halo1_ai.rs`),
+        // and the weapons they carry.
+        let mut arsenal = None;
+        if insertion.is_some() && value_of(args, "--ai").as_deref() != Some("none") {
+            if let Some(h1_ai) = halo1_ai::load(&h1.map, difficulty(args)) {
+                extras.ai = Some(h1_ai.assets);
+                extras.h1_moves = Some(h1_ai.moves);
+                arsenal = h1_ai.arsenal;
+            }
+        }
         if let (Some(ins), Some(data)) = (insertion, h1.scripts.take()) {
             let start = h1.start;
             let runtime = halo3_script::h1::runtime(data, &h1.scene, ins, difficulty(args));
@@ -371,7 +385,7 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             sky: h1.sky,
             water: world::water::WaterData::default(),
             map_file: None,
-            arsenal: None,
+            arsenal,
             foot_tuning: None,
             plain_fog: h1.fog,
             plain_sound: None,
@@ -617,7 +631,7 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         app.add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
         if grounded {
             // The campaign's squads (only maps with AI bring any).
-            app.add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin, ai::AiPlugin));
+            app.add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin, ai::AiPlugin, halo1_anim::H1AnimPlugin));
         }
     }
     if args.iter().any(|a| a == "--anim-test") {
@@ -815,6 +829,9 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         };
         w.insert_resource(mode);
         w.insert_resource(ai::PendingAi(extras.ai));
+        if let Some(m) = extras.h1_moves {
+            w.insert_resource(m);
+        }
     }
     w.insert_resource(zones);
     w.insert_resource(world::stream::ZoneTriggers::new(shot_mode));
