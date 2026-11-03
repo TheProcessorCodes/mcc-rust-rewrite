@@ -26,6 +26,7 @@ pub mod objects;
 pub mod script;
 pub mod shader;
 pub mod skeleton;
+pub mod sound;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

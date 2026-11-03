@@ -76,6 +76,9 @@ pub struct SoundData {
     /// carries: music 32, ambience 33, effects 4 (weapon fire; impacts and
     /// crashes have the same).
     pub ducking: Vec<(Bus, f32, [f32; 2])>,
+    /// Halo CE: each BSP's clusters and their background sounds
+    /// (`halo1.rs`), for maps whose scene has no cluster locator.
+    pub h1_bsps: Vec<blam_h1::sound::BspSound>,
 }
 
 impl SoundData {
@@ -144,6 +147,31 @@ impl Clips {
         }
         (n, bytes as f32 / (1 << 20) as f32)
     }
+}
+
+/// A clip store whose missing clips `decode` makes on a worker thread
+/// (`None`: the clip failed), by id: FMOD ids for Halo 3, bank sample ids
+/// for Halo CE (`halo1.rs`).
+pub(crate) fn clips_from(
+    thread: &str,
+    mut decode: impl FnMut(u32) -> Option<Clip> + Send + 'static,
+) -> std::io::Result<Arc<Clips>> {
+    let (req_tx, req_rx) = channel::<u32>();
+    let clips = Arc::new(Clips {
+        slots: Mutex::new(HashMap::new()),
+        requests: Mutex::new(req_tx),
+    });
+    let worker = clips.clone();
+    std::thread::Builder::new().name(thread.into()).spawn(move || {
+        while let Ok(id) = req_rx.recv() {
+            let slot = match decode(id) {
+                Some(c) => Slot::Ready(Arc::new(c)),
+                None => Slot::Failed,
+            };
+            worker.slots.lock().unwrap().insert(id, slot);
+        }
+    })?;
+    Ok(clips)
 }
 
 /// Turns decoded PCM into a clip: 48 kHz is all the bank holds; more than
@@ -306,23 +334,7 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         land_wheels: under(r"data\sound\materials\havok\tire\tire_hits\"),
     };
 
-    let (req_tx, req_rx) = channel::<u32>();
-    let clips = Arc::new(Clips {
-        slots: Mutex::new(HashMap::new()),
-        requests: Mutex::new(req_tx),
-    });
-    let worker = clips.clone();
-    std::thread::Builder::new()
-        .name("halo-sound-decode".into())
-        .spawn(move || {
-            while let Ok(id) = req_rx.recv() {
-                let slot = match library.decode(id).ok().and_then(to_clip) {
-                    Some(c) => Slot::Ready(Arc::new(c)),
-                    None => Slot::Failed,
-                };
-                worker.slots.lock().unwrap().insert(id, slot);
-            }
-        })?;
+    let clips = clips_from("halo-sound-decode", move |id| library.decode(id).ok().and_then(to_clip))?;
     bevy::log::info!(
         "sound: {} sound scenery, {} looping sounds, {} sounds, {} music tracks, {} weapons; bank and tags read in {:.2} s",
         map.scenery.len(),
@@ -340,6 +352,7 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
             gameplay,
             weapons,
             ducking,
+            h1_bsps: Vec::new(),
         }),
         clips,
     })

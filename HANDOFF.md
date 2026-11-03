@@ -814,7 +814,7 @@ off is a converted effect at a cutscene flag; a large explosion plays its flash,
 smoke).
 
 Not done (Halo CE sides with nothing behind them yet; the scripts' calls log once and do
-nothing): sound, music (`d40_07` .. `d40_09`) and Cortana's lines.
+nothing): what is listed as not done under each part below.
 
 **Objects (2026-11-03, branch `h1-objects`).** The placed objects are solid and the scripts
 reach them (`docs/format/halo1.md` 16 to 18, probe `probe_h1_objects.py`):
@@ -881,6 +881,28 @@ down). Walkers run at their run animation's root motion. `--ai none` leaves them
   grenades, infection forms reanimating the dead, carriers spawning infection forms. The AI
   fights the player only on foot until `enemies-attack-rider` (Halo 3's rider targeting) is
   merged; on the bike they fight each other.
+
+**Sound (2026-11-03, branch `h1-sound`).** MCC's Halo CE has no `sounds.map`: the audio is in
+FMOD banks in `halo1\sound\pc` (`game_paths::halo1_sound()`), found by tag path through
+`lst\*.lst.bin`, encoded as FMOD's CELT 0.11.0 (`docs/format/halo1.md` 19, probe
+`probe_h1_sound.py`). The Xiph CELT 0.11.0 decoder is vendored in `third_party/celt-0.11.0`
+(BSD-3-Clause, C, built by the new crate `fsb_celt` with `cc`; needs MSVC's C compiler, which
+the Rust MSVC toolchain already has). `blam_h1::sound` reads `snd!`, `lsnd`, the script
+sound references, each BSP's background sound per cluster (with its own cluster finder from
+the collision tree) and the banks; `halo3_audio::halo1` turns them into Halo 3's player data,
+so `music.rs` plays them unchanged (`MapSound::Halo1`). On the run: `d40_07` from the start
+(the insertion passes `enc6_0_dialog`, whose script starts it), its alternate
+(`string_idea`, cross-faded over 6 s) at the Pelican scene, `d40_08` after it, the one-shot
+finale `d40_09` at `enc6_9_1`, `d40_08` stopped at `grand_finale`; Cortana's and the pilot's
+lines on the dialogue bus in the setup's language (French, German, Italian, Spanish banks;
+English otherwise or when a line is missing), each script sleeping as long as its line
+(`sound_impulse_time`, from the tag's own PCM length); the trench's `interior_*_trench`
+background loops by cluster. Every `snd!` of the map is playable by tag index, so effects
+can sound: push `SoundRequest::Impulse { tag, name, at: Some(pos), scale }` into
+`ScriptSounds` (`halo3_audio/src/halo1.rs` header). Levels are our choice (no class tag in
+Halo CE): music and lines as tagged, effects -6 dB, ambience -12 dB. Headless at the run's start (`HALO3_AUDIO_TRACE=1 --shot`): `d40_07` -13 to -18 dBFS, Cortana -14 to -17, the trench background (its loop and the `muffled_explosions` it scatters every 0.5 to 2 s, details a further -6 dB) -18 to -21 (it was -12, over the music, at the tags' own gains). Not done: pitch, reverb
+(`snde`), sound scenery (none on the run), the cutscenes' 5.1 music, the Warthog's engine
+sounds (in no bank). Awaiting the user's playtest.
 
 Also fixed on this branch: a headless `--shot` without `--bike` / `--skate` / `--foot`
 crashed on every map (the speedometer read the bike's resources, which such a shot does not

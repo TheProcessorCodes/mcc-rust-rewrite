@@ -152,6 +152,21 @@ pub fn halo1_maps() -> Option<PathBuf> {
         .or_else(|| Some(mcc_root()?.join("halo1").join("maps")))
 }
 
+/// MCC's Halo CE sound banks (`sounds_music.fsb`, `sounds_dialogs*.fsb`, ...
+/// with their indexes in `lst\`): `%HALO1_SOUND%`, else `sound\pc` beside
+/// the Halo CE maps folder (`halo1\sound\pc`).
+pub fn halo1_sound() -> Option<PathBuf> {
+    std::env::var_os("HALO1_SOUND")
+        .map(PathBuf::from)
+        .or_else(|| Some(halo1_maps()?.parent()?.join("sound").join("pc")))
+}
+
+/// A Halo CE map by bare name (`d40`), when it is installed. For tests.
+pub fn halo1_map(name: &str) -> Option<PathBuf> {
+    let p = halo1_maps()?.join(format!("{name}.map"));
+    p.is_file().then_some(p)
+}
+
 /// MCC's Halo: Reach maps: `%HALOREACH_MAPS%`, else `haloreach\maps` in MCC.
 pub fn reach_maps() -> Option<PathBuf> {
     std::env::var_os("HALOREACH_MAPS")

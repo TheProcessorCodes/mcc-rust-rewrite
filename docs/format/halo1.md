@@ -64,7 +64,7 @@ The structure BSP's entry has no data of its own here: its data is in its BSP ch
 
 `bitmaps.map` beside the maps (185 MB, shared by all of them) holds most bitmaps' pixels. Its
 header starts with 1 (bitmaps), but nothing in it is needed: each bitmap image says its own
-offset into the file (8). `sounds.map` is the same for sound.
+offset into the file (8). MCC ships no `sounds.map`: sound is in FMOD banks (19).
 
 ## 4. Scenario (`scnr`)
 
@@ -715,10 +715,206 @@ away for its door open time. The distance is ours; the game's exact test was not
 `antr` (the devices' animations) is not read: in the viewer an open door (position past one
 half) loses its collision and is not drawn, a platform keeps its rest pose.
 
+## 19. Sound
+
+Probed 2026-11-03 on The Maw (`d40`) with `probe_h1_sound.py` (`raw TAG`, `lsnd NAME`,
+`snd NAME`, `lst BANK [grep]`, `fsb BANK [first [n]]`, `find NAME`, `check NAME`); code
+`blam_h1::sound` (tags, banks), `fsb_celt` (the codec), `halo3_audio::halo1` (playing).
+Field meanings come from the values (names, lengths, which tags set what) and the public
+HEK field order; no other project's code was read.
+
+### 19.1 Where the audio is
+
+MCC's Halo CE has **no `sounds.map`**. A permutation's sample data reference in the map
+(`+0x40`: size, flags 1 "external", offset) points into the original release's
+`sounds.map`, which MCC does not ship. The audio is in FMOD FSB5 banks in
+`halo1\sound\pc\` (`game_paths::halo1_sound()`), found **by tag path** through an index per
+bank in `halo1\sound\pc\lst\`:
+
+| bank | samples | codec | what (on `d40`, by tag count) |
+|---|---|---|---|
+| `sounds_dialogs.fsb` | 6,093 | CELT | every line, English (194 `d40` tags) |
+| `sounds_dialogs_french` / `_german` / `_italian` / `_spanish.fsb` | 5,840 (French) ... | CELT | the localised lines, each bank with its own `.lst.bin` (the Chinese, Japanese and Korean `.lst.bin` have no bank) |
+| `sounds_music.fsb` | 1,028 | CELT | music, and some long ambience loops (48 tags) |
+| `sounds_stream.fsb` | 254 | CELT | streamed loops (29 tags) |
+| `sounds_debug.fsb` | 2,245 | CELT | most effects, despite the name (497 tags) |
+| `sounds_adpcm.fsb` | 3,106 | IMA ADPCM (7) | other levels' effects, 22.05 / 44.1 kHz (no `d40` tag) |
+
+**`<bank>.lst.bin`**: u32 version (1), u32 entry count, then per entry: u32 length
+(including the NUL), the tag path (`sound\music\perc\loops`), u32 first sample, u32 sample
+count. The entries' samples follow each other through the bank. Paths compare case-blind.
+
+**A tag's samples** are `first .. first + count`. For 678 of `d40`'s 768 tags in a bank the
+count is the tag's actual permutation count and sample `first + k` carries permutation `k`'s
+name (`sounds_music` #140 `lp1` .. #144 `lp5` for `perc\loops`). For the rest MCC has its
+own takes: names sorted alphabetically instead of in tag order (`strnglp3\loops`: tag `lp4,
+lp1, lp2, lp3`, bank `lp1 .. lp4`), or more takes than the tag has permutations (remastered
+weapon sounds: tag `shotgun_fire`, bank `shotgun_fire_1 .. _3`). So a play picks among the
+bank's samples, not the tag's permutations. 4 `d40` tags are in no bank (the Warthog's
+engine, `warthog_7_*`).
+
+**Lookup order** (`Banks::open`, our choice): the player's language bank
+(`game_paths::language()`; `mexican` takes the Spanish bank), English dialogue, music,
+stream, debug, ADPCM. A line missing from a language bank plays in English.
+
+### 19.2 The banks
+
+FSB5 as in `sound.md` 1 (version 1 header of `0x3C` bytes, the 64-bit sample headers and
+their chunks, data at `0x3C + headers + names`), with these differences:
+
+- Codec (`+0x18`) **12, CELT**; header flags (`+0x1C`) `0x80000010`, which marks CELT
+  **0.11.0**. The ADPCM bank: codec 7, flags 0.
+- Every sample 44.1 kHz (the ADPCM bank also 22.05). Mono or stereo; 218 music-bank samples
+  have a channels chunk (type 1) saying 4.
+- The name table is filled: one name per sample (`D40_440_Cortana`, `lp1`, `desertwindlp1`).
+- Dialogue and effect samples carry a loop chunk (type 3) from 0 to the last frame; music has
+  none. Not used: music loops by playing its permutations back to back.
+- No `.info` sidecar (Halo 3's banks have one).
+
+**CELT framing.** A sample's data is frames back to back: the 4 bytes `17 C3 0D F3`, a u32
+length (464 bytes stereo, 370 mono on the music and dialogue), then one CELT 0.11.0 packet
+of 512 frames per channel in a custom mode of 44.1 kHz and 512-frame packets. The packets
+decode with the Xiph CELT 0.11.0 library (`third_party/celt-0.11.0`, BSD-3-Clause, built by
+`crates/fsb_celt`) to the header's frame count once the last packet is trimmed: `perc\in`
+204,288 frames, 4.63 s, -14.5 dBFS RMS, 17 of 408,576 samples at full scale; every first
+sample of every `d40` tag in a bank decodes to its header's length. Zero padding follows the
+last frame up to the next 16-byte offset.
+
+**4-channel CELT** (ambience: `desertwindlp1`, `tonalghost`): two stereo streams whose
+packets take turns (A, B, A, B, ...): `tonalghost`'s 353,792 frames are 691 packets per
+pair, and 1,382 packets of 472 bytes are exactly its data, followed by padding and a stray
+partial frame. Decoded
+as two stereo pairs and folded to stereo, front pair first (assumed).
+
+**Not decoded:** the cutscenes' `*_5.1mix` music (`d40_bridge_music01_5.1mix_v1` ...): the
+header says mono, the data has no CELT sync and runs about 2.8 bytes per frame. None is on the
+run.
+
+**IMA ADPCM** (codec 7): blocks of 36 bytes per channel, a 4-byte header per channel (sample
+i16, step index u8, pad), then 4-byte groups of 8 nibbles taking turns per channel, 64
+samples per block (`blam_h1::sound`; not checked, no `d40` tag uses it).
+
+### 19.3 `snd!`
+
+| offset | type | what | evidence |
+|---|---|---|---|
+| `0x00` | u32 | flags | 2 on music, 0 on the lines |
+| `0x04` | u16 | **sound class** (below) | 32 on music, 44 on The Maw's lines |
+| `0x06` | u16 | sample rate: 0 22.05 kHz, 1 44.1 kHz (the original release's) | lines 0, music 1 |
+| `0x08`, `0x0C` | f32 | **distance**: full volume within, silent beyond (wu) | music 0.9 / 5, lines 3 / 20 |
+| `0x10` | f32 | skip fraction | |
+| `0x14`, `0x18` | f32 | random pitch bounds | 1, 1 |
+| `0x1C`, `0x20`, `0x24` | f32 | inner and outer cone angles (2 pi), outer cone gain | |
+| `0x28` | f32 | **gain**, linear | 0.85 on The Maw's lines, 1 on music |
+| `0x3C`, `0x40`, `0x44` | f32 | skip, gain, pitch at script scale 0 | 1, 0, 1 |
+| `0x54`, `0x58`, `0x5C` | f32 | skip, gain, pitch at script scale 1 | 1, 1, 1 |
+| `0x6C` | u16 | encoding: 0 mono, 1 stereo | |
+| `0x6E` | u16 | the original release's compression: 3 Ogg | |
+| `0x70` | tag ref | promotion sound | |
+| `0x98` | block | **pitch ranges**, 0x48 each | |
+
+**Pitch range** (0x48): name (char[32]), natural pitch (f32 `0x20`), bend bounds (`0x24`),
+**actual permutation count** (i16 `0x2C`), permutations (block `0x3C`, 0x7C each).
+
+**Permutation** (0x7C): name (char[32]), skip fraction (`0x20`), gain (`0x24`), compression
+(u16 `0x28`), **next permutation** (i16 `0x2A`, -1 none), **PCM bytes** of the original
+release's data (u32 `0x38`), the sample data reference (`0x40`). The first `actual`
+permutations are the plays; the rest continue them through `next` (the original release split
+long sounds: `perc\loops` has 10 permutations, 5 actual, `lp1` continued by the second
+`lp1`, ...). MCC's bank has one sample per actual permutation, the pieces joined.
+
+**Length from the tag alone**: a permutation's and its continuations' PCM bytes over (rate x
+2 x channels): `d40_440_cortana` 581,808 bytes mono at 22.05 kHz = 13.19 s against the bank
+take's 13.20 s (French 13.20 s); `perc\loops` `lp1` and its continuation 9.23 s, bank 9.24 s.
+`blam_h1::sound::script_seconds` answers the scripts' `sound_impulse_time` from it.
+
+**Classes** (Halo CE's numbering in the HEK's order; checked on `d40` for 32 and 44): 0 and 1
+projectile impact and detonation, 4 to 10 weapons, 13 to 15 impacts, 18 footsteps, 19 unit
+dialogue, 22 and 23 vehicle collision and engine, 26 to 30 devices, **32 music**, **33 to 35
+ambience** (nature, machinery, computers), 39 first-person damage, **44 scripted dialogue
+(player), 45 scripted effect, 46 scripted dialogue (other), 47 scripted dialogue (forced
+unspatialised)**, 50 game event. There is no class tag: the class levels are in the engine.
+
+### 19.4 `lsnd`
+
+Header, 0x54 bytes:
+
+| offset | type | what |
+|---|---|---|
+| `0x00` | u32 | flags: bit 1 **not a loop** (`d40_09`, the finale, plays its one bar once; every cutscene `sinomatixx` piece), bit 2 **stops music** (`d40_01` .. `d40_06`) |
+| `0x04` .. `0x18` | f32 | 1.0 everywhere (detail periods and gains at scale 0 and 1; not used) |
+| `0x20` | f32 | a distance: 5 on music, 3 to 300 on placed loops (120 on the trench ambience) |
+| `0x2C` | tag ref | continuous damage effect (none) |
+| `0x3C` | block | **tracks**, 0xA0 each |
+| `0x48` | block | **detail sounds**, 0x68 each |
+
+**Track** (0xA0): flags (u32 `0x00`: bit 0 fade in, bit 1 fade out on stop, bit 2 fade to the
+alternate; Halo 3's meanings, `sound.md` 5), gain (f32 `0x04`, linear), fade in and fade out
+times (`0x08`, `0x0C`), then tag references: **start** `0x30`, **loop** `0x40`, **end**
+`0x50`, **alternate loop** `0x80`, **alternate end** `0x90`. No alternate transitions and no
+cross-fade time.
+
+**Detail** (0x68): sound (tag ref `0x00`), random period bounds s (`0x10`, `0x14`), gain
+(`0x18`), flags (`0x1C`), yaw bounds (`0x50`, `0x54`, -pi..pi), pitch bounds (`0x58`, `0x5C`),
+distance bounds (`0x60`, `0x64`). Checked on `emitters\fire` (1 to 3 s, `fire_detail`) and the
+computer loops.
+
+**The run's music:**
+
+| piece | tracks | rules |
+|---|---|---|
+| `d40_07` | start `music\perc\in` (4.6 s), loop `perc\loops` (5 bars of 9.2 s), alternate loop `misc\string_idea` | fade out 6 s, fade to the alternate |
+| `d40_08` | loop `misc\long` | fade out 6 s |
+| `d40_09` | loop `cstrng\cstrng3` | not a loop: plays once |
+
+### 19.5 Scripts, BSP ambience, sound scenery
+
+- **Script tag references** (`scnr + 0x4B4`, 0x28 each, the reference at `+0x18`): every
+  `snd!` and `lsnd` the scripts name (`blam_h1::sound::script_sounds`).
+- **The run's sound calls** (`.dev\d40_scripts.txt`): `enc6_0_dialog` stops `d40_06` and starts
+  `d40_07` at the jeeps; `enc6_6_1` sets its alternate (the Pelican scene) and plays
+  `d40_370_cortana`; `trench_scene` plays `d40_400_cortana`; `trench_scene_continue` stops
+  `d40_07`, starts `d40_08` and plays `d40_440_cortana`; `enc6_9_1` starts `d40_09`;
+  `test_for_endgame` plays `d40_450_cortana` and stops `d40_08` at `grand_finale`. The lines are
+  static scripts `d40_NNN_cortana` / `_pilot`: `(sound_impulse_start snd none
+  cortana_dialogue_scale)` then `(sleep (max 0 (- (sound_impulse_time snd) 30)))`, so each line
+  waits for the one before; `sound_impulse_time` is the sound's length in ticks. Our insertion
+  counts `enc6_0_dialog` as passed, which makes its script start `d40_07` at once
+  (`halo3_script/tests/h1_sound.rs`).
+- **Background sound per cluster**: `sbsp + 0x1FC` is the background sound palette (0x74
+  each: name, `lsnd` at `+0x20`), `sbsp + 0x208` the sound environment palette (0x50 each:
+  name, `snde` at `+0x20`; not used). A cluster (0x68) names its background sound entry at
+  **`+0x4`** and its sound environment at `+0x6` (i16, -1 none). The run's BSPs (`d40f` ..
+  `d40h`) share an 8-entry palette of `interior_*` loops (the `_trench` ones for the run).
+- **Which cluster a point is in**: the collision BSP's 3D nodes (12 bytes: plane i32, back
+  child i32, front child i32; a child with the top bit set is a leaf, its index in the low 31
+  bits; -1 solid) from node 0 (front when `n . p - d >= 0`), then the leaf's render leaf
+  (`sbsp + 0xE0`, 16 bytes each, as many as the collision leaves: 15,171 on `d40f`) names the
+  cluster at `+0x8` (i16). Checked: the first Warthog's bay and the run's trigger volumes all
+  land in clusters, the start in one with `interior_base_trench`.
+- **Sound scenery**: placements `scnr + 0x2DC` (0x28 each: palette i16 `+0`, position
+  `+0x8`), palette `+0x2E8` (0x30, the `ssce` at `+0`); the `ssce`'s object attachments (block
+  `+0x140`) name the `lsnd` at `+0`. `d40` has 37 (desert wind, computer loops), all on the
+  bridge and at the mission's start, none on the run; not played.
+
+### 19.6 How we play it (`halo3_audio::halo1`)
+
+The tags become Halo 3's player data (`SoundData`): every `snd!` a `SoundInfo` whose
+"permutations" are bank sample ids (bank index in the top 8 bits), every `lsnd` a
+`blam_sound::tags::Looping` with the same flags (a track that fades to its alternate
+cross-fades over its fade-out time, else 2 s: our choice, the tag has no time), so `music.rs`
+plays the scripts' music, one-shots and lines as it does Halo 3's (`sound.md` 8). Samples are
+decoded on demand and resampled to 48 kHz (Catmull-Rom). Buses by class: 32 music; 19, 44,
+46, 47 dialogue; 33 to 35 ambience; the rest effects. Levels: the tags' linear gains; music
+and lines as tagged, effects 6 dB and ambience 12 dB down (our choice; at the tag gain the trench's background sat over the music); lines duck the music by 3 dB
+and effects by 6 dB (Halo 3's numbers). Background loops follow the listener's cluster
+through the ambience in `lib.rs`. Not done: pitch (natural, random, bend), skip fractions,
+cone gains, sound environments (reverb), sound scenery, `sound_class_set_gain` beyond music and
+ambience, the 5.1 cutscene music.
+
 ## What is not read yet
 
-Weapons on foot (netgame equipment through item collections to `weap` tags), sound
-(`sounds.map`), campaign vehicles, the AI's command lists, platoons' behaviour, actor
+Weapons on foot (netgame equipment through item collections to `weap` tags), campaign vehicles, the AI's command lists, platoons' behaviour, actor
 states, grenades and the `actr` behaviour numbers beyond perception, compressed animations,
 the graph's unit and weapon action tables, device animations (`antr`), the netgame flags
 (teleporters, CTF flags), the multipurpose map's specular
