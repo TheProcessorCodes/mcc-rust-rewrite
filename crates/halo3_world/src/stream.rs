@@ -44,6 +44,9 @@ pub struct WorldSource {
     pub lightmaps: Vec<Option<LightmapTextures>>,
     /// The GPU takes BC textures.
     pub bc: bool,
+    /// The reflection cube array and its capture points
+    /// (`reflections.rs`), shared by every material.
+    pub reflections: Option<(Handle<Image>, Handle<Image>)>,
 }
 
 /// An uploaded image, held weakly, and whether it reads -1..1.
@@ -339,12 +342,17 @@ fn chunk_material(
         .sampler
         .get_or_insert_with(|| images.add(super::sampler_carrier()))
         .clone();
+    let (cubes, cube_points) = source.reflections.clone().map_or((None, None), |(a, b)| (Some(a), Some(b)));
+    let mode = if cubes.is_some() { super::reflections::mode() } else { 0.0 };
     let mut extension = HaloLightmap {
         scales: Vec4::from_slice(&scales[..4]),
-        extra: Vec4::new(scales[4], lighting::exposure(), 0.0, 0.0),
+        extra: Vec4::new(scales[4], lighting::exposure(), mode, super::reflections::cube_scale()),
         coefficients,
         intensity,
         surface_dummy: Some(sampler),
+        cubes,
+        cube_points,
+        cube_axes: super::reflections::cube_axes(),
         ..default()
     };
     if let Some(t) = terrain {
@@ -412,6 +420,9 @@ pub fn upload(
         }
         if let Some(o) = chunk.object {
             entity.insert(halo3_core::objects::ObjectChunk(o));
+        }
+        if chunk.reflection != 0 {
+            entity.insert(bevy::mesh::MeshTag::new(chunk.reflection));
         }
         entities.push(entity.id());
     }

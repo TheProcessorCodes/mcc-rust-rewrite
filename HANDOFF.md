@@ -212,7 +212,9 @@ Order: the user approved 1, 2, 3, 4 as the priority order (2026-10-31).
 
 **Look, still different from real Halo 3:**
 
-- Real cube-map reflections (now an SH stand-in) and parallax.
+- How Halo itself scales its normalised reflection cubes (ours: by the lightmap's mean
+  light times 0.12, `docs/format/cubemaps.md` 3); `per_pixel` shaders' own cubes are drawn
+  with the level's.
 - Halo's exact specular and tonemap curve.
 - Haze that varies with height; cliffs come out a little too warm.
 - Water's painted masks; High Ground's seam between the cove and the sea.

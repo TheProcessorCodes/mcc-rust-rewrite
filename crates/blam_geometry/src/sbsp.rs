@@ -10,7 +10,7 @@ use crate::lightmap::{self, Lighting};
 use crate::materials::MaterialTable;
 use crate::render_geometry::{self, GeometryResource};
 use crate::render_model::matrix_from_rows;
-use crate::scene::{BspInfo, ClusterInfo, Kind, Mesh, Part, Placement, Portal, Scene};
+use crate::scene::{BspInfo, ClusterInfo, CubemapPoint, Kind, Mesh, Part, Placement, Portal, Scene};
 use crate::{Error, Result};
 
 /// The structure BSPs a scenario lists, with the lightmap tag that holds each
@@ -20,6 +20,9 @@ pub struct BspTags<'a> {
     pub index: u32,
     pub sbsp: &'a TagEntry,
     pub lightmap_bsp: Option<&'a TagEntry>,
+    /// The BSP's reflection cube maps (`bitm`, scenario structure BSP
+    /// `+0x48`; `docs/format/cubemaps.md`).
+    pub cubemaps: Option<u32>,
 }
 
 /// Which BSPs the map's scenario uses.
@@ -56,10 +59,12 @@ pub fn structure_bsps(cache: &CacheFile) -> Result<Vec<BspTags<'_>>> {
             .find(|(b, _)| *b == i as i16)
             .map(|(_, t)| *t)
             .or_else(|| cache.tags.find("Lbsp", sbsp.name()));
+        let cubemaps = cache.reader_at(o + 0x48).tag_ref()?;
         out.push(BspTags {
             index: i as u32,
             sbsp,
             lightmap_bsp,
+            cubemaps: cubemaps.index.filter(|_| cubemaps.class.as_str() == "bitm"),
         });
     }
     Ok(out)
@@ -179,6 +184,7 @@ pub fn decode(
         .map(|o| cache.reader_at(o + 4).i16().map(|i| u32::try_from(i).ok()))
         .collect::<std::result::Result<_, _>>()?;
     let mut cluster_info = Vec::new();
+    let mut cubemaps = Vec::new();
     for (c, o) in clusters.elements(280).enumerate() {
         stats.clusters += 1;
         // Bounds (x, y, z ranges; FLT_MAX when unset), the sky index at
@@ -200,6 +206,21 @@ pub fn decode(
                 .and_then(|a| atmospheres.get(a).copied().flatten()),
             acoustics: u32::try_from(acoustics).ok(),
         });
+        // +0x10C: the cluster's reflection cube maps, 16 bytes each:
+        // capture point, the cube's scenario-wide number, its bitmap in
+        // this BSP's cube map tag (`docs/format/cubemaps.md` 2).
+        if bsp.cubemaps.is_some() {
+            let points: Block = cache.reader_at(o + 0x10C).block()?;
+            for p in points.elements(16).take(256) {
+                let mut r = cache.reader_at(p);
+                let position = Vec3::from(r.f32x3()?);
+                let (id, cube) = (r.i16()?, r.i16()?);
+                let (Ok(id), Ok(cube)) = (u32::try_from(id), u32::try_from(cube)) else { continue };
+                if position.is_finite() {
+                    cubemaps.push(CubemapPoint { position, cluster: c as u32, id, cube });
+                }
+            }
+        }
         let section = cache.reader_at(o + 216).i16()?;
         let Some(mesh) = usize::try_from(section)
             .ok()
@@ -288,6 +309,8 @@ pub fn decode(
         clusters: cluster_info,
         portals,
         locator: None,
+        cubemap_bitmap: bsp.cubemaps,
+        cubemaps,
     });
     Ok(stats)
 }
