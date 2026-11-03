@@ -315,9 +315,87 @@ The countdown the Warthog run races (`timer_begin`, `endgame_cinematics`): `hud_
 minutes seconds` sets it, `hud_get_timer_ticks` reads it in 30ths of a second,
 `pause_hud_timer`, `show_hud_timer`, `hud_set_timer_warning_time` (1:00 on `d40`).
 
+## 13. Which BSPs an object stands in
+
+Checked on `d40` with `probe_h1_objects.py`. Halo CE loads one structure BSP at a time, and an
+object belongs to the BSPs whose **open space** holds its position: walk the BSP's collision
+3D nodes (collision BSP `+0x0`, 12 bytes: plane i32, back child i32, front child i32; planes at
+`+0xC`, 16 bytes: normal, d) from node 0, front when `n . p - d >= 0`; a child of -1 is solid
+(outside), any other negative child (top bit set) is a leaf (inside). A BSP with no 3D nodes
+holds everything (d40's BSP 9). Scenery placements store this mask themselves: **u16 at
+`+0x20`**, bit k for BSP k; it equals the point test on all 293 of d40's scenery. Machines and
+controls keep zeros there; the point test is used for them.
+
+On d40 the Warthog run's BSPs (5, 6, 7) hold 123 scenery, 6 machines (the lift at the bottom of
+its shaft, x -113, z 7.4: `elevator`, `elevator_door`, two blast doors, `enc5_2_door`; and
+`asspain_13` at the top, never created by any script) and `poa_explosion` (created only by the
+losing cutscene). BSP 5's stated bounds also take in the ship's insides (BSPs 1 to 4; the
+interior doors), which the point test leaves out.
+
+## 14. Collision models (`coll`)
+
+The object tag names it at `+0x70` (model `+0x28`, animations `antr` `+0x38`).
+
+| offset | what |
+|---|---|
+| 0x234 | materials, 0x48 each |
+| 0x240 | regions, 0x54 each: name (char[32]), permutations (block `+0x48`, 0x40 each, a name) |
+| 0x280 | pathfinding spheres, 0x20 each |
+| 0x28C | nodes, 0x40 each |
+
+A **node** (0x40): name (char[32]), region (i16 `+0x20`, -1: none), parent (i16 `+0x22`), next
+sibling (`+0x24`), first child (`+0x26`), and its collision BSPs (block `+0x34`, 0x60 each),
+**one per permutation of its region**, laid out exactly as the structure BSP's (section 7).
+`c_field_generator`'s region `shield` has permutations `shield` and `` (broken) and its node two
+BSPs, the second smaller. The placement's desired permutation is the i16 at `+0x6`.
+
+A node's BSP is in that node's frame: put it on the render model's node of the same name
+(`mod2` nodes, `+0xB8`, 0x9C each: name, parent i16 `+0x24`, default translation `+0x28`,
+rotation `+0x34` as i j k w, relative to the parent). **The stored rotation is the inverse**:
+conjugated, the collision lands on the drawn model (mean distance 0.00 against 0.02 wu on
+d40's `signal light`; 0.01 against 0.76 on a10's `cryotube`, 0.29 against 0.99 on the crashed
+Pelican); identity nodes agree either way. Placed with the object's yaw, pitch, roll and
+position (section 4).
+
+Not every object has one: effects scenery (`burning_flame`, `sparks`, the `poa_fire_emitter`s)
+and the Longsword in d40's hangar (`fighterbomber_scenery`, radius 12) reference none, so the
+game passes through them. On the run the solid ones are 60 `h oxy tank` (a cylinder 1.0 wu
+across, 0.83 high, 163 surfaces) and 5 `c_field_generator`. `door_blast_collision` is a
+two-surface invisible wall (`elevator_blocker` at the lift's bottom, placed by scripts).
+
+## 15. Devices (`devi`, `mach`, `ctrl`)
+
+`devi` follows `obje` at `+0x17C`: flags (u32), power transition time (f32 `+0x180`), power
+acceleration time (`+0x184`), **position transition time** (`+0x188`, seconds closed to open:
+`door small` 0.8, `door blast` 14, `elevator` 30), position acceleration time (`+0x18C`); near
+the end the engine's per-tick inverses (`+0x284` = 1 / (30 x acceleration time), `+0x288` = 1 /
+(30 x transition time)).
+
+`mach` after it: **type** (u16 `+0x290`: 0 door, 1 platform, 2 gear), flags (u16 `+0x292`: 1
+pathfinding obstacle, 2 but not when open, 4 elevator), **door open time** (f32 `+0x294`,
+seconds a door stays open; `door small` 1.5). Many of a10's "doors" are platforms
+(`door small no glass`, `door blast`, `door cryo chamber`): only scripts move them.
+
+Machine and control placements (0x40): after the common start, power group (i16 `+0x28`),
+position group (i16 `+0x2A`), **device flags** (u32 `+0x2C`: 1 initially open, 2 initially off,
+4 can change only once, 8 position reversed, 16 not usable from any side), and for machines
+**machine flags** (u32 `+0x30`: 1 does not operate automatically, 2 one-sided, 4 never appears
+locked, 8 opened by melee attack). The flag names are the HEK's as the community documents
+them; the values seen on d40 fit them (the lift's top door `asspain_13`: 3, initially open and
+off).
+
+The rule we use for a door the game opens itself (a door machine without "does not operate
+automatically", powered): it opens over its transition time when the player comes within its
+bounding sphere (`obje +0x4` radius, `+0x8` offset) plus 0.6 wu, and closes once he has been
+away for its door open time. The distance is ours; the game's exact test was not read.
+
+`antr` (the devices' animations) is not read: in the viewer an open door (position past one
+half) loses its collision and is not drawn, a platform keeps its rest pose.
+
 ## What is not read yet
 
 Weapons on foot (netgame equipment through item collections to `weap` tags), sound
-(`sounds.map`), campaign vehicles, bipeds and AI (encounters), object collision, the netgame flags (teleporters, CTF flags), the multipurpose map's specular
+(`sounds.map`), campaign vehicles, bipeds and AI (encounters), device animations (`antr`), the
+netgame flags (teleporters, CTF flags), the multipurpose map's specular
 and self-illumination, micro detail, bump and reflection maps, water animation, the indoor fog,
 the decals and detail objects.
