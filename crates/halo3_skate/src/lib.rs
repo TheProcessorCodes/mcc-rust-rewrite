@@ -553,6 +553,12 @@ fn update(
 ) {
     let host = &mut *host;
     let Some(receive) = host.receive.as_ref() else {
+        // No skate session (it failed): a hand-over to the board lands him
+        // on foot instead.
+        if let Some((Ride::Board, bail)) = mount.0 {
+            mount.0 = None;
+            dismount.0 = Some(bail);
+        }
         return;
     };
     // Another zone set: rebuild the skate world from its collision.
@@ -734,7 +740,7 @@ fn update(
         rider.bones.clear();
         rider.camera = None;
         let _ = send.send(Job::Suspend);
-        commands.entity(camera).remove::<Skating>();
+        // The camera keeps `Skating`: the bike takes it over (`Mount`).
         mount.0 = Some((Ride::Bike, Bail::new(host.feet, host.velocity, &transform)));
         return;
     }
@@ -746,7 +752,7 @@ fn update(
         rider.bones.clear();
         rider.camera = None;
         let _ = send.send(Job::Suspend);
-        commands.entity(camera).remove::<Skating>();
+        // The camera keeps `Skating`: the Spartan takes it over (`Dismount`).
         dismount.0 = Some(Bail::new(host.feet, host.velocity, &transform));
         return;
     }

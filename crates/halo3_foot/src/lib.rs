@@ -241,15 +241,18 @@ pub fn walk(
         info!("on foot: jumped off at {:.1} m/s", Vec2::new(v.x, v.z).length());
     } else if toggle || (ride.is_some() && foot.spartan.is_some()) {
         if let Some(spartan) = foot.spartan.take() {
-            if let Some(ride) = ride {
-                let view = rider.camera.map_or(*transform, |(v, _)| v);
-                mount.0 = Some((ride, Bail::new(spartan.position, spartan.velocity, &view)));
-            }
+            let view = rider.camera.map_or(*transform, |(v, _)| v);
             rider.foot = false;
             rider.first_person = false;
             rider.active = false;
             rider.bones.clear();
             rider.camera = None;
+            if let Some(ride) = ride {
+                // The camera keeps `Skating`: the ride takes it over
+                // (`Mount`).
+                mount.0 = Some((ride, Bail::new(spartan.position, spartan.velocity, &view)));
+                return;
+            }
             commands.entity(camera).remove::<Skating>();
             // Fly on from where the camera was.
             fly.yaw = foot.yaw;

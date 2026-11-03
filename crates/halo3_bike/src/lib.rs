@@ -521,7 +521,7 @@ fn ride(
         rider.active = false;
         rider.bones.clear();
         rider.camera = None;
-        commands.entity(camera).remove::<Skating>();
+        // The camera keeps `Skating`: the Spartan takes it over (`Dismount`).
         dismount.0 = Some(Bail::new(bike.position, bike.velocity, &transform));
         return;
     }
@@ -536,7 +536,7 @@ fn ride(
         rider.active = false;
         rider.bones.clear();
         rider.camera = None;
-        commands.entity(camera).remove::<Skating>();
+        // The camera keeps `Skating`: the board takes it over (`Mount`).
         mount.0 = Some((Ride::Board, Bail::new(bike.position, bike.velocity, &transform)));
         return;
     }

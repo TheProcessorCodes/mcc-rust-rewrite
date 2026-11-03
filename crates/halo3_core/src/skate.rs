@@ -90,6 +90,11 @@ pub struct Respawn(pub Option<(Vec3, f32)>);
 /// The rider jumping off the board or the bike onto his feet, keeping the
 /// ride's momentum: set by `halo3_skate` / `halo3_bike` as the ride ends,
 /// taken by `halo3_foot`.
+///
+/// Handing over (this and `Mount`), the ride being left does not take
+/// `Skating` off the camera; the next ride inserts it from a system running
+/// beside it, and Bevy may apply that insert before the remove, leaving the
+/// fly camera fighting the ride's camera (the bike shook up and down).
 #[derive(Resource, Default)]
 pub struct Dismount(pub Option<Bail>);
 
