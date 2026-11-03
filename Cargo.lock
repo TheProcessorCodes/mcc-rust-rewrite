@@ -2677,6 +2677,7 @@ dependencies = [
  "anyhow",
  "bevy",
  "blam_cache",
+ "blam_h1",
  "blam_sound",
  "game_paths",
  "halo3_core",

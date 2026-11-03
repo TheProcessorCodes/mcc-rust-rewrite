@@ -222,8 +222,9 @@ pub(crate) struct LoadedMap {
     arsenal: Option<weapons::assets::Arsenal>,
     foot_tuning: Option<foot::physics::Tuning>,
     plain_fog: Option<world::sky::PlainFogSetting>,
-    /// Halo 2: the map's ambience, decoded on the sound plugin's thread.
-    plain_sound: Option<audio::halo2::PlainLoader>,
+    /// Halo 2's ambience or Halo CE's sound (`audio::MapSound`), loaded on
+    /// the sound plugin's thread.
+    plain_sound: Option<audio::MapSound>,
     /// Halo 3 only: scripts, AI, the mission's zone sets.
     extras: MapExtras,
 }
@@ -347,7 +348,8 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
         let mut extras = MapExtras::default();
         if let (Some(ins), Some(data)) = (insertion, h1.scripts.take()) {
             let start = h1.start;
-            let runtime = halo3_script::h1::runtime(data, &h1.scene, ins, difficulty(args));
+            let mut runtime = halo3_script::h1::runtime(data, &h1.scene, ins, difficulty(args));
+            runtime.dialogue.seconds = std::mem::take(&mut h1.sound_seconds);
             extras.scripts = Some(ScriptStart {
                 pending: halo3_script::PendingScripts(Some(runtime), None, None),
                 devices: halo3_anim::MachinePoser::default(),
@@ -374,7 +376,8 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             arsenal: None,
             foot_tuning: None,
             plain_fog: h1.fog,
-            plain_sound: None,
+            // The map's sound from MCC's Halo CE banks (`audio::halo1`).
+            plain_sound: Some(audio::MapSound::Halo1(audio::halo1::Halo1Sound::of(&path))),
             extras,
         });
     }
@@ -403,7 +406,7 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             arsenal,
             foot_tuning: None,
             plain_fog: fog,
-            plain_sound: Some(halo2::ambience_loader(&path)),
+            plain_sound: Some(audio::MapSound::Plain(halo2::ambience_loader(&path))),
             extras: MapExtras::default(),
         });
     }
@@ -688,7 +691,7 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         // Reach's sound tags are not read (`reach.rs`).
         (Some(cache), _) if cache.engine() != blam_cache::Engine::Halo3 => {}
         (Some(cache), _) => audio::install(w, audio::MapSound::Halo3(cache)),
-        (None, Some(loader)) => audio::install(w, audio::MapSound::Plain(loader)),
+        (None, Some(sound)) => audio::install(w, sound),
         (None, None) => {}
     }
     let start_spot = scene

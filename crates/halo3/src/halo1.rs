@@ -59,6 +59,9 @@ pub struct Loaded {
     pub start: Option<(Vec3, f32)>,
     /// A mission's scripts.
     pub scripts: Option<blam_script::ScriptData>,
+    /// How long the scripts' sounds play, seconds by tag index, for
+    /// `sound_impulse_time` (`blam_h1::sound::script_seconds`).
+    pub sound_seconds: HashMap<u32, f32>,
 }
 
 pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded> {
@@ -144,6 +147,7 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
         sky,
         start,
         scripts,
+        sound_seconds: insertion.map(|_| blam_h1::sound::script_seconds(&map)).unwrap_or_default(),
     })
 }
 

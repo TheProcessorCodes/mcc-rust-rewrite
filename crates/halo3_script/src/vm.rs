@@ -1349,8 +1349,9 @@ impl Runtime {
                 V(Value::Real((seconds as f64 * TICKS_PER_SECOND).round() as f32).coerce(ty))
             }
             // `sound_impulse_language_time snd`: the sound's length in
-            // ticks, in the player's language.
-            "sound_impulse_language_time" => {
+            // ticks, in the player's language; Halo CE's
+            // `sound_impulse_time snd` the same (its lines sleep on it).
+            "sound_impulse_language_time" | "sound_impulse_time" => {
                 let tag = arg(0).raw() & 0xFFFF;
                 let seconds = self.dialogue.seconds_of(tag);
                 V(Value::Real((seconds as f64 * TICKS_PER_SECOND).round() as f32).coerce(ty))
