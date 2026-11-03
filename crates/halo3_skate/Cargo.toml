@@ -12,3 +12,6 @@ bevy = { workspace = true }
 blam_geometry = { workspace = true }
 halo3_core = { workspace = true }
 skate-host = { path = "../../third_party/skate-engine/crates/skate-host" }
+
+[dev-dependencies]
+game_paths = { workspace = true }

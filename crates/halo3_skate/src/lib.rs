@@ -4,7 +4,9 @@
 //!
 //! J (or both sticks clicked) drops the skater where the camera is and starts
 //! riding; J again goes back to flying. G (or the d-pad's up) jumps off onto
-//! foot, keeping the board's speed (`halo3_foot`). Without a pad the keyboard stands in:
+//! foot, keeping the board's speed (`halo3_foot`); B (or View / Back) swaps
+//! to the dirt bike at the board's speed (`halo3_bike`), and J on the bike or
+//! on foot swaps back. Without a pad the keyboard stands in:
 //! WASD is the left stick, the arrow keys the right stick, Space A, F B,
 //! R X, T Y, Q / E the bumpers, Z / X the triggers.
 //!
@@ -91,7 +93,9 @@ enum Job {
     World(u32),
     /// Collision built for request `n` (the latest `World` wins).
     Install(u64, Box<PreparedCollision>, usize, usize),
-    Activate(u64, [f32; 3], f32, f32),
+    /// Epoch, spawn, heading, aspect, and the velocity to start with
+    /// (skate space; zero from rest).
+    Activate(u64, [f32; 3], f32, f32, [f32; 3]),
     Step(u64, f32, InputFrame, f32),
     Suspend,
 }
@@ -164,6 +168,13 @@ impl Default for Host {
 /// The collision as the skate engine wants it: skate metres, no degenerate
 /// or repeated triangles. Halo already winds faces counter-clockwise seen
 /// from the side you stand on, which is what the engine expects.
+/// The skate engine's heading for a board pointing along `dir` (renderer
+/// frame), as `Session::activate` takes it.
+fn heading_along(dir: Vec3) -> f32 {
+    let f = to_halo_dir(dir);
+    f.y.atan2(f.x) + std::f32::consts::FRAC_PI_2
+}
+
 fn skate_triangles(collision: &Collision, k: f32) -> Vec<[[f32; 3]; 3]> {
     let mut seen = std::collections::HashSet::new();
     let key = |p: Vec3| (p * 1000.0).round().as_ivec3().to_array();
@@ -384,11 +395,14 @@ fn start_worker(
                     };
                     match job {
                         Job::World(_) | Job::Install(..) => {}
-                        Job::Activate(new_epoch, spawn, heading, aspect) => {
+                        Job::Activate(new_epoch, spawn, heading, aspect, velocity) => {
                             epoch = new_epoch;
                             accumulated = 0.0;
                             session.set_aspect_ratio(aspect);
-                            let p = session.activate(spawn, heading)?;
+                            let mut p = session.activate(spawn, heading)?;
+                            if velocity != [0.0; 3] {
+                                p = session.launch(velocity);
+                            }
                             if publish.send(Reply::Activated(epoch, p)).is_err() {
                                 break;
                             }
@@ -539,6 +553,12 @@ fn update(
 ) {
     let host = &mut *host;
     let Some(receive) = host.receive.as_ref() else {
+        // No skate session (it failed): a hand-over to the board lands him
+        // on foot instead.
+        if let Some((Ride::Board, bail)) = mount.0 {
+            mount.0 = None;
+            dismount.0 = Some(bail);
+        }
         return;
     };
     // Another zone set: rebuild the skate world from its collision.
@@ -670,7 +690,7 @@ fn update(
         host.neutral = true;
         rider.skated = 0.0;
         commands.entity(camera).insert(Skating);
-        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect, [0.0; 3]));
         return;
     }
     if let Some((position, yaw)) = respawn.0.take()
@@ -682,28 +702,46 @@ fn update(
         let AutoStart(Some((spawn, heading))) = AutoStart::at(position, yaw) else {
             return;
         };
-        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect, [0.0; 3]));
         return;
     }
-    // Straight from walking onto the board, facing the way he moved or
-    // looked; the engine puts the wheels on the ground below.
+    // Straight from walking or off the bike onto the board, facing the way
+    // he moved or looked, rolling on at his speed along the ground; the
+    // engine puts the wheels on the ground below.
     if let Some((Ride::Board, bail)) = mount.0 {
         mount.0 = None;
         if !host.ready || host.active {
+            // He has already left what he was on: land him on foot.
             warn!("skate: not ready yet; {}", host.status);
+            dismount.0 = Some(bail);
             return;
         }
         let flat = Vec3::new(bail.velocity.x, 0.0, bail.velocity.z);
         let look = Quat::from_euler(EulerRot::YXZ, bail.yaw, 0.0, 0.0) * Vec3::NEG_Z;
-        let f = to_halo_dir(if flat.length() > 1.0 { flat } else { look });
-        let heading = f.y.atan2(f.x) + std::f32::consts::FRAC_PI_2;
+        let heading = heading_along(if flat.length() > 1.0 { flat } else { look });
         let spawn = ((bail.position + Vec3::Y * 0.3) * k).to_array();
         host.epoch = host.epoch.wrapping_add(1);
         host.active = true;
         host.neutral = false;
         rider.skated = 0.0;
         commands.entity(camera).insert(Skating);
-        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+        let velocity = (flat * k).to_array();
+        let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect, velocity));
+        info!("skate: on the board at {:.1} m/s", flat.length());
+        return;
+    }
+    // Straight onto the bike (B, or View / Back), keeping the board's
+    // momentum: `halo3_bike` takes the `Mount`.
+    let to_bike = keys.just_pressed(KeyCode::KeyB) || pad.is_some_and(|p| p.just_pressed(B::Select));
+    if host.active && !host.neutral && to_bike {
+        host.epoch = host.epoch.wrapping_add(1);
+        host.active = false;
+        rider.active = false;
+        rider.bones.clear();
+        rider.camera = None;
+        let _ = send.send(Job::Suspend);
+        // The camera keeps `Skating`: the bike takes it over (`Mount`).
+        mount.0 = Some((Ride::Bike, Bail::new(host.feet, host.velocity, &transform)));
         return;
     }
     // Jumping off onto foot, keeping the board's momentum.
@@ -714,7 +752,7 @@ fn update(
         rider.bones.clear();
         rider.camera = None;
         let _ = send.send(Job::Suspend);
-        commands.entity(camera).remove::<Skating>();
+        // The camera keeps `Skating`: the Spartan takes it over (`Dismount`).
         dismount.0 = Some(Bail::new(host.feet, host.velocity, &transform));
         return;
     }
@@ -737,14 +775,13 @@ fn update(
         } else {
             // Drop the skater under the camera, facing the way it looks; the
             // engine puts the wheels on the ground below.
-            let f = to_halo_dir(transform.forward().as_vec3());
-            let heading = f.y.atan2(f.x) + std::f32::consts::FRAC_PI_2;
+            let heading = heading_along(transform.forward().as_vec3());
             let spawn = (transform.translation * k).to_array();
             host.active = true;
             host.neutral = false;
             rider.skated = 0.0;
             commands.entity(camera).insert(Skating);
-            let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect));
+            let _ = send.send(Job::Activate(host.epoch, spawn, heading, aspect, [0.0; 3]));
         }
         return;
     }
@@ -841,5 +878,46 @@ fn show_status(
     let title = if status.is_empty() { base } else { format!("{base} | {status}") };
     if window.title != title {
         window.title = title;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A board dropped on flat ground with `velocity` (m/s, skate space),
+    /// rolled for a second with the sticks at rest: its velocity then.
+    fn roll(root: &std::path::Path, velocity: Vec3) -> Vec3 {
+        let floor = vec![
+            [[-200.0, 0.0, -200.0], [-200.0, 0.0, 200.0], [200.0, 0.0, 200.0]],
+            [[-200.0, 0.0, -200.0], [200.0, 0.0, 200.0], [200.0, 0.0, -200.0]],
+        ];
+        let mut session = Session::new(root, floor, vec![], [0.0; 3], 0.0).unwrap();
+        let dir = if velocity == Vec3::ZERO { Vec3::Z } else { velocity.normalize() };
+        session.activate([0.0, 0.3, 0.0], heading_along(dir)).unwrap();
+        if velocity != Vec3::ZERO {
+            session.launch(velocity.to_array());
+        }
+        let ticks = (1.0 / session.period()).round() as usize;
+        for _ in 0..ticks {
+            session.tick(Default::default()).unwrap();
+        }
+        session.pose().velocity
+    }
+
+    #[test]
+    fn the_board_keeps_the_speed_it_is_launched_with() {
+        let Some(root) = game_paths::skate_assets().filter(|r| game_paths::is_skate_assets(r)) else {
+            eprintln!("skipped: Skate 3 is not set up");
+            return;
+        };
+        let rest = roll(&root, Vec3::ZERO);
+        assert!(rest.length() < 1.0, "from rest: {rest}");
+        for dir in [Vec3::Z, Vec3::X, Vec3::new(-1.0, 0.0, -1.0).normalize()] {
+            let v = roll(&root, dir * 8.0);
+            let flat = Vec3::new(v.x, 0.0, v.z);
+            assert!(flat.length() > 5.0, "along {dir}: {v}");
+            assert!(flat.normalize().dot(dir) > 0.95, "along {dir}: {v}");
+        }
     }
 }

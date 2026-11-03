@@ -2777,6 +2777,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "blam_geometry",
+ "game_paths",
  "halo3_core",
  "skate-host",
 ]
