@@ -306,6 +306,25 @@ impl Default for PlayerVitality {
     }
 }
 
+/// The player's shield sounds: the first four entries of the HUD globals'
+/// (`chgd ui\chud\globals`) sound list, as (tag class, tag path). Halo 3
+/// has no low-health sound there (its next entries are the rocket and
+/// missile launchers' lock tones). `halo3_audio` loads them with the map,
+/// `halo3_ai` starts and stops them through [`crate::script_sound::ScriptSounds`].
+pub struct ShieldSounds;
+
+impl ShieldSounds {
+    /// A one-shot as the shields take a hit.
+    pub const HIT: (&str, &str) = ("snd!", r"sound\game_sfx\ui\shield_hit");
+    /// Looped while the shields recharge.
+    pub const CHARGE: (&str, &str) = ("lsnd", r"sound\game_sfx\ui\shield_charge\shield_charge");
+    /// The low-shield beeping, looped while they are low.
+    pub const LOW: (&str, &str) = ("lsnd", r"sound\game_sfx\ui\shield_low\shield_low");
+    /// The alarm, looped while they are empty.
+    pub const DEPLETED: (&str, &str) = ("lsnd", r"sound\game_sfx\ui\shield_depleted\shield_depleted");
+    pub const ALL: [(&str, &str); 4] = [Self::HIT, Self::CHARGE, Self::LOW, Self::DEPLETED];
+}
+
 /// The game's difficulty: 0 easy, 1 normal (the default), 2 heroic, 3
 /// legendary (`--difficulty`). Scales the damage actors deal the player.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]

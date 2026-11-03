@@ -27,6 +27,7 @@
 
 mod animate;
 mod brain;
+pub mod hud;
 mod model;
 mod place;
 mod player;
@@ -101,6 +102,8 @@ pub struct AiAssets {
     /// The globals' scale on the damage enemies deal the player, by
     /// difficulty (easy .. legendary).
     pub enemy_damage: Option<[f32; 4]>,
+    /// The shield meter's bitmaps and the shield sounds (`hud.rs`).
+    pub hud: Option<hud::HudAssets>,
 }
 
 impl AiAssets {
@@ -266,6 +269,7 @@ pub fn load(cache: &CacheFile) -> Option<AiAssets> {
         }
     };
     let enemy_damage = tags::enemy_damage_scales(cache).ok().flatten();
+    let hud = hud::read(cache);
     eprintln!(
         "ai: {} squads, {} characters ({} drawn from {} models, {} animated), in {:.1} s",
         data.squads.len(),
@@ -282,6 +286,7 @@ pub fn load(cache: &CacheFile) -> Option<AiAssets> {
         player_vitality,
         splatter,
         enemy_damage,
+        hud,
     })
 }
 
@@ -334,6 +339,6 @@ impl Plugin for AiPlugin {
                     .run_if(halo3_core::pause::running)
                     .run_if(halo3_core::map::ready),
             )
-            .add_plugins((place::PlacePlugin, brain::BrainPlugin, vitality::VitalityPlugin, animate::AnimatePlugin));
+            .add_plugins((place::PlacePlugin, brain::BrainPlugin, vitality::VitalityPlugin, animate::AnimatePlugin, hud::HudPlugin));
     }
 }

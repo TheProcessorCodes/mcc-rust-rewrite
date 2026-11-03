@@ -58,6 +58,13 @@ impl Plugin for VitalityPlugin {
 const SHIELD_DELAY: f32 = 5.0;
 const SHIELD_FILL: f32 = 2.0;
 const BODY_FILL: f32 = 4.0;
+fn pinned_shield() -> Option<f32> {
+    static AT: std::sync::LazyLock<Option<f32>> = std::sync::LazyLock::new(|| {
+        std::env::var("HALO3_SHIELD").ok().and_then(|v| v.parse::<f32>().ok()).map(|v| v.clamp(0.0, 1.0))
+    });
+    *AT
+}
+
 /// `HALO3_AI_TRACE=1`: log every hit on the player.
 fn trace() -> bool {
     static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("HALO3_AI_TRACE").is_ok_and(|v| v == "1"));
@@ -253,7 +260,12 @@ fn recharge(mut vitality: ResMut<PlayerVitality>, mut actors: Query<&mut Actor>,
     let dt = time.delta_secs();
     let v = &mut *vitality;
     v.flash = (v.flash - dt).max(0.0);
-    if v.dead.is_none() {
+    // `HALO3_SHIELD=0.2`: hold the shields at that share (a developer's
+    // hook for pictures of the meter).
+    if let Some(share) = pinned_shield() {
+        v.shield = v.max_shield * share;
+        v.since_hit = 0.0;
+    } else if v.dead.is_none() {
         v.since_hit += dt;
         if v.since_hit > SHIELD_DELAY {
             if v.shield < v.max_shield {
@@ -359,69 +371,12 @@ fn respawn(
 }
 
 #[derive(Component)]
-struct Bars;
-
-#[derive(Component)]
-struct ShieldBar;
-
-#[derive(Component)]
-struct HealthBar;
-
-#[derive(Component)]
 struct Flash;
 
 #[derive(Component)]
 struct DeadText;
 
-const BAR_WIDTH: f32 = 260.0;
-
 fn spawn_hud(mut commands: Commands) {
-    // Shields and health, top middle, Halo blue and red.
-    commands
-        .spawn((
-            Bars,
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(18.0),
-                left: Val::Percent(50.0),
-                margin: UiRect::left(Val::Px(-BAR_WIDTH * 0.5)),
-                width: Val::Px(BAR_WIDTH),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(3.0),
-                ..default()
-            },
-            Visibility::Hidden,
-            GlobalZIndex(11),
-        ))
-        .with_children(|p| {
-            for (shield, colour, height) in [(true, Color::srgba(0.45, 0.80, 1.0, 0.9), 10.0), (false, Color::srgba(1.0, 0.3, 0.25, 0.85), 4.0)] {
-                p.spawn((
-                    Node {
-                        width: Val::Px(BAR_WIDTH),
-                        height: Val::Px(height),
-                        border: UiRect::all(Val::Px(1.0)),
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgba(0.45, 0.80, 1.0, 0.5)),
-                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.25)),
-                ))
-                .with_children(|bar| {
-                    let mut fill = bar.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            ..default()
-                        },
-                        BackgroundColor(colour),
-                    ));
-                    if shield {
-                        fill.insert(ShieldBar);
-                    } else {
-                        fill.insert(HealthBar);
-                    }
-                });
-            }
-        });
     commands.spawn((
         Flash,
         Node {
@@ -451,29 +406,17 @@ fn spawn_hud(mut commands: Commands) {
     ));
 }
 
+/// The red flash and "You died" (the shield meter is `hud.rs`).
 #[allow(clippy::type_complexity)]
 fn hud(
     vitality: Res<PlayerVitality>,
     player: Res<PlayerBody>,
     ai: Option<Res<Ai>>,
-    mut bars: Query<&mut Visibility, (With<Bars>, Without<Flash>, Without<DeadText>)>,
-    mut shield: Query<&mut Node, (With<ShieldBar>, Without<HealthBar>)>,
-    mut health: Query<&mut Node, (With<HealthBar>, Without<ShieldBar>)>,
-    mut flash: Query<(&mut BackgroundColor, &mut Visibility), (With<Flash>, Without<Bars>, Without<DeadText>)>,
-    mut dead: Query<&mut Visibility, (With<DeadText>, Without<Bars>, Without<Flash>)>,
+    mut flash: Query<(&mut BackgroundColor, &mut Visibility), (With<Flash>, Without<DeadText>)>,
+    mut dead: Query<&mut Visibility, (With<DeadText>, Without<Flash>)>,
 ) {
     let on = ai.is_some() && player.0.is_some();
     let show = |on: bool| if on { Visibility::Visible } else { Visibility::Hidden };
-    for mut v in &mut bars {
-        v.set_if_neq(show(on));
-    }
-    let share = |a: f32, b: f32| if b > 0.0 { (a / b).clamp(0.0, 1.0) * 100.0 } else { 0.0 };
-    for mut n in &mut shield {
-        n.width = Val::Percent(share(vitality.shield, vitality.max_shield));
-    }
-    for mut n in &mut health {
-        n.width = Val::Percent(share(vitality.body, vitality.max_body));
-    }
     for (mut c, mut v) in &mut flash {
         let a = if vitality.dead.is_some() { 0.45 } else { vitality.flash * 0.8 };
         v.set_if_neq(show(on && a > 0.0));
@@ -483,4 +426,3 @@ fn hud(
         v.set_if_neq(show(on && vitality.dead.is_some()));
     }
 }
-

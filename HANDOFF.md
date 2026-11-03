@@ -190,7 +190,9 @@ To do:
 4. ~~**Enemies must attack.**~~ Done 2026-11-03 on branch `enemies-attack-rider`, awaiting the
    user's playtest: the Flood and Sentinels see, chase, shoot and hit the rider on the bike and
    the skater as on foot, he dies and comes back on the bike, and the bike splatters them (see
-   "Enemies attack the rider" under the Warthog Run below).
+   "Enemies attack the rider" under the Warthog Run below). After the first playtest (no Flood
+   seen): the Flood fix, Halo 3's shield meter and the shield sounds (see "The missing Flood"
+   below).
 
 Skipped by the user's choice (do not do unless asked):
 
@@ -811,6 +813,57 @@ ignored you. Now:
   Carriers do not spawn infection forms; no grenades; the Flood do not leap onto the bike. The
   rider's death has no animation; the bike just rolls on. `halo3_anim/tests/frigate.rs` does
   not build on master (it uses `setup::START_AHEAD`, which no longer exists); not touched here.
+
+**The missing Flood, Halo 3's shield meter and its sounds (2026-11-03, branch
+`enemies-attack-rider`, after the user's playtest; awaiting the next one).** The user saw only
+Sentinels on the run, for several builds.
+
+- **Why there were no Flood**: the scripts place them (`100_trench_run_encounters01` and on,
+  checked by `halo3_ai/tests/warthog_flood.rs`, which runs `ins_trench_run` and rides the
+  trigger volumes in order with the AI in a bare app). The first tunnel's twelve combat forms
+  (`trench_combat_forms01..03`, placed at `tunnel01_trig01`) are put among the six
+  `trench_sentinel_100_4` (placed earlier, at `trench_run_100_trig08`, in the same room): a
+  scripted Flood-Sentinel fight for the rider to ride into. At full damage the sentinel beams
+  (4 a hit, 30 hits a second) killed all twelve within a second of their placement
+  (`HALO3_AI_TRACE=1` now logs who killed whom), seconds before the rider got there; the same
+  for the later tunnels (`trench_combat_forms04` with `trench_sentinel_110_11`, 06..08 with
+  `trench_sentinel_110_1`). Fix: actors hurting actors deal 0.2 of the damage effect's number
+  (`vitality.rs` `AI_VS_AI`; ours: the material responses that make such fights last in the
+  game are not read). The player's damage to actors and theirs to him are unchanged. The test
+  asserts at least four live, drawn combat forms on the floor within 40 wu of the rider when he
+  reaches the tunnel (twelve, now) and `trench_combat_forms04` standing ahead.
+- The run's earlier infection and carrier squads (`trench_infection_100`, `_100_02`, `_100_03`,
+  `trench_carrier_100_01`, and the `100_sentinel_patrols` points their command scripts swarm
+  from and to) stand in open air over the trench centre (around x -20..16, y -17..18, z 3..6):
+  no render or collision geometry, no object, under them in BSPs 040, 100 and 110. They are
+  placed (14 infection forms, 2 carriers) and hang there unseen, far from the route. Not fixed;
+  `cs_swarm_from` / `cs_swarm_to` are not run either.
+- **Shield meter** (`halo3_ai/src/hud.rs`): the map's own bitmaps of the Spartan HUD
+  (`chdt ui\chud\spartan`), `ui\chud\bitmaps\shield_meter` and `shield_border`, decoded with
+  `blam_texture`. They are chud shader masks: alpha the shape, green the shading, the meter's
+  blue a ramp left to right (16..239) that the chud shader compares with the shield fraction, so
+  the bar empties from the right (`hud::fill_columns`). Not decoded: the `chdt` widget layout and
+  the chud globals' colours, so the place (top middle, the bitmaps' own size on a 720-line
+  screen), the tints (pale blue, red under a quarter) and the border flashing red four times a
+  second while the shields are empty are ours. Halo 3 shows no health meter for the Chief, so
+  the placeholder health bar is gone; the red flash and "You died" stay. On foot, bike and board
+  alike. `HALO3_SHIELD=0.2` (dev) pins the shields for pictures.
+- **Shield sounds**: the HUD globals' sound list (20-byte entries next to `chgd
+  ui\chud\globals`, a tag ref and a flag each): `sound\game_sfx\ui\shield_hit` (snd!),
+  `shield_charge\shield_charge`, `shield_low\shield_low` and `shield_depleted\shield_depleted`
+  (lsnd); the list's next four are the rocket and missile launchers' lock tones, and there is no
+  low-health sound. `halo3_core::ai::ShieldSounds`; `halo3_audio` loads them with the map,
+  `hud.rs` plays them through the script sound queue (the tags' sound classes pick bus and
+  gain): the hit one-shot as the shields drop, the charge loop while they fill, low under a
+  quarter, depleted while empty (thresholds ours). Not found: the block header that points at the
+  list (it is reached by name).
+- Checked: `tests/warthog_flood.rs`, `tests/shield_hud.rs` (meter and border 312 x 28, the
+  ramp's half point near the middle, the four sound tags and their classes), unit tests for the
+  fill columns and the loop choice. Shots: `out\shots\shield_1\120_halo_0.png` (full),
+  `out\shots\shield_0.2\120_halo_0.png` (low), `out\shots\shield_0\120_halo_0.png` (empty), from
+  `warthog_run --bike --view -174.5,-351.4,-1.7,92,0` with `HALO3_SHIELD`.
+- Also seen: a plain `--shot` with no ride (`riverworld --shot DIR`) panics on a missing
+  resource, on master too; not touched.
 
 ## Open questions and known gaps
 
