@@ -14,12 +14,14 @@
 //! # Ok::<(), blam_h1::Error>(())
 //! ```
 
+pub mod ai;
 pub mod bitmap;
 pub mod cache;
 pub mod collision;
 pub mod model;
 pub mod script;
 pub mod shader;
+pub mod skeleton;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
