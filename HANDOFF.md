@@ -798,9 +798,30 @@ slots in the middle of the road. The run's haze is the map's own: the run's clus
 
 Not done (Halo CE sides with nothing behind them yet; the scripts' calls log once and do
 nothing): enemies (`ai_place` of the run's Flood, Covenant and Sentinels), effects (the run's
-explosions, `effect_new`), sound, music (`d40_07` .. `d40_09`) and Cortana's lines, doors and
-other objects' collision (they are drawn and passable), the scripted objects themselves
-(object calls find nothing).
+explosions, `effect_new`), doors and other objects' collision (they are drawn and passable),
+the scripted objects themselves (object calls find nothing).
+
+**Sound (2026-11-03, branch `h1-sound`).** MCC's Halo CE has no `sounds.map`: the audio is in
+FMOD banks in `halo1\sound\pc` (`game_paths::halo1_sound()`), found by tag path through
+`lst\*.lst.bin`, encoded as FMOD's CELT 0.11.0 (`docs/format/halo1.md` 13, probe
+`probe_h1_sound.py`). The Xiph CELT 0.11.0 decoder is vendored in `third_party/celt-0.11.0`
+(BSD-3-Clause, C, built by the new crate `fsb_celt` with `cc`; needs MSVC's C compiler, which
+the Rust MSVC toolchain already has). `blam_h1::sound` reads `snd!`, `lsnd`, the script
+sound references, each BSP's background sound per cluster (with its own cluster finder from
+the collision tree) and the banks; `halo3_audio::halo1` turns them into Halo 3's player data,
+so `music.rs` plays them unchanged (`MapSound::Halo1`). On the run: `d40_07` from the start
+(the insertion passes `enc6_0_dialog`, whose script starts it), its alternate
+(`string_idea`, cross-faded over 6 s) at the Pelican scene, `d40_08` after it, the one-shot
+finale `d40_09` at `enc6_9_1`, `d40_08` stopped at `grand_finale`; Cortana's and the pilot's
+lines on the dialogue bus in the setup's language (French, German, Italian, Spanish banks;
+English otherwise or when a line is missing), each script sleeping as long as its line
+(`sound_impulse_time`, from the tag's own PCM length); the trench's `interior_*_trench`
+background loops by cluster. Every `snd!` of the map is playable by tag index, so effects
+can sound: push `SoundRequest::Impulse { tag, name, at: Some(pos), scale }` into
+`ScriptSounds` (`halo3_audio/src/halo1.rs` header). Levels are our choice (no class tag in
+Halo CE): music and lines as tagged, effects and ambience -6 dB. Not done: pitch, reverb
+(`snde`), sound scenery (none on the run), the cutscenes' 5.1 music, the Warthog's engine
+sounds (in no bank). Awaiting the user's playtest.
 
 Also fixed on this branch: a headless `--shot` without `--bike` / `--skate` / `--foot`
 crashed on every map (the speedometer read the bike's resources, which such a shot does not
