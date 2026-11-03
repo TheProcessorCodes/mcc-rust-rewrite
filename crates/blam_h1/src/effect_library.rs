@@ -28,8 +28,14 @@ use crate::{Map, Result};
 
 /// A light's intensity as `halo3_effects` reads it (its `LIGHT_SCALE`
 /// makes 20 about one unit of irradiance): our choice, by eye, for every
-/// Halo CE effect light at the start of its life.
-pub const LIGHT_INTENSITY: f32 = 20.0;
+/// Halo CE effect light at the start of its life (20 turned the whole
+/// Warthog bay flat orange).
+pub const LIGHT_INTENSITY: f32 = 12.0;
+/// What particle colours are multiplied by: `halo3_effects` multiplies
+/// every particle by its exposure (3), chosen for Halo 3's run; this
+/// undoes it, so a Halo CE colour reaches the screen as the tag has it
+/// (at x3 the grey smoke plume came out white).
+pub const COLOUR_SCALE: f32 = 1.0 / 3.0;
 /// `halo3_effects` lights reach this many times a light's size.
 const LIGHT_RANGE_PER_SIZE: f32 = 4.0;
 /// Halo CE runs at 30 ticks a second.
@@ -139,9 +145,14 @@ fn linear(c: [f32; 3]) -> [f32; 3] {
     c.map(|v| srgb_to_linear(v.clamp(0.0, 1.0)))
 }
 
+/// A particle colour: linear, times [`COLOUR_SCALE`].
+fn particle_colour(c: [f32; 3]) -> [f32; 3] {
+    linear(c).map(|v| v * COLOUR_SCALE)
+}
+
 /// A colour picked between `a` and `b` by random variable `var`.
 fn colour_between(var: u8, a: [f32; 3], b: [f32; 3]) -> Property {
-    let (a, b) = (linear(a), linear(b));
+    let (a, b) = (particle_colour(a), particle_colour(b));
     let mut f = function(1, a != b, Shape::Constant, 0.0, 1.0);
     f.colour_stops = if a == b { 1 } else { 2 };
     f.colours = [a, a, b, b];

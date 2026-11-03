@@ -68,6 +68,7 @@ mod anim_test;
 mod countdown;
 mod finish;
 mod halo1;
+mod halo1_effects;
 mod halo2;
 mod menu;
 mod reach;
@@ -355,6 +356,8 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
                 effect_roots: Vec::new(),
             });
         }
+        // The effects the scripts name (`halo1_effects.rs`).
+        extras.effects = h1.effects.take();
         if let Some(mean) = world::lighting::scene_mean_irradiance(&h1.scene, &h1.textures.lightmaps) {
             eprintln!("halo ce lightmap: mean irradiance {mean:.3}");
             world::lighting::set_scene_mean(mean);

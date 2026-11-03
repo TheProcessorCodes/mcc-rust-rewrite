@@ -15,6 +15,11 @@
 //! pictures are the engine's chase camera, the rider from the side, from the
 //! front, the board close up and the neck close up, followed by any
 //! further views.
+//!
+//! `HALO3_SHOT_EFFECT=path@x,y,z[;path@x,y,z...]` sets effects off (by
+//! their tag path, at Halo positions) `HALO3_SHOT_EFFECT_LEAD` seconds
+//! (default 0.3) before the first picture; with `HALO3_SHOT_NEXT_WAIT` and
+//! several views at one place the pictures follow the explosion.
 
 use std::path::PathBuf;
 
@@ -163,6 +168,20 @@ struct Progress {
     /// The bench of the current view: frames left, frame times so far.
     bench_left: Option<u32>,
     frame_ms: Vec<f32>,
+    /// `HALO3_SHOT_EFFECT` has been set off.
+    fired: bool,
+}
+
+/// The effects `HALO3_SHOT_EFFECT` asks for: `path@x,y,z`, `;` between.
+fn shot_effects() -> Vec<(String, Vec3)> {
+    let Ok(v) = std::env::var("HALO3_SHOT_EFFECT") else { return Vec::new() };
+    v.split(';')
+        .filter_map(|e| {
+            let (path, at) = e.rsplit_once('@')?;
+            let p: Vec<f32> = at.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            (p.len() == 3).then(|| (path.trim().to_string(), Vec3::new(p[0], p[1], p[2])))
+        })
+        .collect()
 }
 
 pub struct ShotPlugin(pub ShotPlan);
@@ -310,6 +329,7 @@ fn step(
     time: Res<Time<Real>>,
     drawn: Query<(&ViewVisibility, Option<&Triangles>), With<Mesh3d>>,
     portals: Option<Res<halo3_world::culling::PortalView>>,
+    effects: Option<ResMut<halo3_core::effects::EffectQueue>>,
 ) {
     let Some(target) = progress.target.clone() else {
         return;
@@ -368,6 +388,18 @@ fn step(
                 .unwrap_or(NEXT_WAIT);
         }
         return;
+    }
+    if !progress.fired && progress.view == 0 {
+        let lead = std::env::var("HALO3_SHOT_EFFECT_LEAD").ok().and_then(|s| s.parse().ok()).unwrap_or(0.3);
+        if progress.wait <= lead {
+            progress.fired = true;
+            if let Some(mut queue) = effects {
+                for (path, at) in shot_effects() {
+                    eprintln!("shot: effect {path} at halo [{:.2}, {:.2}, {:.2}]", at.x, at.y, at.z);
+                    queue.push(halo3_core::effects::EffectRequest::at(path, at));
+                }
+            }
+        }
     }
     if progress.wait > 0.0 {
         progress.wait -= time.delta_secs();

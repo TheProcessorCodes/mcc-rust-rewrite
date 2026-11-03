@@ -59,6 +59,8 @@ pub struct Loaded {
     pub start: Option<(Vec3, f32)>,
     /// A mission's scripts.
     pub scripts: Option<blam_script::ScriptData>,
+    /// The effects a mission's scripts name (`halo1_effects.rs`).
+    pub effects: Option<halo3_effects::EffectAssets>,
 }
 
 pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded> {
@@ -99,6 +101,7 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
         Some(ins) => mission_start(&map, &mut scene, ins)?,
         None => (None, None),
     };
+    let effects = scripts.as_ref().map(|d| crate::halo1_effects::load(&map, d));
     if let Some(f) = fog {
         eprintln!(
             "sky fog: colour {:.2?}, up to {:.2} from {} to {} wu",
@@ -144,6 +147,7 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
         sky,
         start,
         scripts,
+        effects,
     })
 }
 
