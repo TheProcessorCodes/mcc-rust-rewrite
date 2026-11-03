@@ -168,3 +168,44 @@ fn every_d40_sound_is_found_and_decodes() {
     assert!(failed.is_empty(), "{failed:?}");
     assert!(missing.len() <= 4, "{missing:?}");
 }
+
+#[test]
+fn the_run_background_sound() {
+    let Some(map) = game_paths::halo1_map("d40").and_then(|p| Map::open(&p).ok()) else { return };
+    let bsps = sound::bsp_sounds(&map, Some(&[5, 6, 7])).unwrap();
+    assert_eq!(bsps.len(), 3);
+    let name = |i: Option<u32>| i.map_or("-".to_string(), |i| map.tags[i as usize].name.clone());
+    for b in &bsps {
+        println!(
+            "bsp {}: {} clusters, palette {:?}",
+            b.bsp,
+            b.clusters.len(),
+            b.palette.iter().map(|p| name(*p)).collect::<Vec<_>>()
+        );
+    }
+    // The first Warthog's bay is in a cluster of d40f with the trench's
+    // own background.
+    let start = blam_h1::object_named(&map, "trench_jeep1").unwrap().position;
+    let f = &bsps[0];
+    let c = f.finder.cluster(start + glam::Vec3::Z * 0.3).expect("the start is in a cluster");
+    let bg = f.clusters[c as usize].and_then(|e| f.palette[e as usize]);
+    println!("start: cluster {c}, background {}", name(bg));
+    assert!(name(bg).contains("trench"), "{}", name(bg));
+    // Along the run every point of the road is in some cluster of a BSP.
+    let scene_volumes = ["enc6_1", "enc6_5_4", "enc6_6_1", "enc6_9_1", "enc7_7"];
+    let opts = blam_h1::Options { textures: false, objects: false, collision: false, bsps: Some(vec![5, 6, 7]), ..Default::default() };
+    let scene = blam_h1::decode(&map, &opts).unwrap().scene;
+    for v in scene.trigger_volumes.iter().filter(|v| scene_volumes.contains(&v.name.as_str())) {
+        let left = v.up.cross(v.forward);
+        let mid = v.position + (v.forward * v.extents.x + left * v.extents.y + v.up * v.extents.z) * 0.5;
+        let found: Vec<String> = bsps
+            .iter()
+            .filter_map(|b| {
+                let c = b.finder.cluster(mid)?;
+                Some(format!("bsp {} cluster {c} {}", b.bsp, name(b.clusters[c as usize].and_then(|e| b.palette[e as usize]))))
+            })
+            .collect();
+        println!("{}: {found:?}", v.name);
+        assert!(!found.is_empty(), "{} is in no cluster", v.name);
+    }
+}

@@ -291,6 +291,103 @@ pub fn script_seconds(map: &Map) -> HashMap<u32, f32> {
         .collect()
 }
 
+// ---- background sound per cluster ----------------------------------------
+
+/// What a structure BSP sounds like where: its background sound palette
+/// (`sbsp + 0x1FC`, 0x74 each: name, `lsnd` at `+0x20`), each cluster's
+/// entry (cluster `+0x4`, i16, -1 none), and a way to find the cluster a
+/// point is in (the collision BSP's 3D tree down to a leaf, whose render
+/// leaf, `sbsp + 0xE0`, 16 bytes, names the cluster at `+0x8`).
+#[derive(Clone, Debug, Default)]
+pub struct BspSound {
+    /// The scenario's index of the BSP.
+    pub bsp: u32,
+    /// Background `lsnd` tag index of each palette entry.
+    pub palette: Vec<Option<u32>>,
+    /// Each cluster's palette entry.
+    pub clusters: Vec<Option<u32>>,
+    pub finder: ClusterFinder,
+}
+
+/// The collision BSP's 3D nodes and planes, and the cluster of each leaf.
+#[derive(Clone, Debug, Default)]
+pub struct ClusterFinder {
+    /// Plane, back child, front child; a child with the top bit set is a
+    /// leaf (the low bits its index), -1 solid.
+    pub nodes: Vec<[i32; 3]>,
+    pub planes: Vec<[f32; 4]>,
+    pub leaf_clusters: Vec<i16>,
+}
+
+impl ClusterFinder {
+    /// The cluster holding `p` (world units), `None` in solid space.
+    pub fn cluster(&self, p: glam::Vec3) -> Option<u32> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        let mut node = 0usize;
+        for _ in 0..self.nodes.len().min(1 << 16) {
+            let [plane, back, front] = *self.nodes.get(node)?;
+            let q = self.planes.get((plane & 0x7FFF_FFFF) as usize)?;
+            let mut d = q[0] * p.x + q[1] * p.y + q[2] * p.z - q[3];
+            if plane < 0 {
+                d = -d;
+            }
+            let child = if d >= 0.0 { front } else { back };
+            if child == -1 {
+                return None;
+            }
+            if child < 0 {
+                let leaf = (child & 0x7FFF_FFFF) as usize;
+                return u32::try_from(*self.leaf_clusters.get(leaf)?).ok();
+            }
+            node = child as usize;
+        }
+        None
+    }
+}
+
+/// The background sounds of the scenario's BSPs `only` (all when `None`).
+pub fn bsp_sounds(map: &Map, only: Option<&[u32]>) -> Result<Vec<BspSound>> {
+    let mut out = Vec::new();
+    for (i, chunk) in map.bsps()?.iter().enumerate() {
+        let index = i as u32;
+        if only.is_some_and(|o| !o.contains(&index)) {
+            continue;
+        }
+        let sbsp = map.sbsp(chunk);
+        let palette = sbsp
+            .block(0x1FC, 0x74)?
+            .iter()
+            .map(|e| tag_ref(map, e, 0x20, b"lsnd"))
+            .collect::<Result<Vec<_>>>()?;
+        let clusters = sbsp
+            .block(0x134, 0x68)?
+            .iter()
+            .map(|c| Ok(u32::try_from(c.i16(4)?).ok()))
+            .collect::<Result<Vec<_>>>()?;
+        let mut finder = ClusterFinder::default();
+        if let Some(col) = sbsp.block(0xB0, 0x60)?.into_iter().next() {
+            for n in col.block(0, 12)? {
+                finder.nodes.push([n.i32(0)?, n.i32(4)?, n.i32(8)?]);
+            }
+            for p in col.block(0xC, 16)? {
+                finder.planes.push([p.f32(0)?, p.f32(4)?, p.f32(8)?, p.f32(12)?]);
+            }
+        }
+        for l in sbsp.block(0xE0, 16)? {
+            finder.leaf_clusters.push(l.i16(8)?);
+        }
+        out.push(BspSound {
+            bsp: index,
+            palette,
+            clusters,
+            finder,
+        });
+    }
+    Ok(out)
+}
+
 // ---- banks --------------------------------------------------------------
 
 /// The banks in the order a tag is looked up: the player's dialogue
