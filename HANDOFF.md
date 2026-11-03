@@ -797,10 +797,38 @@ slots in the middle of the road. The run's haze is the map's own: the run's clus
 `skyofdoom`, whose fog reaches 60 % at 20 wu.
 
 Not done (Halo CE sides with nothing behind them yet; the scripts' calls log once and do
-nothing): enemies (`ai_place` of the run's Flood, Covenant and Sentinels), effects (the run's
+nothing): effects (the run's
 explosions, `effect_new`), sound, music (`d40_07` .. `d40_09`) and Cortana's lines, doors and
 other objects' collision (they are drawn and passable), the scripted objects themselves
 (object calls find nothing).
+
+**Enemies (2026-11-03, branch `h1-enemies`).** The run's encounters are `halo3_ai` actors,
+placed, killed and counted by the map's own scripts through the same `AiBridge` Halo 3 uses.
+`blam_h1::ai` reads encounters, squads, platoons, starting and firing positions and the actor
+variant palette (`actv` -> `actr`, `bipd`, `coll`, `weap`, `proj`, `jpt!`); `blam_h1::skeleton`
+the models' nodes and markers (rotations stored conjugated); `blam_h1::animation` the `antr`
+graphs; `halo1.md` 13 and 14, probe `probe_h1_ai.py`. `crates/halo3/src/halo1_ai.rs` turns them
+into `AiAssets` (each encounter a squad group and an AI zone, each platoon a group, each squad
+`encounter/squad`, lower case, its count for the difficulty) and an arsenal of the actors'
+weapons; `halo1_anim.rs` plays idle, moves (at the actor's ground speed) and melee from the
+graphs (`<mode> <class> <action>` names; the dead keep their last pose and the AI lays them
+down). Walkers run at their run animation's root motion. `--ai none` leaves them out.
+- Works (headless shots, tests): Flood combat forms, infection forms, carriers, grunts,
+  elites, hunters, sentinels drawn with their Halo CE models and textures, skinned, animated,
+  guns in hand; teams from the bipeds (Flood and Sentinels and Covenant fight each other and
+  the player); vitality from the variant or the `coll`; melee from the biped's `jpt!`; ranged
+  fire with the variant's rate, bursts and the weapon's projectile speed and damage;
+  `ai_kill`, `ai_living_count`, `ai_spawn_count`. `THE_MAW` now also stops the earlier
+  sections' continuous spawners (`enc1_4_manager` ...), which their own sections put to sleep
+  and which would otherwise refill encounters behind the start.
+- Not done: turret gunners and the dropship (`vehicle_load_magic`, `ai_go_to_vehicle`,
+  `enc6_5_dropship`, `enc7_7_cov/left_gunner` stand on foot where they start), Banshees
+  (`trench_banshees`), command lists (`ai_command_list`), `ai_magically_see_players`,
+  `ai_try_to_fight(_player)`, `ai_force_active`, `ai_attach_free`, `ai_spawn_actor` (all
+  still log once and do nothing), death, turn, flinch and fire animations, aim overlays,
+  grenades, infection forms reanimating the dead, carriers spawning infection forms. The AI
+  fights the player only on foot until `enemies-attack-rider` (Halo 3's rider targeting) is
+  merged; on the bike they fight each other.
 
 Also fixed on this branch: a headless `--shot` without `--bike` / `--skate` / `--foot`
 crashed on every map (the speedometer read the bike's resources, which such a shot does not
