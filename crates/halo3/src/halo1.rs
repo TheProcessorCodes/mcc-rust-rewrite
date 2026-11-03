@@ -61,6 +61,9 @@ pub struct Loaded {
     pub scripts: Option<blam_script::ScriptData>,
     /// The effects a mission's scripts name (`halo1_effects.rs`).
     pub effects: Option<halo3_effects::EffectAssets>,
+    /// The map, for what is read after the world (the encounters,
+    /// `halo1_ai.rs`).
+    pub map: blam_h1::Map,
 }
 
 pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded> {
@@ -148,6 +151,7 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
         start,
         scripts,
         effects,
+        map,
     })
 }
 

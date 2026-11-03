@@ -53,8 +53,21 @@ pub const THE_MAW: Insertion = Insertion {
     // clamps.)
     start_at: "trench_jeep1",
     // The mission's own start (intro, the first sections) stays out of the
-    // way; its difficulty settings run as it would have run them.
-    stop: &["mission"],
+    // way; its difficulty settings run as it would have run them. The
+    // earlier sections' continuous spawners, which those sections' own
+    // scripts put to sleep (`sleep -1 enc1_4_manager`), stop too: with
+    // the AI behind them they would refill encounters behind the start.
+    stop: &[
+        "mission",
+        "enc1_4_manager",
+        "enc3_5_manager",
+        "enc3_6_manager",
+        "enc4_2_manager",
+        "enc5_1_manager",
+        "enc5_1_spawner",
+        "enc5_1_spawner_sents",
+        "enc5_1_explosions",
+    ],
     console: &["diff_control"],
     // `section6` waits for the top of the lift, which the run starts just
     // past, and `enc6_0_dialog` for the walk to the Warthogs (the run's
