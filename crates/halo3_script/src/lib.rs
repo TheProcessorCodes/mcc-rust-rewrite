@@ -15,6 +15,7 @@ pub mod crate_physics;
 pub mod dialogue;
 pub mod ground;
 pub mod h1;
+pub mod h1_objects;
 pub mod hooks;
 pub mod objects;
 pub mod setup;

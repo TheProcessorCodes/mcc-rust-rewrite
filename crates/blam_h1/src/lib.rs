@@ -22,6 +22,7 @@ pub mod collision;
 pub mod effect;
 pub mod effect_library;
 pub mod model;
+pub mod objects;
 pub mod script;
 pub mod shader;
 pub mod skeleton;
@@ -31,7 +32,7 @@ use std::path::PathBuf;
 
 use blam_geometry::{
     BspInfo, ClusterInfo, CollisionMaterial, CollisionSource, Kind, Lighting, Lightmap, Material, Mesh, Part, Placement, Scene,
-    Shading, Spawn, SpawnKind, StartingLocation, TriggerVolume, ZoneSet, ZoneSwitch,
+    SceneObject, Shading, Spawn, SpawnKind, StartingLocation, TriggerVolume, ZoneSet, ZoneSwitch,
 };
 use blam_h2::Fog;
 use blam_h2::lightmap::Atlas;
@@ -90,6 +91,8 @@ pub struct Stats {
     pub lightmaps: usize,
     pub bsp_triangles: usize,
     pub collision_triangles: usize,
+    /// The placed objects' collision triangles (`objects::collision_model`).
+    pub object_collision_triangles: usize,
     pub corrupt_loops: usize,
     pub objects: HashMap<Kind, usize>,
     pub models_failed: Vec<String>,
@@ -189,7 +192,7 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
         return Err(Error::Invalid(format!("{} decoded no structure BSPs", map.map_name)));
     }
     if options.objects {
-        decode_objects(map, scnr, options.bsps.is_some(), &mut scene, &mut materials, &mut stats)?;
+        decode_objects(map, scnr, options, &mut scene, &mut materials, &mut stats)?;
     }
     decode_spawns(scnr, &mut scene)?;
     decode_zone_sets(scnr, &mut scene)?;
@@ -520,12 +523,18 @@ pub fn decode_models(map: &Map, modes: &[u32]) -> Models {
 fn decode_objects(
     map: &Map,
     scnr: Reader<'_>,
-    only_inside: bool,
+    options: &Options,
     scene: &mut Scene,
     materials: &mut Materials,
     stats: &mut Stats,
 ) -> Result<()> {
     let mut cache: HashMap<u32, Vec<u32>> = HashMap::new();
+    let only_inside = options.bsps.is_some();
+    // Which BSPs each object stands in, as the game decides it (section 13).
+    let trees = objects::bsp_trees(map)?;
+    let decoded = scene.bsps.iter().fold(0u32, |m, b| m | 1u32.checked_shl(b.index).unwrap_or(0));
+    let names: Vec<String> = scnr.block(0x204, 0x24)?.into_iter().map(|n| n.str(0, 32)).collect();
+    let mut collisions: HashMap<(u32, usize), Vec<blam_geometry::CollisionTriangle>> = HashMap::new();
     // (kind, placements, element size, palette): scenery, machines,
     // controls, light fixtures. Each placement starts with its palette
     // index (i16), position (+0x8) and yaw, pitch, roll (+0x14). Vehicles
@@ -541,7 +550,8 @@ fn decode_objects(
         for (k, e) in scnr.block(at, size)?.into_iter().enumerate() {
             let Some(&object) = usize::try_from(e.i16(0)?).ok().and_then(|p| palette.get(p)) else { continue };
             // With BSPs chosen, only what stands inside one of them.
-            if only_inside && !inside_bsps(scene, e.vec3(0x8)?) {
+            let mask = objects::bsp_mask(&trees, e.vec3(0x8)?) & decoded;
+            if only_inside && mask == 0 {
                 continue;
             }
             let object_name = map.tag_name(object).unwrap_or("?").to_string();
@@ -558,6 +568,7 @@ fn decode_objects(
             };
             let position = e.vec3(0x8)?;
             let transform = object_transform(position, e.vec3(0x14)?);
+            let first = scene.placements.len() as u32;
             for m in meshes {
                 scene.placements.push(Placement {
                     name: format!("{} {k}", object_name.rsplit('\\').next().unwrap_or(&object_name)),
@@ -575,6 +586,46 @@ fn decode_objects(
                 });
             }
             *stats.objects.entry(kind).or_default() += 1;
+            let name_index = u16::try_from(e.i16(2)?).ok().filter(|&n| (n as usize) < names.len());
+            let index = scene.objects.len() as u32;
+            // Collision belongs to the BSPs the object stands in; with one
+            // BSP (multiplayer) to all.
+            let bsps = if only_inside { mask } else { 0 };
+            scene.objects.push(SceneObject {
+                kind,
+                name_index,
+                name: name_index.map(|n| names[n as usize].clone()),
+                placement: k as u32,
+                tag: object & 0xFFFF,
+                tag_path: object_name.clone(),
+                transform,
+                bsps,
+                folder: None,
+                // Placement `+0x4` ("not placed"): bit 0, automatically.
+                flags: u32::from(e.u16(4)?),
+                placements: first..scene.placements.len() as u32,
+                dynamic: false,
+            });
+            if options.collision {
+                // Its collision model, for the placement's permutation (`+0x6`).
+                let permutation = usize::try_from(e.i16(6)?).unwrap_or(0);
+                let local = collisions.entry((object, permutation)).or_insert_with(|| {
+                    objects::collision_model(map, object, permutation).unwrap_or_else(|e| {
+                        stats.models_failed.push(format!("{object_name} collision: {e}"));
+                        Vec::new()
+                    })
+                });
+                let mirrored = transform.determinant() < 0.0;
+                for t in local.iter() {
+                    let p = t.points.map(|v| transform.transform_point3(v));
+                    scene.collision.triangles.push(blam_geometry::CollisionTriangle {
+                        points: if mirrored { [p[0], p[2], p[1]] } else { p },
+                        source: blam_geometry::CollisionSource::Object { object: index, bsps },
+                        ..*t
+                    });
+                    stats.object_collision_triangles += 1;
+                }
+            }
         }
     }
 
@@ -706,11 +757,6 @@ pub fn object_named(map: &Map, name: &str) -> Option<NamedObject> {
         }
     }
     None
-}
-
-/// Whether `p` lies inside the stated bounds of a decoded BSP.
-fn inside_bsps(scene: &Scene, p: Vec3) -> bool {
-    scene.bsps.iter().any(|b| p.cmpge(b.bounds.0).all() && p.cmple(b.bounds.1).all())
 }
 
 /// Halo CE loads one structure BSP at a time: each decoded BSP is a zone

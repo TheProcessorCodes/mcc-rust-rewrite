@@ -64,6 +64,8 @@ pub struct Loaded {
     /// The map, for what is read after the world (the encounters,
     /// `halo1_ai.rs`).
     pub map: blam_h1::Map,
+    /// Each scene object's device, for the scripts (`h1_objects.rs`).
+    pub devices: Vec<Option<halo3_script::h1_objects::H1Device>>,
 }
 
 pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded> {
@@ -76,13 +78,14 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
     let loaded = blam_h1::decode(&map, &options)?;
     let s = &loaded.stats;
     eprintln!(
-        "halo ce {}: {} lightmap meshes ({} lit from {} pages), {} triangles; collision {} triangles; {} spawns; {} scenery; {} bitmaps ({} not decoded) in {:.1} s",
+        "halo ce {}: {} lightmap meshes ({} lit from {} pages), {} triangles; collision {} triangles (+{} of objects); {} spawns; {} scenery; {} bitmaps ({} not decoded) in {:.1} s",
         map.map_name,
         s.lightmaps,
         s.lightmapped,
         s.lightmap_pages,
         loaded.scene.triangle_count(),
         s.collision_triangles,
+        s.object_collision_triangles,
         loaded.scene.spawns.len(),
         s.objects.get(&Kind::Scenery).copied().unwrap_or(0),
         loaded.bitmaps.len(),
@@ -105,6 +108,7 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
         None => (None, None),
     };
     let effects = scripts.as_ref().map(|d| crate::halo1_effects::load(&map, d));
+    let devices = crate::h1_objects::devices(&map, &scene);
     if let Some(f) = fog {
         eprintln!(
             "sky fog: colour {:.2?}, up to {:.2} from {} to {} wu",
@@ -152,6 +156,7 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
         scripts,
         effects,
         map,
+        devices,
     })
 }
 
