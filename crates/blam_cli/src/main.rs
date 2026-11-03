@@ -28,6 +28,7 @@
 
 mod anim;
 mod ai;
+mod cubemaps;
 mod geometry;
 mod halo2;
 mod sound;
@@ -199,6 +200,7 @@ fn main() -> Result<()> {
         "weapons" => weapons::run(&cache, &args),
         "anim" => anim::run(&cache, &args),
         "ai" => ai::run(&cache, &args),
+        "cubemaps" => cubemaps::run(&cache),
         "bitmap" => {
             let Some(what) = args.positional.get(1) else {
                 usage()

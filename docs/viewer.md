@@ -262,10 +262,18 @@ formulas):
   `analytical_specular_contribution` and the specular mask (base alpha or
   `specular_mask_texture`). The SH towards the reflection gives the area
   specular;
-- **environment map**: `dynamic` (the usual, a runtime cube map) and
-  `per_pixel` are both stood in for by the lightmap's SH (without the
-  dominant light) towards the reflection, times `env_tint_color` and
-  `environment_map_specular_contribution`; the cube bitmaps are not sampled;
+- **environment map**: `dynamic` (the usual) reflects the level's own cube
+  maps (`reflections.rs`, `docs/format/cubemaps.md`): each chunk blends the
+  three capture points of its clusters nearest its middle (its mesh tag),
+  each cube divided by its own mean and scaled to the lightmap's mean light
+  at the pixel, times `env_tint_color` and
+  `environment_map_specular_contribution`, read at a mip from the
+  roughness. `per_pixel` uses the same cubes (its own cube bitmap is not
+  read). Where there is no cube (Halo 2, Reach, the test scene) the
+  lightmap's SH (without the dominant light) towards the reflection stands
+  in, as before;
+- **parallax**: `simple` and `interpolated` move every map's texcoord by
+  the height map along the view in the tangent frame (one step or two);
 - **self-illumination**: `simple` and kin (`self_illum_map * self_illum_color *
   self_illum_intensity`), `illum_detail`, `from_diffuse`,
   `self_illum_times_diffuse`, `3_channel_self_illum`; exposed like the rest.
@@ -278,9 +286,12 @@ blocks into the reflective panels they are: a near-black albedo under a
 strong specular mask).
 `HALO3_MATERIALS=0` turns all of this off (base colour and lightmap only, as
 before), `HALO3_SPECULAR` scales the specular (0 turns it off) and
-`HALO3_SELF_ILLUM` the self-illumination, for comparisons.
+`HALO3_SELF_ILLUM` the self-illumination, `HALO3_REFLECTIONS=0` the cube
+maps (back to the SH stand-in; `mirror` and `view` are the checks of
+`cubemaps.md` 4), `HALO3_CUBE_SCALE` their level and `HALO3_PARALLAX=0`
+parallax, for comparisons.
 
-Not yet: real cube-map reflections, parallax, `two_detail`'s second detail map, change colours, decal
+Not yet: `two_detail`'s second detail map, change colours, decal
 bump. Translucent materials are still one mesh per material, so two
 overlapping translucent materials can sort wrongly.
 

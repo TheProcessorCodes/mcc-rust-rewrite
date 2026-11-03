@@ -124,6 +124,10 @@ pub struct SurfaceLook {
     /// (`environment_map_specular_contribution`, or 1 for glass).
     pub env: f32,
     pub env_tint: [f32; 3],
+    /// How blurred the reflection is: the mip of a 128-texel cube it is
+    /// read at (0 sharp). Cook-Torrance from its roughness lobe times
+    /// `env_roughness_scale`; the phong models and glass near sharp.
+    pub env_lod: f32,
     pub illum: Illum,
     pub illum_map: Option<MapRef>,
     /// Plasma only: the mask's pattern is in its red channel (its alpha is
@@ -133,6 +137,9 @@ pub struct SurfaceLook {
     /// `self_illum_color * self_illum_intensity`; three colours for
     /// `3_channel_self_illum` (`channel_a/b/c`).
     pub illum_colour: [[f32; 3]; 3],
+    /// `parallax` (not `off`): the height map, `height_scale`, and whether
+    /// it is `interpolated` (two steps) rather than `simple` (one).
+    pub parallax: Option<(MapRef, f32, bool)>,
 }
 
 /// A terrain shader's textures (`docs/format/shaders.md` 7.5): the blend
@@ -391,6 +398,11 @@ fn surface_look(s: &Shader, fetch: &mut dyn FnMut(&TextureSlot) -> Option<u32>) 
     ) {
         out.detail = map("detail_map");
     }
+    let parallax = s.option("parallax").unwrap_or("off");
+    if parallax != "off" {
+        let scale = p1("height_scale", 0.0);
+        out.parallax = map("height_map").filter(|_| scale != 0.0).map(|m| (m, scale, parallax == "interpolated"));
+    }
     match s.option("bump_mapping").unwrap_or("off") {
         // Decals' `leave` keeps what is under them.
         "off" | "leave" => {}
@@ -450,6 +462,16 @@ fn surface_look(s: &Shader, fetch: &mut dyn FnMut(&TextureSlot) -> Option<u32>) 
             p1("environment_map_specular_contribution", 0.0)
         };
         out.env_tint = rgb("env_tint_color", [1.0; 3]);
+        out.env_lod = match out.model {
+            Model::CookTorrance => {
+                // The lobe's width, sqrt(2 / (power + 2)) radians, in
+                // texels of a 128-texel face (90 degrees).
+                let width = (2.0 / (out.power[0] + 2.0)).sqrt() * p1("env_roughness_scale", 1.0);
+                (width / (std::f32::consts::FRAC_PI_2 / 128.0)).max(1.0).log2().clamp(0.0, 6.0)
+            }
+            Model::Phong => 1.0,
+            _ => 0.0,
+        };
     }
     let intensity = illum_intensity(s);
     out.illum_colour = [rgb("self_illum_color", [1.0; 3]).map(|x| x * intensity); 3];
@@ -679,6 +701,7 @@ pub fn bitmaps_of(look: &Look) -> Vec<u32> {
             .map(|m| m.0),
     );
     out.extend(s.bump_detail.map(|b| b.0));
+    out.extend(s.parallax.map(|p| p.0.0));
     out.sort_unstable();
     out.dedup();
     out

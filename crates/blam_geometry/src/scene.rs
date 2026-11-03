@@ -408,6 +408,24 @@ pub struct BspInfo {
     pub portals: Vec<Portal>,
     /// Finds the cluster a point is in, when the collision BSP decoded.
     pub locator: Option<ClusterLocator>,
+    /// The BSP's baked reflection cube maps (scenario structure BSP
+    /// `+0x48`, a `bitm` tag of cube maps; `docs/format/cubemaps.md`).
+    pub cubemap_bitmap: Option<u32>,
+    /// Where each cube map was captured, per cluster.
+    pub cubemaps: Vec<CubemapPoint>,
+}
+
+/// One reflection cube map's capture point (cluster `+0x10C`, 16 bytes).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CubemapPoint {
+    pub position: Vec3,
+    /// The cluster whose list it is in.
+    pub cluster: u32,
+    /// The cube's number across the scenario: BSPs that share a capture
+    /// (120_halo's cube 70 is in BSPs 0 and 7) give it the same number.
+    pub id: u32,
+    /// Which bitmap of the BSP's cube map tag.
+    pub cube: u32,
 }
 
 /// A convex opening joining two clusters of one BSP: whatever is seen of

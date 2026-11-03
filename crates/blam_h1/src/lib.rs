@@ -448,6 +448,8 @@ fn decode_bsp(
         clusters,
         portals: Vec::new(),
         locator: None,
+        cubemap_bitmap: None,
+        cubemaps: Vec::new(),
     });
     Ok(())
 }

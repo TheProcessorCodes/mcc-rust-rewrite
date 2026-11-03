@@ -18,8 +18,9 @@
 //
 // The material model (`docs/format/shaders.md` section 11) is an
 // approximation of Halo's: the dominant light of the lightmap is the one
-// analytic light; the SH towards the reflection stands in for the area
-// specular and for dynamic cube maps.
+// analytic light; the SH towards the reflection is the area specular; the
+// level's own reflection cube maps (`reflections.rs`) are the environment
+// map, the SH standing in where a chunk has no cube.
 //
 // The same file is the material's prepass fragment shader (`PREPASS_PIPELINE`,
 // the depth prepass maps with water get): there it only cuts cut-outs whose
@@ -34,6 +35,8 @@ import bevy_pbr::render::{
 };
 @if(!PREPASS_PIPELINE)
 import bevy_pbr::render::{clustered_forward as clustering, mesh_view_bindings::clustered_lights};
+@if(!PREPASS_PIPELINE)
+import bevy_pbr::render::mesh_functions::get_tag;
 @if(PREPASS_PIPELINE)
 import bevy_pbr::{prepass::io::VertexOutput, render::pbr_prepass_functions::prepass_sample_color_and_alpha_discard};
 @if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
@@ -87,7 +90,10 @@ fn effect_irradiance(world: vec4<f32>, frag: vec2<f32>, n: vec3<f32>, ortho: boo
 struct HaloLightmapParams {
     // Ranges of SH coefficients c0..c3.
     scales: vec4<f32>,
-    // x: dominant light intensity range, y: exposure.
+    // x: dominant light intensity range, y: exposure, z: reflection mode
+    // (0 SH stand-in, 1 cube maps, 2 mirror of the cubes alone, 3 the cubes
+    // along the view ray), w: cube
+    // texel brightness.
     extra: vec4<f32>,
     // Terrain: 1 per layer drawn, 0 per layer off; all 0 on non-terrain.
     terrain_layers: vec4<f32>,
@@ -119,7 +125,7 @@ struct HaloLightmapParams {
     tint_glancing: vec4<f32>,
     // F0, w: model (0 diffuse, 1 phong, 2 cook-torrance, 3 glass).
     f0: vec4<f32>,
-    // Reflection colour (tint times contribution).
+    // Reflection colour (tint times contribution); w: the cube mip level.
     env: vec4<f32>,
     // x: self-illumination mode (0 off, 1 map, 2 map x detail,
     // 3 from diffuse, 4 map x diffuse, 5 three channels, 6 plasma: map alpha);
@@ -140,6 +146,11 @@ struct HaloLightmapParams {
     // x: 1 when the alpha test reads `alpha_test_map`; its xform.
     alpha_flags: vec4<f32>,
     alpha_xform: vec4<f32>,
+    // Rows: Halo-frame direction to cube lookup direction.
+    cube_axes: array<vec4<f32>, 3>,
+    // Parallax: x steps (0 off, 1 simple, 2 interpolated), y height scale.
+    parallax: vec4<f32>,
+    height_xform: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> halo: HaloLightmapParams;
@@ -170,6 +181,37 @@ struct HaloLightmapParams {
 @group(constants::MATERIAL_BIND_GROUP) @binding(125) var terrain_bump_2: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(126) var terrain_bump_3: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(127) var alpha_map: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(128) var cubes: texture_cube_array<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(129) var cube_sampler: sampler;
+@group(constants::MATERIAL_BIND_GROUP) @binding(130) var cube_points: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(131) var height_map: texture_2d<f32>;
+
+// The level's reflection cube maps around a pixel: up to three capture
+// points named by the chunk's mesh tag (count in the top two bits, then 10
+// bits per cube), blended by inverse squared distance from `world`
+// (render frame), looked up towards `r` (Halo frame). A texel is colour
+// times brightness, over its cube's mean brightness (`cube_points` w): 1 is
+// the cube's average, the caller scales it by the light at the pixel
+// (`reflections.rs`). Alpha 0: the chunk has no cube.
+fn cube_reflection(tag: u32, world: vec3<f32>, r: vec3<f32>, lod: f32) -> vec4<f32> {
+    let count = tag >> 30u;
+    if count == 0u || halo.extra.z == 0.0 {
+        return vec4(0.0);
+    }
+    var sum = vec3(0.0);
+    var weights = 0.0;
+    for (var k = 0u; k < count; k = k + 1u) {
+        let cube = (tag >> (10u * k)) & 1023u;
+        let p = textureLoad(cube_points, vec2(i32(cube), 0), 0);
+        let d = p.xyz - world;
+        let w = 1.0 / (dot(d, d) + 1.0);
+        let dir = vec3(dot(halo.cube_axes[0].xyz, r), dot(halo.cube_axes[1].xyz, r), dot(halo.cube_axes[2].xyz, r));
+        let t = textureSampleLevel(cubes, cube_sampler, dir, i32(cube), lod);
+        sum = sum + t.rgb * (t.a * p.w * w);
+        weights = weights + w;
+    }
+    return vec4(sum / weights, 1.0);
+}
 
 // decode_bpp16_luvw: base and residual layer to a signed RGB value.
 fn luvw(a: vec4<f32>, b: vec4<f32>, range: f32) -> vec3<f32> {
@@ -217,6 +259,12 @@ fn halo_light(uv: vec2<f32>) -> HaloLight {
     l.dir = dir;
     l.d = d;
     return l;
+}
+
+// The mean light arriving from all round (the SH's constant term, the
+// dominant light included), what a cube's average stands for.
+fn halo_mean_radiance(l: HaloLight) -> vec3<f32> {
+    return max((l.k0 + l.d * 0.2820948) * 0.2820948, vec3(0.0));
 }
 
 // The SH part alone (the light from everywhere but the dominant light).
@@ -296,7 +344,9 @@ fn terrain_bump_xy(uv: vec2<f32>, w: vec4<f32>) -> vec2<f32> {
 // lobe, the SH towards the reflection (area specular) and a reflection of
 // the surroundings (environment map stand-in), all times `coefficient`.
 // `tint_n`: the normal specular tint, analytical contribution in w.
-fn halo_specular(l: HaloLight, n: vec3<f32>, v: vec3<f32>, coefficient: f32, power_n: f32, tint_n: vec4<f32>) -> vec3<f32> {
+// `cube`: the cube maps' reflection towards `r` (alpha 0: none, the SH
+// stands in).
+fn halo_specular(l: HaloLight, n: vec3<f32>, v: vec3<f32>, coefficient: f32, power_n: f32, tint_n: vec4<f32>, cube: vec4<f32>) -> vec3<f32> {
     let model = halo.f0.w;
     let r = reflect(-v, n);
     let nv = clamp(dot(n, v), 0.0, 1.0);
@@ -320,9 +370,10 @@ fn halo_specular(l: HaloLight, n: vec3<f32>, v: vec3<f32>, coefficient: f32, pow
     let facing = max(dot(n, l.dir), 0.0);
     let analytic = l.d * pow(rl, max(power, 1.0)) * facing * tint_n.w;
     let area = halo_ambient(l, r) * halo.tint_glancing.w;
-    // The light arriving from around the reflection, without the dominant
-    // light (that is the analytic lobe's).
-    let env = halo_ambient(l, r) * halo.env.rgb * env_weight;
+    // The light arriving from around the reflection: the cube maps, else
+    // the SH without the dominant light (that is the analytic lobe's).
+    let surroundings = select(halo_ambient(l, r), cube.rgb, cube.a > 0.0);
+    let env = surroundings * halo.env.rgb * env_weight;
     return ((analytic + area) * tint + env) * coefficient;
 }
 
@@ -371,9 +422,38 @@ fn fragment(in: VertexOutput) {
     prepass_cut(in);
 }
 
+// Parallax (`parallax` simple / interpolated): the texcoord moved towards
+// the eye by the height map's height above its middle grey times
+// `height_scale`, along the view direction in the surface's tangent frame;
+// `interpolated` takes a second step from where the first landed and
+// averages the two heights. `v`: towards the eye, render frame.
+@if(!PREPASS_PIPELINE)
+fn parallax_uv(uv: vec2<f32>, n: vec3<f32>, tangent: vec4<f32>, v: vec3<f32>) -> vec2<f32> {
+    let t = tangent.xyz - n * dot(n, tangent.xyz);
+    if dot(t, t) < 1e-8 {
+        return uv;
+    }
+    let tn = normalize(t);
+    let b = cross(n, tn) * select(-1.0, 1.0, tangent.w >= 0.0);
+    let view_ts = vec2(dot(v, tn), dot(v, b));
+    let scale = halo.parallax.y;
+    let h0 = (textureSample(height_map, surface_sampler, xform(uv, halo.height_xform)).r - 0.5) * scale;
+    let uv1 = uv + view_ts * h0;
+    // Sampled either way (uniform control flow); the steps pick.
+    let h1 = (textureSample(height_map, surface_sampler, xform(uv1, halo.height_xform)).r - 0.5) * scale;
+    return select(uv1, uv + view_ts * (h0 + h1) * 0.5, halo.parallax.x == 2.0);
+}
+
 @if(!PREPASS_PIPELINE)
 @fragment
-fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+fn fragment(in_raw: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    var in = in_raw;
+@if(VERTEX_UVS_A && VERTEX_TANGENTS) {
+    if halo.parallax.x != 0.0 {
+        let v = normalize(view.world_position - in.world_position.xyz);
+        in.uv = parallax_uv(in.uv, normalize(in.world_normal), in.world_tangent, v);
+    }
+}
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     // Before alpha_discard makes opaque alpha 1: the specular mask of
     // `specular_mask_from_diffuse` shaders.
@@ -465,25 +545,48 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     albedo = albedo / max(in.color.rgb, vec3(1e-3));
 }
 
+    // The reflection of the level's cube maps, where the material has one.
+    let tag = get_tag(in.instance_index);
+    var rh = to_halo_dir(reflect(-pbr_input.V, n));
+    if halo.extra.z == 3.0 {
+        // Checking the cubes' axes: the cube seen straight along the view
+        // ray, as if the camera stood at the capture point.
+        rh = to_halo_dir(-pbr_input.V);
+    }
+    var cube = vec4(0.0);
+    if dot(halo.env.rgb, vec3(1.0)) > 0.0 || halo.extra.z >= 2.0 {
+        let origin = select(in.world_position.xyz, view.world_position, halo.extra.z == 3.0);
+        cube = cube_reflection(tag, origin, rh, halo.env.w);
+    }
+
 @if(VERTEX_UVS_B) {
     let l = halo_light(in.uv_b);
     let nh = to_halo_dir(n);
     let vh = to_halo_dir(pbr_input.V);
     let e = halo_irradiance(l, nh);
+    cube = vec4(cube.rgb * halo_mean_radiance(l) * halo.extra.w, cube.a);
     var lit = colour.rgb * e;
     if halo.f0.w != 0.0 || dot(halo.terrain_spec, vec4(1.0)) > 0.0 {
-        lit = lit + halo_specular(l, nh, vh, coefficient * mask, power, tint_n);
+        lit = lit + halo_specular(l, nh, vh, coefficient * mask, power, tint_n, cube);
     }
     colour = vec4(lit, colour.a);
 }
 
 @if(VERTEX_COLORS && !VERTEX_UVS_B) {
-    // Lit per vertex: no light direction here, but the vertex irradiance
-    // stands in for the surroundings an environment map would reflect.
-    // Halved: the vertex irradiance includes the dominant light, which the
-    // per-pixel reflection leaves to the analytic lobe.
-    colour = vec4(colour.rgb + in.color.rgb * halo.env.rgb * (0.5 * coefficient * mask), colour.a);
+    // Lit per vertex: no light direction here. The cube maps' reflection at
+    // the level of the vertex irradiance over pi; without one the vertex
+    // irradiance stands in for the surroundings, halved: it includes the
+    // dominant light, which the per-pixel reflection leaves to the analytic
+    // lobe.
+    cube = vec4(cube.rgb * in.color.rgb * (halo.extra.w / 3.14159265), cube.a);
+    let around = select(in.color.rgb * 0.5, cube.rgb, cube.a > 0.0);
+    colour = vec4(colour.rgb + around * halo.env.rgb * (coefficient * mask), colour.a);
 }
+
+    // Checking the cubes against the world: every surface a mirror.
+    if halo.extra.z >= 2.0 && cube.a > 0.0 {
+        colour = vec4(cube.rgb, colour.a);
+    }
 
     colour = vec4(colour.rgb + albedo * effect_irradiance(in.world_position, in.position.xy, n, pbr_input.is_orthographic), colour.a);
     colour = vec4((colour.rgb + illum) * halo.extra.y, colour.a);

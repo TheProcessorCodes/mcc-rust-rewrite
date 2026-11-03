@@ -214,10 +214,17 @@ lists all 20).
       (`docs/format/water.md`).
 - [x] Materials: detail maps, normal maps on Halo's own tangents (BC5
       kept compressed), specular from the lightmap's dominant light
-      (two-lobe phong, cook-torrance, glass), an SH stand-in for
-      environment maps, self-illumination, per-map exposure from the
-      camera fx; spawn markers hidden (`docs/viewer.md`).
-- [ ] Real cube-map reflections, parallax.
+      (two-lobe phong, cook-torrance, glass), self-illumination, per-map
+      exposure from the camera fx; spawn markers hidden (`docs/viewer.md`).
+- [x] Cube-map reflections and parallax (2026-11-02; checked by headless
+      shots, awaiting a playtest): each BSP's own reflection cubes (scenario
+      BSP `+0x48`, the capture points per cluster at cluster `+0x10C`) go up
+      as one cube array; each chunk blends the three nearest of its
+      clusters' cubes, at the level of the lightmap's light at the pixel
+      (the cubes are stored normalised). `parallax` simple / interpolated
+      moves the texcoords by the height map. `blam cubemaps <map>` lists
+      them; `HALO3_REFLECTIONS=0` brings back the SH stand-in,
+      `HALO3_PARALLAX=0` flat (`docs/format/cubemaps.md`).
 - [x] Enemies and AI on 120_halo (2026-10-29; built, awaiting a playtest):
       the scenario's 262 squads, their cells and starting locations, 11 AI
       zones with 3,842 firing positions and the 15 characters read and
