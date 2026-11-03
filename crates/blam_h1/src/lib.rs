@@ -17,6 +17,8 @@
 pub mod bitmap;
 pub mod cache;
 pub mod collision;
+pub mod effect;
+pub mod effect_library;
 pub mod model;
 pub mod script;
 pub mod shader;
