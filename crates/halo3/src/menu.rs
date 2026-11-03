@@ -174,6 +174,8 @@ const CAMPAIGN: &[Entry] = &[
     ("h3:120_halo", "Halo", Some("H3_C10_HALO3")),
     // A mission of ours (`main.rs` `MISSIONS`): Halo from the Warthog run on.
     ("warthog_run", "The Warthog Run", Some("H3_C10_HALO3")),
+    // Halo CE's: The Maw from the Warthogs on (`MISSIONS`).
+    ("h1:warthog_run", "Halo CE: The Warthog Run", Some("H1_C10_THEMAW")),
     ("h3:130_epilogue", "Epilogue", Some("H3_C11_EPILOGUE")),
 ];
 
@@ -184,6 +186,15 @@ const KINDS: [&str; 5] = [
     "Halo Reach multiplayer",
     "Halo 3 campaign",
 ];
+
+/// What the footer calls a tile: its tab's kind, except Halo CE's mission
+/// on the Campaign tab.
+fn kind(tab: usize, map: &Map) -> &'static str {
+    match map.game {
+        Game::Halo1 if tab == KINDS.len() - 1 => "Halo CE campaign",
+        _ => KINDS[tab],
+    }
+}
 
 const BACKGROUND: Color = Color::srgb(0.043, 0.059, 0.082);
 const BAR: Color = Color::srgb(0.071, 0.098, 0.141);
@@ -1730,8 +1741,8 @@ fn show(
         text.0 = match (selected, part.0) {
             (Some(map), 0) => map.name.to_string(),
             (Some(_), _) if menu.error.is_some() => menu.error.clone().unwrap_or_default(),
-            (Some(map), _) if !map.installed => format!("{} - not installed in MCC", KINDS[menu.tab]),
-            (Some(_), _) => KINDS[menu.tab].to_string(),
+            (Some(map), _) if !map.installed => format!("{} - not installed in MCC", kind(menu.tab, map)),
+            (Some(map), _) => kind(menu.tab, map).to_string(),
             (None, _) => String::new(),
         };
     }
@@ -1858,7 +1869,9 @@ mod tests {
             (CAMPAIGN, Game::Halo3),
         ] {
             for (arg, ..) in entries {
-                // A mission (warthog_run) is its map's game.
+                // A mission (warthog_run) is its map's game; the Campaign
+                // tab also holds Halo CE's Warthog run.
+                let game = if *arg == "h1:warthog_run" { Game::Halo1 } else { game };
                 assert_eq!(crate::codename(map_of(arg)).0, Some(game), "{arg}");
             }
         }

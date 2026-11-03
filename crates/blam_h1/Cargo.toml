@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 blam_geometry = { workspace = true }
 blam_h2 = { workspace = true }
+blam_script = { workspace = true }
 blam_texture = { workspace = true }
 glam = { workspace = true }
 memmap2 = { workspace = true }

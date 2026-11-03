@@ -5,6 +5,8 @@
 //! halo3 <map>            riverworld, or a path to a .map
 //! halo3 warthog_run      a mission (`MISSIONS`): Halo 3's last mission
 //!                        from the Warthog run on, on the dirt bike, timed
+//! halo3 h1:warthog_run   Halo CE's Warthog run: The Maw from the Warthogs
+//!                        at the top of the lift, against the countdown
 //! halo3 --test-scene     a made-up room, for checking the camera
 //!
 //! halo3 <map> --shot <dir> [--view x,y,z,yaw,pitch]... [--size WxH]
@@ -63,6 +65,7 @@
 //! `lockout.map`, is `blackout`.
 
 mod anim_test;
+mod countdown;
 mod finish;
 mod halo1;
 mod halo2;
@@ -186,6 +189,7 @@ fn main() -> anyhow::Result<()> {
   halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-setup [--menu-step N]] [--size WxH]
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 warthog_run [--foot] [--difficulty ...]             the Warthog run of 120_halo, timed
+  halo3 h1:warthog_run [--foot] [--difficulty ...]          Halo CE's Warthog run (The Maw), against its countdown
   halo3 <map> [--foot] [--ai nearby|zone|off|none]
   halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary] [--foot]   e.g. 120_halo --insertion trench_run (or trench_end)
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
@@ -262,6 +266,13 @@ pub(crate) struct Mission {
     /// never switches to another (so nothing before the mission streams
     /// back in).
     pub(crate) zone_sets: &'static [&'static str],
+    /// A Halo CE mission: its BSPs, where it starts and how its scripts
+    /// begin (`halo1.rs`).
+    pub(crate) h1: Option<halo1::Insertion>,
+    /// The line under MISSION COMPLETE, and under MISSION FAILED
+    /// (`finish.rs`).
+    pub(crate) won_line: &'static str,
+    pub(crate) lost_line: &'static str,
 }
 
 /// The missions.
@@ -273,6 +284,19 @@ pub(crate) const MISSIONS: &[Mission] = &[Mission {
     map: "h3:120_halo",
     args: &["--insertion", "trench_run", "--zone", "120_04_100_110"],
     zone_sets: &["120_04_100_110", "120_100_110", "120_110_120"],
+    h1: None,
+    won_line: "You made it into the Forward Unto Dawn.",
+    lost_line: "The mission is lost.",
+}, Mission {
+    // Halo CE's last mission, The Maw, from the Warthogs on: the dirt bike
+    // stands in for the Warthog (`halo3_script::h1::THE_MAW`).
+    name: "h1:warthog_run",
+    map: "h1:d40",
+    args: &[],
+    zone_sets: &[],
+    h1: Some(halo3_script::h1::THE_MAW),
+    won_line: "You made it to the Longsword.",
+    lost_line: "Time ran out: the Pillar of Autumn's reactor went up.",
 }];
 
 /// The mission called `name`, if it is one.
@@ -316,8 +340,21 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
     // Told by the file's own header, not its name: Halo CE's `sidewinder`
     // and `prisoner` share their file names with other games' maps.
     if blam_h1::is_halo1(&path) {
-        // Halo CE: decoded up front like Halo 2 (`halo1.rs`).
-        let h1 = halo1::load(&path)?;
+        // Halo CE: decoded up front like Halo 2 (`halo1.rs`); a mission
+        // decodes only its BSPs and starts its scripts.
+        let insertion = mission.and_then(|m| m.h1.as_ref());
+        let mut h1 = halo1::load(&path, insertion)?;
+        let mut extras = MapExtras::default();
+        if let (Some(ins), Some(data)) = (insertion, h1.scripts.take()) {
+            let start = h1.start;
+            let runtime = halo3_script::h1::runtime(data, &h1.scene, ins, difficulty(args));
+            extras.scripts = Some(ScriptStart {
+                pending: halo3_script::PendingScripts(Some(runtime), None, None),
+                devices: halo3_anim::MachinePoser::default(),
+                start,
+                effect_roots: Vec::new(),
+            });
+        }
         if let Some(mean) = world::lighting::scene_mean_irradiance(&h1.scene, &h1.textures.lightmaps) {
             eprintln!("halo ce lightmap: mean irradiance {mean:.3}");
             world::lighting::set_scene_mean(mean);
@@ -338,7 +375,7 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             foot_tuning: None,
             plain_fog: h1.fog,
             plain_sound: None,
-            extras: MapExtras::default(),
+            extras,
         });
     }
     if blam_h2::is_halo2(&path) {
@@ -594,6 +631,7 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         halo3_script::ScriptPlugin,
         halo3_effects::EffectsPlugin,
         finish::FinishPlugin,
+        countdown::CountdownPlugin,
         fly_camera::FlyCameraPlugin,
         flag::SessionFlagPlugin,
         world::WorldPlugin,
@@ -803,15 +841,10 @@ fn scripts_for(
         return None;
     }
     let data = halo3_script::prepare(cache, scene)?;
-    let mut config = halo3_script::Config::default();
-    if let Some(d) = value("--difficulty") {
-        config.difficulty = match d.as_str() {
-            "easy" => 0,
-            "heroic" => 2,
-            "legendary" => 3,
-            _ => 1,
-        };
-    }
+    let mut config = halo3_script::Config {
+        difficulty: difficulty(args),
+        ..Default::default()
+    };
     let mut console = None;
     let mut start = None;
     let mut start_override = None;
@@ -885,6 +918,17 @@ struct ScriptStart {
     start: Option<(Vec3, f32)>,
     /// `effe` tags the scripts and their objects' damage play.
     effect_roots: Vec<u32>,
+}
+
+/// `--difficulty easy|normal|heroic|legendary` as the scripts number it
+/// (0 to 3); normal when not given.
+fn difficulty(args: &[String]) -> i16 {
+    match value_of(args, "--difficulty").as_deref() {
+        Some("easy") => 0,
+        Some("heroic") => 2,
+        Some("legendary") => 3,
+        _ => 1,
+    }
 }
 
 /// The value after `flag`, if given.

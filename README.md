@@ -129,6 +129,7 @@ target\debug\blam.exe anim 120_halo --all
 & "target\debug\halo3.exe"
 & "target\debug\halo3.exe" riverworld
 & "target\debug\halo3.exe" warthog_run
+& "target\debug\halo3.exe" h1:warthog_run
 ```
 
 `halo3.exe` with no map opens the map menu: Halo 3, Halo 2, Halo CE, Reach and
@@ -365,6 +366,16 @@ lists all 20).
       (`crates/blam_h1/tests/maps.rs`). Headless shots of every map; the
       bike, skating and walking stand on Blood Gulch's collision. Not yet:
       weapons, sound, teleporters, water animation.
+- [x] Halo CE: The Warthog Run (`h1:warthog_run`, the menu's Campaign tab; built 2026-11-02,
+      awaiting a playtest): The Maw (`d40`) from the Warthogs at the top of the lift, on the
+      dirt bike. Only the run's BSPs (`d40f`, `d40g`, `d40h`), one at a time, switched by
+      the map's own BSP switch volumes. The map's own scripts (`blam_h1::script`, read into
+      Halo 3's `ScriptData`) run on `halo3_script`: the countdown (6:00, 5:00 on Legendary)
+      in the bottom right, red under a minute, paused for the Pelican scene; reaching
+      `grand_finale` by the Longsword wins (MISSION COMPLETE with the time and what was left
+      on the countdown), the countdown running out loses (MISSION FAILED). Checked by
+      `crates/halo3_script/tests/h1_warthog_run.rs` and headless shots along the run. Not
+      yet: enemies, effects (explosions), sound, dialogue, music, doors (drawn, not solid).
 - [x] Halo: Reach, the 20 multiplayer maps (`hr:NAME`, the menu's Reach tab; built, awaiting
       a playtest): our own `blam_reach` crate (`docs/format/reach.md`) on the Halo 3 path:
       textured BSPs, instances, scenery, crates, machines, controls and the sky model;

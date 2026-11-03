@@ -14,6 +14,7 @@ pub mod ai_bridge;
 pub mod crate_physics;
 pub mod dialogue;
 pub mod ground;
+pub mod h1;
 pub mod hooks;
 pub mod objects;
 pub mod setup;
@@ -324,11 +325,12 @@ fn tick(
     scripts.accumulator = (scripts.accumulator + time.delta_secs_f64()).min(0.25);
     let dt = 1.0 / vm::TICKS_PER_SECOND;
     let poser = animation.0.as_deref();
-    while scripts.accumulator >= dt && scripts.runtime.mission_over.is_none() {
+    let over = |r: &Runtime| r.mission_over.is_some() || r.mission_lost.is_some();
+    while scripts.accumulator >= dt && !over(&scripts.runtime) {
         scripts.accumulator -= dt;
         scripts.runtime.step(&mut bridge, ai.0.as_mut(), poser);
-        if scripts.runtime.mission_over.is_some() {
-            // Won: the scripts stop here. The outro goes on to teleport the
+        if over(&scripts.runtime) {
+            // Won or lost: the scripts stop here. The outro goes on to teleport the
             // player to its cutscene flags (120_halo's `cin_halo_outro`);
             // the game's completion screen takes over instead.
             bridge.teleport = None;

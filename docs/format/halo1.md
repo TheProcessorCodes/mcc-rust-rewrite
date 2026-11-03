@@ -102,7 +102,18 @@ item collection (+0x50; Blood Gulch's first: shotgun, shotgun, assault rifle, pl
 2, 3, 4, 6, 7, 8, meanings not checked), team (u16 +0x12). Neither is used yet.
 
 **Trigger volumes** (0x60): name (char[32] at +4), then forward (+0x30), up (+0x3C), position
-(+0x48), extents (+0x54) as read; not checked against the bytes, as no multiplayer map has any.
+(+0x48, a corner), extents (+0x54) along forward, left (up x forward) and up, as in Halo 3.
+Checked on The Maw (`d40`, 158 volumes): `grand_finale` lies across the Longsword's hangar
+floor, `enc7_7` on the road into it, the `bsp a,b` volumes at the seams between BSPs.
+
+**Object names** (`+0x204`, 0x24 each): name (char[32]), object type (u16 +0x20: 0 biped, 1
+vehicle, ..., 7 machine), placement index (i16 +0x22). A placement names its entry with the
+i16 at +2 (`d40`: `trench_jeep1` is vehicle placement 5, a Warthog at the top of the lift).
+
+**BSP switch volumes** (`+0x39C`, 8 bytes each): trigger volume (i16), from BSP (i16), to BSP
+(i16), an unused -1. The engine switches structure BSP when the player enters one; only one BSP
+is loaded at a time. `d40` has 13, each over a volume named after it (`bsp 5,6` from 5 to 6).
+`blam_h1` makes each decoded BSP a zone set of its own and these its switches.
 
 ## 5. Structure BSPs and their chunks
 
@@ -267,9 +278,46 @@ The sky model's shaders are `schi` / `sotr` stacks: the dome's gradient is the l
 star layers), a cloud layer is a colour map with its alpha in a separate A8 `cloud mask` map,
 planets and rings are single alpha-blended maps.
 
+## 12. Scripts
+
+Checked on `d40` with `probe_h1_scripts.py` (it decompiles a map's scripts). Halo 3's layout
+(`halo-script.md`) with smaller pieces; `blam_h1::script` reads it into Halo 3's
+`blam_script::ScriptData`, so `blam_script`'s decompiler prints it and `halo3_script` runs it.
+
+| scenario offset | what |
+|---|---|
+| 0x474 | syntax data (a 20-byte tag data field: size, flags, file offset, address, unused) |
+| 0x488 | string data (the same kind of field) |
+| 0x49C | scripts, 0x5C each: name (char[32]), type (u16 +0x20: 0 startup, 1 dormant, 2 continuous, 3 static, 4 stub), return type (u16 +0x22), root node datum (+0x24) |
+| 0x4A8 | globals, 0x5C each: name, type (u16 +0x20), initial value datum (+0x28) |
+| 0x4B4 | tag references scripts use, 0x28 each, the reference at +0x18 |
+| 0x4E4 | cutscene flags, 0x5C each: name (+4), position (+0x24), yaw and pitch (+0x30) |
+
+The syntax data is a data array: a 0x38-byte header (name `script node`, maximum count u16
++0x20 = 32767, element size u16 +0x22 = 20, `@t@d` at +0x28), then the nodes. A node (20
+bytes): salt (u16), opcode (u16; the script's index for a script call), value type (u16),
+flags (u16; the same bits as Halo 3: 1 primitive, 2 script call, 4 global), next node datum
+(u32), string offset (u32), value (u32). Halo 3's node adds a source line. As in Halo 3, a
+call's first child is a function-name node whose string is the function's name, so no
+opcode table is needed. `d40`: 298 scripts, 66 globals.
+
+Halo CE numbers its value types differently from Halo 3 (`blam_h1::script::value_type` maps
+them): 0 to 10 the same (void 4, boolean 5, real 6, short 7, long 8, string 9, script 10),
+then 11 trigger volume, 12 cutscene flag, 13 camera point, 14 cutscene title, 15 recording,
+16 device group, 17 ai (value `0x8000_0000 | squad << 16 | encounter`), 18 ai command list, 21
+navpoint, 22 hud message, 23 object list, 24 sound, 25 effect, 26 damage, 27 looping sound, 28
+animation graph, 29 actor variant, 31 object definition, 32 game difficulty (easy, normal,
+hard, impossible as 0 to 3), 33 team, 36 hud corner, 37 object, 38 unit, 39 vehicle, 40
+weapon, 41 device, 42 scenery, 43 to 48 object names. Seen as the constants' strings and
+the functions that take them on `d40`.
+
+The countdown the Warthog run races (`timer_begin`, `endgame_cinematics`): `hud_set_timer_time
+minutes seconds` sets it, `hud_get_timer_ticks` reads it in 30ths of a second,
+`pause_hud_timer`, `show_hud_timer`, `hud_set_timer_warning_time` (1:00 on `d40`).
+
 ## What is not read yet
 
 Weapons on foot (netgame equipment through item collections to `weap` tags), sound
-(`sounds.map`), the netgame flags (teleporters, CTF flags), the multipurpose map's specular
+(`sounds.map`), campaign vehicles, bipeds and AI (encounters), object collision, the netgame flags (teleporters, CTF flags), the multipurpose map's specular
 and self-illumination, micro detail, bump and reflection maps, water animation, the indoor fog,
 the decals and detail objects.

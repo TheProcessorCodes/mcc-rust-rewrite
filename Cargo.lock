@@ -1696,6 +1696,7 @@ version = "0.1.0"
 dependencies = [
  "blam_geometry",
  "blam_h2",
+ "blam_script",
  "blam_texture",
  "game_paths",
  "glam",
@@ -2608,6 +2609,7 @@ dependencies = [
  "blam_h1",
  "blam_h2",
  "blam_reach",
+ "blam_script",
  "blam_texture",
  "game_paths",
  "halo3_ai",
@@ -2750,6 +2752,7 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "blam_h1",
  "blam_script",
  "blam_sound",
  "game_paths",

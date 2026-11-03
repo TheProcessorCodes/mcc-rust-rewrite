@@ -137,6 +137,7 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Halo 2: Coagulation | `coagulation` (MCC Halo 2) | built, HaloExportH2 counts match, not playtested; no sky model yet |
 | Halo 2: Lockout | `lockout` (MCC Halo 2) | built with lightmaps, fog, gravity lift, weapons, ambient sound; own counts pinned; not playtested |
 | Halo CE: all 19 multiplayer maps | `h1:bloodgulch` ... (MCC `halo1\maps`) | built 2026-10-31, every map drawn in headless shots (textures, lightmaps, sky, spawns); HaloExportH1 counts match on 4 maps; bike, skate and foot stand on Blood Gulch; no weapons or sound yet; not playtested |
+| Halo CE: The Warthog Run | `h1:warthog_run` (The Maw, `d40`, BSPs 5-7) | built 2026-11-02 with the map's own scripts, countdown, win and loss; not playtested (see "Halo CE's Warthog run") |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
 | Reach: all 20 multiplayer maps | `hr:20_sword_slayer`, `hr:cex_timberland`, ... | built 2026-10-31, counts pinned, each drawn headlessly; not playtested. Lightmaps read without their directions (per-vertex and probe-lit instances use the fallback), no fog, sound or weapons |
 
@@ -742,6 +743,66 @@ contrails, 8 lights, 35 bitmaps on the run, 0.1 s). Reader `blam_effect`, format
   run's first trigger), `out\shots\giant4\120_halo_6.png`, `_9.png` (the first giant
   explosion in the canyon, from `120_08_trench_encounter_100`). `HALO3_EFFECT_TRACE=1` logs
   every effect started; `HALO3_SHOT_NEXT_WAIT` spaces later `--shot` views for time series.
+
+## Halo CE's Warthog run (2026-11-02, branch `h1-warthog-run`)
+
+`halo3.exe h1:warthog_run`, or the Campaign tab's "Halo CE: The Warthog Run" tile (MCC's
+`H1_C10_THEMAW` picture). The Maw (`h1:d40`) from where the Warthogs wait at the top of the
+lift; the walk before is left out (the user asked for only the part in the Warthog). The dirt
+bike stands in for the Warthog, as on Halo 3's run. Built on what Halo 3's run taught:
+
+- **Only the run's BSPs, one at a time.** `blam_h1::Options::bsps` decodes `d40f`, `d40g`,
+  `d40h` (5, 6, 7) and only the objects standing in them. Halo CE loads one BSP at a time:
+  each decoded BSP is a zone set of its own, switched by the scenario's BSP switch volumes
+  (`+0x39C`, `docs/format/halo1.md` 4) through the existing zone triggers. So the two BSPs'
+  overlap is never drawn twice and there is no seam to open (Halo 3's `drop_seams` problem).
+- **The map's own scripts on Halo 3's runtime.** `blam_h1::script` reads Halo CE's scripts
+  into Halo 3's `blam_script::ScriptData` (20-byte nodes, Halo CE's value type numbers mapped
+  to Halo 3's; `halo1.md` 12, probe `probe_h1_scripts.py`), and `halo3_script` runs them
+  unchanged except for new functions: the HUD countdown (`hud_set_timer_time`,
+  `hud_get_timer_ticks`, `pause_hud_timer`, `show_hud_timer`, `hud_set_timer_warning_time`;
+  `vm::HudTimer`), `game_lost` (`Runtime::mission_lost`), `switch_bsp`
+  (`Config::bsp_zone_sets`), and `Config::won_at` / `lost_at`: a call of one of those scripts
+  ends the mission there, so the outro cutscene (teleports, BSP switches) never plays.
+- **Begun like an insertion** (`halo3_script::h1::THE_MAW`): the mission's own startup
+  (`mission`) is stopped, `diff_control` runs to its end first (`Runtime::run_now`; Legendary
+  takes a minute off the countdown), `section6`, `section7` and `timer_begin` are woken, and
+  `section6` / `enc6_0_dialog` count as passed (the lift top and the walk to the jeeps).
+- **The start is the only spawn.** The player starts on the bike at `trench_jeep1`, facing
+  its way: the Warthogs leave their recessed bay forwards up a ramp, and facing the run's
+  first trigger instead runs the bike into the bay's low wheel clamps. The scene's starts and
+  spawns are replaced by that spot, so falls and deaths never send the rider to the map's own
+  start in an unloaded BSP (Halo 3's fall loop).
+- **The end.** `test_for_endgame` waits for `grand_finale` (across the Longsword hangar's
+  floor) and `endgame_cinematics` calls `cinematic_finale`: MISSION COMPLETE with the run's
+  time and what was left on the countdown. The countdown reaching 0 calls
+  `cinematic_time_up`: MISSION FAILED ("Time ran out"). Both with Restart / Quit
+  (`finish.rs`; the lines are per mission, `Mission::won_line` / `lost_line`).
+- **The countdown** (`countdown.rs`): bottom right over the speedometer, `m:ss`, red under
+  the scripts' warning time (1:00). It stops and hides for the Pelican scene at `enc6_6_1`
+  (about 27 s: the scene's sleeps, then `trench_scene_continue`'s 180 ticks), as in the game;
+  driving on to `enc6_7_1` ends the scene early, as in the game. It starts at the jeeps with
+  the full 6:00; in the game it starts on the lift ride, some 20 s earlier.
+
+Checked: `blam_h1/tests/scripts.rs` (298 scripts, 66 globals, the countdown and finish read
+back; the BSP switches), `halo3_script/tests/h1_warthog_run.rs` (the countdown starts at 6:00
+and 5:00 on Legendary; driven through the run's volumes it pauses at `enc6_6_1`, resumes, and
+`grand_finale` wins; standing still, the countdown runs out and loses), every
+`halo3_script` / `halo3_anim` test (Halo 3's run unchanged). Headless: the bike leaves the bay
+and turns into the run; shots along the run to the Longsword (`out\shots\h1route\` in the
+worktree); the floor traced along the run's line (y = -4) has no gap wider than the narrow
+slots in the middle of the road. The run's haze is the map's own: the run's clusters see
+`skyofdoom`, whose fog reaches 60 % at 20 wu.
+
+Not done (Halo CE sides with nothing behind them yet; the scripts' calls log once and do
+nothing): enemies (`ai_place` of the run's Flood, Covenant and Sentinels), effects (the run's
+explosions, `effect_new`), sound, music (`d40_07` .. `d40_09`) and Cortana's lines, doors and
+other objects' collision (they are drawn and passable), the scripted objects themselves
+(object calls find nothing).
+
+Also fixed on this branch: a headless `--shot` without `--bike` / `--skate` / `--foot`
+crashed on every map (the speedometer read the bike's resources, which such a shot does not
+load).
 
 ## Open questions and known gaps
 

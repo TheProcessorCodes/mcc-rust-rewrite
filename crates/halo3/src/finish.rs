@@ -1,8 +1,9 @@
 //! The end of a scripted run: when the map's own scripts say the mission is
 //! won (`halo3_script::Runtime::mission_over`; on 120_halo, reaching
-//! `end_trilogy01` at the mouth of the frigate's hangar), play stops and a
-//! completion screen shows the time the run took, with a way to restart
-//! the run or quit.
+//! `end_trilogy01` at the mouth of the frigate's hangar; on Halo CE's The
+//! Maw, `grand_finale` by the Longsword) or lost (`mission_lost`: The
+//! Maw's countdown running out), play stops and a completion screen shows
+//! the time the run took, with a way to restart the run or quit.
 //!
 //! The clock starts the first time the player is in control after play
 //! has begun (the loading screen gone, `halo3_core::map::Playing`) (riding, on foot or skating; an insertion puts him on
@@ -98,6 +99,9 @@ struct FinishScreen;
 struct TimeText;
 
 #[derive(Component)]
+struct Title;
+
+#[derive(Component)]
 struct Subtitle;
 
 #[derive(Component)]
@@ -120,6 +124,13 @@ pub fn format_time(seconds: f64) -> String {
     } else {
         format!("{m}:{s:02}.{c:02}")
     }
+}
+
+/// Halo CE's countdown as its HUD shows it: `m:ss`, rounded up so it reads
+/// 0:00 only when it has run out.
+pub fn countdown(ticks: i64) -> String {
+    let seconds = (ticks.max(0) + 29) / 30;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
 fn text(s: &str, size: f32, colour: Color) -> impl Bundle {
@@ -154,7 +165,7 @@ fn spawn_screen(mut commands: Commands) {
                 BackgroundColor(Color::srgba(0.05, 0.07, 0.10, 0.92)),
             ))
             .with_children(|panel| {
-                panel.spawn(text("MISSION COMPLETE", 36.0, Color::WHITE));
+                panel.spawn((Title, text("MISSION COMPLETE", 36.0, Color::WHITE)));
                 panel.spawn((Subtitle, text("", 16.0, DIM)));
                 panel.spawn(Node {
                     height: Val::Px(14.0),
@@ -210,22 +221,30 @@ fn finish(
     mut picked: ResMut<Picked>,
     mut screens: Query<&mut Visibility, With<FinishScreen>>,
     mut menus: Query<&mut Visibility, (With<crate::pause::PauseMenu>, Without<FinishScreen>)>,
-    mut times: Query<&mut Text, (With<TimeText>, Without<Subtitle>)>,
-    mut subtitles: Query<&mut Text, (With<Subtitle>, Without<TimeText>)>,
+    mut times: Query<&mut Text, (With<TimeText>, Without<Subtitle>, Without<Title>)>,
+    mut subtitles: Query<&mut Text, (With<Subtitle>, Without<TimeText>, Without<Title>)>,
+    mut titles: Query<&mut Text, (With<Title>, Without<TimeText>, Without<Subtitle>)>,
     mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    current: Option<Res<CurrentMap>>,
 ) {
     if finished.0 {
         return;
     }
     let Some(scripts) = scripts else { return };
-    let Some(why) = scripts.runtime.mission_over.as_deref() else { return };
+    let rt = &scripts.runtime;
+    let (why, failed) = match (rt.mission_over.as_deref(), rt.mission_lost.as_deref()) {
+        (Some(why), _) => (why, false),
+        (None, Some(why)) => (why, true),
+        (None, None) => return,
+    };
     let now = time.elapsed_secs_f64();
     clock.finished = Some(now);
     finished.0 = true;
     *picked = Picked::default();
+    let outcome = if failed { "failed" } else { "complete" };
     match clock.time() {
-        Some(t) => info!("run complete ({why}) in {} ({t:.2} s)", format_time(t)),
-        None => info!("run complete ({why}); the clock never started"),
+        Some(t) => info!("run {outcome} ({why}) in {} ({t:.2} s)", format_time(t)),
+        None => info!("run {outcome} ({why}); the clock never started"),
     }
     // Play stops as behind the pause menu.
     paused.0 = true;
@@ -237,14 +256,25 @@ fn finish(
         *v = Visibility::Visible;
     }
     let shown = clock.time().map_or_else(|| "--:--.--".to_string(), format_time);
-    // 120_halo: the outro is the jump into the frigate.
-    let line = if scripts.runtime.data.script_index("cin_halo_outro").is_some() {
-        "You made it into the Forward Unto Dawn."
-    } else {
-        "The mission is won."
+    // The mission's own line (`main.rs` `MISSIONS`); else 120_halo's
+    // outro is the jump into the frigate.
+    let mission = current.as_deref().and_then(|c| crate::mission(&c.arg));
+    let mut line = match (mission, failed) {
+        (Some(m), false) => m.won_line.to_string(),
+        (Some(m), true) => m.lost_line.to_string(),
+        (None, true) => "The mission is lost.".to_string(),
+        (None, false) if rt.data.script_index("cin_halo_outro").is_some() => "You made it into the Forward Unto Dawn.".to_string(),
+        (None, false) => "The mission is won.".to_string(),
     };
+    // Halo CE's countdown: what was left on it.
+    if !failed && let Some(ticks) = rt.hud_timer.ticks {
+        line.push_str(&format!(" {} left on the countdown.", countdown(ticks)));
+    }
     for mut t in &mut subtitles {
-        t.0 = line.to_string();
+        t.0 = line.clone();
+    }
+    for mut t in &mut titles {
+        t.0 = if failed { "MISSION FAILED" } else { "MISSION COMPLETE" }.to_string();
     }
     for mut t in &mut times {
         t.0 = shown.clone();
@@ -426,6 +456,15 @@ mod tests {
         assert_eq!(format_time(61.256), "1:01.26");
         assert_eq!(format_time(599.999), "10:00.00");
         assert_eq!(format_time(3725.5), "1:02:05.50");
+    }
+
+    #[test]
+    fn countdown_reads_minutes_seconds() {
+        assert_eq!(countdown(6 * 60 * 30), "6:00");
+        assert_eq!(countdown(6 * 60 * 30 - 1), "6:00");
+        assert_eq!(countdown(31), "0:02");
+        assert_eq!(countdown(1), "0:01");
+        assert_eq!(countdown(0), "0:00");
     }
 
     #[test]
