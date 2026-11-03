@@ -120,6 +120,11 @@ impl OnFoot {
         self.world.as_deref()
     }
 
+    /// The same, shared (it is the bike's `SharedWorld` build).
+    pub fn shared_world(&self) -> Option<std::sync::Arc<World>> {
+        self.world.clone()
+    }
+
     /// Where the camera looks.
     pub fn aim_rotation(&self) -> Quat {
         Quat::from_euler(EulerRot::YXZ, self.yaw, self.pitch, 0.0)

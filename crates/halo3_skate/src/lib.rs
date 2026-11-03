@@ -65,10 +65,17 @@ impl Plugin for SkatePlugin {
 }
 
 fn publish_motion(host: Res<Host>, mut motion: ResMut<SkateMotion>) {
-    if motion.riding != host.active || motion.speed != host.speed || motion.state != host.state {
+    if motion.riding != host.active
+        || motion.speed != host.speed
+        || motion.state != host.state
+        || motion.feet != host.feet
+        || motion.velocity != host.velocity
+    {
         motion.riding = host.active;
         motion.speed = host.speed;
         motion.state.clone_from(&host.state);
+        motion.feet = host.feet;
+        motion.velocity = host.velocity;
     }
 }
 

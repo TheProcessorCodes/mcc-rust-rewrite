@@ -188,6 +188,13 @@ impl AutoStart {
 
 pub struct BikePlugin;
 
+/// The bike's systems (riding, drawing, publishing [`BikeMotion`]); the AI
+/// reads the rider after them.
+///
+/// [`BikeMotion`]: halo3_core::bike::BikeMotion
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BikeSet;
+
 impl Plugin for BikePlugin {
     fn build(&self, app: &mut App) {
         app.init_map_resource::<Riding>()
@@ -200,6 +207,7 @@ impl Plugin for BikePlugin {
             .init_map_resource::<halo3_core::bike::BikeMotion>()
             .add_plugins(tune::TunePlugin)
             .init_map_resource::<SharedWorld>()
+            .init_map_resource::<halo3_core::ai::PlayerRespawn>()
             .add_systems(halo3_core::map::MapStartup, (setup, model::start, spawn_crashed_text, warm_world))
             .add_systems(
                 Update,
@@ -214,7 +222,9 @@ impl Plugin for BikePlugin {
                     show_crashed,
                     publish_motion,
                 )
-                    .chain().run_if(halo3_core::map::ready),
+                    .chain()
+                    .in_set(BikeSet)
+                    .run_if(halo3_core::map::ready),
             );
     }
 }
@@ -254,6 +264,10 @@ fn publish_motion(riding: Res<Riding>, mut motion: ResMut<halo3_core::bike::Bike
                 crashed: b.crashed.is_some(),
                 clutch_slipping: !b.engine.locked,
                 rear_sliding: b.wheels[0].sliding && b.wheels[0].contact.is_some(),
+                position: b.position,
+                velocity: b.velocity,
+                heading: b.heading(),
+                upright: b.crashed.is_none() && b.grounded() == 2 && b.up().y > 0.8,
             }
         }
         None => halo3_core::bike::BikeMotion::default(),
@@ -413,7 +427,7 @@ fn ride(
     kill: Option<Res<halo3_core::falls::KillZones>>,
     lifts: Option<Res<halo3_core::lifts::Lifts>>,
     fallback: Option<Res<halo3_core::falls::FallbackSpot>>,
-    mut rider: ResMut<RiderPose>,
+    (mut rider, mut player): (ResMut<RiderPose>, ResMut<halo3_core::ai::PlayerRespawn>),
     loaded: Res<LoadedBsps>,
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -548,7 +562,16 @@ fn ride(
     if reset {
         bike.reset_here(world);
     }
+    // The rider died (`halo3_ai`): the bike rolls on with nobody at the
+    // controls, then comes back under him at his last quiet checkpoint.
+    if let Some((at, heading)) = player.bike.take() {
+        *bike = Bike::dropped(world, at + Vec3::Y, heading);
+        riding.eye = None;
+        riding.look = Vec3::ZERO;
+        info!("bike: back at the checkpoint");
+    }
     let controls = match riding.neutral {
+        _ if player.dead => Controls::default(),
         Some(throttle) => Controls {
             throttle,
             ..default()

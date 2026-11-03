@@ -25,6 +25,13 @@ pub struct BikeMotion {
     pub clutch_slipping: bool,
     /// The rear tyre spinning or locked.
     pub rear_sliding: bool,
+    /// The bike frame's origin (renderer frame, m), its velocity (m/s) and
+    /// heading about +Y, for the AI (`halo3_core::ai::PlayerBody`).
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub heading: f32,
+    /// On both wheels, upright, not crashed.
+    pub upright: bool,
 }
 
 /// The engine sound's loudness, 0 to 1.

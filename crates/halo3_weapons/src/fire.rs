@@ -11,8 +11,11 @@
 //!
 //! Rounds hit actors too: each step is also traced against the AI's hit
 //! shapes (`halo3_core::ai::Targets`) and, for an actor's rounds, the
-//! Spartan's capsule; a hit sends a `Damage` message with the projectile's
+//! player's capsule (`halo3_core::ai::PlayerBody`: on foot, on the bike or
+//! on the board); a hit sends a `Damage` message with the projectile's
 //! damage effect numbers. Explosives hurt everything near where they go off.
+//! Rounds fly on the shared collision (`halo3_bike::SharedWorld`, the same
+//! one the Spartan walks on).
 
 use bevy::prelude::*;
 use halo3_core::map::MapAppExt;
@@ -22,16 +25,33 @@ use blam_geometry::weapons::Barrel;
 use super::assets::Kind;
 use super::enemy::{Enemy, EnemyKilled};
 use super::{WU, WeaponImpact};
-use halo3_core::ai::{Damage, DamageSource, DamageTarget, Targets, ray_capsule};
+use halo3_core::ai::{Damage, DamageSource, DamageTarget, PlayerBody, Targets, ray_capsule};
+use halo3_core::zones::LoadedBsps;
+use halo3_bike::SharedWorld;
 use halo3_bike::physics::World;
 use halo3_foot::OnFoot;
 
 pub struct FirePlugin;
 
+/// Rounds launched and flown; the player's body is published before.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FireSet;
+
+/// The player's hit capsule (ends and radius), when he plays.
+type Capsule = Option<(Vec3, Vec3, f32)>;
+
+/// The collision rounds fly on: the Spartan's on foot, else the shared one
+/// of the loaded BSPs once built.
+fn world_of(foot: &OnFoot, shared: &SharedWorld, loaded: &LoadedBsps) -> Option<std::sync::Arc<World>> {
+    let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
+    foot.shared_world().or_else(|| shared.ready(mask))
+}
+
 impl Plugin for FirePlugin {
     fn build(&self, app: &mut App) {
         app.init_map_resource::<Shots>()
             .init_map_resource::<Targets>()
+            .init_map_resource::<PlayerBody>()
             .add_message::<Damage>()
             .remove_on_map_unload::<Looks>()
             .add_systems(halo3_core::map::MapStartup, setup)
@@ -39,6 +59,7 @@ impl Plugin for FirePlugin {
                 Update,
                 (launch, fly, fade)
                     .chain()
+                    .in_set(FireSet)
                     .run_if(halo3_core::pause::running)
                     .after(super::trigger)
                     .before(super::place_held).run_if(halo3_core::map::ready),
@@ -192,9 +213,8 @@ impl Shots {
     }
 
     /// Queues an actor's shot from `from` towards `dir` (renderer frame),
-    /// spread by `spread` radians. Its rounds hit the Spartan and other
-    /// actors, never `owner`. Dropped while nobody is on foot (rounds fly
-    /// on the on-foot collision).
+    /// spread by `spread` radians. Its rounds hit the player (on foot or
+    /// riding) and other actors, never `owner`.
     pub fn shoot_from(&mut self, kind: &Kind, barrel: &Barrel, from: Vec3, dir: Vec3, spread: f32, owner: Entity) {
         let dir = dir.normalize_or(Vec3::NEG_Z);
         let view = Transform::from_translation(from).looking_to(dir, Vec3::Y);
@@ -365,7 +385,7 @@ fn blast(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32,
 /// `max`: an actor (not `owner`), or for an actor's round the Spartan.
 fn body_hit(
     targets: Option<&Targets>,
-    spartan: &halo3_foot::physics::Spartan,
+    player: Capsule,
     owner: Option<Entity>,
     from: Vec3,
     dir: Vec3,
@@ -374,10 +394,7 @@ fn body_hit(
     let actor = targets
         .and_then(|t| t.raycast(from, dir, max, owner))
         .map(|h| (DamageTarget::Actor(h.entity), h.distance, h.head));
-    let player = owner.and_then(|_| {
-        let r = spartan.tuning.radius;
-        let base = spartan.position + Vec3::Y * r;
-        let top = spartan.position + Vec3::Y * (spartan.height() - r).max(r);
+    let player = owner.zip(player).and_then(|(_, (base, top, r))| {
         ray_capsule(from, dir, base, top, r)
             .filter(|d| *d <= max)
             .map(|d| (DamageTarget::Player, d, false))
@@ -398,7 +415,7 @@ const EXPLOSION_DAMAGE: f32 = 120.0;
 fn explode(
     damage: &mut MessageWriter<Damage>,
     targets: Option<&Targets>,
-    spartan: &halo3_foot::physics::Spartan,
+    player: Capsule,
     owner: Option<Entity>,
     at: Vec3,
     radius: f32,
@@ -422,14 +439,16 @@ fn explode(
     for t in targets.map_or(&[][..], |t| &t.0[..]) {
         hurt(DamageTarget::Actor(t.entity), (t.base + t.top) * 0.5);
     }
-    hurt(DamageTarget::Player, spartan.position + Vec3::Y * spartan.height() * 0.5);
+    if let Some((base, top, _)) = player {
+        hurt(DamageTarget::Player, (base + top) * 0.5);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn launch(
     mut commands: Commands,
     mut shots: ResMut<Shots>,
-    foot: Res<OnFoot>,
+    (foot, shared, loaded, body): (Res<OnFoot>, Res<SharedWorld>, Res<LoadedBsps>, Res<PlayerBody>),
     looks: Option<Res<Looks>>,
     targets: Option<Res<Targets>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -437,16 +456,20 @@ fn launch(
     mut damage: MessageWriter<Damage>,
     (mut enemy, mut kills): (ResMut<Enemy>, MessageWriter<EnemyKilled>),
 ) {
-    let (Some(looks), Some(world), Some(spartan)) = (looks, foot.world(), foot.spartan.as_ref()) else {
+    let (Some(looks), Some(world)) = (looks, world_of(&foot, &shared, &loaded)) else {
         shots.pending.clear();
         return;
     };
-    let eye = spartan.eye();
+    let world = &*world;
+    let player = body.0.as_ref().map(|b| b.capsule());
+    let eye = foot.spartan.as_ref().map(|s| s.eye());
     let pending = std::mem::take(&mut shots.pending);
     for p in pending {
-        let (from, dir) = match p.aimed {
-            Some(aimed) => aimed,
-            None => {
+        let (from, dir) = match (p.aimed, eye) {
+            (Some(aimed), _) => aimed,
+            // The player's own shots need him on foot.
+            (None, None) => continue,
+            (None, Some(eye)) => {
                 let target = aim_point(world, &enemy, &p.view, eye);
                 let mut from = p.muzzle.w_axis.truncate();
                 // A muzzle poking through a wall fires from the eye instead.
@@ -476,9 +499,9 @@ fn launch(
             // The enemy Spartan stands in the way of the player's beams.
             let spartan_hit = if p.owner.is_none() { enemy.raycast(from, dir, wall.map_or(p.range, |h| h.distance)) } else { None };
             let reach = spartan_hit.as_ref().map_or(wall.map_or(p.range, |h| h.distance), |b| b.distance);
-            let end = match (body_hit(targets.as_deref(), spartan, p.owner, from, dir, reach), wall) {
+            let end = match (body_hit(targets.as_deref(), player, p.owner, from, dir, reach), wall) {
                 (None, _) if let Some(b) = spartan_hit => {
-                    impact(&mut commands, &looks, &mut shots, &material, b.point, b.normal, 0.0, true);
+                    impact(&mut commands, &looks, &mut shots, &material, b.point, b.normal, 0.0, true, false);
                     hurt(&mut enemy, &mut kills, p.kind_tag, &p.path, p.spartan_damage, b.head);
                     b.point
                 }
@@ -494,11 +517,11 @@ fn launch(
                         head,
                         melee: false,
                     });
-                    impact(&mut commands, &looks, &mut shots, &material, at, -dir, 0.0, true);
+                    impact(&mut commands, &looks, &mut shots, &material, at, -dir, 0.0, true, false);
                     at
                 }
                 (None, Some(hit)) => {
-                    impact(&mut commands, &looks, &mut shots, &material, hit.point, hit.normal, 0.0, true);
+                    impact(&mut commands, &looks, &mut shots, &material, hit.point, hit.normal, 0.0, true, true);
                     impacts.write(WeaponImpact { weapon: p.kind_tag, at: hit.point, normal: hit.normal });
                     hit.point
                 }
@@ -555,6 +578,9 @@ fn impact(
     normal: Vec3,
     explosion: f32,
     big: bool,
+    // A scorch mark: on walls, not on bodies (it would hang in the air
+    // where the actor or the rider was).
+    mark: bool,
 ) {
     let n = if big { 10 } else { 5 };
     for _ in 0..n {
@@ -568,20 +594,22 @@ fn impact(
         ));
     }
     let size = if explosion > 0.0 { (explosion * 0.4).min(1.2) } else if big { 0.12 } else { 0.06 };
-    let mark = commands
-        .spawn((
-            Mesh3d(looks.disc.clone()),
-            MeshMaterial3d(looks.mark.clone()),
-            Transform::from_translation(at + normal * 0.01)
-                .with_rotation(Quat::from_rotation_arc(Vec3::Z, normal))
-                .with_scale(Vec3::splat(size)),
-            Fading { life: 20.0, age: 0.0, velocity: Vec3::ZERO, grow: 0.0, shrink: false },
-        ))
-        .id();
-    shots.marks.push_back(mark);
-    while shots.marks.len() > MARKS {
-        if let Some(old) = shots.marks.pop_front() {
-            commands.entity(old).try_despawn();
+    if mark {
+        let mark = commands
+            .spawn((
+                Mesh3d(looks.disc.clone()),
+                MeshMaterial3d(looks.mark.clone()),
+                Transform::from_translation(at + normal * 0.01)
+                    .with_rotation(Quat::from_rotation_arc(Vec3::Z, normal))
+                    .with_scale(Vec3::splat(size)),
+                Fading { life: 20.0, age: 0.0, velocity: Vec3::ZERO, grow: 0.0, shrink: false },
+            ))
+            .id();
+        shots.marks.push_back(mark);
+        while shots.marks.len() > MARKS {
+            if let Some(old) = shots.marks.pop_front() {
+                commands.entity(old).try_despawn();
+            }
         }
     }
     if explosion > 0.0 {
@@ -608,7 +636,7 @@ const GRAVITY: f32 = blam_geometry::movement::GRAVITY * WU;
 fn fly(
     mut commands: Commands,
     mut shots: ResMut<Shots>,
-    foot: Res<OnFoot>,
+    (foot, shared, loaded, body): (Res<OnFoot>, Res<SharedWorld>, Res<LoadedBsps>, Res<PlayerBody>),
     looks: Option<Res<Looks>>,
     targets: Option<Res<Targets>>,
     time: Res<Time>,
@@ -618,9 +646,11 @@ fn fly(
     mut damage: MessageWriter<Damage>,
     (mut enemy, mut kills): (ResMut<Enemy>, MessageWriter<EnemyKilled>),
 ) {
-    let (Some(looks), Some(world), Some(spartan)) = (looks, foot.world(), foot.spartan.as_ref()) else {
+    let (Some(looks), Some(world)) = (looks, world_of(&foot, &shared, &loaded)) else {
         return;
     };
+    let world = &*world;
+    let player = body.0.as_ref().map(|b| b.capsule());
     let dt = time.delta_secs();
     let mut rounds = std::mem::take(&mut shots.rounds);
     rounds.retain_mut(|r| {
@@ -639,7 +669,7 @@ fn fly(
         let body = if r.owner.is_none() { enemy.raycast(from, unit, hit.map_or(len, |h| h.distance)) } else { None };
         // An actor before the wall (and the Spartan) takes the round.
         let reach = body.as_ref().map_or(hit.map_or(len, |h| h.distance), |b| b.distance);
-        if let Some((who, d, head)) = body_hit(targets.as_deref(), spartan, r.owner, from, unit, reach) {
+        if let Some((who, d, head)) = body_hit(targets.as_deref(), player, r.owner, from, unit, reach) {
             let at = from + unit * d;
             let amount = shots.roll(r.damage);
             if amount > 0.0 {
@@ -655,9 +685,9 @@ fn fly(
             }
             shots.hits += 1;
             let glow = materials.get(r.tracer).map(|m| m.0.clone()).unwrap_or_else(|_| looks.spark.clone());
-            impact(&mut commands, &looks, &mut shots, &glow, at, -unit, r.explosion, r.power > 0.5);
+            impact(&mut commands, &looks, &mut shots, &glow, at, -unit, r.explosion, r.power > 0.5, false);
             if r.explosion > 0.0 {
-                explode(&mut damage, targets.as_deref(), spartan, r.owner, at, r.explosion);
+                explode(&mut damage, targets.as_deref(), player, r.owner, at, r.explosion);
             }
             commands.entity(r.tracer).try_despawn();
             return false;
@@ -686,10 +716,10 @@ fn fly(
         if let Some(h) = hit {
             shots.hits += 1;
             let glow = materials.get(r.tracer).map(|m| m.0.clone()).unwrap_or_else(|_| looks.spark.clone());
-            impact(&mut commands, &looks, &mut shots, &glow, h.point, h.normal, r.explosion, r.power > 0.5);
+            impact(&mut commands, &looks, &mut shots, &glow, h.point, h.normal, r.explosion, r.power > 0.5, true);
             impacts.write(WeaponImpact { weapon: r.weapon, at: h.point, normal: h.normal });
             if r.explosion > 0.0 {
-                explode(&mut damage, targets.as_deref(), spartan, r.owner, h.point, r.explosion);
+                explode(&mut damage, targets.as_deref(), player, r.owner, h.point, r.explosion);
             }
             // A direct hit on the enemy Spartan took its damage above.
             if body.is_none() && r.owner.is_none() {
@@ -698,8 +728,8 @@ fn fly(
         } else if gone && r.explosion > 0.0 {
             // Grenades and missiles go off at the end of their range.
             let glow = materials.get(r.tracer).map(|m| m.0.clone()).unwrap_or_else(|_| looks.spark.clone());
-            impact(&mut commands, &looks, &mut shots, &glow, end, Vec3::Y, r.explosion, true);
-            explode(&mut damage, targets.as_deref(), spartan, r.owner, end, r.explosion);
+            impact(&mut commands, &looks, &mut shots, &glow, end, Vec3::Y, r.explosion, true, true);
+            explode(&mut damage, targets.as_deref(), player, r.owner, end, r.explosion);
             if r.owner.is_none() {
                 blast(&mut enemy, &mut kills, r.weapon, &r.path, r.spartan_damage, end, r.explosion);
             }

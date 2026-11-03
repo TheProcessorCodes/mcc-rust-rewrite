@@ -37,7 +37,7 @@ use bevy::prelude::*;
 use halo3_core::map::MapAppExt;
 
 pub use halo3_core::weapons::{WeaponAction, WeaponEvent, WeaponImpact};
-pub use fire::Shots;
+pub use fire::{FireSet, Shots};
 
 use halo3_core::coords::{to_halo, to_render};
 use halo3_core::skate::RiderPose;
