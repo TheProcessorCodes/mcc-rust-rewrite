@@ -79,13 +79,14 @@ fn class_as_halo3(class: u16) -> u8 {
 
 /// Our levels per bus, dB, on top of the tags' linear gains: Halo CE keeps
 /// its class levels in the engine, not in a tag. Music and lines as tagged;
-/// effects and ambience 6 dB down (our choice, by ear against Halo 3's mix,
-/// where they sit 12 to 15 dB under the music; Halo CE's samples are
-/// mastered quieter than Halo 3's).
+/// effects 6 dB down and ambience 12 dB down (our choice: measured headless
+/// at the run's start, the trench's background loop at its tag gain sat
+/// 1 to 2 dB over the music; Halo 3's classes put ambience 12 dB under it).
 fn class_gain_db(class: u8) -> f32 {
     match super::bus_of_class(class as i32) {
         Bus::Music | Bus::Dialogue => 0.0,
-        Bus::Ambience | Bus::Effects => -6.0,
+        Bus::Effects => -6.0,
+        Bus::Ambience => -12.0,
     }
 }
 
@@ -271,7 +272,11 @@ fn as_looping(l: &h1::Looping, sounds: &HashMap<u32, SoundInfo>) -> Looping {
                 name: format!("detail{}", i + 1),
                 sound: d.sound,
                 period: d.period,
-                gain_db: db(d.gain),
+                // A further 6 dB down: the trench's background scatters
+                // `muffled_explosions` (an effects-class sound) every 0.5
+                // to 2 s, which at its own level rose over the music
+                // (headless, -12 against -13 dBFS). Our choice.
+                gain_db: db(d.gain) - 6.0,
                 flags: d.flags,
                 yaw: d.yaw,
                 pitch: d.pitch,

@@ -819,7 +819,7 @@ English otherwise or when a line is missing), each script sleeping as long as it
 background loops by cluster. Every `snd!` of the map is playable by tag index, so effects
 can sound: push `SoundRequest::Impulse { tag, name, at: Some(pos), scale }` into
 `ScriptSounds` (`halo3_audio/src/halo1.rs` header). Levels are our choice (no class tag in
-Halo CE): music and lines as tagged, effects and ambience -6 dB. Not done: pitch, reverb
+Halo CE): music and lines as tagged, effects -6 dB, ambience -12 dB. Headless at the run's start (`HALO3_AUDIO_TRACE=1 --shot`): `d40_07` -13 to -18 dBFS, Cortana -14 to -17, the trench background (its loop and the `muffled_explosions` it scatters every 0.5 to 2 s, details a further -6 dB) -18 to -21 (it was -12, over the music, at the tags' own gains). Not done: pitch, reverb
 (`snde`), sound scenery (none on the run), the cutscenes' 5.1 music, the Warthog's engine
 sounds (in no bank). Awaiting the user's playtest.
 

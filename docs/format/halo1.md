@@ -506,7 +506,7 @@ cross-fades over its fade-out time, else 2 s: our choice, the tag has no time), 
 plays the scripts' music, one-shots and lines as it does Halo 3's (`sound.md` 8). Samples are
 decoded on demand and resampled to 48 kHz (Catmull-Rom). Buses by class: 32 music; 19, 44,
 46, 47 dialogue; 33 to 35 ambience; the rest effects. Levels: the tags' linear gains; music
-and lines as tagged, effects and ambience 6 dB down (our choice); lines duck the music by 3 dB
+and lines as tagged, effects 6 dB and ambience 12 dB down (our choice; at the tag gain the trench's background sat over the music); lines duck the music by 3 dB
 and effects by 6 dB (Halo 3's numbers). Background loops follow the listener's cluster
 through the ambience in `lib.rs`. Not done: pitch (natural, random, bend), skip fractions,
 cone gains, sound environments (reverb), sound scenery, `sound_class_set_gain` beyond music and
