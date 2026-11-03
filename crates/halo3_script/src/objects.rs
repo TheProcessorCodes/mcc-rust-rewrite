@@ -78,6 +78,31 @@ pub struct ObjectInfo {
     pub contacts: Vec<Vec3>,
     /// Its physics model, for a crate that can be let go.
     pub physics: Option<CratePhysics>,
+    /// How a device moves by its own tag (Halo CE's machines,
+    /// `crate::h1_objects`); `None`: the scripts' defaults.
+    pub device: Option<DeviceSpec>,
+}
+
+/// A device's own numbers (Halo CE: `blam_h1::objects::Device`).
+#[derive(Clone, Debug, Default)]
+pub struct DeviceSpec {
+    /// Seconds from closed to open; `device_set_position` takes this
+    /// times the distance to go.
+    pub position_seconds: f32,
+    /// Open (position past one half) clears the way: no collision, not
+    /// drawn (a door, whose leaves are not posed here).
+    pub opens_away: bool,
+    /// An automatic door: opens when the player comes near.
+    pub door: Option<AutoDoor>,
+}
+
+/// A door that opens by itself when the player comes within `radius` of
+/// `centre` (world frame), and closes `hold_seconds` after he left.
+#[derive(Clone, Debug)]
+pub struct AutoDoor {
+    pub centre: Vec3,
+    pub radius: f32,
+    pub hold_seconds: f32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -122,6 +147,8 @@ pub struct Device {
     overlay_duration: f32,
     overlay_elapsed: f32,
     pub power: f32,
+    /// An automatic door: seconds since the player was last near it.
+    pub away: f32,
 }
 
 impl Device {
@@ -504,6 +531,15 @@ impl Objects {
                     s.transform = t;
                     changed = true;
                 }
+                // A door open past half way is out of the way.
+                let (solid, hidden) = match &self.info[i].device {
+                    Some(d) if d.opens_away => (s.device.position < 0.5, s.device.position >= 0.5),
+                    _ => (solid, s.hidden),
+                };
+                if hidden != s.hidden {
+                    s.hidden = hidden;
+                    changed = true;
+                }
                 if solid != s.solid {
                     s.solid = solid;
                     changed = true;
@@ -512,6 +548,30 @@ impl Objects {
         }
         if changed {
             self.generation += 1;
+        }
+    }
+}
+
+impl Objects {
+    /// Opens the automatic doors the player is near and closes those he
+    /// left long enough ago (Halo CE's doors: `crate::h1_objects`). A door
+    /// without power stays as it is (locked).
+    pub fn auto_doors(&mut self, player: Option<Vec3>, dt: f32) {
+        for i in 0..self.state.len() {
+            let Some(door) = self.info[i].device.as_ref().and_then(|d| d.door.as_ref()) else { continue };
+            let seconds = self.info[i].device.as_ref().map_or(1.0, |d| d.position_seconds);
+            let s = &mut self.state[i];
+            if !s.exists || s.device.power <= 0.0 {
+                continue;
+            }
+            let near = player.is_some_and(|p| p.distance(door.centre) <= door.radius);
+            s.device.away = if near { 0.0 } else { s.device.away + dt };
+            let heading = s.device.target;
+            if near && heading < 1.0 {
+                s.device.animate(1.0, seconds * (1.0 - s.device.position));
+            } else if !near && heading > 0.0 && s.device.away >= door.hold_seconds {
+                s.device.animate(0.0, seconds * s.device.position);
+            }
         }
     }
 }

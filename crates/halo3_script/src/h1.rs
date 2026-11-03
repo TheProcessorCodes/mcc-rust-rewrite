@@ -8,7 +8,7 @@ use std::sync::Arc;
 use blam_geometry::Scene;
 use blam_script::ScriptData;
 
-use crate::objects::Objects;
+use crate::h1_objects::H1Device;
 use crate::vm::{Config, Runtime};
 
 /// A Halo CE mission of ours: which part of the map, where the player
@@ -68,9 +68,16 @@ pub const THE_MAW: Insertion = Insertion {
 /// The map's scripts on Halo 3's runtime, begun as `ins` says: its own
 /// start stopped, the difficulty scripts run, the mission's scripts woken,
 /// the volumes behind the start passed. `switch_bsp` reaches the zone set
-/// of each decoded BSP. Objects are not given to it yet: object calls do
-/// nothing.
+/// of each decoded BSP. The scene's objects are the scripts' objects
+/// (`h1_objects`), without their devices' own numbers
+/// ([`runtime_with_devices`] has them).
 pub fn runtime(data: ScriptData, scene: &Scene, ins: &Insertion, difficulty: i16) -> Runtime {
+    runtime_with_devices(data, scene, ins, difficulty, &[])
+}
+
+/// [`runtime`], with each scene object's device (`devices`, by
+/// `Scene::objects` index).
+pub fn runtime_with_devices(data: ScriptData, scene: &Scene, ins: &Insertion, difficulty: i16, devices: &[Option<H1Device>]) -> Runtime {
     let mut bsp_zone_sets = vec![None; 32];
     for (z, set) in scene.zone_sets.iter().enumerate() {
         if set.bsps.count_ones() == 1 {
@@ -85,9 +92,10 @@ pub fn runtime(data: ScriptData, scene: &Scene, ins: &Insertion, difficulty: i16
         lost_at: names(ins.lost_at),
         ..Default::default()
     };
+    let objects = crate::h1_objects::objects(scene, &data, devices);
     let mut rt = Runtime::new(
         Arc::new(data),
-        Objects::default(),
+        objects,
         scene.trigger_volumes.clone(),
         Vec::new(),
         config,

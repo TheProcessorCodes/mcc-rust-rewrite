@@ -511,6 +511,7 @@ impl Runtime {
             time: self.tick as f64 / TICKS_PER_SECOND,
         };
         ai.tick(&ctx);
+        self.objects.auto_doors(world.player_position(), (1.0 / TICKS_PER_SECOND) as f32);
         self.objects.step((1.0 / TICKS_PER_SECOND) as f32, poser);
     }
 
@@ -1177,6 +1178,36 @@ impl Runtime {
                 }
                 V(Value::Void)
             }
+            // Every object whose name holds the text (Halo CE's d40:
+            // `object_create_containing "bsp_8_1"`).
+            "object_create_containing" | "object_create_anew_containing" | "object_destroy_containing" => {
+                let part = arg(0).text().unwrap_or("").to_ascii_lowercase();
+                let named: Vec<usize> = self
+                    .data
+                    .object_names
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, n)| !part.is_empty() && n.name.to_ascii_lowercase().contains(&part))
+                    .filter_map(|(k, _)| self.objects.by_name.get(k).copied().flatten())
+                    .map(|e| e as usize)
+                    .collect();
+                for e in named {
+                    if name == "object_destroy_containing" {
+                        self.objects.destroy(e);
+                    } else {
+                        self.objects.create(e, name == "object_create_anew_containing");
+                    }
+                }
+                V(Value::Void)
+            }
+            "object_destroy_all" => {
+                for e in 0..self.objects.len() {
+                    self.objects.destroy(e);
+                }
+                V(Value::Void)
+            }
+            // Loading ahead of time: nothing to do here.
+            "objects_predict" | "object_type_predict" | "object_pvs_activate" => V(Value::Void),
             "object_create_folder" | "object_create_folder_anew" | "object_destroy_folder" => {
                 let members = arg(0).index().and_then(|f| self.folders.get(f)).cloned().unwrap_or_default();
                 for e in members {
@@ -1240,12 +1271,17 @@ impl Runtime {
             }
             // ---- devices ----
             "device_set_position" | "device_set_position_immediate" | "device_animate_position" => {
-                let seconds = match name {
-                    "device_set_position" => 2.0,
-                    "device_animate_position" => num(2) as f32,
-                    _ => 0.0,
-                };
                 for e in self.entries_of(&arg(0)) {
+                    // A device with its own transition time (Halo CE) takes
+                    // it for the whole way.
+                    let seconds = match (name, &self.objects.info[e].device) {
+                        ("device_set_position", Some(d)) => {
+                            d.position_seconds * (num(1) as f32 - self.objects.state[e].device.position).abs()
+                        }
+                        ("device_set_position", None) => 2.0,
+                        ("device_animate_position", _) => num(2) as f32,
+                        _ => 0.0,
+                    };
                     self.objects.state[e].device.animate(num(1) as f32, seconds);
                 }
                 V(Value::Void)
