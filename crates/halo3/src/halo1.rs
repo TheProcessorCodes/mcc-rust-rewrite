@@ -59,6 +59,8 @@ pub struct Loaded {
     pub start: Option<(Vec3, f32)>,
     /// A mission's scripts.
     pub scripts: Option<blam_script::ScriptData>,
+    /// Each scene object's device, for the scripts (`h1_objects.rs`).
+    pub devices: Vec<Option<halo3_script::h1_objects::H1Device>>,
 }
 
 pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded> {
@@ -71,13 +73,14 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
     let loaded = blam_h1::decode(&map, &options)?;
     let s = &loaded.stats;
     eprintln!(
-        "halo ce {}: {} lightmap meshes ({} lit from {} pages), {} triangles; collision {} triangles; {} spawns; {} scenery; {} bitmaps ({} not decoded) in {:.1} s",
+        "halo ce {}: {} lightmap meshes ({} lit from {} pages), {} triangles; collision {} triangles (+{} of objects); {} spawns; {} scenery; {} bitmaps ({} not decoded) in {:.1} s",
         map.map_name,
         s.lightmaps,
         s.lightmapped,
         s.lightmap_pages,
         loaded.scene.triangle_count(),
         s.collision_triangles,
+        s.object_collision_triangles,
         loaded.scene.spawns.len(),
         s.objects.get(&Kind::Scenery).copied().unwrap_or(0),
         loaded.bitmaps.len(),
@@ -99,6 +102,7 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
         Some(ins) => mission_start(&map, &mut scene, ins)?,
         None => (None, None),
     };
+    let devices = crate::h1_objects::devices(&map, &scene);
     if let Some(f) = fog {
         eprintln!(
             "sky fog: colour {:.2?}, up to {:.2} from {} to {} wu",
@@ -144,6 +148,7 @@ pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded
         sky,
         start,
         scripts,
+        devices,
     })
 }
 

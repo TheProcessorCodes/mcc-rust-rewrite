@@ -798,9 +798,45 @@ slots in the middle of the road. The run's haze is the map's own: the run's clus
 
 Not done (Halo CE sides with nothing behind them yet; the scripts' calls log once and do
 nothing): enemies (`ai_place` of the run's Flood, Covenant and Sentinels), effects (the run's
-explosions, `effect_new`), sound, music (`d40_07` .. `d40_09`) and Cortana's lines, doors and
-other objects' collision (they are drawn and passable), the scripted objects themselves
-(object calls find nothing).
+explosions, `effect_new`), sound, music (`d40_07` .. `d40_09`) and Cortana's lines.
+
+**Objects (2026-11-03, branch `h1-objects`).** The placed objects are solid and the scripts
+reach them (`docs/format/halo1.md` 13 to 15, probe `probe_h1_objects.py`):
+
+- **Which objects.** An object belongs to the BSPs whose open space holds it (the collision
+  BSP's 3D tree; scenery stores the same mask at `+0x20`, equal on all 293 of d40's). Only
+  those in the decoded BSPs are decoded, so the ship's interior doors that sat inside BSP 5's
+  bounding box are gone. Each becomes a `Scene::objects` entry (name, placement flags: bit 0
+  "not placed automatically" = absent until a script creates it).
+- **Collision** (`blam_h1::objects::collision_model`): the `coll` tag's nodes, each node's BSP
+  for the placement's permutation, put on the render model's node (Halo CE stores node
+  rotations inverted), placed by the object's transform, `CollisionSource::Object` with the
+  object's BSP mask. On the run: 60 oxygen tanks and 5 field generators in BSP 7's tunnels;
+  the Longsword (`fighterbomber_scenery`), the flames and sparks have no collision model, as in
+  the game.
+- **Scripts** (`halo3_script::h1_objects`, `h1::runtime_with_devices`): the same object table
+  Halo 3's scripts use, from the scene without a cache file, so `object_create` /
+  `object_destroy` / `object_hide`, `device_*` and collision removal (`publish_collision`) work
+  as on 120_halo. New in the VM for both games: `object_create_containing`,
+  `object_create_anew_containing`, `object_destroy_containing`, `object_destroy_all`,
+  `objects_predict` (nothing). At `grand_finale` `test_for_endgame` destroys everything and
+  creates the `bsp_8_1` / `5` / `7` / `8` sets; the finish still comes at `cinematic_finale`.
+- **Devices.** Machines take their tag's transition time for `device_set_position`, start
+  open / unpowered by their placement flags, and door machines that operate automatically
+  open when the player is within their bounding sphere + 0.6 wu and close after the tag's
+  door open time (ours: the distance). `antr` animations are not posed: an open door (past
+  half way) has no collision and is not drawn; platforms keep their rest pose. **There are no
+  doors on the run**: the run's BSPs hold only the lift's machines down its shaft (x -113,
+  z 7.4) and `asspain_13` at its top, which no script creates; nothing on the road is a door.
+
+Checked: `blam_h1/tests/objects.rs` (the mask; a tank's collision box equals its drawn box; the
+run's line y = -4 from x -115 to 1052, 0.3 and 0.8 wu over the floor: the only objects met are
+four oxygen tanks, `bsp_8_22`, `23` at x 995 and `bsp_8_74`, `75` at x 1021, each with a free
+line within 6 wu beside it; no machine), `halo3_anim/tests/h1_objects.rs` (the bike at full
+throttle stops at `bsp_8_75` and rides on without object collision; the scripts find
+`bsp_8_*` by name, the absent ones do not collide until created, `object_destroy_all` /
+`object_create_containing` at `grand_finale`, the run still won), `halo3_script` unit tests
+(an automatic door opens, holds, closes; an unpowered one stays shut). Not playtested.
 
 Also fixed on this branch: a headless `--shot` without `--bike` / `--skate` / `--foot`
 crashed on every map (the speedometer read the bike's resources, which such a shot does not

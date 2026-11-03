@@ -67,6 +67,7 @@
 mod anim_test;
 mod countdown;
 mod finish;
+mod h1_objects;
 mod halo1;
 mod halo2;
 mod menu;
@@ -347,7 +348,10 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
         let mut extras = MapExtras::default();
         if let (Some(ins), Some(data)) = (insertion, h1.scripts.take()) {
             let start = h1.start;
-            let runtime = halo3_script::h1::runtime(data, &h1.scene, ins, difficulty(args));
+            // The objects the scripts name or create, and the doors, are
+            // drawn on their own (`h1_objects.rs`).
+            halo3_script::h1_objects::mark_dynamic(&mut h1.scene, &data, &h1.devices);
+            let runtime = halo3_script::h1::runtime_with_devices(data, &h1.scene, ins, difficulty(args), &h1.devices);
             extras.scripts = Some(ScriptStart {
                 pending: halo3_script::PendingScripts(Some(runtime), None, None),
                 devices: halo3_anim::MachinePoser::default(),

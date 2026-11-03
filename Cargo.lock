@@ -2654,6 +2654,7 @@ dependencies = [
  "blam_anim",
  "blam_cache",
  "blam_geometry",
+ "blam_h1",
  "blam_script",
  "game_paths",
  "glam",
