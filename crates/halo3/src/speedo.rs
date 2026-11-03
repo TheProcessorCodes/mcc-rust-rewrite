@@ -56,19 +56,18 @@ fn spawn(mut commands: Commands) {
 #[allow(clippy::type_complexity)]
 fn show(
     unit: Res<SpeedUnit>,
-    bike: Res<BikeMotion>,
-    skate: Res<SkateMotion>,
+    // Absent in a `--shot` without a ride (no bike or skate plugin).
+    bike: Option<Res<BikeMotion>>,
+    skate: Option<Res<SkateMotion>>,
     mut root: Query<&mut Visibility, With<Speedo>>,
     mut number: Query<&mut Text, (With<SpeedoNumber>, Without<SpeedoUnitLabel>)>,
     mut label: Query<&mut Text, (With<SpeedoUnitLabel>, Without<SpeedoNumber>)>,
 ) {
     // The bike's motion is empty off the bike; the skate's is live only while skating.
-    let mps = if bike.riding {
-        Some(bike.speed)
-    } else if skate.riding {
-        Some(skate.speed)
-    } else {
-        None
+    let mps = match (bike.as_deref(), skate.as_deref()) {
+        (Some(bike), _) if bike.riding => Some(bike.speed),
+        (_, Some(skate)) if skate.riding => Some(skate.speed),
+        _ => None,
     };
     for mut v in &mut root {
         v.set_if_neq(if mps.is_some() { Visibility::Inherited } else { Visibility::Hidden });
