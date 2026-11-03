@@ -20,6 +20,7 @@ pub mod collision;
 pub mod model;
 pub mod script;
 pub mod shader;
+pub mod sound;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
