@@ -74,14 +74,22 @@ fn devices(map: &blam_h1::Map, scene: &Scene) -> Vec<Option<H1Device>> {
 fn ride(world: &halo3_bike::physics::World, from: Vec3) -> f32 {
     let d = to_render_dir(Vec3::X);
     let mut bike = Bike::dropped(world, to_render(from + Vec3::Z), d.x.atan2(d.z));
+    // Settled first, as the bike's own tests do.
+    for _ in 0..60 {
+        bike.step(world, Controls::default(), 1.0 / 60.0);
+    }
     let mut furthest = f32::MIN;
     let controls = Controls {
         throttle: 1.0,
         ..Default::default()
     };
-    for _ in 0..240 {
+    for k in 0..240 {
         bike.step(world, controls, 1.0 / 60.0);
-        furthest = furthest.max(to_halo(bike.position).x);
+        let p = to_halo(bike.position);
+        furthest = furthest.max(p.x);
+        if k % 60 == 59 {
+            eprintln!("  {:.1} s: halo [{:.2}, {:.2}, {:.2}]", (k + 1) as f32 / 60.0, p.x, p.y, p.z);
+        }
     }
     furthest
 }
@@ -101,8 +109,19 @@ fn the_runs_objects_are_solid_and_scripted() {
     // `bsp_8_75` stands on the run's line (y = -4) at x 1020.9, in BSP 7.
     let tank = scene.objects.iter().position(|o| o.name.as_deref() == Some("bsp_8_75")).unwrap();
     let at = scene.objects[tank].transform.w_axis.truncate();
-    let start = Vec3::new(at.x - 12.0, at.y, at.z);
     let with = halo3_bike::build_world(&scene.collision, 1 << 7);
+    // A run-up on the tank's own floor (the road drops about 4 wu before
+    // it): the furthest point back, up to 12 wu, whose floor is the tank's.
+    let floor_at = |x: f32| {
+        let hit = with.raycast_far(to_render(Vec3::new(x, at.y, at.z + 3.0)), -Vec3::Y, 10.0 * 3.048)?;
+        Some(to_halo(hit.point).z)
+    };
+    let back = (4..=24)
+        .rev()
+        .map(|k| k as f32 * 0.5)
+        .find(|d| floor_at(at.x - d).is_some_and(|z| (z - at.z).abs() < 0.3))
+        .expect("a floor before the tank");
+    let start = Vec3::new(at.x - back, at.y, at.z);
     let mut without = scene.collision.clone();
     without.triangles.retain(|t| matches!(t.source, CollisionSource::Bsp(_)));
     let without = halo3_bike::build_world(&without, 1 << 7);
@@ -129,7 +148,7 @@ fn the_runs_objects_are_solid_and_scripted() {
         at: blam_h1::object_named(&map, THE_MAW.start_at).unwrap().position,
         zone_set: 0,
     };
-    let mut step = |rt: &mut Runtime, player: &mut Player, ticks: usize| {
+    let step = |rt: &mut Runtime, player: &mut Player, ticks: usize| {
         for _ in 0..ticks {
             rt.step(player, &mut NoAi, None);
         }
@@ -156,15 +175,25 @@ fn the_runs_objects_are_solid_and_scripted() {
     }
     assert!(exists(&rt, "bsp_8_75"), "the tanks stay until the hangar");
     player.at = middle(scene.trigger_volumes.iter().find(|v| v.name == "grand_finale").unwrap());
-    step(&mut rt, &mut player, 60);
+    // Until the win, where the game stops the scripts (`halo3_script`'s
+    // tick; the outro would bring the hangar's scene objects back).
+    for _ in 0..60 {
+        if rt.mission_over.is_some() {
+            break;
+        }
+        step(&mut rt, &mut player, 1);
+    }
     assert_eq!(rt.mission_over.as_deref(), Some("cinematic_finale"));
     // `object_destroy_all`, then `object_create_containing` "bsp_8_1",
-    // "bsp_8_5", "bsp_8_7", "bsp_8_8".
-    assert!(!exists(&rt, "bsp_8_22") && !exists(&rt, "bsp_8_75") && !exists(&rt, "fighter_hangar"));
-    for name in ["bsp_8_1", "bsp_8_13", "bsp_8_5", "bsp_8_57", "bsp_8_77", "bsp_8_8", "bsp_8_86"] {
+    // "bsp_8_5", "bsp_8_7", "bsp_8_8". "Containing" is a substring match,
+    // so "bsp_8_7" brings the tank (bsp_8_75) back too.
+    assert!(!exists(&rt, "bsp_8_22") && !exists(&rt, "fighter_hangar"));
+    for name in ["bsp_8_1", "bsp_8_13", "bsp_8_5", "bsp_8_57", "bsp_8_75", "bsp_8_77", "bsp_8_8", "bsp_8_86"] {
         assert!(exists(&rt, name), "{name}");
     }
     halo3_script::publish_collision(&rt.objects, &mut solid, &mut posed);
-    assert!(halo3_core::objects::collision_removed(tank as u32));
+    let gone = entry(&rt, "bsp_8_22");
+    assert!(halo3_core::objects::collision_removed(gone as u32), "a destroyed object does not collide");
+    assert!(!halo3_core::objects::collision_removed(tank as u32));
     assert!(!halo3_core::objects::collision_removed(absent as u32));
 }
