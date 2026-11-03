@@ -1,4 +1,4 @@
-# Halo CE sound in MCC (docs/format/halo1.md 13): the `snd!` and `lsnd`
+# Halo CE sound in MCC (docs/format/halo1.md 19): the `snd!` and `lsnd`
 # tags in the map, the FMOD banks in halo1\sound\pc and their `.lst.bin`
 # indexes. Read-only.
 #
