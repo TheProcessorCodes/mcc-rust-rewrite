@@ -36,6 +36,10 @@ pub struct SkateMotion {
     pub riding: bool,
     pub speed: f32,
     pub state: String,
+    /// The skater's feet (renderer frame, m) and velocity (m/s), for the
+    /// AI (`halo3_core::ai::PlayerBody`).
+    pub feet: Vec3,
+    pub velocity: Vec3,
 }
 
 /// The latest pose for drawing the rider, in skate space (`docs/skate-interface.md`

@@ -306,6 +306,79 @@ impl Default for PlayerVitality {
     }
 }
 
+/// The game's difficulty: 0 easy, 1 normal (the default), 2 heroic, 3
+/// legendary (`--difficulty`). Scales the damage actors deal the player.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Difficulty(pub usize);
+
+impl Default for Difficulty {
+    fn default() -> Self {
+        Difficulty(1)
+    }
+}
+
+/// How the player gets about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayerMode {
+    Foot,
+    Bike,
+    Board,
+}
+
+/// The player's body this frame, however he gets about: what the actors
+/// see, aim at and swing at, and what their rounds hit. Written by
+/// `halo3_ai` from the Spartan on foot, the dirt bike
+/// ([`crate::bike::BikeMotion`]) or the skater
+/// ([`crate::skate::SkateMotion`]); `None` while nobody plays (the free
+/// camera). Renderer frame.
+#[derive(Resource, Default, Clone, Debug)]
+pub struct PlayerBody(pub Option<Body>);
+
+#[derive(Clone, Copy, Debug)]
+pub struct Body {
+    pub mode: PlayerMode,
+    /// Where he touches the ground (on the bike: under the wheels), metres.
+    pub feet: Vec3,
+    /// The hit capsule's height above `feet` and its radius, metres.
+    pub height: f32,
+    pub radius: f32,
+    /// m/s.
+    pub velocity: Vec3,
+    /// Facing about +Y (0 looks down +Z).
+    pub heading: f32,
+    /// Standing (or riding) steadily on the ground: a checkpoint may be
+    /// taken here.
+    pub steady: bool,
+}
+
+impl Body {
+    /// The point actors aim at.
+    pub fn chest(&self) -> Vec3 {
+        self.feet + Vec3::Y * self.height * 0.7
+    }
+
+    pub fn centre(&self) -> Vec3 {
+        self.feet + Vec3::Y * self.height * 0.5
+    }
+
+    /// The hit capsule: its two end centres and radius.
+    pub fn capsule(&self) -> (Vec3, Vec3, f32) {
+        let r = self.radius;
+        (self.feet + Vec3::Y * r, self.feet + Vec3::Y * (self.height - r).max(r), r)
+    }
+}
+
+/// Where the player comes back after dying, for the ride he is on:
+/// `halo3_bike` takes `bike` (renderer frame feet and heading) and puts the
+/// bike down there; `dead` holds the bike's controls at rest meanwhile.
+/// (On foot `halo3_ai` moves the Spartan itself; the skater comes back
+/// through [`crate::skate::Respawn`].)
+#[derive(Resource, Default, Clone, Debug)]
+pub struct PlayerRespawn {
+    pub bike: Option<(Vec3, f32)>,
+    pub dead: bool,
+}
+
 /// What an actor is doing, for the animation code to pick an animation
 /// from. Written by `halo3_ai` every frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

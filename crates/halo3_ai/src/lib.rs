@@ -5,7 +5,9 @@
 //! swing (the Flood), hover and fire beams (Sentinels, the monitor), and
 //! keep their weapons' combat range and fire bursts with the character's
 //! own firing patterns. The player gets shields and health from his model
-//! and comes back at the last quiet spot when he dies.
+//! and comes back at the last quiet spot when he dies. They fight him the
+//! same way on foot, on the dirt bike and on the skateboard
+//! (`halo3_core::ai::PlayerBody`), and the bike runs them down (`player.rs`).
 //!
 //! Everything numeric comes from the tags where a tag has it
 //! (`docs/format/ai.md`): vitality, sight, hearing, melee ranges and
@@ -15,7 +17,8 @@
 //!
 //! Files: `model.rs` the bodies, `place.rs` squads in and out (auto
 //! placement, script commands, the census), `brain.rs` seeing, moving and
-//! fighting, `vitality.rs` damage, death and the player's shields.
+//! fighting, `vitality.rs` damage, death and the player's shields,
+//! `player.rs` the player's body however he gets about, and splatter.
 //!
 //! The script runtime drives it with `halo3_core::ai::AiCommand` and reads
 //! `AiCensus`; the animation code poses `ActorSkeleton` joints from
@@ -26,6 +29,7 @@ mod animate;
 mod brain;
 mod model;
 mod place;
+mod player;
 mod vitality;
 
 use std::collections::HashMap;
@@ -40,7 +44,7 @@ use blam_geometry::weapons::Damage as DamageEffect;
 
 pub use halo3_core::ai::{
     ActorActivity, ActorSkeleton, ActorState, ActorTag, AiBridge, AiCensus, AiCommand, AiRef, Allegiances, AutoPlace, Damage,
-    PlayerVitality, Targets,
+    Difficulty, PlayerBody, PlayerMode, PlayerRespawn, PlayerVitality, Targets,
 };
 
 /// World units to metres.
@@ -91,6 +95,12 @@ pub struct AiAssets {
     pub models: Vec<model::ModelData>,
     /// The player's own model damage info (body, shield), when found.
     pub player_vitality: Option<(f32, f32)>,
+    /// What the dirt bike deals running into actors: the Mongoose's
+    /// collision damage, when the map has it (`player.rs`).
+    pub splatter: Option<blam_geometry::weapons::VehicleCollision>,
+    /// The globals' scale on the damage enemies deal the player, by
+    /// difficulty (easy .. legendary).
+    pub enemy_damage: Option<[f32; 4]>,
 }
 
 impl AiAssets {
@@ -248,6 +258,14 @@ pub fn load(cache: &CacheFile) -> Option<AiAssets> {
     .find_map(|n| cache.tags.find("hlmt", n))
     .and_then(|h| tags::model_vitality(cache, h).ok())
     .filter(|(b, s)| *b > 0.0 && *s >= 0.0);
+    let splatter = match blam_geometry::weapons::read_vehicle_collision(cache, r"objects\vehicles\mongoose\mongoose") {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("ai: vehicle collision damage not read: {e}");
+            None
+        }
+    };
+    let enemy_damage = tags::enemy_damage_scales(cache).ok().flatten();
     eprintln!(
         "ai: {} squads, {} characters ({} drawn from {} models, {} animated), in {:.1} s",
         data.squads.len(),
@@ -262,6 +280,8 @@ pub fn load(cache: &CacheFile) -> Option<AiAssets> {
         kinds,
         models,
         player_vitality,
+        splatter,
+        enemy_damage,
     })
 }
 
@@ -290,9 +310,30 @@ impl Plugin for AiPlugin {
             .init_map_resource::<Allegiances>()
             .init_map_resource::<Targets>()
             .init_map_resource::<PlayerVitality>()
+            .init_map_resource::<PlayerBody>()
+            .init_map_resource::<Difficulty>()
+            .init_map_resource::<PlayerRespawn>()
+            .init_map_resource::<player::Splatter>()
             .remove_on_map_unload::<PendingAi>()
             .remove_on_map_unload::<place::Ai>()
             .configure_sets(Update, (AiSet::Place, AiSet::Think, AiSet::Hurt).chain())
+            .add_systems(
+                Update,
+                player::publish
+                    .after(halo3_foot::walk)
+                    .after(halo3_bike::BikeSet)
+                    .before(AiSet::Place)
+                    .before(halo3_weapons::FireSet)
+                    .run_if(halo3_core::map::ready),
+            )
+            .add_systems(
+                Update,
+                player::ram
+                    .in_set(AiSet::Hurt)
+                    .before(vitality::HurtSet)
+                    .run_if(halo3_core::pause::running)
+                    .run_if(halo3_core::map::ready),
+            )
             .add_plugins((place::PlacePlugin, brain::BrainPlugin, vitality::VitalityPlugin, animate::AnimatePlugin));
     }
 }

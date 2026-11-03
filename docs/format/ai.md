@@ -210,6 +210,14 @@ and time (inferred). For AI bipeds the character's vitality is what the game use
 model says 100, its character 40, and combat forms die to about six rifle rounds); for creatures the
 model's (the infection form's says 1: they pop at a touch; its character inherits `ai\generic`'s 50).
 
+**Difficulty scales (globals).** The globals (`matg`) block at `0x410` holds one element of 0x230
+bytes: 35 rows of four floats, one per difficulty (easy, normal, heroic, legendary). On 120_halo
+the first row is **0.1, 0.775, 1.0, 1.6**, which by its shape and its place (Halo CE's difficulty
+block starts with "enemy damage") reads as the scale on the damage enemies deal to the player;
+`halo3_ai` applies it (`blam_geometry::ai::enemy_damage_scales`). The other rows (for example
+`+0x30` 1.4 / 1.0 / 0.7 / 0.3, `+0x130` 0.1 / 0.5 / 0.75 / 1.0, `+0x150` 4 / 2 / 1 / 0.25) are not
+named or used.
+
 ## 9. 120_halo, by zone set
 
 Squads whose starting locations (or else AI zone) lie in a zone set's BSPs, with their actors by

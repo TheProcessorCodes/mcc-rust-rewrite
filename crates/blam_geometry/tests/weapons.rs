@@ -162,3 +162,20 @@ fn valhalla_weapon_meshes_decode() {
     .collect();
     assert_eq!(counts, expected);
 }
+
+/// The Mongoose's splatter numbers on 120_halo: the global collision damage
+/// effect deals 100, its `cddf` (`vehicle_small`) scales by 1.2 over 3..8
+/// wu/s. The dirt bike uses these (`halo3_ai`).
+#[test]
+fn mongoose_collision_damage() {
+    let Some(path) = map("120_halo") else { return };
+    let cache = CacheFile::open(&path).expect("120_halo opens");
+    let c = weapons::read_vehicle_collision(&cache, r"objects\vehicles\mongoose\mongoose")
+        .expect("read")
+        .expect("the Mongoose and the collision effect are on 120_halo");
+    assert_eq!(c.effect_tag, r"globals\collision_damage\collision");
+    assert_eq!(c.vehicle_tag, r"globals\collision_damage\vehicle_small");
+    assert!(close(c.damage[0], 100.0) && close(c.damage[1], 100.0), "{:?}", c.damage);
+    assert!(close(c.scale, 1.2), "{}", c.scale);
+    assert!(close(c.speeds[0], 3.0) && close(c.speeds[1], 8.0), "{:?}", c.speeds);
+}

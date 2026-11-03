@@ -776,6 +776,14 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
             _ => ai::AutoPlace::default(),
         };
         w.insert_resource(mode);
+        // The damage actors deal the player follows the difficulty (the
+        // globals' scales), as the scripts do.
+        w.insert_resource(ai::Difficulty(match value_of(args, "--difficulty").as_deref() {
+            Some("easy") => 0,
+            Some("heroic") => 2,
+            Some("legendary") => 3,
+            _ => 1,
+        }));
         w.insert_resource(ai::PendingAi(extras.ai));
     }
     w.insert_resource(zones);

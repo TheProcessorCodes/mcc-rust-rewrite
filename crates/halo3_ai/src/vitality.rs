@@ -2,7 +2,12 @@
 //! actors fall over and vanish; the player's shields come back after a
 //! pause and his health after them; when he dies he comes back at the last
 //! quiet place he stood (a checkpoint taken while no enemy had sight of
-//! him). Also the shield and health bars and the red flash.
+//! him). All of that on foot, on the dirt bike and on the board alike: on
+//! the bike he comes back on the bike at the checkpoint (the bike rolls on
+//! riderless while he is dead), on the board through the skate engine's
+//! respawn. A hit does not knock him off the bike (Halo 3's vehicles do not
+//! throw their drivers either); his health decides. Also the shield and
+//! health bars and the red flash.
 //!
 //! Halo's rules kept: shields soak a hit before the body; a shot to the
 //! head of an unshielded actor does double (our own number; the damage
@@ -13,13 +18,20 @@
 use bevy::prelude::*;
 use halo3_core::map::MapAppExt;
 
-use halo3_core::ai::{Allegiances, Damage, DamageSource, DamageTarget, PlayerVitality, team};
+use halo3_core::ai::{
+    Allegiances, Damage, DamageSource, DamageTarget, PlayerBody, PlayerMode, PlayerRespawn, PlayerVitality, team,
+};
+use halo3_core::coords::to_halo;
 use halo3_foot::OnFoot;
 use halo3_foot::physics::Spartan;
 
 use crate::brain::Foe;
-use crate::place::{Actor, Ai, root_transform};
+use crate::place::{Actor, Ai, root_transform, yaw_of_heading};
 use crate::AiSet;
+
+/// Damage taken, deaths, the player's checkpoint and respawn.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct HurtSet;
 
 pub(crate) struct VitalityPlugin;
 
@@ -31,6 +43,7 @@ impl Plugin for VitalityPlugin {
                 Update,
                 (hurt, fall, recharge, checkpoint, respawn)
                     .chain()
+                    .in_set(HurtSet)
                     .in_set(AiSet::Hurt)
                     .run_if(halo3_core::pause::running)
                     .run_if(halo3_core::map::ready),
@@ -45,6 +58,12 @@ impl Plugin for VitalityPlugin {
 const SHIELD_DELAY: f32 = 5.0;
 const SHIELD_FILL: f32 = 2.0;
 const BODY_FILL: f32 = 4.0;
+/// `HALO3_AI_TRACE=1`: log every hit on the player.
+fn trace() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("HALO3_AI_TRACE").is_ok_and(|v| v == "1"));
+    *ON
+}
+
 /// Seconds a dead player waits before coming back.
 const RESPAWN_AFTER: f32 = 3.0;
 
@@ -55,9 +74,15 @@ fn hurt(
     mut actors: Query<&mut Actor>,
     mut vitality: ResMut<PlayerVitality>,
     allegiances: Res<Allegiances>,
-    foot: Option<Res<OnFoot>>,
+    player: Res<PlayerBody>,
+    difficulty: Res<halo3_core::ai::Difficulty>,
 ) {
-    let on_foot = foot.as_deref().is_some_and(|f| f.spartan.is_some());
+    let playing = player.0.is_some();
+    // The globals' scale on what enemies deal him (normal 0.775 on 120_halo).
+    let enemy_scale = ai
+        .as_deref()
+        .and_then(|ai| ai.assets.enemy_damage)
+        .map_or(1.0, |s| s[difficulty.0.min(3)]);
     for d in reader.read() {
         let source_team = match d.source {
             DamageSource::Actor(e) => actors.get(e).ok().map(|a| a.team),
@@ -66,13 +91,34 @@ fn hurt(
         };
         match d.target {
             DamageTarget::Player => {
-                if !on_foot || vitality.god || vitality.dead.is_some() {
+                if !playing || vitality.god || vitality.dead.is_some() {
                     continue;
                 }
                 if source_team.is_some_and(|t| t != team::PLAYER && allegiances.allied(t, team::PLAYER)) {
                     continue;
                 }
+                if trace() {
+                    let who = match d.source {
+                        DamageSource::Actor(e) => actors
+                            .get(e)
+                            .ok()
+                            .and_then(|a| ai.as_deref()?.assets.kinds.get(a.kind)?.as_ref())
+                            .map_or("an actor", |k| k.character.tag_path.rsplit('\\').next().unwrap_or("")),
+                        DamageSource::Player => "himself",
+                        DamageSource::World => "the world",
+                    };
+                    info!(
+                        "ai: the player takes {:.1}{} from {who} (shield {:.0}, body {:.0})",
+                        d.amount,
+                        if d.melee { " (melee)" } else { "" },
+                        vitality.shield,
+                        vitality.body
+                    );
+                }
                 let mut amount = d.amount;
+                if matches!(d.source, DamageSource::Actor(_)) {
+                    amount *= enemy_scale;
+                }
                 let soak = vitality.shield.min(amount);
                 vitality.shield -= soak;
                 amount -= soak;
@@ -84,7 +130,7 @@ fn hurt(
                 if vitality.body <= 0.0 {
                     vitality.body = 0.0;
                     vitality.dead = Some(0.0);
-                    info!("ai: the player died");
+                    info!("ai: the player died ({:?})", player.0.map(|b| b.mode));
                 }
             }
             DamageTarget::Actor(e) => {
@@ -211,12 +257,12 @@ struct Checkpoint {
 
 fn checkpoint(
     mut point: ResMut<Checkpoint>,
-    foot: Option<Res<OnFoot>>,
+    player: Res<PlayerBody>,
     vitality: Res<PlayerVitality>,
     actors: Query<&Actor>,
     time: Res<Time>,
 ) {
-    let Some(s) = foot.as_deref().and_then(|f| f.spartan.as_ref()) else {
+    let Some(b) = player.0 else {
         point.quiet = 0.0;
         return;
     };
@@ -225,17 +271,22 @@ fn checkpoint(
     }
     let seen = actors.iter().any(|a| a.alive() && a.brain.sees && a.brain.foe == Some(Foe::Player));
     point.quiet = if seen { 0.0 } else { point.quiet + time.delta_secs() };
-    if point.at.is_none() || (point.quiet > 3.0 && s.grounded && s.ground_normal.y > 0.7) {
-        point.at = Some((s.position, s.heading));
+    if point.at.is_none() || (point.quiet > 3.0 && b.steady) {
+        point.at = Some((b.feet, b.heading));
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn respawn(
     mut vitality: ResMut<PlayerVitality>,
     mut foot: Option<ResMut<OnFoot>>,
+    player: Res<PlayerBody>,
+    mut ride: ResMut<PlayerRespawn>,
+    skate: Option<ResMut<halo3_core::skate::Respawn>>,
     point: Res<Checkpoint>,
     time: Res<Time>,
 ) {
+    ride.dead = vitality.dead.is_some();
     let Some(since) = vitality.dead else {
         return;
     };
@@ -244,17 +295,33 @@ fn respawn(
     if since < RESPAWN_AFTER {
         return;
     }
-    let Some(foot) = foot.as_deref_mut() else {
-        return;
-    };
-    if let Some(s) = foot.spartan.as_mut() {
-        let (at, heading) = point.at.or(s.safe).unwrap_or((s.position, s.heading));
-        let tuning = s.tuning;
-        *s = Spartan::new(at + Vec3::Y * 0.3, heading);
-        s.tuning = tuning;
-        foot.yaw = heading - std::f32::consts::PI;
-        foot.pitch = 0.0;
+    let mode = player.0.map(|b| b.mode);
+    let fallback = player.0.map(|b| (b.feet, b.heading));
+    match mode {
+        Some(PlayerMode::Bike) => {
+            if let Some(at) = point.at.or(fallback) {
+                ride.bike = Some(at);
+            }
+        }
+        Some(PlayerMode::Board) => {
+            if let (Some(mut skate), Some((at, heading))) = (skate, point.at.or(fallback)) {
+                skate.0 = Some((to_halo(at), yaw_of_heading(heading)));
+            }
+        }
+        Some(PlayerMode::Foot) | None => {
+            if let Some(foot) = foot.as_deref_mut()
+                && let Some(s) = foot.spartan.as_mut()
+            {
+                let (at, heading) = point.at.or(s.safe).unwrap_or((s.position, s.heading));
+                let tuning = s.tuning;
+                *s = Spartan::new(at + Vec3::Y * 0.3, heading);
+                s.tuning = tuning;
+                foot.yaw = heading - std::f32::consts::PI;
+                foot.pitch = 0.0;
+            }
+        }
     }
+    ride.dead = false;
     let v = &mut *vitality;
     v.dead = None;
     v.body = v.max_body;
@@ -360,7 +427,7 @@ fn spawn_hud(mut commands: Commands) {
 #[allow(clippy::type_complexity)]
 fn hud(
     vitality: Res<PlayerVitality>,
-    foot: Option<Res<OnFoot>>,
+    player: Res<PlayerBody>,
     ai: Option<Res<Ai>>,
     mut bars: Query<&mut Visibility, (With<Bars>, Without<Flash>, Without<DeadText>)>,
     mut shield: Query<&mut Node, (With<ShieldBar>, Without<HealthBar>)>,
@@ -368,7 +435,7 @@ fn hud(
     mut flash: Query<(&mut BackgroundColor, &mut Visibility), (With<Flash>, Without<Bars>, Without<DeadText>)>,
     mut dead: Query<&mut Visibility, (With<DeadText>, Without<Bars>, Without<Flash>)>,
 ) {
-    let on = ai.is_some() && foot.as_deref().is_some_and(|f| f.spartan.is_some());
+    let on = ai.is_some() && player.0.is_some();
     let show = |on: bool| if on { Visibility::Visible } else { Visibility::Hidden };
     for mut v in &mut bars {
         v.set_if_neq(show(on));

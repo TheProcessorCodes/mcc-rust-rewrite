@@ -230,6 +230,10 @@ lists all 20).
       ways; shields and health come from the tags; you come back at the
       last quiet spot when you die. No animations yet, no vehicles, no
       grenades, no pathfinding beyond firing positions and straight lines.
+      Since 2026-11-03 (awaiting a playtest) they fight you the same way on
+      the dirt bike and the skateboard, you die and come back on the bike,
+      and the bike splatters them with the Mongoose's collision damage
+      (HANDOFF "Enemies attack the rider").
 - [x] Milestone 3a: the game's real collision BSP decoded (the handoff's
       "known gap"): Valhalla gives 30,560 world and 39,678 instanced collision
       triangles with invisible walls, slip and two-sided surfaces flagged.

@@ -118,14 +118,16 @@ fn print_character(cache: &CacheFile, i: usize, c: &Character, full: bool) {
             w.first_burst_delay[0],
             w.first_burst_delay[1],
             pattern.map_or(String::new(), |f| format!(
-                "; fires {:.1}/s, bursts {:.1}..{:.1} s every {:.1}..{:.1} s, error {:.2} deg (max {:.1})",
+                "; fires {:.1}/s, bursts {:.1}..{:.1} s every {:.1}..{:.1} s, error {:.2} deg (max {:.1}), tracking {:.2}, leading {:.2}",
                 f.rate_of_fire,
                 f.burst_duration[0],
                 f.burst_duration[1],
                 f.burst_separation[0],
                 f.burst_separation[1],
                 f.projectile_error.to_degrees(),
-                f.max_error_angle.to_degrees()
+                f.max_error_angle.to_degrees(),
+                f.target_tracking,
+                f.target_leading
             ))
         );
     }

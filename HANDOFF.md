@@ -187,9 +187,10 @@ To do:
    `effe` tags (particles, contrails, light flashes, sounds; see "Explosion effects" under the
    Warthog Run below). Not done: debris objects (the plate chunks), camera shake, screen
    effects, decals.
-4. **Enemies must attack.** Today the AI only fights while the player is on foot (their rounds
-   fly on the on-foot collision), so on the bike the run's Flood and Sentinels mostly ignore
-   you. They should see, chase and shoot / hit the rider on the bike (and the skater).
+4. ~~**Enemies must attack.**~~ Done 2026-11-03 on branch `enemies-attack-rider`, awaiting the
+   user's playtest: the Flood and Sentinels see, chase, shoot and hit the rider on the bike and
+   the skater as on foot, he dies and comes back on the bike, and the bike splatters them (see
+   "Enemies attack the rider" under the Warthog Run below).
 
 Skipped by the user's choice (do not do unless asked):
 
@@ -415,8 +416,8 @@ with headless shots; not playtested.
 - **Stubbed / own numbers**: run speeds (Halo uses animation root motion), head-shot double damage,
   explosion damage 120 for rockets / grenades, no pathfinding graph (straight lines + firing
   positions + a hop when stuck), no vehicles (Warthog / chopper crews skipped), no grenades, no
-  carrier spawns, no infection reanimating corpses, AI only fights while you are on foot (rounds fly
-  on the on-foot collision).
+  carrier spawns, no infection reanimating corpses. (Until 2026-11-03 the AI only fought while you
+  were on foot; it now fights you on the bike and the board too, see "Enemies attack the rider".)
 
 **For the script agent** (all in `halo3_core::ai`, no dependency on `halo3_ai` needed):
 `MessageWriter<AiCommand>` with `Place { who: AiRef::named("sentinels"), count: None }` (`ai_place`;
@@ -742,6 +743,74 @@ contrails, 8 lights, 35 bitmaps on the run, 0.1 s). Reader `blam_effect`, format
   run's first trigger), `out\shots\giant4\120_halo_6.png`, `_9.png` (the first giant
   explosion in the canyon, from `120_08_trench_encounter_100`). `HALO3_EFFECT_TRACE=1` logs
   every effect started; `HALO3_SHOT_NEXT_WAIT` spaces later `--shot` views for time series.
+
+**Enemies attack the rider (2026-11-03, branch `enemies-attack-rider`, awaiting the user's
+playtest).** The AI fought only the Spartan on foot; on the bike the run's Flood and Sentinels
+ignored you. Now:
+
+- **One body for the player** (`halo3_core::ai::PlayerBody`, written by `halo3_ai/src/player.rs`
+  every frame from the Spartan, the bike's `BikeMotion` or the skater's `SkateMotion`): feet, a
+  hit capsule, velocity. The brain sees, hears, chases, leads and swings at it; the actors' rounds
+  (`halo3_weapons/src/fire.rs`) hit it and fly on the shared collision (`SharedWorld`, the one
+  the bike rides), not only the on-foot one; the damage goes to the same shields and health.
+  On the bike the capsule stands round the rider (2.5 m, radius 0.63; ours): hits on the bike
+  count as hits on him, the bike has no health of its own.
+- **Firing at a fast rider**, from the tags: the lead is the firing pattern's target leading
+  times his velocity times the round's flight time (beams lead 0; they are instant), and the
+  aim now follows a moving target only as well as the pattern's **target tracking** (0.5 for
+  every 120_halo character): the aimed point trails him by `(1 - tracking) x 0.3 s` (the 0.3 s
+  and this reading of the field are ours). It applies on foot too. `blam ai --characters` now
+  prints tracking and leading.
+- **Difficulty**: what actors deal the player is scaled by the globals' first difficulty row
+  (`matg` +0x410: 0.1 / 0.775 / 1.0 / 1.6 for easy / normal / heroic / legendary; our reading,
+  `docs/format/ai.md` 8), by `--difficulty` (`halo3_core::ai::Difficulty`, normal by default).
+  On foot too.
+- **The engine is heard**: a moving bike is heard like gunfire within half the character's
+  hearing distance (our share), so a squad you pass behind turns and fights. Without it a
+  squad facing away never saw a rider going by (sight is the character's 50 deg cone).
+- **Death and respawn on the bike**: health decides; a hit does not knock him off (Halo 3's
+  vehicles do not throw their drivers). While he is dead the bike's controls go dead
+  (`halo3_core::ai::PlayerRespawn::dead`) and it rolls on; after 3 s it is put down at his last
+  quiet checkpoint (`PlayerRespawn::bike`, taken by `halo3_bike`) with full shields and health.
+  Checkpoints are taken on the bike while it is upright on both wheels and no enemy has seen him
+  for 3 s. On the board he comes back through the skate engine's respawn
+  (`halo3_core::skate::Respawn`). The HUD bars, the red flash and "You died" show in all three.
+- **Splatter**: the bike hurts what it runs into (`player.rs` `ram`, a capsule along the bike,
+  swept from last frame so a fast bike cannot skip a small actor). From the map: the global
+  `jpt! globals\collision_damage\collision` (100) times the Mongoose's `cddf`
+  (`globals\collision_damage\vehicle_small`) scale 1.2, ramped by closing speed over its 3 to 8
+  wu/s band (33 to 88 km/h): 120 at full speed, a Flood combat form (40 hp) dies from about
+  50 km/h. The scale and the band are our reading of the `cddf` floats
+  (`docs/format/weapons.md` 6a, `blam_geometry::weapons::read_vehicle_collision`). Slower,
+  the bike only shoves them aside. The body is thrown along the bike's way. The bike does not
+  slow down, the rider takes nothing, and actors are not solid to the bike's physics.
+- Checked: `halo3_ai/tests/rider.rs` (120_halo's AI and weapons in a bare app on the run's
+  collision, the rider stood in by `BikeMotion`): `trench_sentinel_100_1` hears the bike going
+  past at 8 m/s, fires its beams and hurts him within the first 30 s, kills him, the bike's
+  controls go dead and he is sent back to his checkpoint with full shields and health; riding
+  at 20 m/s into a `trench_combat_forms01` elite kills it. `blam_geometry/tests/weapons.rs`
+  `mongoose_collision_damage` and `ai.rs` `enemy_damage_by_difficulty` pin the numbers. Unit tests for the segment distance and the
+  ramp. All `halo3_ai`, `halo3_script`, `halo3_anim` (but `frigate`, see below) and
+  `halo3_effects` tests pass.
+- Rounds that hit a body (an actor or the rider) no longer leave a scorch mark hanging in the air.
+- Headless shots (`HALO3_AI_PLACE=squad,...` places squads as play begins whatever the scripts do,
+  a dev hook for this; `HALO3_AI_TRACE=1` logs every hit on the player and every splatter):
+  `out\shots\sentinel_beams\120_halo_0.png`, `_1.png` (`trench_sentinel_100_1`'s beams on a
+  stopped rider, from `warthog_run --bike --view 92,-147,-29,180,0`, `HALO3_GOD=1
+  HALO3_BIKE_THROTTLE=0 HALO3_SKATE_FOR=4`), `out\shots\flood_charge_4\120_halo_0.png`
+  (`trench_combat_forms01` charging and swinging at him in the first tunnel, `--view
+  55,-2,-33,90,0`), in the worktree. A ride at throttle 0.4 into all eight combat forms of
+  `01` and `02` killed him within two seconds at normal before the difficulty scale (they fire
+  head-on at a capsule they cannot miss); riding past the sentinels at 80 km/h drew no hits
+  (most were beyond the sentinel gun's 8 wu range).
+- **Still not right**: enemies on foot cannot keep up with the bike (combat forms run at their
+  run animation's speed, about 2 wu/s), so the Flood mostly gets one swing or one burst as you
+  pass; they have no pathfinding to cut you off. Sentinel beams are the tag's 4 damage at 30 a
+  second, so a few sentinels together drain a standing rider in two or three seconds (the
+  targets' material responses and the difficulty scaling are not read; the same on foot).
+  Carriers do not spawn infection forms; no grenades; the Flood do not leap onto the bike. The
+  rider's death has no animation; the bike just rolls on. `halo3_anim/tests/frigate.rs` does
+  not build on master (it uses `setup::START_AHEAD`, which no longer exists); not touched here.
 
 ## Open questions and known gaps
 
