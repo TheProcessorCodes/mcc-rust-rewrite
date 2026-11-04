@@ -7,9 +7,14 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+blam_cache = { workspace = true }
+blam_effect = { workspace = true }
 blam_geometry = { workspace = true }
 blam_h2 = { workspace = true }
+blam_script = { workspace = true }
 blam_texture = { workspace = true }
+# FSB5 CELT (MCC Halo CE sound banks), C decoder vendored in third_party.
+fsb_celt = { workspace = true }
 glam = { workspace = true }
 memmap2 = { workspace = true }
 thiserror = { workspace = true }

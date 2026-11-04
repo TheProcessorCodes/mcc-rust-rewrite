@@ -14,18 +14,26 @@
 //! # Ok::<(), blam_h1::Error>(())
 //! ```
 
+pub mod ai;
+pub mod animation;
 pub mod bitmap;
 pub mod cache;
 pub mod collision;
+pub mod effect;
+pub mod effect_library;
 pub mod model;
+pub mod objects;
+pub mod script;
 pub mod shader;
+pub mod skeleton;
+pub mod sound;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use blam_geometry::{
-    BspInfo, CollisionMaterial, CollisionSource, Kind, Lighting, Lightmap, Material, Mesh, Part, Placement, Scene,
-    Shading, Spawn, SpawnKind, StartingLocation, TriggerVolume,
+    BspInfo, ClusterInfo, CollisionMaterial, CollisionSource, Kind, Lighting, Lightmap, Material, Mesh, Part, Placement, Scene,
+    SceneObject, Shading, Spawn, SpawnKind, StartingLocation, TriggerVolume, ZoneSet, ZoneSwitch,
 };
 use blam_h2::Fog;
 use blam_h2::lightmap::Atlas;
@@ -61,6 +69,9 @@ pub struct Options {
     pub collision: bool,
     /// Resolve shaders and decode their bitmaps and the lightmaps.
     pub textures: bool,
+    /// Only these structure BSPs (scenario indices), and only the objects
+    /// placed inside them; `None`: every BSP and object.
+    pub bsps: Option<Vec<u32>>,
 }
 
 impl Default for Options {
@@ -69,6 +80,7 @@ impl Default for Options {
             objects: true,
             collision: true,
             textures: true,
+            bsps: None,
         }
     }
 }
@@ -80,6 +92,8 @@ pub struct Stats {
     pub lightmaps: usize,
     pub bsp_triangles: usize,
     pub collision_triangles: usize,
+    /// The placed objects' collision triangles (`objects::collision_model`).
+    pub object_collision_triangles: usize,
     pub corrupt_loops: usize,
     pub objects: HashMap<Kind, usize>,
     pub models_failed: Vec<String>,
@@ -169,6 +183,9 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
     let mut lightmaps = Vec::new();
 
     for (bi, chunk) in map.bsps()?.iter().enumerate() {
+        if options.bsps.as_ref().is_some_and(|b| !b.contains(&(bi as u32))) {
+            continue;
+        }
         decode_bsp(map, chunk, bi as u32, options, &mut scene, &mut materials, &mut stats, &mut lightmaps)
             .map_err(|e| Error::Invalid(format!("bsp {bi} {}: {e}", map.tag_name(chunk.tag).unwrap_or("?"))))?;
     }
@@ -176,9 +193,10 @@ pub fn decode(map: &Map, options: &Options) -> Result<Loaded> {
         return Err(Error::Invalid(format!("{} decoded no structure BSPs", map.map_name)));
     }
     if options.objects {
-        decode_objects(map, scnr, &mut scene, &mut materials, &mut stats)?;
+        decode_objects(map, scnr, options, &mut scene, &mut materials, &mut stats)?;
     }
     decode_spawns(scnr, &mut scene)?;
+    decode_zone_sets(scnr, &mut scene)?;
     // The sky's fog is outdoor fog: a map where no cluster sees the sky
     // (Chillout, Putput, Rat Race) has none.
     let fog = match stats.outdoor_clusters {
@@ -390,10 +408,18 @@ fn decode_bsp(
     }
 
     // Clusters (`+0x134`, 0x68 each): the sky they see (i16 at +0).
+    let mut clusters = Vec::new();
     for c in sbsp.block(0x134, 0x68)? {
-        if c.i16(0)? >= 0 {
+        let sky = c.i16(0)?;
+        if sky >= 0 {
             stats.outdoor_clusters += 1;
         }
+        clusters.push(ClusterInfo {
+            bounds: None,
+            sky: u32::try_from(sky).ok(),
+            atmosphere: None,
+            acoustics: None,
+        });
     }
 
     if options.collision {
@@ -428,7 +454,7 @@ fn decode_bsp(
         index,
         name,
         bounds: world,
-        clusters: Vec::new(),
+        clusters,
         portals: Vec::new(),
         locator: None,
         cubemap_bitmap: None,
@@ -495,8 +521,21 @@ pub fn decode_models(map: &Map, modes: &[u32]) -> Models {
     }
 }
 
-fn decode_objects(map: &Map, scnr: Reader<'_>, scene: &mut Scene, materials: &mut Materials, stats: &mut Stats) -> Result<()> {
+fn decode_objects(
+    map: &Map,
+    scnr: Reader<'_>,
+    options: &Options,
+    scene: &mut Scene,
+    materials: &mut Materials,
+    stats: &mut Stats,
+) -> Result<()> {
     let mut cache: HashMap<u32, Vec<u32>> = HashMap::new();
+    let only_inside = options.bsps.is_some();
+    // Which BSPs each object stands in, as the game decides it (section 13).
+    let trees = objects::bsp_trees(map)?;
+    let decoded = scene.bsps.iter().fold(0u32, |m, b| m | 1u32.checked_shl(b.index).unwrap_or(0));
+    let names: Vec<String> = scnr.block(0x204, 0x24)?.into_iter().map(|n| n.str(0, 32)).collect();
+    let mut collisions: HashMap<(u32, usize), Vec<blam_geometry::CollisionTriangle>> = HashMap::new();
     // (kind, placements, element size, palette): scenery, machines,
     // controls, light fixtures. Each placement starts with its palette
     // index (i16), position (+0x8) and yaw, pitch, roll (+0x14). Vehicles
@@ -511,6 +550,11 @@ fn decode_objects(map: &Map, scnr: Reader<'_>, scene: &mut Scene, materials: &mu
         let palette: Vec<u32> = scnr.block(palette_at, 0x30)?.into_iter().map(|p| p.tag_ref(0)).collect::<Result<_>>()?;
         for (k, e) in scnr.block(at, size)?.into_iter().enumerate() {
             let Some(&object) = usize::try_from(e.i16(0)?).ok().and_then(|p| palette.get(p)) else { continue };
+            // With BSPs chosen, only what stands inside one of them.
+            let mask = objects::bsp_mask(&trees, e.vec3(0x8)?) & decoded;
+            if only_inside && mask == 0 {
+                continue;
+            }
             let object_name = map.tag_name(object).unwrap_or("?").to_string();
             let Some(mode) = model_of(map, object) else {
                 stats.models_failed.push(object_name);
@@ -523,7 +567,9 @@ fn decode_objects(map: &Map, scnr: Reader<'_>, scene: &mut Scene, materials: &mu
                     continue;
                 }
             };
-            let transform = object_transform(e.vec3(0x8)?, e.vec3(0x14)?);
+            let position = e.vec3(0x8)?;
+            let transform = object_transform(position, e.vec3(0x14)?);
+            let first = scene.placements.len() as u32;
             for m in meshes {
                 scene.placements.push(Placement {
                     name: format!("{} {k}", object_name.rsplit('\\').next().unwrap_or(&object_name)),
@@ -532,13 +578,55 @@ fn decode_objects(map: &Map, scnr: Reader<'_>, scene: &mut Scene, materials: &mu
                     transform,
                     mirrored: false,
                     lighting: Lighting::None,
-                    bsps: 1,
+                    // Halo CE's objects belong to the scenario, not to a
+                    // BSP: shown whichever BSP is loaded.
+                    bsps: 0,
                     sky: None,
                     cluster: None,
                     fade_pixels: [0, 0],
                 });
             }
             *stats.objects.entry(kind).or_default() += 1;
+            let name_index = u16::try_from(e.i16(2)?).ok().filter(|&n| (n as usize) < names.len());
+            let index = scene.objects.len() as u32;
+            // Collision belongs to the BSPs the object stands in; with one
+            // BSP (multiplayer) to all.
+            let bsps = if only_inside { mask } else { 0 };
+            scene.objects.push(SceneObject {
+                kind,
+                name_index,
+                name: name_index.map(|n| names[n as usize].clone()),
+                placement: k as u32,
+                tag: object & 0xFFFF,
+                tag_path: object_name.clone(),
+                transform,
+                bsps,
+                folder: None,
+                // Placement `+0x4` ("not placed"): bit 0, automatically.
+                flags: u32::from(e.u16(4)?),
+                placements: first..scene.placements.len() as u32,
+                dynamic: false,
+            });
+            if options.collision {
+                // Its collision model, for the placement's permutation (`+0x6`).
+                let permutation = usize::try_from(e.i16(6)?).unwrap_or(0);
+                let local = collisions.entry((object, permutation)).or_insert_with(|| {
+                    objects::collision_model(map, object, permutation).unwrap_or_else(|e| {
+                        stats.models_failed.push(format!("{object_name} collision: {e}"));
+                        Vec::new()
+                    })
+                });
+                let mirrored = transform.determinant() < 0.0;
+                for t in local.iter() {
+                    let p = t.points.map(|v| transform.transform_point3(v));
+                    scene.collision.triangles.push(blam_geometry::CollisionTriangle {
+                        points: if mirrored { [p[0], p[2], p[1]] } else { p },
+                        source: blam_geometry::CollisionSource::Object { object: index, bsps },
+                        ..*t
+                    });
+                    stats.object_collision_triangles += 1;
+                }
+            }
         }
     }
 
@@ -615,6 +703,92 @@ fn decode_spawns(scnr: Reader<'_>, scene: &mut Scene) -> Result<()> {
             position: e.vec3(0x48)?,
             extents: e.vec3(0x54)?,
         });
+    }
+    Ok(())
+}
+
+/// An object the scenario places under a name.
+#[derive(Clone, Debug)]
+pub struct NamedObject {
+    /// The object tag's path (`vehicles\warthog\warthog`).
+    pub tag: String,
+    pub position: Vec3,
+    /// Yaw, pitch, roll, radians.
+    pub angles: Vec3,
+}
+
+/// The placement called `name` (scenario object names, `+0x204`, 0x24
+/// each; a placement names its entry with the i16 at +2), in any of the
+/// placement blocks: scenery, bipeds, vehicles, equipment, weapons,
+/// machines, controls, light fixtures, sound scenery.
+pub fn object_named(map: &Map, name: &str) -> Option<NamedObject> {
+    let scnr = map.tag_data(map.scenario)?;
+    let names = scnr.block(0x204, 0x24).ok()?;
+    let index = names.iter().position(|n| n.str(0, 32).eq_ignore_ascii_case(name))?;
+    let lists = [
+        (0x210, 0x48, 0x21C),
+        (0x228, 0x78, 0x234),
+        (0x240, 0x78, 0x24C),
+        (0x258, 0x28, 0x264),
+        (0x270, 0x5C, 0x27C),
+        (0x294, 0x40, 0x2A0),
+        (0x2AC, 0x40, 0x2B8),
+        (0x2C4, 0x58, 0x2D0),
+        (0x2DC, 0x28, 0x2E8),
+    ];
+    for (at, size, palette_at) in lists {
+        let Ok(placements) = scnr.block(at, size) else { continue };
+        for e in placements {
+            if e.i16(2).ok().and_then(|n| usize::try_from(n).ok()) != Some(index) {
+                continue;
+            }
+            let palette = scnr.block(palette_at, 0x30).ok()?;
+            let tag = usize::try_from(e.i16(0).ok()?)
+                .ok()
+                .and_then(|p| palette.get(p))
+                .and_then(|p| p.tag_ref(0).ok())
+                .and_then(|t| map.tag_name(t))
+                .unwrap_or("")
+                .to_string();
+            return Some(NamedObject {
+                tag,
+                position: e.vec3(0x8).ok()?,
+                angles: e.vec3(0x14).ok()?,
+            });
+        }
+    }
+    None
+}
+
+/// Halo CE loads one structure BSP at a time: each decoded BSP is a zone
+/// set of its own, named after it. The scenario's BSP switch volumes
+/// (`+0x39C`, 8 bytes each: trigger volume, from BSP, to BSP as i16, then
+/// an unused -1; `docs/format/halo1.md` 4) switch to the "to" BSP when the
+/// player enters them, from whichever BSP is loaded. A switch to a BSP
+/// that was not decoded is left out.
+fn decode_zone_sets(scnr: Reader<'_>, scene: &mut Scene) -> Result<()> {
+    if scene.bsps.len() < 2 {
+        // Multiplayer maps: one BSP, always loaded.
+        return Ok(());
+    }
+    for b in &scene.bsps {
+        scene.zone_sets.push(ZoneSet {
+            name: b.name.rsplit('\\').next().unwrap_or(&b.name).to_string(),
+            bsps: 1 << b.index,
+        });
+    }
+    for e in scnr.block(0x39C, 8)? {
+        let (volume, to) = (e.i16(0)?, e.i16(4)?);
+        let Ok(volume) = u32::try_from(volume) else { continue };
+        let Some(commit) = scene.bsps.iter().position(|b| i32::from(to) == b.index as i32) else { continue };
+        if (volume as usize) < scene.trigger_volumes.len() {
+            scene.zone_switches.push(ZoneSwitch {
+                flags: 0,
+                begin: None,
+                volume,
+                commit: Some(commit as u32),
+            });
+        }
     }
     Ok(())
 }

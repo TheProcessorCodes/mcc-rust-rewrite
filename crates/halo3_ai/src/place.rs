@@ -162,7 +162,15 @@ fn squads_of(ai: &Ai, who: &AiRef) -> Vec<usize> {
         AiRef::All => (0..data.squads.len()).collect(),
         AiRef::Squad(i) => (*i < data.squads.len()).then_some(*i).into_iter().collect(),
         AiRef::Named(name) => {
-            // `squad/cell` and `squad.location` forms name the squad.
+            // A squad's or group's own name (Halo CE's `encounter/squad`
+            // and `encounter/platoon`), else the `squad/cell` and
+            // `squad.location` forms name the squad.
+            if let Some(s) = data.squad(name) {
+                return vec![s.index];
+            }
+            if let Some(g) = data.group(name) {
+                return data.squads_in_group(g);
+            }
             let base = name.split(['/', '.']).next().unwrap_or(name);
             match data.squad(base) {
                 Some(s) => vec![s.index],

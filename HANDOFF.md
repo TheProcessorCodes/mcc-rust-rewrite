@@ -141,6 +141,7 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Halo 2: Coagulation | `coagulation` (MCC Halo 2) | built, HaloExportH2 counts match, not playtested; no sky model yet |
 | Halo 2: Lockout | `lockout` (MCC Halo 2) | built with lightmaps, fog, gravity lift, weapons, ambient sound; own counts pinned; not playtested |
 | Halo CE: all 19 multiplayer maps | `h1:bloodgulch` ... (MCC `halo1\maps`) | built 2026-10-31, every map drawn in headless shots (textures, lightmaps, sky, spawns); HaloExportH1 counts match on 4 maps; bike, skate and foot stand on Blood Gulch; no weapons or sound yet; not playtested |
+| Halo CE: The Warthog Run | `h1:warthog_run` (The Maw, `d40`, BSPs 5-7) | built 2026-11-02 with the map's own scripts, countdown, win and loss; not playtested (see "Halo CE's Warthog run") |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
 | Reach: all 20 multiplayer maps | `hr:20_sword_slayer`, `hr:cex_timberland`, ... | built 2026-10-31, counts pinned, each drawn headlessly; not playtested. Lightmaps read without their directions (per-vertex and probe-lit instances use the fallback), no fog, sound or weapons |
 
@@ -752,6 +753,167 @@ contrails, 8 lights, 35 bitmaps on the run, 0.1 s). Reader `blam_effect`, format
   explosion in the canyon, from `120_08_trench_encounter_100`). `HALO3_EFFECT_TRACE=1` logs
   every effect started; `HALO3_SHOT_NEXT_WAIT` spaces later `--shot` views for time series.
 
+## Halo CE's Warthog run (2026-11-02, branch `h1-warthog-run`)
+
+`halo3.exe h1:warthog_run`, or the Campaign tab's "Halo CE: The Warthog Run" tile (MCC's
+`H1_C10_THEMAW` picture). The Maw (`h1:d40`) from where the Warthogs wait at the top of the
+lift; the walk before is left out (the user asked for only the part in the Warthog). The dirt
+bike stands in for the Warthog, as on Halo 3's run. Built on what Halo 3's run taught:
+
+- **Only the run's BSPs, one at a time.** `blam_h1::Options::bsps` decodes `d40f`, `d40g`,
+  `d40h` (5, 6, 7) and only the objects standing in them. Halo CE loads one BSP at a time:
+  each decoded BSP is a zone set of its own, switched by the scenario's BSP switch volumes
+  (`+0x39C`, `docs/format/halo1.md` 4) through the existing zone triggers. So the two BSPs'
+  overlap is never drawn twice and there is no seam to open (Halo 3's `drop_seams` problem).
+- **The map's own scripts on Halo 3's runtime.** `blam_h1::script` reads Halo CE's scripts
+  into Halo 3's `blam_script::ScriptData` (20-byte nodes, Halo CE's value type numbers mapped
+  to Halo 3's; `halo1.md` 12, probe `probe_h1_scripts.py`), and `halo3_script` runs them
+  unchanged except for new functions: the HUD countdown (`hud_set_timer_time`,
+  `hud_get_timer_ticks`, `pause_hud_timer`, `show_hud_timer`, `hud_set_timer_warning_time`;
+  `vm::HudTimer`), `game_lost` (`Runtime::mission_lost`), `switch_bsp`
+  (`Config::bsp_zone_sets`), and `Config::won_at` / `lost_at`: a call of one of those scripts
+  ends the mission there, so the outro cutscene (teleports, BSP switches) never plays.
+- **Begun like an insertion** (`halo3_script::h1::THE_MAW`): the mission's own startup
+  (`mission`) is stopped, `diff_control` runs to its end first (`Runtime::run_now`; Legendary
+  takes a minute off the countdown), `section6`, `section7` and `timer_begin` are woken, and
+  `section6` / `enc6_0_dialog` count as passed (the lift top and the walk to the jeeps).
+- **The start is the only spawn.** The player starts on the bike at `trench_jeep1`, facing
+  its way: the Warthogs leave their recessed bay forwards up a ramp, and facing the run's
+  first trigger instead runs the bike into the bay's low wheel clamps. The scene's starts and
+  spawns are replaced by that spot, so falls and deaths never send the rider to the map's own
+  start in an unloaded BSP (Halo 3's fall loop).
+- **The end.** `test_for_endgame` waits for `grand_finale` (across the Longsword hangar's
+  floor) and `endgame_cinematics` calls `cinematic_finale`: MISSION COMPLETE with the run's
+  time and what was left on the countdown. The countdown reaching 0 calls
+  `cinematic_time_up`: MISSION FAILED ("Time ran out"). Both with Restart / Quit
+  (`finish.rs`; the lines are per mission, `Mission::won_line` / `lost_line`).
+- **The countdown** (`countdown.rs`): bottom right over the speedometer, `m:ss`, red under
+  the scripts' warning time (1:00). It stops and hides for the Pelican scene at `enc6_6_1`
+  (about 27 s: the scene's sleeps, then `trench_scene_continue`'s 180 ticks), as in the game;
+  driving on to `enc6_7_1` ends the scene early, as in the game. It starts at the jeeps with
+  the full 6:00; in the game it starts on the lift ride, some 20 s earlier.
+
+Checked: `blam_h1/tests/scripts.rs` (298 scripts, 66 globals, the countdown and finish read
+back; the BSP switches), `halo3_script/tests/h1_warthog_run.rs` (the countdown starts at 6:00
+and 5:00 on Legendary; driven through the run's volumes it pauses at `enc6_6_1`, resumes, and
+`grand_finale` wins; standing still, the countdown runs out and loses), every
+`halo3_script` / `halo3_anim` test (Halo 3's run unchanged). Headless: the bike leaves the bay
+and turns into the run; shots along the run to the Longsword (`out\shots\h1route\` in the
+worktree); the floor traced along the run's line (y = -4) has no gap wider than the narrow
+slots in the middle of the road. The run's haze is the map's own: the run's clusters see
+`skyofdoom`, whose fog reaches 60 % at 20 wu.
+
+**Explosion effects** (2026-11-03, branch `h1-effects`): the run's `effect_new` explosions play
+with Halo CE's own tags from `d40.map` (`docs/format/halo1.md` 13). `blam_h1::effect` reads
+`effe`, `part`, `pctl` (particle systems: fire turning to smoke), `ligh`, `pphy` and bitmap
+sequences; `blam_h1::effect_library` turns them into Halo 3's effect types, so
+`halo3_effects` plays them with its renderer unchanged (`halo3/src/halo1_effects.rs` loads the
+11 effects the scripts name, with their bitmaps as atlases, 0.1 s). Seen: the light flash
+lighting the trench orange, the fire puffs (added), the smoke plume they turn into (blended),
+the drifting smoke, the panel debris specks. The scripts' ambient explosions also go off along
+the run, as in the game. The effects' sounds go to `halo3_core::script_sound` as impulses with
+the Halo CE `snd!` tag index, path and position: the hook for Halo CE sound playback. Not played:
+debris objects (`garb`), decals, damage (`jpt!`: no area damage to the rider), lens flares.
+Headless: `HALO3_SHOT_EFFECT='effects\explosions\large explosion@x,y,z'` sets an effect off
+before the first `--shot` picture (`shot.rs`). Tests: `blam_h1/tests/effects.rs`,
+`halo3_effects/tests/h1_run_effects.rs` (driven through the run, every explosion the scripts set
+off is a converted effect at a cutscene flag; a large explosion plays its flash, sound, fire,
+smoke).
+
+Not done (Halo CE sides with nothing behind them yet; the scripts' calls log once and do
+nothing): what is listed as not done under each part below.
+
+**Objects (2026-11-03, branch `h1-objects`).** The placed objects are solid and the scripts
+reach them (`docs/format/halo1.md` 16 to 18, probe `probe_h1_objects.py`):
+
+- **Which objects.** An object belongs to the BSPs whose open space holds it (the collision
+  BSP's 3D tree; scenery stores the same mask at `+0x20`, equal on all 293 of d40's). Only
+  those in the decoded BSPs are decoded, so the ship's interior doors that sat inside BSP 5's
+  bounding box are gone. Each becomes a `Scene::objects` entry (name, placement flags: bit 0
+  "not placed automatically" = absent until a script creates it).
+- **Collision** (`blam_h1::objects::collision_model`): the `coll` tag's nodes, each node's BSP
+  for the placement's permutation, put on the render model's node (Halo CE stores node
+  rotations inverted), placed by the object's transform, `CollisionSource::Object` with the
+  object's BSP mask. On the run: 60 oxygen tanks and 5 field generators in BSP 7's tunnels;
+  the Longsword (`fighterbomber_scenery`), the flames and sparks have no collision model, as in
+  the game.
+- **Scripts** (`halo3_script::h1_objects`, `h1::runtime_with_devices`): the same object table
+  Halo 3's scripts use, from the scene without a cache file, so `object_create` /
+  `object_destroy` / `object_hide`, `device_*` and collision removal (`publish_collision`) work
+  as on 120_halo. New in the VM for both games: `object_create_containing`,
+  `object_create_anew_containing`, `object_destroy_containing`, `object_destroy_all`,
+  `objects_predict` (nothing). At `grand_finale` `test_for_endgame` destroys everything and
+  creates the `bsp_8_1` / `5` / `7` / `8` sets; the finish still comes at `cinematic_finale`.
+- **Devices.** Machines take their tag's transition time for `device_set_position`, start
+  open / unpowered by their placement flags, and door machines that operate automatically
+  open when the player is within their bounding sphere + 0.6 wu and close after the tag's
+  door open time (ours: the distance). `antr` animations are not posed: an open door (past
+  half way) has no collision and is not drawn; platforms keep their rest pose. **There are no
+  doors on the run**: the run's BSPs hold only the lift's machines down its shaft (x -113,
+  z 7.4) and `asspain_13` at its top, which no script creates; nothing on the road is a door.
+
+Checked: `blam_h1/tests/objects.rs` (the mask; a tank's collision box equals its drawn box; the
+run's line y = -4 from x -115 to 1052, 0.3 and 0.8 wu over the floor: the only objects met are
+four oxygen tanks, `bsp_8_22`, `23` at x 995 and `bsp_8_74`, `75` at x 1021, each with a free
+line within 6 wu beside it; no machine), `halo3_anim/tests/h1_objects.rs` (the bike at full
+throttle stops at `bsp_8_75` and rides on without object collision; the scripts find
+`bsp_8_*` by name, the absent ones do not collide until created, `object_destroy_all` /
+`object_create_containing` at `grand_finale`, the run still won), `halo3_script` unit tests
+(an automatic door opens, holds, closes; an unpowered one stays shut). Not playtested.
+
+**Enemies (2026-11-03, branch `h1-enemies`).** The run's encounters are `halo3_ai` actors,
+placed, killed and counted by the map's own scripts through the same `AiBridge` Halo 3 uses.
+`blam_h1::ai` reads encounters, squads, platoons, starting and firing positions and the actor
+variant palette (`actv` -> `actr`, `bipd`, `coll`, `weap`, `proj`, `jpt!`); `blam_h1::skeleton`
+the models' nodes and markers (rotations stored conjugated); `blam_h1::animation` the `antr`
+graphs; `halo1.md` 14 and 15, probe `probe_h1_ai.py`. `crates/halo3/src/halo1_ai.rs` turns them
+into `AiAssets` (each encounter a squad group and an AI zone, each platoon a group, each squad
+`encounter/squad`, lower case, its count for the difficulty) and an arsenal of the actors'
+weapons; `halo1_anim.rs` plays idle, moves (at the actor's ground speed) and melee from the
+graphs (`<mode> <class> <action>` names; the dead keep their last pose and the AI lays them
+down). Walkers run at their run animation's root motion. `--ai none` leaves them out.
+- Works (headless shots, tests): Flood combat forms, infection forms, carriers, grunts,
+  elites, hunters, sentinels drawn with their Halo CE models and textures, skinned, animated,
+  guns in hand; teams from the bipeds (Flood and Sentinels and Covenant fight each other and
+  the player); vitality from the variant or the `coll`; melee from the biped's `jpt!`; ranged
+  fire with the variant's rate, bursts and the weapon's projectile speed and damage;
+  `ai_kill`, `ai_living_count`, `ai_spawn_count`. `THE_MAW` now also stops the earlier
+  sections' continuous spawners (`enc1_4_manager` ...), which their own sections put to sleep
+  and which would otherwise refill encounters behind the start.
+- Not done: turret gunners and the dropship (`vehicle_load_magic`, `ai_go_to_vehicle`,
+  `enc6_5_dropship`, `enc7_7_cov/left_gunner` stand on foot where they start), Banshees
+  (`trench_banshees`), command lists (`ai_command_list`), `ai_magically_see_players`,
+  `ai_try_to_fight(_player)`, `ai_force_active`, `ai_attach_free`, `ai_spawn_actor` (all
+  still log once and do nothing), death, turn, flinch and fire animations, aim overlays,
+  grenades, infection forms reanimating the dead, carriers spawning infection forms. The AI
+  fights the player only on foot until `enemies-attack-rider` (Halo 3's rider targeting) is
+  merged; on the bike they fight each other.
+
+**Sound (2026-11-03, branch `h1-sound`).** MCC's Halo CE has no `sounds.map`: the audio is in
+FMOD banks in `halo1\sound\pc` (`game_paths::halo1_sound()`), found by tag path through
+`lst\*.lst.bin`, encoded as FMOD's CELT 0.11.0 (`docs/format/halo1.md` 19, probe
+`probe_h1_sound.py`). The Xiph CELT 0.11.0 decoder is vendored in `third_party/celt-0.11.0`
+(BSD-3-Clause, C, built by the new crate `fsb_celt` with `cc`; needs MSVC's C compiler, which
+the Rust MSVC toolchain already has). `blam_h1::sound` reads `snd!`, `lsnd`, the script
+sound references, each BSP's background sound per cluster (with its own cluster finder from
+the collision tree) and the banks; `halo3_audio::halo1` turns them into Halo 3's player data,
+so `music.rs` plays them unchanged (`MapSound::Halo1`). On the run: `d40_07` from the start
+(the insertion passes `enc6_0_dialog`, whose script starts it), its alternate
+(`string_idea`, cross-faded over 6 s) at the Pelican scene, `d40_08` after it, the one-shot
+finale `d40_09` at `enc6_9_1`, `d40_08` stopped at `grand_finale`; Cortana's and the pilot's
+lines on the dialogue bus in the setup's language (French, German, Italian, Spanish banks;
+English otherwise or when a line is missing), each script sleeping as long as its line
+(`sound_impulse_time`, from the tag's own PCM length); the trench's `interior_*_trench`
+background loops by cluster. Every `snd!` of the map is playable by tag index, so effects
+can sound: push `SoundRequest::Impulse { tag, name, at: Some(pos), scale }` into
+`ScriptSounds` (`halo3_audio/src/halo1.rs` header). Levels are our choice (no class tag in
+Halo CE): music and lines as tagged, effects -6 dB, ambience -12 dB. Headless at the run's start (`HALO3_AUDIO_TRACE=1 --shot`): `d40_07` -13 to -18 dBFS, Cortana -14 to -17, the trench background (its loop and the `muffled_explosions` it scatters every 0.5 to 2 s, details a further -6 dB) -18 to -21 (it was -12, over the music, at the tags' own gains). Not done: pitch, reverb
+(`snde`), sound scenery (none on the run), the cutscenes' 5.1 music, the Warthog's engine
+sounds (in no bank). Awaiting the user's playtest.
+
+Also fixed on this branch: a headless `--shot` without `--bike` / `--skate` / `--foot`
+crashed on every map (the speedometer read the bike's resources, which such a shot does not
+load).
 **Enemies attack the rider (2026-11-03, branch `enemies-attack-rider`, awaiting the user's
 playtest).** The AI fought only the Spartan on foot; on the bike the run's Flood and Sentinels
 ignored you. Now:

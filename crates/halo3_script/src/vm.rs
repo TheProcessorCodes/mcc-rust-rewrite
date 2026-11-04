@@ -19,6 +19,21 @@ use crate::hooks::{AiHooks, DevicePoser, HookContext};
 use crate::objects::Objects;
 use crate::value::{ObjectRef, Value};
 
+/// The world for code run outside the game's ticks: nobody anywhere.
+struct NoWorld;
+
+impl WorldApi for NoWorld {
+    fn player_position(&self) -> Option<Vec3> {
+        None
+    }
+    fn teleport_player(&mut self, _: Vec3, _: f32) {}
+    fn current_zone_set(&self) -> Option<usize> {
+        Some(0)
+    }
+    fn switch_zone_set(&mut self, _: usize) {}
+    fn effect(&mut self, _: &str, _: Vec3) {}
+}
+
 /// Script ticks per second.
 pub const TICKS_PER_SECOND: f64 = 30.0;
 /// Expression steps one thread may take in one tick before it is stopped
@@ -73,6 +88,16 @@ pub struct Config {
     /// The `editor` engine global: true skips a mission's own `start`
     /// (used with a console insertion script, as the designers did).
     pub editor: bool,
+    /// Halo CE's `switch_bsp N`: the zone set holding structure BSP `N`
+    /// (by BSP index; `None` where the BSP is not loaded).
+    pub bsp_zone_sets: Vec<Option<usize>>,
+    /// Scripts whose call wins the mission: the thread stops there, so the
+    /// cutscene after it (teleports, BSP switches) does not play. Halo CE's
+    /// The Maw: `cinematic_finale`, called once the player reaches
+    /// `grand_finale` in time.
+    pub won_at: Vec<String>,
+    /// Scripts whose call loses it (The Maw: `cinematic_time_up`).
+    pub lost_at: Vec<String>,
 }
 
 impl Default for Config {
@@ -81,7 +106,28 @@ impl Default for Config {
             difficulty: 1,
             insertion_point: 0,
             editor: false,
+            bsp_zone_sets: Vec::new(),
+            won_at: Vec::new(),
+            lost_at: Vec::new(),
         }
+    }
+}
+
+/// Halo CE's HUD countdown (`hud_set_timer_time` and the rest), counted in
+/// script ticks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HudTimer {
+    /// Ticks left; `None` until a script sets the timer.
+    pub ticks: Option<i64>,
+    pub paused: bool,
+    pub shown: bool,
+    /// At or under this many ticks the timer warns (Halo CE draws it red).
+    pub warning: i64,
+}
+
+impl HudTimer {
+    pub fn warns(&self) -> bool {
+        self.ticks.is_some_and(|t| t <= self.warning)
     }
 }
 
@@ -185,6 +231,10 @@ pub struct Runtime {
     pub folders: Vec<Vec<u32>>,
     /// Kill volumes the scripts switched on or off, by trigger volume index.
     pub kill_volumes: Vec<(usize, bool)>,
+    /// The last `game_save*` (true) or `game_save_cancel` (false) since
+    /// the game last looked: the game takes a checkpoint at the next
+    /// steady moment (`halo3_core::ai::SaveRequest`).
+    pub save_requested: Option<bool>,
     /// Sound function calls for the sound side, oldest first
     /// (`halo3_core::script_sound`); the game moves them on every frame.
     pub sounds: Vec<SoundRequest>,
@@ -207,6 +257,11 @@ pub struct Runtime {
     /// 120_halo's outro calls first, once the player reaches
     /// `end_trilogy01` in the frigate's hangar mouth).
     pub mission_over: Option<String>,
+    /// The mission is lost: the call that said so (`game_lost`, or a
+    /// script in [`Config::lost_at`]).
+    pub mission_lost: Option<String>,
+    /// Halo CE's HUD countdown.
+    pub hud_timer: HudTimer,
 }
 
 impl Runtime {
@@ -266,6 +321,7 @@ impl Runtime {
             volumes,
             folders,
             kill_volumes: Vec::new(),
+            save_requested: None,
             sounds: Vec::new(),
             dialogue: Default::default(),
             passed_volumes: HashSet::new(),
@@ -276,26 +332,39 @@ impl Runtime {
             pending: Vec::new(),
             calls: Default::default(),
             mission_over: None,
+            mission_lost: None,
+            hud_timer: HudTimer::default(),
         };
         rt.init_globals();
         rt
     }
 
+    /// Runs a static script to its end now, before any thread steps, with
+    /// no world (no player, zone sets or effects): for settings a mission
+    /// makes before anything else runs (Halo CE's `diff_control`). A
+    /// script that sleeps is left where it slept.
+    pub fn run_now(&mut self, script: &str) -> bool {
+        let Some(i) = self.data.script_index(script) else {
+            warn!("script: no script named {script}");
+            return false;
+        };
+        let root = self.data.scripts[i].root;
+        let mut t = Thread {
+            script: Some(i),
+            root,
+            state: ThreadState::Running,
+            frames: vec![Frame::new(root, 0)],
+            scopes: vec![Vec::new()],
+            continuous: false,
+        };
+        let done = self.run(&mut t, &mut NoWorld, &mut crate::hooks::NoAi).is_some();
+        info!("script: ran {script} at the start");
+        done
+    }
+
     /// Evaluates each global's initial value, in order (they may use the
     /// ones before them). No world: they are constants in practice.
     fn init_globals(&mut self) {
-        struct NoWorld;
-        impl WorldApi for NoWorld {
-            fn player_position(&self) -> Option<Vec3> {
-                None
-            }
-            fn teleport_player(&mut self, _: Vec3, _: f32) {}
-            fn current_zone_set(&self) -> Option<usize> {
-                Some(0)
-            }
-            fn switch_zone_set(&mut self, _: usize) {}
-            fn effect(&mut self, _: &str, _: Vec3) {}
-        }
         let mut ai = crate::hooks::NoAi;
         for g in 0..self.data.globals.len() {
             let init = self.data.globals[g].init;
@@ -343,6 +412,30 @@ impl Runtime {
         true
     }
 
+    /// Wakes a dormant script, as `(wake NAME)` would.
+    pub fn wake(&mut self, script: &str) -> bool {
+        let Some(t) = self.data.script_index(script).and_then(|i| self.script_thread[i]) else {
+            warn!("script: no script named {script} to wake");
+            return false;
+        };
+        if matches!(self.threads[t].state, ThreadState::Dormant | ThreadState::Sleeping(_)) {
+            self.threads[t].state = ThreadState::Running;
+        }
+        true
+    }
+
+    /// Stops a startup, dormant or continuous script before it runs (an
+    /// insertion of ours that skips a mission's own start).
+    pub fn stop(&mut self, script: &str) -> bool {
+        let Some(t) = self.data.script_index(script).and_then(|i| self.script_thread[i]) else {
+            warn!("script: no script named {script} to stop");
+            return false;
+        };
+        self.threads[t].state = ThreadState::Stopped;
+        self.threads[t].frames.clear();
+        true
+    }
+
     /// Takes the player to have passed through these trigger volumes (by
     /// name): `volume_test_players` answers true for them from now on.
     /// For an insertion that starts past a volume a script still waits
@@ -375,6 +468,11 @@ impl Runtime {
     /// ends, then objects move on by a tick.
     pub fn step(&mut self, world: &mut dyn WorldApi, ai: &mut dyn AiHooks, poser: Option<&dyn DevicePoser>) {
         self.tick += 1;
+        if let Some(t) = self.hud_timer.ticks.as_mut()
+            && !self.hud_timer.paused
+        {
+            *t = (*t - 1).max(0);
+        }
         let mut i = 0;
         while i < self.threads.len() {
             let due = match self.threads[i].state {
@@ -418,6 +516,7 @@ impl Runtime {
             time: self.tick as f64 / TICKS_PER_SECOND,
         };
         ai.tick(&ctx);
+        self.objects.auto_doors(world.player_position(), (1.0 / TICKS_PER_SECOND) as f32);
         self.objects.step((1.0 / TICKS_PER_SECOND) as f32, poser);
     }
 
@@ -561,6 +660,25 @@ impl Runtime {
                             }
                             continue;
                         };
+                        let won = self.config.won_at.iter().any(|w| w.eq_ignore_ascii_case(&s.name));
+                        let lost = self.config.lost_at.iter().any(|w| w.eq_ignore_ascii_case(&s.name));
+                        if won || lost {
+                            let call = s.name.clone();
+                            let thread = self.thread_name(t);
+                            if self.mission_over.is_none() && self.mission_lost.is_none() {
+                                if won {
+                                    info!("script {thread}: {call}: the mission is won");
+                                    self.mission_over = Some(call);
+                                } else {
+                                    info!("script {thread}: {call}: the mission is lost");
+                                    self.mission_lost = Some(call);
+                                }
+                            }
+                            // The thread goes no further, as for `game_won`.
+                            t.state = ThreadState::Sleeping(self.tick + (1 << 40));
+                            return None;
+                        }
+                        let top = t.frames.last_mut().unwrap();
                         let args: Vec<Value> = std::mem::take(&mut top.args)
                             .into_iter()
                             .zip(s.parameters.iter().map(|p| p.value_type).chain(std::iter::repeat(ValueType::VOID)))
@@ -934,6 +1052,45 @@ impl Runtime {
                 // business now.
                 Outcome::Sleep(1 << 40)
             }
+            "game_lost" => {
+                if self.mission_over.is_none() && self.mission_lost.is_none() {
+                    info!("script {}: game_lost: the mission is lost", self.thread_name(t));
+                    self.mission_lost = Some(name.to_string());
+                }
+                Outcome::Sleep(1 << 40)
+            }
+            // ---- Halo CE's HUD countdown ----
+            "hud_set_timer_time" => {
+                let seconds = num(0) * 60.0 + num(1);
+                self.hud_timer.ticks = Some((seconds * TICKS_PER_SECOND).round() as i64);
+                info!("script {}: hud timer set to {}:{:02}", self.thread_name(t), num(0) as i64, num(1) as i64);
+                V(Value::Void)
+            }
+            "hud_set_timer_warning_time" => {
+                self.hud_timer.warning = ((num(0) * 60.0 + num(1)) * TICKS_PER_SECOND).round() as i64;
+                V(Value::Void)
+            }
+            "hud_get_timer_ticks" => V(Value::Long(self.hud_timer.ticks.unwrap_or(0) as i32)),
+            "show_hud_timer" => {
+                self.hud_timer.shown = arg(0).truthy();
+                V(Value::Void)
+            }
+            "pause_hud_timer" => {
+                self.hud_timer.paused = arg(0).truthy();
+                V(Value::Void)
+            }
+            "hud_set_timer_position" => V(Value::Void),
+            "switch_bsp" => {
+                let bsp = num(0).max(0.0) as usize;
+                match self.config.bsp_zone_sets.get(bsp).copied().flatten() {
+                    Some(z) => {
+                        info!("script {}: switch_bsp {bsp}", self.thread_name(t));
+                        world.switch_zone_set(z);
+                    }
+                    None => self.log_once(&format!("switch_bsp {bsp}"), || format!("switch_bsp {bsp}: that BSP is not loaded")),
+                }
+                V(Value::Void)
+            }
             "script_finished" => {
                 let done = arg(0)
                     .text()
@@ -950,6 +1107,14 @@ impl Runtime {
             "game_insertion_point_get" => V(Value::Short(self.config.insertion_point)),
             "game_coop_player_count" | "player_count" => V(Value::Long(1)),
             "game_is_cooperative" | "game_is_playtest" | "game_reverted" | "game_saving" => V(Value::Bool(false)),
+            "game_save" | "game_save_no_timeout" | "game_save_totally_unsafe" | "game_save_immediate" => {
+                self.save_requested = Some(true);
+                V(Value::Void)
+            }
+            "game_save_cancel" => {
+                self.save_requested = Some(false);
+                V(Value::Void)
+            }
             "players" => V(Value::Objects(Arc::new(vec![ObjectRef::player(0)]))),
             "list_get" => {
                 let list = arg(0).objects();
@@ -981,7 +1146,13 @@ impl Runtime {
                 let all = name.ends_with("_all");
                 let objects = arg(1).objects();
                 let (w, h) = (&*world, &*ai);
+                // The player counts as inside a volume an insertion took
+                // him past (`pass_volumes`), as for `volume_test_players`.
+                let passed = arg(0).index().is_some_and(|v| self.passed_volumes.contains(&v));
                 let mut hits = objects.iter().map(|o| {
+                    if passed && o.player_index().is_some() {
+                        return true;
+                    }
                     let p = self.object_position(*o, w, h);
                     self.in_volume(&arg(0), p)
                 });
@@ -1020,6 +1191,36 @@ impl Runtime {
                 }
                 V(Value::Void)
             }
+            // Every object whose name holds the text (Halo CE's d40:
+            // `object_create_containing "bsp_8_1"`).
+            "object_create_containing" | "object_create_anew_containing" | "object_destroy_containing" => {
+                let part = arg(0).text().unwrap_or("").to_ascii_lowercase();
+                let named: Vec<usize> = self
+                    .data
+                    .object_names
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, n)| !part.is_empty() && n.name.to_ascii_lowercase().contains(&part))
+                    .filter_map(|(k, _)| self.objects.by_name.get(k).copied().flatten())
+                    .map(|e| e as usize)
+                    .collect();
+                for e in named {
+                    if name == "object_destroy_containing" {
+                        self.objects.destroy(e);
+                    } else {
+                        self.objects.create(e, name == "object_create_anew_containing");
+                    }
+                }
+                V(Value::Void)
+            }
+            "object_destroy_all" => {
+                for e in 0..self.objects.len() {
+                    self.objects.destroy(e);
+                }
+                V(Value::Void)
+            }
+            // Loading ahead of time: nothing to do here.
+            "objects_predict" | "object_type_predict" | "object_pvs_activate" => V(Value::Void),
             "object_create_folder" | "object_create_folder_anew" | "object_destroy_folder" => {
                 let members = arg(0).index().and_then(|f| self.folders.get(f)).cloned().unwrap_or_default();
                 for e in members {
@@ -1083,12 +1284,17 @@ impl Runtime {
             }
             // ---- devices ----
             "device_set_position" | "device_set_position_immediate" | "device_animate_position" => {
-                let seconds = match name {
-                    "device_set_position" => 2.0,
-                    "device_animate_position" => num(2) as f32,
-                    _ => 0.0,
-                };
                 for e in self.entries_of(&arg(0)) {
+                    // A device with its own transition time (Halo CE) takes
+                    // it for the whole way.
+                    let seconds = match (name, &self.objects.info[e].device) {
+                        ("device_set_position", Some(d)) => {
+                            d.position_seconds * (num(1) as f32 - self.objects.state[e].device.position).abs()
+                        }
+                        ("device_set_position", None) => 2.0,
+                        ("device_animate_position", _) => num(2) as f32,
+                        _ => 0.0,
+                    };
                     self.objects.state[e].device.animate(num(1) as f32, seconds);
                 }
                 V(Value::Void)
@@ -1192,8 +1398,9 @@ impl Runtime {
                 V(Value::Real((seconds as f64 * TICKS_PER_SECOND).round() as f32).coerce(ty))
             }
             // `sound_impulse_language_time snd`: the sound's length in
-            // ticks, in the player's language.
-            "sound_impulse_language_time" => {
+            // ticks, in the player's language; Halo CE's
+            // `sound_impulse_time snd` the same (its lines sleep on it).
+            "sound_impulse_language_time" | "sound_impulse_time" => {
                 let tag = arg(0).raw() & 0xFFFF;
                 let seconds = self.dialogue.seconds_of(tag);
                 V(Value::Real((seconds as f64 * TICKS_PER_SECOND).round() as f32).coerce(ty))
@@ -1207,6 +1414,15 @@ impl Runtime {
                 if world.player_in_vehicle() && arg(0).text().is_some_and(|t| PLAYER_RIDE_STANDS_IN_FOR.contains(&t)) =>
             {
                 V(Value::Object(Some(ObjectRef::player(0))))
+            }
+            // The dirt bike answers for the vehicle a seat test asks about
+            // while the player rides it: The Maw's `trench_jeep_test` has
+            // Cortana tell him to get back in the Warthog after 15 s in no
+            // Warthog's driver seat.
+            "vehicle_test_seat_list" | "vehicle_test_seat"
+                if world.player_in_vehicle() && arg(2).objects().iter().any(|o| o.0 >= ObjectRef::PLAYER && o.0 < ObjectRef::DYNAMIC) =>
+            {
+                V(Value::Bool(true))
             }
             n if is_ai_function(n) => {
                 let ctx = HookContext {

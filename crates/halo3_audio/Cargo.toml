@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 bevy = { workspace = true, features = ["bevy_audio"] }
 blam_cache = { workspace = true }
+blam_h1 = { workspace = true }
 blam_sound = { workspace = true }
 game_paths = { workspace = true }
 halo3_core = { workspace = true }

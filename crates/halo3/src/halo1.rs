@@ -13,12 +13,19 @@
 //! Lighting: Halo CE's lightmap pages are plain light colours (R5G6B5),
 //! packed by `blam_h1` into one atlas per BSP and written as Halo 3's
 //! constant SH term like Halo 2's (`halo2::encode_lightmap`).
+//!
+//! Missions (`main.rs` `MISSIONS`, an [`Insertion`]): only the mission's
+//! BSPs are decoded, one loaded at a time and switched by the map's own BSP
+//! switch volumes as in the game (`blam_h1`'s zone sets); the player starts
+//! on the dirt bike where a named object of the map stands; the map's own
+//! scripts (`blam_h1::script`) run on Halo 3's runtime (`halo3_script`).
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use blam_geometry::{Kind, Scene};
+use blam_geometry::{Kind, Scene, Spawn, SpawnKind, StartingLocation};
 use blam_texture::Texture;
+use bevy::math::Vec3;
 
 use crate::textures::MaterialTextures;
 use crate::world::sky::{Albedo, IllumMode, Map as SkyMap, PlainFogSetting, SkyData, SkyLook};
@@ -39,28 +46,49 @@ fn lightmap_scale() -> f32 {
 /// exposure); checked by eye on Blood Gulch.
 pub const LIGHTMAP_SCALE: f32 = 1.15;
 
+pub use halo3_script::h1::Insertion;
+
 /// A Halo CE map: its scene and looks, its sky's fog for the camera and
-/// its sky model's looks.
+/// its sky model's looks; for a mission, where it starts and its scripts.
 pub struct Loaded {
     pub scene: Scene,
     pub textures: MaterialTextures,
     pub fog: Option<PlainFogSetting>,
     pub sky: SkyData,
+    /// A mission's start (feet position, facing).
+    pub start: Option<(Vec3, f32)>,
+    /// A mission's scripts.
+    pub scripts: Option<blam_script::ScriptData>,
+    /// The effects a mission's scripts name (`halo1_effects.rs`).
+    pub effects: Option<halo3_effects::EffectAssets>,
+    /// The map, for what is read after the world (the encounters,
+    /// `halo1_ai.rs`).
+    pub map: blam_h1::Map,
+    /// Each scene object's device, for the scripts (`h1_objects.rs`).
+    pub devices: Vec<Option<halo3_script::h1_objects::H1Device>>,
+    /// How long the scripts' sounds play, seconds by tag index, for
+    /// `sound_impulse_time` (`blam_h1::sound::script_seconds`).
+    pub sound_seconds: HashMap<u32, f32>,
 }
 
-pub fn load(path: &Path) -> anyhow::Result<Loaded> {
+pub fn load(path: &Path, insertion: Option<&Insertion>) -> anyhow::Result<Loaded> {
     let started = std::time::Instant::now();
     let map = blam_h1::Map::open(path)?;
-    let loaded = blam_h1::decode(&map, &blam_h1::Options::default())?;
+    let options = blam_h1::Options {
+        bsps: insertion.map(|i| i.bsps.to_vec()),
+        ..Default::default()
+    };
+    let loaded = blam_h1::decode(&map, &options)?;
     let s = &loaded.stats;
     eprintln!(
-        "halo ce {}: {} lightmap meshes ({} lit from {} pages), {} triangles; collision {} triangles; {} spawns; {} scenery; {} bitmaps ({} not decoded) in {:.1} s",
+        "halo ce {}: {} lightmap meshes ({} lit from {} pages), {} triangles; collision {} triangles (+{} of objects); {} spawns; {} scenery; {} bitmaps ({} not decoded) in {:.1} s",
         map.map_name,
         s.lightmaps,
         s.lightmapped,
         s.lightmap_pages,
         loaded.scene.triangle_count(),
         s.collision_triangles,
+        s.object_collision_triangles,
         loaded.scene.spawns.len(),
         s.objects.get(&Kind::Scenery).copied().unwrap_or(0),
         loaded.bitmaps.len(),
@@ -78,6 +106,12 @@ pub fn load(path: &Path) -> anyhow::Result<Loaded> {
         fog,
         ..
     } = loaded;
+    let (start, scripts) = match insertion {
+        Some(ins) => mission_start(&map, &mut scene, ins)?,
+        None => (None, None),
+    };
+    let effects = scripts.as_ref().map(|d| crate::halo1_effects::load(&map, d));
+    let devices = crate::h1_objects::devices(&map, &scene);
     if let Some(f) = fog {
         eprintln!(
             "sky fog: colour {:.2?}, up to {:.2} from {} to {} wu",
@@ -121,7 +155,55 @@ pub fn load(path: &Path) -> anyhow::Result<Loaded> {
         },
         fog,
         sky,
+        start,
+        scripts,
+        effects,
+        sound_seconds: insertion.map(|_| blam_h1::sound::script_seconds(&map)).unwrap_or_default(),
+        map,
+        devices,
     })
+}
+
+/// A mission's start: the named object's spot becomes the scene's only
+/// start and spawn, so a fall, a death or a restart comes back there and
+/// never to the map's own start in a BSP that is not loaded (on 120_halo
+/// that made a fall loop). The scripts are read here too.
+fn mission_start(
+    map: &blam_h1::Map,
+    scene: &mut Scene,
+    ins: &Insertion,
+) -> anyhow::Result<(Option<(Vec3, f32)>, Option<blam_script::ScriptData>)> {
+    let object = blam_h1::object_named(map, ins.start_at)
+        .ok_or_else(|| anyhow::anyhow!("{}: no object named {}", map.map_name, ins.start_at))?;
+    let (position, yaw) = (object.position, object.angles.x);
+    eprintln!(
+        "mission: starts at {} ({}) halo [{:.2}, {:.2}, {:.2}] facing {:.0} degrees",
+        ins.start_at,
+        object.tag,
+        position.x,
+        position.y,
+        position.z,
+        yaw.to_degrees()
+    );
+    scene.starts = vec![StartingLocation { position, yaw, pitch: 0.0 }];
+    scene.spawns = vec![Spawn {
+        name: ins.start_at.to_string(),
+        position,
+        yaw,
+        kind: SpawnKind::Respawn,
+    }];
+    let scripts = match blam_h1::script::read(map) {
+        Ok(d) if !d.scripts.is_empty() => {
+            eprintln!("scripts: {} scripts, {} globals", d.scripts.len(), d.globals.len());
+            Some(d)
+        }
+        Ok(_) => None,
+        Err(e) => {
+            eprintln!("scripts: not read ({e})");
+            None
+        }
+    };
+    Ok((Some((position, yaw)), scripts))
 }
 
 /// The sky model's materials as sky looks: the last colour map of each

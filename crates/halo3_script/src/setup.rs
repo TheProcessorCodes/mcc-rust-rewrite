@@ -106,6 +106,7 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
             tag: Some(o.tag),
             contacts: Vec::new(),
             physics: None,
+            device: None,
         });
     }
     // Named objects nothing draws (sound scenery, bipeds, vehicles).
@@ -124,6 +125,7 @@ pub fn runtime(cache: &CacheFile, scene: &Scene, data: Arc<ScriptData>, config: 
                 tag: None,
                 contacts: Vec::new(),
                 physics: None,
+                device: None,
             });
         }
     }

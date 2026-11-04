@@ -14,6 +14,7 @@
 //! logs which emitters are active at each view.
 
 pub mod engine;
+pub mod halo1;
 pub mod halo2;
 mod levels;
 mod library;
@@ -49,10 +50,13 @@ pub struct HaloAudioPlugin {
     pub music: Option<String>,
 }
 
-/// A map's sound source: a Halo 3 cache file, or for a map with none
-/// (Halo 2) its ambience, decoded by the caller on a thread (`halo2.rs`).
+/// A map's sound source: a Halo 3 cache file, a Halo CE map with MCC's
+/// Halo CE banks (`halo1.rs`, played like Halo 3's), or for a map with
+/// none (Halo 2) its ambience, decoded by the caller on a thread
+/// (`halo2.rs`).
 pub enum MapSound {
     Halo3(&'static CacheFile),
+    Halo1(halo1::Halo1Sound),
     Plain(halo2::PlainLoader),
 }
 
@@ -64,6 +68,7 @@ pub fn install(world: &mut World, sound: MapSound) {
     }
     match sound {
         MapSound::Halo3(cache) => world.insert_resource(Loader(Mutex::new(Some(library::load(cache))))),
+        MapSound::Halo1(src) => world.insert_resource(Loader(Mutex::new(Some(halo1::load(src))))),
         MapSound::Plain(loader) => world.insert_resource(halo2::PlainState::start(loader)),
     }
 }
@@ -413,7 +418,7 @@ fn background(
     };
     // A script's `sound_class_set_gain amb` (1 otherwise).
     let class_gain = gains.get("amb");
-    let place = place_of(&zones, mask, l.position);
+    let place = place_of(&zones, mask, l.position).or_else(|| halo1::place(&sounds.data, mask, l.position));
     // Indoors-outdoors changes only when the camera is in some cluster;
     // outside every cluster the last background stays.
     if place.is_some() {

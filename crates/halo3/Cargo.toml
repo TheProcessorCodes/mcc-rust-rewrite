@@ -17,6 +17,7 @@ blam_cache = { workspace = true }
 blam_geometry = { workspace = true }
 blam_texture = { workspace = true }
 blam_h1 = { workspace = true }
+blam_script = { workspace = true }
 blam_h2 = { workspace = true }
 blam_reach = { workspace = true }
 anyhow = { workspace = true }

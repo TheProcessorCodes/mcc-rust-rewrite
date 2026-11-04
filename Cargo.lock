@@ -1694,9 +1694,13 @@ dependencies = [
 name = "blam_h1"
 version = "0.1.0"
 dependencies = [
+ "blam_cache",
+ "blam_effect",
  "blam_geometry",
  "blam_h2",
+ "blam_script",
  "blam_texture",
+ "fsb_celt",
  "game_paths",
  "glam",
  "memmap2",
@@ -2429,6 +2433,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
+name = "fsb_celt"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2608,6 +2619,7 @@ dependencies = [
  "blam_h1",
  "blam_h2",
  "blam_reach",
+ "blam_script",
  "blam_texture",
  "game_paths",
  "halo3_ai",
@@ -2656,6 +2668,7 @@ dependencies = [
  "blam_anim",
  "blam_cache",
  "blam_geometry",
+ "blam_h1",
  "blam_script",
  "game_paths",
  "glam",
@@ -2671,6 +2684,7 @@ dependencies = [
  "anyhow",
  "bevy",
  "blam_cache",
+ "blam_h1",
  "blam_sound",
  "game_paths",
  "halo3_core",
@@ -2711,6 +2725,7 @@ dependencies = [
  "blam_cache",
  "blam_effect",
  "blam_geometry",
+ "blam_h1",
  "blam_script",
  "blam_texture",
  "game_paths",
@@ -2754,6 +2769,7 @@ dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
+ "blam_h1",
  "blam_script",
  "blam_sound",
  "game_paths",

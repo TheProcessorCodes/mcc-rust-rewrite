@@ -5,6 +5,8 @@
 //! halo3 <map>            riverworld, or a path to a .map
 //! halo3 warthog_run      a mission (`MISSIONS`): Halo 3's last mission
 //!                        from the Warthog run on, on the dirt bike, timed
+//! halo3 h1:warthog_run   Halo CE's Warthog run: The Maw from the Warthogs
+//!                        at the top of the lift, against the countdown
 //! halo3 --test-scene     a made-up room, for checking the camera
 //!
 //! halo3 <map> --shot <dir> [--view x,y,z,yaw,pitch]... [--size WxH]
@@ -63,8 +65,13 @@
 //! `lockout.map`, is `blackout`.
 
 mod anim_test;
+mod countdown;
 mod finish;
+mod h1_objects;
 mod halo1;
+mod halo1_effects;
+mod halo1_ai;
+mod halo1_anim;
 mod halo2;
 mod menu;
 mod reach;
@@ -186,6 +193,7 @@ fn main() -> anyhow::Result<()> {
   halo3 --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-setup [--menu-step N]] [--size WxH]
   halo3 <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   halo3 warthog_run [--foot] [--difficulty ...]             the Warthog run of 120_halo, timed
+  halo3 h1:warthog_run [--foot] [--difficulty ...]          Halo CE's Warthog run (The Maw), against its countdown
   halo3 <map> [--foot] [--ai nearby|zone|off|none]
   halo3 <map> --insertion NAME|N [--difficulty easy|normal|heroic|legendary] [--foot]   e.g. 120_halo --insertion trench_run (or trench_end)
   halo3 <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
@@ -218,8 +226,9 @@ pub(crate) struct LoadedMap {
     arsenal: Option<weapons::assets::Arsenal>,
     foot_tuning: Option<foot::physics::Tuning>,
     plain_fog: Option<world::sky::PlainFogSetting>,
-    /// Halo 2: the map's ambience, decoded on the sound plugin's thread.
-    plain_sound: Option<audio::halo2::PlainLoader>,
+    /// Halo 2's ambience or Halo CE's sound (`audio::MapSound`), loaded on
+    /// the sound plugin's thread.
+    plain_sound: Option<audio::MapSound>,
     /// Halo 3 only: scripts, AI, the mission's zone sets.
     extras: MapExtras,
 }
@@ -241,6 +250,8 @@ pub(crate) struct MapExtras {
     /// The effects the scripts and the objects they damage play, read
     /// with their bitmaps (`halo3_effects`).
     effects: Option<halo3_effects::EffectAssets>,
+    /// Halo CE actors' animations (`halo1_anim.rs`).
+    h1_moves: Option<halo1_anim::H1Moves>,
 }
 
 impl LoadedMap {
@@ -262,6 +273,13 @@ pub(crate) struct Mission {
     /// never switches to another (so nothing before the mission streams
     /// back in).
     pub(crate) zone_sets: &'static [&'static str],
+    /// A Halo CE mission: its BSPs, where it starts and how its scripts
+    /// begin (`halo1.rs`).
+    pub(crate) h1: Option<halo1::Insertion>,
+    /// The line under MISSION COMPLETE, and under MISSION FAILED
+    /// (`finish.rs`).
+    pub(crate) won_line: &'static str,
+    pub(crate) lost_line: &'static str,
 }
 
 /// The missions.
@@ -273,6 +291,19 @@ pub(crate) const MISSIONS: &[Mission] = &[Mission {
     map: "h3:120_halo",
     args: &["--insertion", "trench_run", "--zone", "120_04_100_110"],
     zone_sets: &["120_04_100_110", "120_100_110", "120_110_120"],
+    h1: None,
+    won_line: "You made it into the Forward Unto Dawn.",
+    lost_line: "The mission is lost.",
+}, Mission {
+    // Halo CE's last mission, The Maw, from the Warthogs on: the dirt bike
+    // stands in for the Warthog (`halo3_script::h1::THE_MAW`).
+    name: "h1:warthog_run",
+    map: "h1:d40",
+    args: &[],
+    zone_sets: &[],
+    h1: Some(halo3_script::h1::THE_MAW),
+    won_line: "You made it to the Longsword.",
+    lost_line: "Time ran out: the Pillar of Autumn's reactor went up.",
 }];
 
 /// The mission called `name`, if it is one.
@@ -316,8 +347,37 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
     // Told by the file's own header, not its name: Halo CE's `sidewinder`
     // and `prisoner` share their file names with other games' maps.
     if blam_h1::is_halo1(&path) {
-        // Halo CE: decoded up front like Halo 2 (`halo1.rs`).
-        let h1 = halo1::load(&path)?;
+        // Halo CE: decoded up front like Halo 2 (`halo1.rs`); a mission
+        // decodes only its BSPs and starts its scripts.
+        let insertion = mission.and_then(|m| m.h1.as_ref());
+        let mut h1 = halo1::load(&path, insertion)?;
+        let mut extras = MapExtras::default();
+        // A mission's encounters, placed by its scripts (`halo1_ai.rs`),
+        // and the weapons they carry.
+        let mut arsenal = None;
+        if insertion.is_some() && value_of(args, "--ai").as_deref() != Some("none") {
+            if let Some(h1_ai) = halo1_ai::load(&h1.map, difficulty(args)) {
+                extras.ai = Some(h1_ai.assets);
+                extras.h1_moves = Some(h1_ai.moves);
+                arsenal = h1_ai.arsenal;
+            }
+        }
+        if let (Some(ins), Some(data)) = (insertion, h1.scripts.take()) {
+            let start = h1.start;
+            // The objects the scripts name or create, and the doors, are
+            // drawn on their own (`h1_objects.rs`).
+            halo3_script::h1_objects::mark_dynamic(&mut h1.scene, &data, &h1.devices);
+            let mut runtime = halo3_script::h1::runtime_with_devices(data, &h1.scene, ins, difficulty(args), &h1.devices);
+            runtime.dialogue.seconds = std::mem::take(&mut h1.sound_seconds);
+            extras.scripts = Some(ScriptStart {
+                pending: halo3_script::PendingScripts(Some(runtime), None, None),
+                devices: halo3_anim::MachinePoser::default(),
+                start,
+                effect_roots: Vec::new(),
+            });
+        }
+        // The effects the scripts name (`halo1_effects.rs`).
+        extras.effects = h1.effects.take();
         if let Some(mean) = world::lighting::scene_mean_irradiance(&h1.scene, &h1.textures.lightmaps) {
             eprintln!("halo ce lightmap: mean irradiance {mean:.3}");
             world::lighting::set_scene_mean(mean);
@@ -334,11 +394,12 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             sky: h1.sky,
             water: world::water::WaterData::default(),
             map_file: None,
-            arsenal: None,
+            arsenal,
             foot_tuning: None,
             plain_fog: h1.fog,
-            plain_sound: None,
-            extras: MapExtras::default(),
+            // The map's sound from MCC's Halo CE banks (`audio::halo1`).
+            plain_sound: Some(audio::MapSound::Halo1(audio::halo1::Halo1Sound::of(&path))),
+            extras,
         });
     }
     if blam_h2::is_halo2(&path) {
@@ -366,7 +427,7 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             arsenal,
             foot_tuning: None,
             plain_fog: fog,
-            plain_sound: Some(halo2::ambience_loader(&path)),
+            plain_sound: Some(audio::MapSound::Plain(halo2::ambience_loader(&path))),
             extras: MapExtras::default(),
         });
     }
@@ -580,7 +641,7 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         app.add_plugins((skate::SkatePlugin, rider::RiderPlugin, swim::SwimPlugin));
         if grounded {
             // The campaign's squads (only maps with AI bring any).
-            app.add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin, ai::AiPlugin));
+            app.add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin, ai::AiPlugin, halo1_anim::H1AnimPlugin));
         }
     }
     if args.iter().any(|a| a == "--anim-test") {
@@ -594,6 +655,7 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         halo3_script::ScriptPlugin,
         halo3_effects::EffectsPlugin,
         finish::FinishPlugin,
+        countdown::CountdownPlugin,
         fly_camera::FlyCameraPlugin,
         flag::SessionFlagPlugin,
         world::WorldPlugin,
@@ -650,7 +712,7 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         // Reach's sound tags are not read (`reach.rs`).
         (Some(cache), _) if cache.engine() != blam_cache::Engine::Halo3 => {}
         (Some(cache), _) => audio::install(w, audio::MapSound::Halo3(cache)),
-        (None, Some(loader)) => audio::install(w, audio::MapSound::Plain(loader)),
+        (None, Some(sound)) => audio::install(w, sound),
         (None, None) => {}
     }
     let start_spot = scene
@@ -785,6 +847,9 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
             _ => 1,
         }));
         w.insert_resource(ai::PendingAi(extras.ai));
+        if let Some(m) = extras.h1_moves {
+            w.insert_resource(m);
+        }
     }
     w.insert_resource(zones);
     w.insert_resource(world::stream::ZoneTriggers::new(shot_mode));
@@ -811,15 +876,10 @@ fn scripts_for(
         return None;
     }
     let data = halo3_script::prepare(cache, scene)?;
-    let mut config = halo3_script::Config::default();
-    if let Some(d) = value("--difficulty") {
-        config.difficulty = match d.as_str() {
-            "easy" => 0,
-            "heroic" => 2,
-            "legendary" => 3,
-            _ => 1,
-        };
-    }
+    let mut config = halo3_script::Config {
+        difficulty: difficulty(args),
+        ..Default::default()
+    };
     let mut console = None;
     let mut start = None;
     let mut start_override = None;
@@ -893,6 +953,17 @@ struct ScriptStart {
     start: Option<(Vec3, f32)>,
     /// `effe` tags the scripts and their objects' damage play.
     effect_roots: Vec<u32>,
+}
+
+/// `--difficulty easy|normal|heroic|legendary` as the scripts number it
+/// (0 to 3); normal when not given.
+fn difficulty(args: &[String]) -> i16 {
+    match value_of(args, "--difficulty").as_deref() {
+        Some("easy") => 0,
+        Some("heroic") => 2,
+        Some("legendary") => 3,
+        _ => 1,
+    }
 }
 
 /// The value after `flag`, if given.

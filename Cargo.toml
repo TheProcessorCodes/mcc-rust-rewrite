@@ -16,6 +16,7 @@ members = [
     "crates/blam_reach",
     "crates/blam_sound",
     "crates/blam_texture",
+    "crates/fsb_celt",
     "crates/game_paths",
     "crates/halo3",
     "crates/halo3_anim",
@@ -61,6 +62,7 @@ blam_h2 = { path = "crates/blam_h2" }
 halo3_anim = { path = "crates/halo3_anim" }
 halo3_ai = { path = "crates/halo3_ai" }
 blam_reach = { path = "crates/blam_reach" }
+fsb_celt = { path = "crates/fsb_celt" }
 game_paths = { path = "crates/game_paths" }
 halo3_audio = { path = "crates/halo3_audio" }
 halo3_bike = { path = "crates/halo3_bike" }

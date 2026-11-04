@@ -398,6 +398,12 @@ pub struct PlayerRespawn {
     pub dead: bool,
 }
 
+/// The scripts asked for a checkpoint (`game_save`, true) or called the
+/// asked one off (`game_save_cancel`, false); `halo3_ai` takes it at the
+/// player's next steady moment and clears it.
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct SaveRequest(pub bool);
+
 /// What an actor is doing, for the animation code to pick an animation
 /// from. Written by `halo3_ai` every frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
