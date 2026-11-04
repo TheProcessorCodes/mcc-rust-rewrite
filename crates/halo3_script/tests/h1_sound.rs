@@ -4,7 +4,8 @@
 //! alternate at the Pelican scene, `d40_08` after the scene, `d40_09` near
 //! the end, `d40_08` stopped at `grand_finale`; Cortana's and the pilot's
 //! lines one after another, each sleeping as long as the line plays
-//! (`sound_impulse_time`). Skips quietly when the map is not installed.
+//! (`sound_impulse_time`); none telling the rider to get back in the
+//! Warthog. Skips quietly when the map is not installed.
 
 use std::path::PathBuf;
 
@@ -34,6 +35,10 @@ impl WorldApi for World {
         self.zone_set = zone_set;
     }
     fn effect(&mut self, _tag: &str, _at: Vec3) {}
+    // On the dirt bike, which stands in for the Warthog.
+    fn player_in_vehicle(&self) -> bool {
+        true
+    }
 }
 
 fn d40() -> Option<PathBuf> {
@@ -133,6 +138,9 @@ fn the_run_music_and_lines() {
     for l in ["d40_370_cortana", "d40_400_cortana", "d40_440_cortana", "d40_450_cortana"] {
         assert!(lines.contains(&l), "{l} not in {lines:?}");
     }
+    // The bike counts as a Warthog: Cortana never tells him to get back in
+    // one (`trench_jeep_test`'s d40_360).
+    assert!(!lines.contains(&"d40_360_cortana"), "{lines:?}");
     // A line's script sleeps as long as it plays, less what the script
     // overlaps (`(- (sound_impulse_time snd) 30)`): `timer_begin` says
     // d40_310, waits, then says d40_330.

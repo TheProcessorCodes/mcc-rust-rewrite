@@ -158,10 +158,9 @@ pub(crate) fn load(map: &blam_h1::Map, difficulty: i16) -> Option<H1Ai> {
             models,
             player_vitality,
             // Not read from Halo CE yet: the bike splatters with the
-            // default numbers, enemies deal their damage unscaled, and
-            // there is no shield meter.
+            // default numbers and there is no shield meter.
             splatter: None,
-            enemy_damage: None,
+            enemy_damage: Some(ENEMY_DAMAGE),
             hud: None,
         },
         arsenal,
@@ -411,6 +410,12 @@ fn kind(map: &blam_h1::Map, v: &h1::ActorVariant, u: &h1::Unit, model: Option<us
         anim: None,
     }
 }
+
+/// The share of their damage enemies deal the player, by difficulty (easy,
+/// normal, heroic, legendary). Ours: Halo CE keeps its difficulty scales in
+/// the engine, not the map, and at the full numbers the run's Flood and
+/// Sentinels killed the rider within seconds.
+const ENEMY_DAMAGE: [f32; 4] = [0.25, 0.4, 0.55, 0.75];
 
 fn damage(d: h1::Damage) -> Damage {
     Damage {

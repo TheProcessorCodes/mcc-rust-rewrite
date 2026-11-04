@@ -231,6 +231,10 @@ pub struct Runtime {
     pub folders: Vec<Vec<u32>>,
     /// Kill volumes the scripts switched on or off, by trigger volume index.
     pub kill_volumes: Vec<(usize, bool)>,
+    /// The last `game_save*` (true) or `game_save_cancel` (false) since
+    /// the game last looked: the game takes a checkpoint at the next
+    /// steady moment (`halo3_core::ai::SaveRequest`).
+    pub save_requested: Option<bool>,
     /// Sound function calls for the sound side, oldest first
     /// (`halo3_core::script_sound`); the game moves them on every frame.
     pub sounds: Vec<SoundRequest>,
@@ -317,6 +321,7 @@ impl Runtime {
             volumes,
             folders,
             kill_volumes: Vec::new(),
+            save_requested: None,
             sounds: Vec::new(),
             dialogue: Default::default(),
             passed_volumes: HashSet::new(),
@@ -1102,6 +1107,14 @@ impl Runtime {
             "game_insertion_point_get" => V(Value::Short(self.config.insertion_point)),
             "game_coop_player_count" | "player_count" => V(Value::Long(1)),
             "game_is_cooperative" | "game_is_playtest" | "game_reverted" | "game_saving" => V(Value::Bool(false)),
+            "game_save" | "game_save_no_timeout" | "game_save_totally_unsafe" | "game_save_immediate" => {
+                self.save_requested = Some(true);
+                V(Value::Void)
+            }
+            "game_save_cancel" => {
+                self.save_requested = Some(false);
+                V(Value::Void)
+            }
             "players" => V(Value::Objects(Arc::new(vec![ObjectRef::player(0)]))),
             "list_get" => {
                 let list = arg(0).objects();
@@ -1401,6 +1414,15 @@ impl Runtime {
                 if world.player_in_vehicle() && arg(0).text().is_some_and(|t| PLAYER_RIDE_STANDS_IN_FOR.contains(&t)) =>
             {
                 V(Value::Object(Some(ObjectRef::player(0))))
+            }
+            // The dirt bike answers for the vehicle a seat test asks about
+            // while the player rides it: The Maw's `trench_jeep_test` has
+            // Cortana tell him to get back in the Warthog after 15 s in no
+            // Warthog's driver seat.
+            "vehicle_test_seat_list" | "vehicle_test_seat"
+                if world.player_in_vehicle() && arg(2).objects().iter().any(|o| o.0 >= ObjectRef::PLAYER && o.0 < ObjectRef::DYNAMIC) =>
+            {
+                V(Value::Bool(true))
             }
             n if is_ai_function(n) => {
                 let ctx = HookContext {

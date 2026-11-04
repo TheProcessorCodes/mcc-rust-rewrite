@@ -292,12 +292,23 @@ struct Checkpoint {
     at: Option<(Vec3, f32)>,
     /// Seconds without an enemy seeing him.
     quiet: f32,
+    /// Seconds since the last one was taken.
+    since: f32,
 }
+
+/// A checkpoint is also taken while enemies see him, once he has gone
+/// this long unhurt (shields full again) and the last one is this old.
+/// Ours: on Halo CE's Warthog run something always sees the rider, and the
+/// scripts save only once (after the Pelican), so without it a death sent
+/// him back to the start.
+const UNHURT_SAVE: f32 = SHIELD_DELAY + SHIELD_FILL;
+const SAVE_EVERY: f32 = 10.0;
 
 fn checkpoint(
     mut point: ResMut<Checkpoint>,
     player: Res<PlayerBody>,
     vitality: Res<PlayerVitality>,
+    mut asked: Option<ResMut<halo3_core::ai::SaveRequest>>,
     actors: Query<&Actor>,
     time: Res<Time>,
 ) {
@@ -308,10 +319,18 @@ fn checkpoint(
     if vitality.dead.is_some() {
         return;
     }
+    let dt = time.delta_secs();
     let seen = actors.iter().any(|a| a.alive() && a.brain.sees && a.brain.foe == Some(Foe::Player));
-    point.quiet = if seen { 0.0 } else { point.quiet + time.delta_secs() };
-    if point.at.is_none() || (point.quiet > 3.0 && b.steady) {
+    point.quiet = if seen { 0.0 } else { point.quiet + dt };
+    point.since += dt;
+    let scripted = asked.as_deref().is_some_and(|a| a.0);
+    let unhurt = vitality.since_hit > UNHURT_SAVE && point.since > SAVE_EVERY;
+    if point.at.is_none() || (b.steady && (scripted || unhurt || point.quiet > 3.0)) {
         point.at = Some((b.feet, b.heading));
+        point.since = 0.0;
+        if let Some(a) = asked.as_deref_mut() {
+            a.0 = false;
+        }
     }
 }
 

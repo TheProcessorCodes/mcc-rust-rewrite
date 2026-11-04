@@ -322,6 +322,7 @@ impl Plugin for AiPlugin {
             .init_map_resource::<PlayerBody>()
             .init_map_resource::<Difficulty>()
             .init_map_resource::<PlayerRespawn>()
+            .init_map_resource::<halo3_core::ai::SaveRequest>()
             .init_map_resource::<player::Splatter>()
             .remove_on_map_unload::<PendingAi>()
             .remove_on_map_unload::<place::Ai>()

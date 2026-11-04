@@ -93,7 +93,7 @@ pub struct Scripts {
 const STARTUP_TICKS: usize = 15;
 
 /// Applies what the scripts asked for during some ticks: kill volumes, a
-/// zone switch, a new fallback spot; returns the teleport.
+/// checkpoint, a zone switch, a new fallback spot; returns the teleport.
 fn apply_requests(
     commands: &mut Commands,
     scripts: &mut Scripts,
@@ -102,6 +102,9 @@ fn apply_requests(
     zones: Option<&Zones>,
     fallback: Option<&mut FallbackSpot>,
 ) -> Option<(Vec3, f32)> {
+    if let Some(save) = scripts.runtime.save_requested.take() {
+        commands.insert_resource(halo3_core::ai::SaveRequest(save));
+    }
     for (v, on) in std::mem::take(&mut scripts.runtime.kill_volumes) {
         if let Some(volume) = scripts.runtime.volumes.get(v) {
             set_kill_volume_enabled(&volume.name, on);
