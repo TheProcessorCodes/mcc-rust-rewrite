@@ -55,8 +55,10 @@ far, the paths on disk and the open decision.
   (cargo never removes them; they had reached 234 GB):
   `& "$(git rev-parse --path-format=absolute --git-common-dir)/../.dev/prune-deps.ps1"`.
   It asks cargo which artifacts the main checkout's build and tests use, keeps those and
-  anything from the last 24 hours, and deletes the rest (`-DryRun` lists only). It may
-  rebuild our crates first. If the script is missing, skip this step.
+  anything from the last 24 hours, and deletes the rest. It also deletes the compile
+  caches in `target\debug\incremental` that no build has used for 48 hours (they had
+  reached 72 GB). `-DryRun` lists only. It may rebuild our crates first. If the script is
+  missing, skip this step.
 - **At most two builds at once.** Run every `cargo build`/`run`/`test`/`check` through
   the gate, from any worktree, using the main checkout's copy:
   `& "$(git rev-parse --path-format=absolute --git-common-dir)/../.dev/build-gate.ps1" cargo build --release`
