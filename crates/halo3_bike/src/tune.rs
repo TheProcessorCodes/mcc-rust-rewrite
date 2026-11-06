@@ -3,7 +3,10 @@
 //! bike stands still while it is open.
 //!
 //! The first slider picks the model the others start from: Unleashed's
-//! Pro 250 as it is, or Reflex v1 (`reflex.rs`). Drag a slider with the
+//! Pro 250 as it is, Reflex v1 (`reflex.rs`), or Reflex itself (`exact.rs`,
+//! Reflex's own simulation; only with Reflex installed). Reflex itself takes
+//! only its own three sliders (engine power, gearing, traction) and none of
+//! the others: it rides as the game does. Drag a slider with the
 //! mouse, or pick one with W / S, the up / down arrows or the d-pad and move
 //! it with A / D, left / right. Right-click a slider, or press Backspace (X
 //! on a pad), to put it back to stock; Delete (Y on a pad) puts them all
@@ -125,8 +128,36 @@ fn to_json(t: &Tuning) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
+/// The arcade model (Unleashed 0 or Reflex v1 1) to go back to when the
+/// physics switch leaves Reflex.
+static ARCADE_MODEL: std::sync::Mutex<f32> = std::sync::Mutex::new(1.0);
+
+/// The physics switch of the main menu's Settings and the pause menu:
+/// Arcade (the bike's own model, Unleashed or Reflex v1 as the tuning menu
+/// last had it) or Reflex (Reflex's own simulation). Saves the tuning when
+/// it changes. Reflex needs the player's Reflex install: without it this
+/// stays on Arcade and returns false.
+pub fn switch_physics(t: &mut Tuning, reflex: bool) -> bool {
+    if reflex && super::exact::vehicle().is_none() {
+        return false;
+    }
+    let mut arcade = ARCADE_MODEL.lock().unwrap_or_else(|e| e.into_inner());
+    if reflex == (t.model >= 1.5) {
+        return true;
+    }
+    if reflex {
+        *arcade = t.model;
+        t.model = 2.0;
+    } else {
+        t.model = *arcade;
+    }
+    save(t);
+    info!("bike: physics switched to {}", if reflex { "Reflex" } else { "Arcade" });
+    true
+}
+
 /// The tuning ridden last time, or stock.
-fn load() -> Tuning {
+pub fn load() -> Tuning {
     match read_json("bike-tuning.json") {
         Some(serde_json::Value::Object(saved)) => from_json(&saved),
         Some(_) => {
@@ -137,7 +168,9 @@ fn load() -> Tuning {
     }
 }
 
-fn save(t: &Tuning) {
+/// Saves the tuning to `bike-tuning.json` (the pause menu's physics switch
+/// saves through this too).
+pub fn save(t: &Tuning) {
     write_json("bike-tuning.json", &to_json(t));
 }
 
@@ -169,12 +202,23 @@ fn differs(k: &Knob, t: &Tuning, stock: &Tuning) -> bool {
 
 /// A saved setup in a few words: its base model and how far it is from stock.
 fn describe(t: &Tuning) -> String {
-    let model = if t.model >= 0.5 { "Reflex v1" } else { "Unleashed" };
+    let model = model_name(t.model);
     // The model slider itself is not a change from that model's stock.
     let stock = Tuning::default();
     match KNOBS[1..].iter().filter(|k| differs(k, t, &stock)).count() {
         0 => format!("{model}, stock"),
         n => format!("{model}, {n} changed"),
+    }
+}
+
+/// The model slider's value in words.
+fn model_name(model: f32) -> &'static str {
+    if model >= 1.5 {
+        "Reflex"
+    } else if model >= 0.5 {
+        "Arcade (Reflex v1)"
+    } else {
+        "Unleashed"
     }
 }
 
@@ -207,18 +251,70 @@ fn gear_top(s: &Setup, gear: usize) -> f32 {
     s.max_rpm() / RPM / s.ratio(gear) * s.rear.radius * KMH
 }
 
-const KNOBS: [Knob; 20] = [
+const KNOBS: [Knob; 23] = [
     Knob {
         key: "model",
         group: "Model",
         name: "Base physics",
         low: "Unleashed",
-        high: "Reflex v1",
-        range: (0.0, 1.0),
+        high: "Reflex",
+        range: (0.0, 2.0),
         step: 1.0,
         get: |t| t.model,
         set: |t, v| t.model = v.round(),
-        show: |s, _| format!("{}: {:.0} kg with the rider", s.name, s.mass),
+        show: |s, v| {
+            if v >= 1.5 {
+                if super::exact::vehicle().is_some() {
+                    "Reflex: the game's own simulation, 450F (the other sliders do nothing)".into()
+                } else {
+                    "Reflex: needs MX vs ATV Reflex installed; riding Reflex v1".into()
+                }
+            } else {
+                format!("{}: {:.0} kg with the rider", s.name, s.mass)
+            }
+        },
+    },
+    Knob {
+        key: "reflex_power",
+        group: "Reflex itself",
+        name: "Reflex engine power",
+        low: "less",
+        high: "more",
+        range: (0.5, 2.0),
+        step: 0.05,
+        get: |t| t.reflex_power,
+        set: |t, v| t.reflex_power = v,
+        show: |_, v| match super::exact::peak_torque() {
+            Some((nm, rpm)) => format!("peak {:.0} N·m at {rpm:.0} rpm (x{v:.2})", nm * v),
+            None => "needs MX vs ATV Reflex installed".into(),
+        },
+    },
+    Knob {
+        key: "reflex_gearing",
+        group: "",
+        name: "Reflex gearing",
+        low: "taller",
+        high: "shorter",
+        range: (0.6, 1.5),
+        step: 0.01,
+        get: |t| t.reflex_gearing,
+        set: |t, v| t.reflex_gearing = v,
+        show: |_, v| match super::exact::top_of_fifth(v) {
+            Some(kmh) => format!("{:.0} km/h ({:.0} mph) at the limiter in 5th (x{v:.2})", kmh, kmh / 1.609),
+            None => "needs MX vs ATV Reflex installed".into(),
+        },
+    },
+    Knob {
+        key: "reflex_traction",
+        group: "",
+        name: "Reflex traction",
+        low: "spins",
+        high: "hooks up",
+        range: (0.5, 3.0),
+        step: 0.05,
+        get: |t| t.reflex_traction,
+        set: |t, v| t.reflex_traction = v,
+        show: |_, v| format!("x{v:.2} the tyres' grip for drive and brakes (corners as Reflex)"),
     },
     Knob {
         key: "power",
@@ -1098,7 +1194,7 @@ mod tests {
         let tuned = Tuning { power: 1.5, model: 0.0, ..stock };
         let back = from_json(to_json(&tuned).as_object().unwrap());
         assert_eq!(back, tuned);
-        assert_eq!(describe(&stock), "Reflex v1, stock");
+        assert_eq!(describe(&stock), "Arcade (Reflex v1), stock");
         assert_eq!(describe(&Tuning { model: 0.0, ..stock }), "Unleashed, stock");
         assert_eq!(describe(&tuned), "Unleashed, 1 changed");
     }

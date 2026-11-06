@@ -69,7 +69,7 @@ What the game does now:
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
 - **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great".
-- **Dirt bike.** B rides it, with Master Chief on it (`halo3_bike`). It is drawn as Reflex's Dakumoto 450F in the user's Cortana graphics kit, read from their own MX vs ATV Reflex install (`reflex_assets`, `docs/format/reflex-bike.md`); without Reflex it is the old stick model. Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`); 0 while riding opens the physics tuning menu (`tune.rs`), which also switches back to plain Unleashed (see "Dirt bike" below).
+- **Dirt bike.** B rides it, with Master Chief on it (`halo3_bike`). It is drawn as Reflex's Dakumoto 450F in the user's Cortana graphics kit, read from their own MX vs ATV Reflex install (`reflex_assets`, `docs/format/reflex-bike.md`); without Reflex it is the old stick model. Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`), or, since 2026-11-06, Reflex's own simulation ("Reflex", `exact.rs`, see "Reflex's own simulation" below); 0 while riding opens the physics tuning menu (`tune.rs`), whose first slider picks Unleashed, Reflex v1 or Reflex (see "Dirt bike" below).
 - **On foot.** F walks the Spartan (`foot/`): the map's own movement numbers (`blam movement`,
   `docs/format/movement.md`), a capsule on the collision, a made-up gait on the skate skeleton,
   shoulder and eye cameras. He carries the map's weapons (`weapons/`, `blam weapons`,
@@ -285,6 +285,56 @@ Halo) or the look fixes above.
   `load` (decode, no bevy), `install` (resources into the world) and `run`; whatever `install`
   inserts must be listed for removal in `MenuPlugin::build`. Anything left out carries over into the
   next map.
+
+## Reflex's own simulation (2026-11-06, branch `reflex-core-physics`)
+
+The user's `reflex-physics` workspace (`D:\reflex-physics`) rebuilt Reflex's bike step by step from
+the decompile and checked it frame by frame against recordings of the game (`reflex_core`), with a
+Bevy adapter (`reflex_bevy`). Both are vendored in `third_party/reflex-physics` (its README lists
+our changes; no licence chosen yet, ask before a release). `crates/halo3_bike/src/exact.rs` rides
+the bike on it:
+
+- The 450F's 108 values come from the player's Reflex install: the BXML asset `mx450f_vehicle` in
+  `Database\EngineDependencies.dx9.package` (`reflex_assets::vehicle`, turned into the XML
+  `reflex_core` reads). `HALO3_REFLEX_VEHICLE=<dump file>` is a developer override. Without Reflex
+  the model is not offered (the slider says so) and the bike rides Reflex v1.
+- Picked with the main menu's Settings row "Bike physics" or the pause menu's dirt bike tab switch,
+  Physics: Arcade / Reflex (X on a pad, P, or a click; saved at once). Both are only there with
+  Reflex set up (it is optional); both go through `tune::switch_physics`. `exact::vehicle()` tries
+  again when the Reflex folder changes, so Reflex chosen in Settings counts without a restart. Arcade is the bike's own model as on master (Reflex v1, or Unleashed if the
+  tuning menu picked it; the switch goes back to whichever). It is also the third choice on the
+  tuning menu's first slider (`model` 2 in `bike-tuning.json`). Of the tuning sliders only Reflex's
+  own three act on it: "Reflex engine power" (`reflex_power`, the torque curve times it), "Reflex
+  gearing" (`reflex_gearing`, Reflex's garage gearing multiplier) and "Reflex traction"
+  (`reflex_traction`, both tyres' `StaticMuRoll`: drive and brake grip; cornering stays Reflex's).
+- Launch, measured on a flat floor (`cargo test -p halo3_bike --lib speed_table -- --ignored
+  --nocapture`; `launch_trace` prints a launch frame by frame): stock Reflex 0-60 mph 3.85 s, top
+  71.9 mph (drag, not the 88.7 mph limiter in 5th). Its launch is traction bound: in 1st the rear
+  spins at the 9,200 rpm limiter (~16 m/s slip), so power alone does nothing for 0-60. Power 1.35 /
+  gearing 0.87 / traction 1.25 (set in the user's `bike-tuning.json`): 0-60 2.8 s, 40-70 2.0 s, top
+  82.4 mph. Traction 1.5 needs the rider leaned forward (0-60 2.5 s), else it loops out; 2.0 and up
+  wheelies hard even leaning. Arcade with the user's tuning (power 2.5, grip 2.2) does 0-60 in
+  1.98 s (stock arcade 5.2 s).
+- `physics::Bike` stays what the rest of the game reads: after each frame the simulation's pose
+  (chassis centre of mass minus `MassProps_MainBodyCMOffset` = the model's origin), speeds, steer,
+  axle heights (as `compression` from the bind pose), contacts, rpm, gear and wreck are written
+  into it; a move or speed change made to the `Bike` from outside (moving platforms, gravity lifts,
+  a launch speed when mounting) is handed back to the simulation as a rigid move / velocity change.
+- Ground: `World::triangles_near` (a box round each wheel, moved objects where they are now; a
+  two-sided face is wound towards the wheel) and `World::raycast_far` for the chassis crash points.
+- Controls: RT throttle, LT both brakes (held at a standstill it backs up, as Reflex's brake
+  button), left stick steer, right stick rider lean. Wrecks are Reflex's: respawn in place after
+  1 s (R / Y still resets, death and kill volumes as before).
+- Crashes: only a chassis crash point touching, or a pitch / yaw rate or tyre load past Reflex's hard
+  limits (upstream 15a977d dropped the game's stick-flick recovery window between the soft and hard
+  limits, so those never wreck; the on-screen save prompt that went with it is gone too).
+- Tests: `cargo test -p halo3_bike --lib exact` (flat floor: settles 0.59 m up, 4 s full gas =
+  61 m and 27 m/s in 5th, steers the right way, a launch speed carries over) and
+  `--test reflex_on_halo` (Valhalla's collision: settles on both wheels, 23 m in 2.5 s, no sinking,
+  no crash). Both skip without Reflex / MCC. Not playtested yet.
+- Not done: a pad button for Reflex's clutch (`ReflexInput::clutch`), surfaces (every Halo surface
+  rides as Reflex's default grip), the engine sound picking takes by Reflex's rpm (it reads
+  `bike.engine` as before).
 
 ## Dirt bike (2026-10-28)
 

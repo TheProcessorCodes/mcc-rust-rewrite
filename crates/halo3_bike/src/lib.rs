@@ -32,6 +32,7 @@
 //! couple of seconds, then takes the rider pictures; `HALO3_BIKE_THROTTLE`
 //! sets the throttle it holds meanwhile (default 0.4).
 
+pub mod exact;
 pub mod marker;
 pub mod model;
 pub mod physics;
@@ -252,11 +253,12 @@ fn publish_motion(riding: Res<Riding>, mut motion: ResMut<halo3_core::bike::Bike
     let m = match riding.bike.as_ref() {
         Some(b) => {
             let s = physics::setup();
+            let (min_rpm, max_rpm) = b.exact().map_or((s.min_rpm, s.max_rpm()), |e| e.rpm_range());
             halo3_core::bike::BikeMotion {
                 riding: true,
                 rpm: b.engine.rpm,
-                min_rpm: s.min_rpm,
-                max_rpm: s.max_rpm(),
+                min_rpm,
+                max_rpm,
                 throttle: b.gas(),
                 speed: b.velocity.length(),
                 gear: b.engine.gear,
@@ -316,6 +318,10 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Reflex's 450F physics values, read before the first ride needs them.
+    std::thread::spawn(|| {
+        exact::vehicle();
+    });
     pool.mesh = meshes.add(Cylinder::new(1.0, 1.0));
     pool.materials = COLOURS
         .iter()

@@ -23,6 +23,8 @@ struct Attr {
 #[derive(Clone, Copy)]
 struct Node {
     name: u32,
+    value: u32,
+    kind: u32,
     first_child: u32,
     children: u32,
     first_attr: u32,
@@ -88,6 +90,8 @@ impl Bxml {
             let p = at + i * 32;
             nodes.push(Node {
                 name: u32_at(&raw, p)?,
+                value: u32_at(&raw, p + 4)?,
+                kind: u32_at(&raw, p + 12)?,
                 first_child: u32_at(&raw, p + 16)?,
                 children: u32_at(&raw, p + 20)?,
                 first_attr: u32_at(&raw, p + 24)?,
@@ -108,6 +112,21 @@ impl Bxml {
 
     pub fn name(&self, node: usize) -> &str {
         self.nodes.get(node).map_or("", |n| self.string(n.name))
+    }
+
+    /// A node's own text (value types 0 and 1 are string indices).
+    pub fn text(&self, node: usize) -> Option<&str> {
+        let n = self.nodes.get(node)?;
+        (n.kind <= 1).then(|| self.string(n.value))
+    }
+
+    /// The names of a node's attributes, in order.
+    pub fn attr_names(&self, node: usize) -> impl Iterator<Item = &str> + '_ {
+        let n = self.nodes.get(node).copied();
+        n.into_iter()
+            .flat_map(|n| n.first_attr..n.first_attr + n.attrs)
+            .filter_map(|i| self.attrs.get(i as usize))
+            .map(|a| self.string(a.name))
     }
 
     pub fn children(&self, node: usize) -> impl Iterator<Item = usize> + '_ {

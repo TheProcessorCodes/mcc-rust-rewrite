@@ -1,0 +1,14 @@
+# MX vs ATV Reflex bike physics (vendored from the user's reflex-physics workspace, see README.md).
+# Its own small workspace, like third_party/skate-engine; halo3_bike links reflex_bevy by path.
+[workspace]
+resolver = "2"
+members = ["crates/reflex_core", "crates/reflex_bevy"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+publish = false
+
+[workspace.dependencies]
+serde_json = "1"
+roxmltree = "0.21"

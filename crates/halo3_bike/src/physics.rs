@@ -30,6 +30,7 @@ use std::sync::{Arc, RwLock};
 use bevy::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 use blam_geometry::column_grid::ColumnGrid;
 
+use super::exact::{self, Exact};
 use super::reflex::Tuning;
 use super::unleashed::{RPM, Setup, Tyre, ft, lerp_clamp};
 
@@ -57,6 +58,14 @@ pub fn setup() -> Arc<Setup> {
 
 /// Rides on `tuning` from the next step on.
 pub fn set_tuning(tuning: &Tuning) {
+    exact::set(
+        tuning.model >= 1.5,
+        exact::Tune {
+            power: tuning.reflex_power,
+            gearing: tuning.reflex_gearing,
+            traction: tuning.reflex_traction,
+        },
+    );
     *SETUP.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(tuning.setup()));
 }
 
@@ -419,6 +428,28 @@ impl World {
         best
     }
 
+    /// The triangles touching the box `centre ± half` where they are now,
+    /// wound counter-clockwise seen from the side you stand on; a two-sided
+    /// one is wound to face `centre` (given both ways round, a wheel on it
+    /// would average its two normals to nothing). `ids` is scratch.
+    pub fn triangles_near(&self, centre: Vec3, half: f32, ids: &mut Vec<u32>, out: &mut Vec<[Vec3; 3]>) {
+        out.clear();
+        self.gather(centre, half, ids);
+        let moved = self.moved.read().unwrap_or_else(|e| e.into_inner());
+        let (lo, hi) = (centre - Vec3::splat(half), centre + Vec3::splat(half));
+        for &i in ids.iter() {
+            let t = self.triangle(&moved, i);
+            if t.a.min(t.b).min(t.c).cmpgt(hi).any() || t.a.max(t.b).max(t.c).cmplt(lo).any() {
+                continue;
+            }
+            if t.two_sided && (centre - t.a).dot(t.normal) < 0.0 {
+                out.push([t.a, t.c, t.b]);
+            } else {
+                out.push([t.a, t.b, t.c]);
+            }
+        }
+    }
+
     /// The same, gathering its own candidates (for occasional long rays).
     pub fn raycast_far(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<Hit> {
         let mut candidates = Vec::new();
@@ -576,6 +607,10 @@ pub struct Bike {
     /// The moving object under the bike and where it was last frame
     /// (`World::moving_ground`), to carry the bike along with it.
     platform: Option<(u32, Mat4)>,
+    /// Riding on Reflex's own simulation (`exact.rs`) instead of ours, and
+    /// the choice's generation when that was decided.
+    pub(crate) exact: Option<Box<Exact>>,
+    exact_generation: u64,
 }
 
 /// Slower than this along the frame, m/s, is a standstill for backing up.
@@ -621,7 +656,21 @@ impl Bike {
             candidates: Vec::new(),
             platform: None,
             contacts: Vec::new(),
+            exact: None,
+            exact_generation: exact::generation(),
         }
+        .with_exact(exact::on())
+    }
+
+    /// The same bike on Reflex's simulation (when it can be had) or on ours.
+    pub(crate) fn with_exact(mut self, on: bool) -> Bike {
+        self.exact = if on { Exact::new(&self).map(Box::new) } else { None };
+        self
+    }
+
+    /// Reflex's simulation, when the bike rides on it.
+    pub fn exact(&self) -> Option<&Exact> {
+        self.exact.as_deref()
     }
 
     /// Drops the bike onto the ground under `point` (a camera, a spawn),
@@ -659,6 +708,11 @@ impl Bike {
     /// The gas the engine gets this step, after the pedal's rate limit.
     pub fn gas(&self) -> f32 {
         self.held.gas
+    }
+
+    /// Sets what `gas` reports (Reflex's simulation keeps its own throttle).
+    pub(crate) fn set_gas(&mut self, gas: f32) {
+        self.held.gas = gas;
     }
 
     pub fn grounded(&self) -> usize {
@@ -716,6 +770,21 @@ impl Bike {
             return;
         }
         self.ride_platform(world);
+        // The tuning menu switched models: carry on from here on the other.
+        if exact::generation() != self.exact_generation {
+            self.exact_generation = exact::generation();
+            self.exact = if exact::on() { Exact::new(self).map(Box::new) } else { None };
+            self.crashed = None;
+        }
+        if let Some(mut exact) = self.exact.take() {
+            exact.step(self, world, controls, dt);
+            self.exact = Some(exact);
+            if !self.position.is_finite() || !self.rotation.is_finite() {
+                self.respawn(world);
+            }
+            self.remember_safe(dt);
+            return;
+        }
         let mut controls = controls;
         if let Some(t) = self.crashed.as_mut() {
             *t -= dt;
@@ -737,7 +806,11 @@ impl Bike {
         if !self.position.is_finite() || !self.rotation.is_finite() {
             self.respawn(world);
         }
-        // Remember where it was riding well.
+        self.remember_safe(dt);
+    }
+
+    /// Remembers where it was riding well.
+    fn remember_safe(&mut self, dt: f32) {
         self.safe_clock += dt;
         if self.crashed.is_none() && self.grounded() == 2 && self.up().y > 0.8 && self.safe_clock > 0.25 {
             self.safe_clock = 0.0;

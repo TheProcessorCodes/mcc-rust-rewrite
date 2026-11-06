@@ -179,6 +179,12 @@ pub struct Tuning {
     pub air_spin: f32,
     pub air_damping: f32,
     pub gravity: f32,
+    /// Reflex itself only (`exact.rs`): its engine torque, and its gear
+    /// ratios (below 1 taller: a higher top speed, a softer pull).
+    pub reflex_power: f32,
+    pub reflex_gearing: f32,
+    /// Reflex itself only: both tyres' grip along the ground (drive, brakes).
+    pub reflex_traction: f32,
 }
 
 impl Default for Tuning {
@@ -204,6 +210,9 @@ impl Default for Tuning {
             air_spin: 1.0,
             air_damping: 1.0,
             gravity: 1.0,
+            reflex_power: 1.0,
+            reflex_gearing: 1.0,
+            reflex_traction: 1.0,
         }
     }
 }
