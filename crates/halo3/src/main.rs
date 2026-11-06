@@ -328,6 +328,9 @@ pub(crate) fn load(arg: &str, args: &[String]) -> anyhow::Result<LoadedMap> {
 
 /// Decodes a map (a name or a path, see [`resolve_map`]), or the test scene.
 fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Result<LoadedMap> {
+    // The last map's exposure and mean light go (the map menu loads maps
+    // one after another in one process).
+    world::lighting::reset_map_lighting();
     if map == "--test-scene" {
         return Ok(LoadedMap {
             scene: world::test_scene(),
@@ -441,6 +444,9 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
     // its own tag layouts (`blam_reach`, `reach.rs`).
     let reach = cache.engine() == blam_cache::Engine::Reach;
     let mut extras = MapExtras::default();
+    // A mission's own BSPs (the rest of the map is lit too: see
+    // `whole_map_irradiance`).
+    let mut rest_of_map: Option<Vec<u32>> = None;
     if reach {
         reach::decode(cache, &mut scene)?;
     } else {
@@ -449,6 +455,7 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
         if let Some(m) = mission.filter(|m| !m.zone_sets.is_empty()) {
             let (sets, bsps) = mission_zone_sets(cache, m)?;
             eprintln!("mission {}: zone sets {:?}, BSPs {:?} only", m.name, m.zone_sets, bsps);
+            rest_of_map = Some(bsps.clone());
             options.bsps = Some(bsps);
             extras.zone_sets = Some(sets);
         }
@@ -488,7 +495,10 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
         bytes as f64 / (1 << 20) as f64,
         started.elapsed().as_secs_f32()
     );
-    let mean = world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps);
+    let mean = match &rest_of_map {
+        Some(loaded) => whole_map_irradiance(cache, &scene, &textures.lightmaps, loaded),
+        None => world::lighting::scene_mean_irradiance(&scene, &textures.lightmaps),
+    };
     if let Some(mean) = mean {
         world::lighting::set_scene_mean(mean);
     }
@@ -552,6 +562,51 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
 }
 
 /// A mission's zone sets (indices in the scenario) and the BSPs they use.
+/// The mean lit-surface irradiance of the whole map, for a mission that
+/// decoded only its own BSPs (`loaded`, drawn as `scene`): the other BSPs'
+/// geometry and lightmaps are decoded here for their light and dropped.
+/// The exposure and the auto exposure's threshold were picked against the
+/// whole map's mean; the Warthog run's BSPs alone are much darker (120_halo
+/// 0.058 against 0.103), which left its tunnels unbrightened.
+fn whole_map_irradiance(
+    cache: &blam_cache::CacheFile,
+    scene: &blam_geometry::Scene,
+    lightmaps: &[Option<textures::LightmapTextures>],
+    loaded: &[u32],
+) -> Option<f32> {
+    let started = std::time::Instant::now();
+    let (mut sum, mut n) = world::lighting::scene_irradiance_sum(scene, lightmaps);
+    let mut layout = blam_geometry::Scene::default();
+    if blam_geometry::zones::decode(cache, &mut layout).is_ok() {
+        let all = layout.zone_sets.iter().fold(0u32, |m, z| m | z.bsps);
+        let rest: Vec<u32> = (0..32).filter(|b| all & (1 << b) != 0 && !loaded.contains(b)).collect();
+        let options = blam_geometry::Options {
+            bsps: Some(rest),
+            objects: false,
+            collision: false,
+            verbose: false,
+        };
+        let mut others = blam_geometry::Scene::default();
+        let decoded = blam_geometry::decode_into(cache, &options, &mut others).map_err(|e| e.to_string());
+        match decoded.and_then(|_| cache.resources().map_err(|e| e.to_string())) {
+            Ok(resources) => {
+                let lms: Vec<_> = others
+                    .lightmaps
+                    .iter()
+                    .map(|lm| textures::lightmap_textures(cache, &resources, lm).ok())
+                    .collect();
+                let (s, k) = world::lighting::scene_irradiance_sum(&others, &lms);
+                sum += s;
+                n += k;
+                resources.clear_page_cache();
+            }
+            Err(e) => eprintln!("whole-map light: {e}; the mission's BSPs alone"),
+        }
+    }
+    eprintln!("whole-map light: {n} samples in {:.1} s", started.elapsed().as_secs_f32());
+    (n > 0).then(|| sum / n as f32)
+}
+
 fn mission_zone_sets(cache: &blam_cache::CacheFile, m: &Mission) -> anyhow::Result<(Vec<usize>, Vec<u32>)> {
     let mut layout = blam_geometry::Scene::default();
     blam_geometry::zones::decode(cache, &mut layout)?;

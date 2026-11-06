@@ -41,12 +41,14 @@ use super::to_render;
 pub const MAX_CUBES: usize = 2048 / 6;
 
 /// The reflection's brightness against the mean light the lightmap holds
-/// at the pixel, for a cube texel at its cube's mean. A cube holds light
-/// reflected off the surfaces round it, the lightmap the light falling on
-/// them, so this is about the scene's mean albedo. Set by comparing the
-/// cubes with the world drawn from a capture point (`HALO3_REFLECTIONS=view`,
-/// `docs/format/cubemaps.md` 4); `HALO3_CUBE_SCALE` overrides.
-pub const CUBE_SCALE: f32 = 0.12;
+/// at the pixel, for a cube texel at its cube's mean: 1, the level the SH
+/// stand-in reflected at. Matching the world drawn from a capture point
+/// (`HALO3_REFLECTIONS=view`) gave 0.12, about a mean albedo, but that left
+/// the metal floors that are mostly reflection near black: the Warthog
+/// run's road in the tunnels (about a fifth of its brightness before the
+/// cubes). At 1 Valhalla's shots come out as bright as before the cubes
+/// (`docs/format/cubemaps.md` 4). `HALO3_CUBE_SCALE` overrides.
+pub const CUBE_SCALE: f32 = 1.0;
 
 /// Every capture point of the scene, numbered as the cube array's cubes.
 #[derive(Default)]

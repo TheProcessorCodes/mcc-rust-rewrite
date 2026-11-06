@@ -67,6 +67,11 @@ cube is not known; this is our reading of the numbers.
   (mean display luminance): 0.12. That is about a mean albedo, as it should be: the cube
   holds light reflected off the surfaces round its point, the SH the light falling on them.
   `HALO3_CUBE_SCALE` overrides it.
+- 2026-11-06: raised to 1.0. At 0.12 surfaces whose look is mostly reflection went near
+  black: the Warthog run's metal road in the tunnels measured 7 (display luminance, 0-255)
+  where the SH stand-in gave 34. At 1.0 Valhalla's spawn, overview and spawn12 shots come
+  out as bright as with `HALO3_REFLECTIONS=0` (82 / 111 / 62), so the cubes keep their pattern
+  at the level the stand-in had.
 
 ## 5. Choosing cubes in the viewer
 
