@@ -17,6 +17,16 @@ pub mod reason {
     pub const CONTACT: u8 = 0x17;
 }
 
+/// The way the rider stick must be flicked (> 0.25 from where it was when the window opened) to save an open
+/// recovery window. Reflex shows it on screen as a prompt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Save {
+    Forward,
+    Back,
+    Left,
+    Right,
+}
+
 /// Bike limit table (0x009c4c00): vertical-speed scale, then (soft, hard) pairs.
 struct Table {
     vy_range: (f64, f64),
@@ -302,6 +312,22 @@ impl WreckChecker {
         false
     }
 
+    /// The open recovery window that wrecks unless saved: the flick it wants and the seconds left. `None` when
+    /// no window is open, or the open one ends by itself (the mildest kinds).
+    pub fn save_prompt(&self) -> Option<(Save, f64)> {
+        if self.reason != 0 || self.rec_timer <= 0.0 {
+            return None;
+        }
+        let save = match self.rec_k {
+            2 | 3 => Save::Forward,
+            5 | 6 => Save::Back,
+            8 | 9 => Save::Left,
+            11 | 12 => Save::Right,
+            _ => return None,
+        };
+        Some((save, self.rec_timer))
+    }
+
     /// Clears the wreck after a respawn.
     pub fn reset(&mut self) {
         *self = WreckChecker { lcg: self.lcg, ..Default::default() };
@@ -330,16 +356,20 @@ mod tests {
         let mut c = WreckChecker::default();
         let mut w = WreckInputs { rate_pitch: -13.0, e_front: 1.0, e_rear: 1.0, ..Default::default() };
         assert!(!c.frame(&w, 1.0 / 60.0));
+        // so mild a window ends by itself: no prompt
+        assert_eq!(c.save_prompt(), None);
         w.rate_pitch = 0.0;
         w.stick = (0.0, 0.6);
         assert!(!c.frame(&w, 1.0 / 60.0));
         for _ in 0..120 {
             assert!(!c.frame(&w, 1.0 / 60.0));
         }
+        assert_eq!(c.save_prompt(), None);
         // no save: the window runs out into a wreck
         let mut c = WreckChecker::default();
         let mut w = WreckInputs { rate_pitch: -20.0, e_front: 1.0, e_rear: 1.0, ..Default::default() };
         assert!(!c.frame(&w, 1.0 / 60.0));
+        assert_eq!(c.save_prompt().map(|p| p.0), Some(Save::Forward));
         w.rate_pitch = 0.0;
         let wrecked = (0..120).any(|_| c.frame(&w, 1.0 / 60.0));
         assert!(wrecked);

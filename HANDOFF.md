@@ -311,6 +311,12 @@ the bike on it:
 - Controls: RT throttle, LT both brakes (held at a standstill it backs up, as Reflex's brake
   button), left stick steer, right stick rider lean. Wrecks are Reflex's: respawn in place after
   1 s (R / Y still resets, death and kill volumes as before).
+- Saves: a hard landing (tyre load) or a big pitch / yaw rate between Reflex's soft and hard limits
+  opens a 0.75..1 s recovery window (`reflex_core::wreck`); flicking the right stick more than 0.25
+  the asked way saves it, else the bike wrecks when it runs out (the "delayed crash"). On a heavy
+  landing the asked way is random (left, right or back). "SAVE IT: RIGHT STICK ..." shows low in
+  the middle while such a window is open (`show_save`). It has to be a flick: a stick already held
+  over that way does not count.
 - Tests: `cargo test -p halo3_bike --lib exact` (flat floor: settles 0.59 m up, 4 s full gas =
   61 m and 27 m/s in 5th, steers the right way, a launch speed carries over) and
   `--test reflex_on_halo` (Valhalla's collision: settles on both wheels, 23 m in 2.5 s, no sinking,

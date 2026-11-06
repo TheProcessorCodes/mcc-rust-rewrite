@@ -277,6 +277,13 @@ impl Exact {
         &self.state
     }
 
+    /// A hard landing or a big pitch / yaw rate opened Reflex's recovery
+    /// window: the right-stick flick that saves it and the seconds left.
+    /// Not flicked in time, the bike wrecks.
+    pub fn save_prompt(&self) -> Option<(reflex_core::wreck::Save, f32)> {
+        self.bike.sim().wreck.save_prompt().map(|(s, t)| (s, t as f32))
+    }
+
     /// The engine's idle and limiter, rpm.
     pub fn rpm_range(&self) -> (f32, f32) {
         let p = &self.bike.sim().params;

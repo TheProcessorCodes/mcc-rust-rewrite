@@ -23,6 +23,8 @@ recordings of the game. Make changes there first where possible, then copy them 
 - `reflex_core/src/contact.rs` `disc_contact`: no contact when the triangle normals under a wheel
   add up to nothing (two faces back to back), instead of normalising a zero vector into NaN, which
   made the whole bike NaN and panicked in the tyre code (2026-11-06).
+- `reflex_core/src/wreck.rs`: `WreckChecker::save_prompt()` and `Save`, the flick an open recovery
+  window wants, for an on-screen prompt as Reflex shows (2026-11-06).
 - `reflex_bevy/src/lib.rs`: `ReflexBike::step(dt, input, ground, state)`, public, so a game can
   step a bike it keeps outside the ECS on its own `reflex_core::Ground`; the plugin's system calls
   it. `ReflexBike` derives `Clone` (2026-11-06).
