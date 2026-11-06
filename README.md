@@ -19,6 +19,21 @@ On those maps you can:
 
 It's main focus is on multiplayer maps in MCC but I did work on converting the two warthog runs from H3 and H1. H3 warthog run is very fun. There are other campaign maps but they are mostly untested and missing most things like scripting and enemies.
 
+## Screenshots
+
+The map select menu, one tab per game (LB/RB to switch). The pictures are
+read from the player's own MCC install.
+
+![Halo 3 multiplayer maps](docs/screenshots/menu-halo3.jpg)
+
+![Halo 2 multiplayer maps](docs/screenshots/menu-halo2.jpg)
+
+![Halo CE multiplayer maps](docs/screenshots/menu-halo-ce.jpg)
+
+![Halo Reach multiplayer maps](docs/screenshots/menu-reach.jpg)
+
+![Campaign: the two Warthog runs, and the untested Halo 3 missions](docs/screenshots/menu-campaign.jpg)
+
 The exe is `mcc-rust-rewrite.exe`. The project was called "Halo 3 in Rust"
 (`halo3.exe`, `halo3_*` crates) until 2026-11-06.
 
