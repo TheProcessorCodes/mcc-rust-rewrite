@@ -415,7 +415,7 @@ fn spawn_menu(
                         ..default()
                     })
                     .with_children(|tabs| {
-                        tabs.spawn(text("LB", 16.0, DIM));
+                        tabs.spawn((crate::key_hint::KeyHint { pad: "LB", keys: "A" }, text("A", 16.0, DIM)));
                         for (i, name) in TABS.iter().enumerate() {
                             tabs.spawn((
                                 TabLabel(i),
@@ -426,7 +426,7 @@ fn spawn_menu(
                                 text(name, 22.0, if i == shown { LIT } else { DIM }),
                             ));
                         }
-                        tabs.spawn(text("RB", 16.0, DIM));
+                        tabs.spawn((crate::key_hint::KeyHint { pad: "RB", keys: "D" }, text("D", 16.0, DIM)));
                     });
                 page(
                     panel,

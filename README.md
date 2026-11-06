@@ -182,7 +182,7 @@ folder is grayed out, and choosing it shows "You must install these Halo maps
 with MCC" instead of loading (A / B / Enter / Esc or a click closes it). Start
 Game loads the map into the same window behind a loading screen; Q (or View)
 in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
-left stick move, Q / E / LB / RB change tab, Enter / A start, Escape / B exit;
+left stick move, Q / E, Tab / Shift+Tab, Page Up / Page Down or LB / RB change tab (the hints by the tabs show Q / E, or LB / RB when a controller was used last), Enter / A start, Escape / B exit;
 the mouse picks a tile and a double click starts it. Naming a map on the
 command line skips the menu, and Q then quits. `mcc-rust-rewrite.exe --menu-shot FILE
 [--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-setup | --menu-start

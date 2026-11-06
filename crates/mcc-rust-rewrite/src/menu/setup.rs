@@ -400,12 +400,14 @@ pub(super) fn input(
     if key(&[KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) || pushed[1] {
         menu.setting = (menu.setting + 1).min(rows - 1);
     }
-    if key(&[KeyCode::KeyQ]) || pad(GamepadButton::LeftTrigger) {
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let tab_key = keys.just_pressed(KeyCode::Tab);
+    if key(&[KeyCode::KeyQ]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger) {
         let step = menu.step.saturating_sub(1);
         go(&mut menu, step);
         say(&mut menu, "", false);
     }
-    if (key(&[KeyCode::KeyE, KeyCode::Tab]) || pad(GamepadButton::RightTrigger)) && step_done(menu.step) {
+    if (key(&[KeyCode::KeyE]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger)) && step_done(menu.step) {
         let step = menu.step + 1;
         go(&mut menu, step);
         say(&mut menu, "", false);

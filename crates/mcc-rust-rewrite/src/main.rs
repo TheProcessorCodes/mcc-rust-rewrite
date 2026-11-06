@@ -74,6 +74,7 @@ mod halo1_effects;
 mod halo1_ai;
 mod halo1_anim;
 mod halo2;
+mod key_hint;
 mod menu;
 mod reach;
 mod pause;
@@ -706,6 +707,7 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
     app.add_plugins((
         mcc_core::map::MapPhasePlugin,
         pause::PausePlugin,
+        key_hint::KeyHintPlugin,
         speedo::SpeedoPlugin,
         // The map's scripts, and the completion screen when they win.
         mcc_script::ScriptPlugin,
