@@ -15,6 +15,7 @@ pub mod model;
 pub mod package;
 pub mod surface;
 pub mod texture;
+pub mod vehicle;
 
 use std::path::{Path, PathBuf};
 

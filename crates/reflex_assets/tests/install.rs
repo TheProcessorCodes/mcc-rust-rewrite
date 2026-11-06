@@ -71,3 +71,18 @@ fn the_450f_engine_decodes() {
     assert!(peak > 0.1 && peak <= 1.0, "peak {peak}");
 }
 
+
+#[test]
+fn the_450f_physics_values_load() {
+    let Some(root) = find_reflex() else {
+        eprintln!("no Reflex install; skipped");
+        return;
+    };
+    let doc = reflex_assets::vehicle::read(&root, "mx450f").expect("mx450f_vehicle");
+    let keys: std::collections::BTreeSet<&str> = doc.children(0).map(|n| doc.name(n)).collect();
+    assert!(keys.len() >= 100, "{} keys", keys.len());
+    let gravity = doc.children(0).find(|&n| doc.name(n) == "VehicleSim_Gravity").expect("gravity");
+    assert_eq!(doc.text(gravity), Some("0.0,-32.2,0"));
+    let xml = reflex_assets::vehicle::to_xml(&doc).expect("xml");
+    assert!(xml.contains("<Engine_TorqueCurve preset=\"Normal\" kind=\"curve\""), "{}", &xml[..400.min(xml.len())]);
+}

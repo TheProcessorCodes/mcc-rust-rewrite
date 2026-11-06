@@ -1,0 +1,10 @@
+[package]
+name = "reflex_core"
+description = "Engine-independent reimplementation of the MX vs ATV Reflex bike simulation (Reflex units and frames)."
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+roxmltree.workspace = true

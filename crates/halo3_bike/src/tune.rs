@@ -3,7 +3,9 @@
 //! bike stands still while it is open.
 //!
 //! The first slider picks the model the others start from: Unleashed's
-//! Pro 250 as it is, or Reflex v1 (`reflex.rs`). Drag a slider with the
+//! Pro 250 as it is, Reflex v1 (`reflex.rs`), or Reflex itself (`exact.rs`,
+//! Reflex's own simulation; only with Reflex installed). Reflex itself takes
+//! none of the other sliders: it rides as the game does. Drag a slider with the
 //! mouse, or pick one with W / S, the up / down arrows or the d-pad and move
 //! it with A / D, left / right. Right-click a slider, or press Backspace (X
 //! on a pad), to put it back to stock; Delete (Y on a pad) puts them all
@@ -169,12 +171,23 @@ fn differs(k: &Knob, t: &Tuning, stock: &Tuning) -> bool {
 
 /// A saved setup in a few words: its base model and how far it is from stock.
 fn describe(t: &Tuning) -> String {
-    let model = if t.model >= 0.5 { "Reflex v1" } else { "Unleashed" };
+    let model = model_name(t.model);
     // The model slider itself is not a change from that model's stock.
     let stock = Tuning::default();
     match KNOBS[1..].iter().filter(|k| differs(k, t, &stock)).count() {
         0 => format!("{model}, stock"),
         n => format!("{model}, {n} changed"),
+    }
+}
+
+/// The model slider's value in words.
+fn model_name(model: f32) -> &'static str {
+    if model >= 1.5 {
+        "Reflex"
+    } else if model >= 0.5 {
+        "Reflex v1"
+    } else {
+        "Unleashed"
     }
 }
 
@@ -213,12 +226,22 @@ const KNOBS: [Knob; 20] = [
         group: "Model",
         name: "Base physics",
         low: "Unleashed",
-        high: "Reflex v1",
-        range: (0.0, 1.0),
+        high: "Reflex",
+        range: (0.0, 2.0),
         step: 1.0,
         get: |t| t.model,
         set: |t, v| t.model = v.round(),
-        show: |s, _| format!("{}: {:.0} kg with the rider", s.name, s.mass),
+        show: |s, v| {
+            if v >= 1.5 {
+                if super::exact::vehicle().is_some() {
+                    "Reflex: the game's own simulation, 450F (the other sliders do nothing)".into()
+                } else {
+                    "Reflex: needs MX vs ATV Reflex installed; riding Reflex v1".into()
+                }
+            } else {
+                format!("{}: {:.0} kg with the rider", s.name, s.mass)
+            }
+        },
     },
     Knob {
         key: "power",

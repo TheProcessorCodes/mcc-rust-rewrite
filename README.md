@@ -42,8 +42,9 @@ the format descriptions the code is written from.
 | `crates/halo3_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
 | `crates/halo3_skate` | skating through the Skate 3 engine (`skate-host`) |
 | `third_party/skate-engine` | the Skate 3 engine crates, vendored (GPL-3.0; its README says where from and what we changed) |
+| `third_party/reflex-physics` | MX vs ATV Reflex's bike simulation (`reflex_core`, `reflex_bevy`), vendored from the user's `reflex-physics` workspace (its README says what we changed) |
 | `crates/halo3_rider` | the Spartan on the board |
-| `crates/halo3_bike` | the dirt bike (MX vs ATV Unleashed's model with Reflex's numbers), drawn as Reflex's Dakumoto 450F in the Cortana kit |
+| `crates/halo3_bike` | the dirt bike (Reflex's own simulation from `third_party/reflex-physics`, or MX vs ATV Unleashed's model with Reflex's numbers), drawn as Reflex's Dakumoto 450F in the Cortana kit |
 | `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model (no bevy) |
 | `crates/halo3_foot` | the Spartan on foot |
 | `crates/halo3_weapons` | the map's weapons, carried and fired on foot |

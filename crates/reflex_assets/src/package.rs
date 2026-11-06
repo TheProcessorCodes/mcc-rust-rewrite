@@ -82,7 +82,9 @@ impl Package {
             f.seek(SeekFrom::Start(asset.offset))?;
             f.read_exact(&mut blob)?;
         }
-        if asset.compressed { unpack(&blob) } else { Ok(blob) }
+        // Some assets are flagged packed but stored plain (a BXML document
+        // whose body is zlib, as every BXML's is).
+        if asset.compressed && !blob.starts_with(b"BXML") { unpack(&blob) } else { Ok(blob) }
     }
 
     /// The asset `name` of `kind` in `subpackage`, unpacked.
