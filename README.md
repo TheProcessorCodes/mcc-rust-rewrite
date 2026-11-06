@@ -45,22 +45,23 @@ the format descriptions the code is written from.
 | `crates/blam_texture` | decodes bitmap tags into mip chains (BCn kept as blocks) and resolves shader tags to their textures, tiling and blend options |
 | `crates/blam_cli` | the `blam` tool: list tags, classes and strings, dump tag bytes, decode geometry to OBJ, inspect bitmaps and shaders, write PNGs |
 | `crates/blam_reach` | MCC Halo: Reach maps: BSPs from the lightmap BSP data, instances from their resource, collision, objects, sky, spawns and lightmap texcoords into the same `Scene`; the cache file, shaders and bitmaps go through `blam_cache` / `blam_texture`, which tell Reach by its header (`docs/format/reach.md`) |
+| `crates/fsb_celt` | decodes FMOD's FSB5 CELT samples (MCC Halo CE's sound banks) with the vendored CELT 0.11.0 decoder |
 | `crates/game_paths` | where the player's games are: the saved setup and dev overrides (`HALO3_MAPS`, ...); nothing is searched for. No dependencies; the readers' tests use it |
 | `crates/mcc_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`) and convert it once, take Reflex if the player has it, save the answers |
 | `crates/mcc-rust-rewrite` | the `mcc-rust-rewrite` binary: the map menu (`menu.rs`), wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
-| `crates/mcc_core` | what the runtime crates share: the map phase (`map.rs`: a map loaded, started and unloaded inside the running app), coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `halo3_*` crate depends on it, so keep it small |
+| `crates/mcc_core` | what the runtime crates share: the map phase (`map.rs`: a map loaded, started and unloaded inside the running app), coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `mcc_*` crate depends on it, so keep it small |
 | `crates/mcc_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
 | `crates/mcc_world` | the world on the GPU: BSP streaming, culling, lightmaps, sky, water, zone keys |
 | `crates/mcc_anim` | Halo's own animations on objects: `AnimModel` (one per object type) and the `Animator` component (actions with fallbacks, cross-fades, overlays, aiming, device positions, root motion) posing skinned joints |
 | `crates/mcc_audio` | the map's sounds, music, the board sounds and the weapons' sounds |
 | `crates/mcc_skate` | skating through the Skate 3 engine (`skate-host`) |
 | `third_party/skate-engine` | the Skate 3 engine crates, vendored (GPL-3.0; its README says where from and what we changed) |
+| `third_party/celt-0.11.0` | Xiph's CELT 0.11.0 decoder in C (BSD-3-Clause), built by `fsb_celt` |
 | `third_party/reflex-physics` | MX vs ATV Reflex's bike simulation (`reflex_core`, `reflex_bevy`), vendored from the user's `reflex-physics` workspace (its README says what we changed) |
 | `crates/mcc_rider` | the Spartan on the board |
 | `crates/mcc_bike` | the dirt bike (Reflex's own simulation from `third_party/reflex-physics`, or MX vs ATV Unleashed's model with Reflex's numbers), drawn as Reflex's Dakumoto 450F in the Cortana kit |
 | `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model (no bevy) |
 | `crates/mcc_foot` | the Spartan on foot |
-| `crates/mcc_weapons` | the map's weapons, carried and fired on foot |
 | `crates/mcc_script` | runs a map's own scripts: threads at 30 ticks a second, objects created, destroyed, dropped and moved, devices, trigger volumes, insertion points; hooks for the AI and device animation |
 | `crates/mcc_effects` | plays the effects the scripts and damaged objects ask for from the map's `effe` tags: particles, contrails, light flashes, sounds |
 | `crates/mcc_weapons` | the map's weapons, carried and fired on foot; rounds hit actors and the player |
@@ -113,6 +114,11 @@ from it), but skating itself can be turned off on the menu's Settings screen (Sk
 saved as `SKATING=off`). Maps then load without grind rails, the skate session or the board
 (a map is ready several seconds sooner), J does nothing, and the pause menu's Skate tab says
 skating is off and where to turn it on. The choice applies from the next map loaded.
+
+With Reflex set up, Settings also has Bike physics: Arcade (the bike's own model) or Reflex
+(MX vs ATV Reflex's own simulation, with the bike's numbers read from the player's Reflex).
+The pause menu's dirt bike tab has the same switch. It is saved in `bike-tuning.json` with
+the tuning sliders; without Reflex the bike rides Arcade.
 
 Dev overrides: `MCC_ROOT`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `MCC_SKATE_ASSETS` (or
 `IW4L_SKATE_ASSETS`), `MCC_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
@@ -284,6 +290,11 @@ lists all 20).
       Dakumoto 450F in the Cortana kit read from the user's own MX vs ATV Reflex
       (`docs/format/reflex-bike.md`; a stick model without Reflex), with dual-stick physics (left stick bars, right stick rider, RT gas,
       LT brake), the Spartan standing on it (`docs/viewer.md` "Dirt bike").
+      Since 2026-11-06 (awaiting a playtest), with Reflex set up, it can ride
+      Reflex's own simulation (`third_party/reflex-physics`, the 450F's values
+      from the player's install): the Bike physics switch (Arcade / Reflex) in
+      Settings and the pause menu, and Reflex engine power, gearing and
+      traction sliders (HANDOFF "Reflex's own simulation").
 - [x] Guardian (`guardian`; built, awaiting a playtest): 26 clusters,
       471 instances, 258 k triangles, 53 spawns (all on a floor), 14,448 world
       and 97,940 instanced collision triangles, about 3,400 rails. Falling
@@ -402,8 +413,12 @@ lists all 20).
       in the bottom right, red under a minute, paused for the Pelican scene; reaching
       `grand_finale` by the Longsword wins (MISSION COMPLETE with the time and what was left
       on the countdown), the countdown running out loses (MISSION FAILED). Checked by
-      `crates/mcc_script/tests/h1_warthog_run.rs` and headless shots along the run. Not
-      yet: enemies, effects (explosions), sound, dialogue, music, doors (drawn, not solid).
+      `crates/mcc_script/tests/h1_warthog_run.rs` and headless shots along the run.
+      Since 2026-11-03 (awaiting a playtest): the run's enemies with their Halo CE models
+      and animations, placed and counted by the scripts; the scripts' explosions; the
+      placed objects solid; the music, Cortana's lines and the trench ambience from MCC's
+      Halo CE sound banks (`fsb_celt`). Not yet: turret gunners, the dropship and
+      Banshees, debris, decals, explosion damage, the Warthog's engine sound.
 - [x] Halo: Reach, the 20 multiplayer maps (`hr:NAME`, the menu's Reach tab; built, awaiting
       a playtest): our own `blam_reach` crate (`docs/format/reach.md`) on the Halo 3 path:
       textured BSPs, instances, scenery, crates, machines, controls and the sky model;
@@ -453,7 +468,8 @@ lists all 20).
 Our own crates are Apache-2.0 (`LICENSE-APACHE`). `mcc-rust-rewrite.exe` links the Skate 3 engine in
 `third_party/skate-engine`, which is GPL-3.0-only, so `mcc-rust-rewrite` and `mcc_skate`, and any
 released `mcc-rust-rewrite.exe`, are distributed under the GNU General Public License version 3 only
-(`LICENSE`), with this source. Apache-2.0 code may be used in a GPL-3.0 work. The Skate 3
+(`LICENSE`), with this source. Apache-2.0 code may be used in a GPL-3.0 work. The CELT
+0.11.0 decoder in `third_party/celt-0.11.0` keeps its own BSD-3-Clause licence (`COPYING`). The Skate 3
 converter `iw4l-skate-convert.exe` is not shipped; it comes from the player's MW2 Skate 3
 download, with its own licence files. None of this
 grants rights to any game's code, data, assets or trademarks; the player brings their own copies.
