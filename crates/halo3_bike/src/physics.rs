@@ -58,7 +58,14 @@ pub fn setup() -> Arc<Setup> {
 
 /// Rides on `tuning` from the next step on.
 pub fn set_tuning(tuning: &Tuning) {
-    exact::set(tuning.model >= 1.5, tuning.reflex_power, tuning.reflex_gearing);
+    exact::set(
+        tuning.model >= 1.5,
+        exact::Tune {
+            power: tuning.reflex_power,
+            gearing: tuning.reflex_gearing,
+            traction: tuning.reflex_traction,
+        },
+    );
     *SETUP.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(tuning.setup()));
 }
 

@@ -351,7 +351,6 @@ impl Sim {
             e_rear: WreckChecker::alignment(r.contact, r.normal, up),
             airborne: self.airborne,
             doughnut: r.doughnut,
-            stick: (self.inputs.rider_x, self.inputs.rider_y),
         };
         if self.wreck.frame(&w, frame_dt) {
             self.crashed = true;

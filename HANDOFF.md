@@ -298,14 +298,21 @@ the bike on it:
   `Database\EngineDependencies.dx9.package` (`reflex_assets::vehicle`, turned into the XML
   `reflex_core` reads). `HALO3_REFLEX_VEHICLE=<dump file>` is a developer override. Without Reflex
   the model is not offered (the slider says so) and the bike rides Reflex v1.
-- Third choice on the tuning menu's first slider (`model` 2 in `bike-tuning.json`); of the other
-  sliders only its own two act on it: "Reflex engine power" (`reflex_power`, the torque curve times
-  it) and "Reflex gearing" (`reflex_gearing`, Reflex's garage gearing multiplier). Measured on a flat
-  floor (`cargo test -p halo3_bike --lib speed_table -- --ignored --nocapture`): stock tops out at
-  71.9 mph (drag, not the 88.7 mph limiter in 5th), 40-70 mph in 4.4 s; power 1.35 / gearing 0.87
-  (what the user asked for, +10 mph, set in their `bike-tuning.json`) 82.4 mph, 40-70 in 2.1 s.
-  0-60 stays about 3.6 s whatever the power (traction / wheelie bound). Stock is still Reflex v1, so a saved `bike-tuning.json` keeps
-  whatever was picked.
+- Picked with the pause menu's dirt bike tab switch, Physics: Arcade / Reflex (X on a pad, P, or a
+  click; saved at once). Arcade is the bike's own model as on master (Reflex v1, or Unleashed if the
+  tuning menu picked it; the switch goes back to whichever). It is also the third choice on the
+  tuning menu's first slider (`model` 2 in `bike-tuning.json`). Of the tuning sliders only Reflex's
+  own three act on it: "Reflex engine power" (`reflex_power`, the torque curve times it), "Reflex
+  gearing" (`reflex_gearing`, Reflex's garage gearing multiplier) and "Reflex traction"
+  (`reflex_traction`, both tyres' `StaticMuRoll`: drive and brake grip; cornering stays Reflex's).
+- Launch, measured on a flat floor (`cargo test -p halo3_bike --lib speed_table -- --ignored
+  --nocapture`; `launch_trace` prints a launch frame by frame): stock Reflex 0-60 mph 3.85 s, top
+  71.9 mph (drag, not the 88.7 mph limiter in 5th). Its launch is traction bound: in 1st the rear
+  spins at the 9,200 rpm limiter (~16 m/s slip), so power alone does nothing for 0-60. Power 1.35 /
+  gearing 0.87 / traction 1.25 (set in the user's `bike-tuning.json`): 0-60 2.8 s, 40-70 2.0 s, top
+  82.4 mph. Traction 1.5 needs the rider leaned forward (0-60 2.5 s), else it loops out; 2.0 and up
+  wheelies hard even leaning. Arcade with the user's tuning (power 2.5, grip 2.2) does 0-60 in
+  1.98 s (stock arcade 5.2 s).
 - `physics::Bike` stays what the rest of the game reads: after each frame the simulation's pose
   (chassis centre of mass minus `MassProps_MainBodyCMOffset` = the model's origin), speeds, steer,
   axle heights (as `compression` from the bind pose), contacts, rpm, gear and wreck are written
@@ -316,12 +323,9 @@ the bike on it:
 - Controls: RT throttle, LT both brakes (held at a standstill it backs up, as Reflex's brake
   button), left stick steer, right stick rider lean. Wrecks are Reflex's: respawn in place after
   1 s (R / Y still resets, death and kill volumes as before).
-- Saves: a hard landing (tyre load) or a big pitch / yaw rate between Reflex's soft and hard limits
-  opens a 0.75..1 s recovery window (`reflex_core::wreck`); flicking the right stick more than 0.25
-  the asked way saves it, else the bike wrecks when it runs out (the "delayed crash"). On a heavy
-  landing the asked way is random (left, right or back). "SAVE IT: RIGHT STICK ..." shows low in
-  the middle while such a window is open (`show_save`). It has to be a flick: a stick already held
-  over that way does not count.
+- Crashes: only a chassis crash point touching, or a pitch / yaw rate or tyre load past Reflex's hard
+  limits (upstream 15a977d dropped the game's stick-flick recovery window between the soft and hard
+  limits, so those never wreck; the on-screen save prompt that went with it is gone too).
 - Tests: `cargo test -p halo3_bike --lib exact` (flat floor: settles 0.59 m up, 4 s full gas =
   61 m and 27 m/s in 5th, steers the right way, a launch speed carries over) and
   `--test reflex_on_halo` (Valhalla's collision: settles on both wheels, 23 m in 2.5 s, no sinking,

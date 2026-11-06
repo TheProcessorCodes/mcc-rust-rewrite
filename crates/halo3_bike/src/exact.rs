@@ -35,16 +35,35 @@ const CLASS: &str = "mx450f";
 static ON: AtomicBool = AtomicBool::new(false);
 /// Counts the changes, so a bike sees when the choice changed under it.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
-/// The tuning menu's Reflex engine power and gearing multipliers.
-static TUNE: RwLock<(f32, f32)> = RwLock::new((1.0, 1.0));
+/// The tuning menu's multipliers for Reflex itself (1 = as the game ships it).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tune {
+    /// The engine's torque curve.
+    pub power: f32,
+    /// The gear ratios (Reflex's garage gearing: below 1 taller).
+    pub gearing: f32,
+    /// Both tyres' grip along the ground (drive and brakes): `StaticMuRoll`,
+    /// which the sliding grip is a share of.
+    pub traction: f32,
+}
+
+impl Tune {
+    pub const STOCK: Tune = Tune {
+        power: 1.0,
+        gearing: 1.0,
+        traction: 1.0,
+    };
+}
+
+static TUNE: RwLock<Tune> = RwLock::new(Tune::STOCK);
 
 /// Rides bikes on Reflex's simulation (when the vehicle values could be
-/// read), with its torque times `power` and its gear ratios times
-/// `gearing`; a bike already out takes the change at its next step.
-pub fn set(on: bool, power: f32, gearing: f32) {
-    let mut tune = TUNE.write().unwrap_or_else(|e| e.into_inner());
-    let changed = ON.swap(on, Ordering::Relaxed) != on || *tune != (power, gearing);
-    *tune = (power, gearing);
+/// read), tuned by `tune`; a bike already out takes the change at its next
+/// step.
+pub fn set(on: bool, tune: Tune) {
+    let mut held = TUNE.write().unwrap_or_else(|e| e.into_inner());
+    let changed = ON.swap(on, Ordering::Relaxed) != on || *held != tune;
+    *held = tune;
     if changed {
         GENERATION.fetch_add(1, Ordering::Relaxed);
     }
@@ -52,22 +71,29 @@ pub fn set(on: bool, power: f32, gearing: f32) {
 
 /// Switches Reflex's simulation on or off, keeping the tuning.
 pub fn set_on(on: bool) {
-    let (power, gearing) = tune();
-    set(on, power, gearing);
+    set(on, tune());
 }
 
-fn tune() -> (f32, f32) {
+fn tune() -> Tune {
     *TUNE.read().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The 450F with its torque curve times `power`.
-fn tuned(power: f32) -> Option<Vehicle> {
+/// The 450F's values with `tune`'s power and traction in them.
+fn tuned(tune: Tune) -> Option<Vehicle> {
     let mut v = vehicle()?.clone();
     if let Some(reflex_core::Value::Curve(c)) = v.values.get_mut("Engine_TorqueCurve") {
-        let k = power as f64;
+        let k = tune.power as f64;
         c.y.iter_mut().for_each(|y| *y *= k);
         c.mleft *= k;
         c.mright *= k;
+    }
+    let k = tune.traction as f64;
+    for key in ["FrontTire_StaticMuRoll", "RearTire_StaticMuRoll"] {
+        match v.values.get_mut(key) {
+            Some(reflex_core::Value::Triple(t)) => t.iter_mut().for_each(|x| *x *= k),
+            Some(reflex_core::Value::Scalar(x)) => *x *= k,
+            _ => {}
+        }
     }
     Some(v)
 }
@@ -187,14 +213,13 @@ impl reflex_core::Ground for Ground<'_> {
 impl Exact {
     /// A simulation for `bike`, placed where it stands at its first step.
     pub fn new(bike: &Bike) -> Option<Exact> {
-        let (power, gearing) = tune();
-        Exact::tuned(bike, power, gearing)
+        Exact::tuned(bike, tune())
     }
 
-    /// The same with the engine power and gearing multipliers given.
-    pub fn tuned(bike: &Bike, power: f32, gearing: f32) -> Option<Exact> {
+    /// The same with the tuning given.
+    pub fn tuned(bike: &Bike, tune: Tune) -> Option<Exact> {
         Some(Exact {
-            bike: ReflexBike::new(tuned(power)?).with_garage(1.0, gearing as f64, 1.0),
+            bike: ReflexBike::new(tuned(tune)?).with_garage(1.0, tune.gearing as f64, 1.0),
             state: ReflexBikeState::default(),
             placed: false,
             written: (bike.position, bike.rotation, bike.velocity),
@@ -337,13 +362,6 @@ impl Exact {
         &self.state
     }
 
-    /// A hard landing or a big pitch / yaw rate opened Reflex's recovery
-    /// window: the right-stick flick that saves it and the seconds left.
-    /// Not flicked in time, the bike wrecks.
-    pub fn save_prompt(&self) -> Option<(reflex_core::wreck::Save, f32)> {
-        self.bike.sim().wreck.save_prompt().map(|(s, t)| (s, t as f32))
-    }
-
     /// The engine's idle and limiter, rpm.
     pub fn rpm_range(&self) -> (f32, f32) {
         let p = &self.bike.sim().params;
@@ -382,38 +400,108 @@ mod tests {
         }
     }
 
-    /// Full gas from a standstill on a long floor: 40-70 mph time and top speed, mph.
-    fn run(power: f32, gearing: f32) -> Option<(f32, f32)> {
+    /// Full gas from a standstill on a long floor: 0-60 and 40-70 mph times, top speed (mph).
+    fn run(tune: Tune, lean_forward: f32) -> Option<(f32, f32, f32)> {
         let s = 3000.0;
         let world = World::new([
             ([Vec3::new(-s, 0.0, -s), Vec3::new(-s, 0.0, s), Vec3::new(s, 0.0, s)], false),
             ([Vec3::new(-s, 0.0, -s), Vec3::new(s, 0.0, s), Vec3::new(s, 0.0, -s)], false),
         ]);
         let mut bike = Bike::dropped(&world, Vec3::new(0.0, 2.0, -2900.0), 0.0);
-        bike.exact = Some(Box::new(Exact::tuned(&bike, power, gearing)?));
+        bike.exact = Some(Box::new(Exact::tuned(&bike, tune)?));
         ride(&world, &mut bike, Controls::default(), 1.0);
-        let gas = Controls { throttle: 1.0, ..Default::default() };
-        let (mut t40, mut t70, mut top) = (f32::NAN, f32::NAN, 0.0f32);
+        let gas = Controls { throttle: 1.0, lean: bevy::math::Vec2::new(0.0, lean_forward), ..Default::default() };
+        let (mut t40, mut t60, mut t70, mut top, mut pitch) = (f32::NAN, f32::NAN, f32::NAN, 0.0f32, 0.0f32);
         for i in 0..(40 * 60) {
             bike.step(&world, gas, 1.0 / 60.0);
             let mph = bike.speed() / 0.44704;
             if t40.is_nan() && mph >= 40.0 {
                 t40 = i as f32 / 60.0;
             }
+            if t60.is_nan() && mph >= 60.0 {
+                t60 = i as f32 / 60.0;
+            }
+            pitch = pitch.max(bike.forward().y.asin().to_degrees());
+            if bike.crashed.is_some() {
+                eprintln!("  crashed at {:.2} s", i as f32 / 60.0);
+                return Some((f32::NAN, f32::NAN, top));
+            }
             if t70.is_nan() && mph >= 70.0 {
                 t70 = i as f32 / 60.0;
             }
             top = top.max(mph);
         }
-        Some((t70 - t40, top))
+        eprintln!("  highest nose {pitch:.0} deg");
+        Some((t60, t70 - t40, top))
+    }
+
+    /// 0-60 mph on the arcade model (`physics.rs`) with a tuning, s.
+    fn arcade_0_60(t: &crate::reflex::Tuning) -> f32 {
+        crate::physics::set_tuning(t);
+        let world = floor();
+        let mut bike = Bike::dropped(&world, Vec3::new(0.0, 2.0, -350.0), 0.0).with_exact(false);
+        ride(&world, &mut bike, Controls::default(), 1.0);
+        let gas = Controls { throttle: 1.0, ..Default::default() };
+        for i in 0..(15 * 60) {
+            bike.step(&world, gas, 1.0 / 60.0);
+            if bike.speed() / 0.44704 >= 60.0 {
+                return i as f32 / 60.0;
+            }
+        }
+        f32::NAN
+    }
+
+    #[test]
+    #[ignore = "prints numbers for tuning; run with --ignored --nocapture"]
+    fn launch_trace() {
+        let stock = crate::reflex::Tuning::default();
+        let user = crate::reflex::Tuning { power: 2.5, grip: 2.2, ..stock };
+        eprintln!("arcade 0-60: stock {:.2} s, power 2.5 grip 2.2 {:.2} s", arcade_0_60(&stock), arcade_0_60(&user));
+        crate::physics::set_tuning(&stock);
+        let world = floor();
+        let mut bike = Bike::dropped(&world, Vec3::new(0.0, 2.0, -350.0), 0.0);
+        bike.exact = Some(Box::new(Exact::tuned(&bike, Tune { power: 1.35, gearing: 0.87, traction: 1.0 }).unwrap()));
+        ride(&world, &mut bike, Controls::default(), 1.0);
+        let gas = Controls { throttle: 1.0, ..Default::default() };
+        for i in 0..(5 * 60) {
+            bike.step(&world, gas, 1.0 / 60.0);
+            if i % 10 == 0 {
+                let e = bike.exact().unwrap();
+                let s = e.state();
+                let sim = e.bike.sim();
+                eprintln!(
+                    "{:4.2} s {:5.1} mph gear {} {:5.0} rpm pitch {:5.1} deg front {} rear slip {:6.2} grip {} clutch {:.2} throttle {:.2}",
+                    i as f32 / 60.0,
+                    bike.speed() / 0.44704,
+                    s.gear,
+                    s.rpm,
+                    bike.forward().y.asin().to_degrees(),
+                    s.wheels[0].contact,
+                    s.wheels[1].slip_longitudinal,
+                    s.wheels[1].roll_grip,
+                    sim.drive.clutch_timer,
+                    sim.ctl.throttle,
+                );
+            }
+        }
     }
 
     #[test]
     #[ignore = "prints numbers for tuning; run with --ignored --nocapture"]
     fn speed_table() {
-        for (p, g) in [(1.0, 1.0), (1.3, 0.88), (1.35, 0.87), (1.5, 0.9), (1.6, 0.88)] {
-            if let Some((t, top)) = run(p, g) {
-                eprintln!("power {p:.2} gearing {g:.2}: 40-70 mph {t:.2} s, top {top:.1} mph, limiter in 5th {:.1} mph", top_of_fifth(g).unwrap() / 1.609);
+        for (power, gearing, traction) in [
+            (1.0, 1.0, 1.0),
+            (1.35, 0.87, 1.0),
+            (1.35, 0.87, 1.25),
+            (1.35, 0.87, 1.5),
+            (1.35, 0.87, 2.0),
+            (1.6, 0.87, 2.0),
+            (2.0, 0.87, 2.5),
+        ] {
+            for lean in [0.0, 1.0] {
+                if let Some((t60, t, top)) = run(Tune { power, gearing, traction }, lean) {
+                    eprintln!("power {power:.2} gearing {gearing:.2} traction {traction:.2} lean {lean}: 0-60 {t60:.2} s, 40-70 {t:.2} s, top {top:.1} mph");
+                }
             }
         }
     }

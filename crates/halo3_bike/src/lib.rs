@@ -209,7 +209,7 @@ impl Plugin for BikePlugin {
             .add_plugins(tune::TunePlugin)
             .init_map_resource::<SharedWorld>()
             .init_map_resource::<halo3_core::ai::PlayerRespawn>()
-            .add_systems(halo3_core::map::MapStartup, (setup, model::start, spawn_crashed_text, spawn_save_text, warm_world))
+            .add_systems(halo3_core::map::MapStartup, (setup, model::start, spawn_crashed_text, warm_world))
             .add_systems(
                 Update,
                 (
@@ -221,7 +221,6 @@ impl Plugin for BikePlugin {
                     model::light,
                     show_status,
                     show_crashed,
-                    show_save,
                     publish_motion,
                 )
                     .chain()
@@ -298,56 +297,6 @@ fn spawn_crashed_text(mut commands: Commands) {
         },
         Visibility::Hidden,
     ));
-}
-
-/// Reflex's save prompt, low in the middle: which way to flick the right
-/// stick before an open recovery window wrecks the bike (`exact.rs`).
-#[derive(Component)]
-struct SaveText;
-
-fn spawn_save_text(mut commands: Commands) {
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                bottom: Val::Px(140.0),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            Visibility::Hidden,
-            SaveText,
-        ))
-        .with_child((Text::new(""), TextFont::from_font_size(40.0), TextColor(CRASHED_ORANGE)));
-}
-
-fn show_save(
-    riding: Res<Riding>,
-    mut prompt: Query<(&mut Visibility, &Children), With<SaveText>>,
-    mut texts: Query<(&mut Text, &mut TextColor)>,
-) {
-    use reflex_bevy::reflex_core::wreck::Save;
-    let save = riding.bike.as_ref().and_then(|b| b.exact()).and_then(|e| e.save_prompt());
-    for (mut v, children) in &mut prompt {
-        v.set_if_neq(if save.is_some() { Visibility::Inherited } else { Visibility::Hidden });
-        let Some((way, left)) = save else { continue };
-        let words = match way {
-            Save::Forward => "SAVE IT: RIGHT STICK FORWARD",
-            Save::Back => "SAVE IT: RIGHT STICK BACK",
-            Save::Left => "SAVE IT: RIGHT STICK LEFT",
-            Save::Right => "SAVE IT: RIGHT STICK RIGHT",
-        };
-        for &child in children {
-            if let Ok((mut text, mut colour)) = texts.get_mut(child) {
-                if text.0 != words {
-                    text.0 = words.to_string();
-                }
-                // Blinks faster as the window runs out.
-                let on = (left * if left < 0.4 { 12.0 } else { 6.0 }).fract() < 0.6;
-                colour.0 = if on { CRASHED_ORANGE } else { Color::WHITE };
-            }
-        }
-    }
 }
 
 fn show_crashed(riding: Res<Riding>, mut text: Query<&mut Visibility, With<CrashedText>>) {

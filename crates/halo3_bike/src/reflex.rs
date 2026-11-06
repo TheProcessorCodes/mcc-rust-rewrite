@@ -183,6 +183,8 @@ pub struct Tuning {
     /// ratios (below 1 taller: a higher top speed, a softer pull).
     pub reflex_power: f32,
     pub reflex_gearing: f32,
+    /// Reflex itself only: both tyres' grip along the ground (drive, brakes).
+    pub reflex_traction: f32,
 }
 
 impl Default for Tuning {
@@ -210,6 +212,7 @@ impl Default for Tuning {
             gravity: 1.0,
             reflex_power: 1.0,
             reflex_gearing: 1.0,
+            reflex_traction: 1.0,
         }
     }
 }

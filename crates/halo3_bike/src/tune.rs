@@ -5,8 +5,8 @@
 //! The first slider picks the model the others start from: Unleashed's
 //! Pro 250 as it is, Reflex v1 (`reflex.rs`), or Reflex itself (`exact.rs`,
 //! Reflex's own simulation; only with Reflex installed). Reflex itself takes
-//! only its own two sliders (engine power and gearing) and none of the
-//! others: it rides as the game does. Drag a slider with the
+//! only its own three sliders (engine power, gearing, traction) and none of
+//! the others: it rides as the game does. Drag a slider with the
 //! mouse, or pick one with W / S, the up / down arrows or the d-pad and move
 //! it with A / D, left / right. Right-click a slider, or press Backspace (X
 //! on a pad), to put it back to stock; Delete (Y on a pad) puts them all
@@ -140,7 +140,9 @@ fn load() -> Tuning {
     }
 }
 
-fn save(t: &Tuning) {
+/// Saves the tuning to `bike-tuning.json` (the pause menu's physics switch
+/// saves through this too).
+pub fn save(t: &Tuning) {
     write_json("bike-tuning.json", &to_json(t));
 }
 
@@ -186,7 +188,7 @@ fn model_name(model: f32) -> &'static str {
     if model >= 1.5 {
         "Reflex"
     } else if model >= 0.5 {
-        "Reflex v1"
+        "Arcade (Reflex v1)"
     } else {
         "Unleashed"
     }
@@ -221,7 +223,7 @@ fn gear_top(s: &Setup, gear: usize) -> f32 {
     s.max_rpm() / RPM / s.ratio(gear) * s.rear.radius * KMH
 }
 
-const KNOBS: [Knob; 22] = [
+const KNOBS: [Knob; 23] = [
     Knob {
         key: "model",
         group: "Model",
@@ -273,6 +275,18 @@ const KNOBS: [Knob; 22] = [
             Some(kmh) => format!("{:.0} km/h ({:.0} mph) at the limiter in 5th (x{v:.2})", kmh, kmh / 1.609),
             None => "needs MX vs ATV Reflex installed".into(),
         },
+    },
+    Knob {
+        key: "reflex_traction",
+        group: "",
+        name: "Reflex traction",
+        low: "spins",
+        high: "hooks up",
+        range: (0.5, 3.0),
+        step: 0.05,
+        get: |t| t.reflex_traction,
+        set: |t, v| t.reflex_traction = v,
+        show: |_, v| format!("x{v:.2} the tyres' grip for drive and brakes (corners as Reflex)"),
     },
     Knob {
         key: "power",
@@ -1152,7 +1166,7 @@ mod tests {
         let tuned = Tuning { power: 1.5, model: 0.0, ..stock };
         let back = from_json(to_json(&tuned).as_object().unwrap());
         assert_eq!(back, tuned);
-        assert_eq!(describe(&stock), "Reflex v1, stock");
+        assert_eq!(describe(&stock), "Arcade (Reflex v1), stock");
         assert_eq!(describe(&Tuning { model: 0.0, ..stock }), "Unleashed, stock");
         assert_eq!(describe(&tuned), "Unleashed, 1 changed");
     }

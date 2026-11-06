@@ -1,8 +1,8 @@
-//! Crash ("wreck") decision, once per frame after the substeps: the game's WreckChecker (`006373e0`) and the
-//! rider controller's recovery window (`0054e8f0` / `0054ea30`), decoded from the asm (local notes
-//! `local\notes\crash.md`). There are no lean or pitch angle limits: a crash is a chassis crash-point contact,
-//! or a pitch / yaw rate or tyre load past hard-coded limits, all scaled by the vertical speed. Between the soft
-//! and the hard limit a 0.75..1 s recovery window opens that a stick flick (> 0.25 in the right direction) saves.
+//! Crash ("wreck") decision, once per frame after the substeps: the game's WreckChecker (`006373e0`), decoded
+//! from the asm (local notes `local\notes\crash.md`). There are no lean or pitch angle limits: a crash is a
+//! chassis crash-point contact, or a pitch / yaw rate or tyre load past hard-coded limits, all scaled by the
+//! vertical speed. The original opens a stick-flick recovery window between the soft and the hard limit
+//! (`0054e8f0` / `0054ea30`); that is left out here, so excursions between soft and hard never wreck.
 
 /// Wreck reasons (`veh+0x280`).
 pub mod reason {
@@ -17,21 +17,10 @@ pub mod reason {
     pub const CONTACT: u8 = 0x17;
 }
 
-/// The way the rider stick must be flicked (> 0.25 from where it was when the window opened) to save an open
-/// recovery window. Reflex shows it on screen as a prompt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Save {
-    Forward,
-    Back,
-    Left,
-    Right,
-}
-
 /// Bike limit table (0x009c4c00): vertical-speed scale, then (soft, hard) pairs.
 struct Table {
     vy_range: (f64, f64),
     scale: (f64, f64),
-    cut: (f64, f64),
     pitch_up: (f64, f64),
     pitch_down: (f64, f64),
     yaw_neg: (f64, f64),
@@ -44,7 +33,6 @@ struct Table {
 const BIKE: Table = Table {
     vy_range: (-10.0, -65.0),
     scale: (1.5, 0.78),
-    cut: (0.95, 0.90),
     pitch_up: (-8.0, -15.0),
     pitch_down: (6.5, 14.0),
     yaw_neg: (-3.0, -8.5),
@@ -77,8 +65,6 @@ pub struct WreckInputs {
     pub airborne: bool,
     /// Rear doughnut active (|factor| > 0.6): yaw-rate checks are skipped.
     pub doughnut: bool,
-    /// Stick used for the save (rider / right stick).
-    pub stick: (f64, f64),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -86,41 +72,14 @@ pub struct WreckChecker {
     cool: f64,
     touch_t: f64,
     pending: u8,
-    t14: f64,
     lcg: u32,
-    /// Recovery window: time left, kind k, reason, save accumulator, previous stick.
-    rec_timer: f64,
-    rec_k: u8,
-    rec_reason: u8,
-    rec_acc: f64,
-    rec_prev: (f64, f64),
     /// Last wreck reason, 0 = riding.
     pub reason: u8,
     /// Time left until the automatic respawn while wrecked.
     pub wreck_timer: f64,
 }
 
-fn reason_type(r: u8) -> u8 {
-    match r {
-        0x0b | 0x13 => 7,
-        0x0c | 0x14 => 4,
-        0x0d | 0x0f | 0x11 => 5,
-        0x0e | 0x10 | 0x12 => 6,
-        _ => 1,
-    }
-}
-
-fn type_kt(t: u8) -> (i32, f64) {
-    match t {
-        4 => (3, 1.0),
-        5 => (9, 1.0),
-        6 => (12, 1.0),
-        7 => (6, 1.0),
-        _ => (9, 1e-5),
-    }
-}
-
-/// Severity: 1e-5 past the hard limit (instant), else 0.75 (at hard) .. 1.0 (at soft).
+/// Severity: 1e-5 past the hard limit (wreck), else 0.75 (at hard) .. 1.0 (at soft).
 fn sev(hard: f64, soft: f64, val: f64) -> f64 {
     if val.abs() > hard.abs() {
         1e-5
@@ -218,114 +177,13 @@ impl WreckChecker {
             x = sev(fl.1, fl.0, w.n_front);
         }
 
-        let wrecked = if why == 0 {
-            false
-        } else {
-            let (mut k, tt) = type_kt(reason_type(why));
-            let tt = tt * x;
-            if x > t.cut.0 {
-                k -= 2;
-            } else if x > t.cut.1 {
-                k -= 1;
-            }
-            if tt <= 1e-5 {
-                true
-            } else if self.rec_timer <= 0.0 {
-                self.begin(k, tt, why, w.stick);
-                false
-            } else {
-                self.t14 += dt;
-                if why != self.rec_reason && self.t14 > 0.15 {
-                    self.t14 = 0.0;
-                    self.rec_timer -= tt;
-                    self.rec_timer < 0.0
-                } else {
-                    false
-                }
-            }
-        };
-        let wrecked = wrecked || self.recovery(w.stick, dt);
+        // contacts wreck outright; rate and load checks only past the hard limit
+        let wrecked = why == reason::CONTACT || (why != 0 && x <= 1e-5);
         if wrecked {
-            self.reason = if why != 0 { why } else { self.rec_reason };
+            self.reason = why;
             self.wreck_timer = WRECK_DURATION;
-            self.rec_timer = 0.0;
         }
         wrecked
-    }
-
-    fn begin(&mut self, k: i32, t: f64, why: u8, stick: (f64, f64)) {
-        self.rec_k = k.max(0) as u8;
-        self.rec_timer = t;
-        self.rec_reason = why;
-        self.rec_acc = 0.0;
-        self.rec_prev = stick;
-    }
-
-    /// Recovery window step; true when it runs out without a save (and the kind is not self-ending).
-    fn recovery(&mut self, stick: (f64, f64), dt: f64) -> bool {
-        if self.rec_timer <= 0.0 {
-            return false;
-        }
-        let (sx, sy) = stick;
-        let (px, py) = self.rec_prev;
-        match self.rec_k {
-            2 | 3 => {
-                if sy > 0.0 && sy > py {
-                    self.rec_acc += sy - py
-                } else if sy < py {
-                    self.rec_acc = 0.0
-                }
-            }
-            5 | 6 => {
-                if sy < 0.0 && sy < py {
-                    self.rec_acc += py - sy
-                } else if sy > py {
-                    self.rec_acc = 0.0
-                }
-            }
-            8 | 9 => {
-                if sx < 0.0 && sx < px {
-                    self.rec_acc += px - sx
-                } else if sx > px {
-                    self.rec_acc = 0.0
-                }
-            }
-            11 | 12 => {
-                if sx > 0.0 && sx > px {
-                    self.rec_acc += sx - px
-                } else if sx < px {
-                    self.rec_acc = 0.0
-                }
-            }
-            _ => {}
-        }
-        self.rec_prev = stick;
-        if self.rec_acc > 0.25 {
-            self.rec_timer = 0.0;
-            return false;
-        }
-        self.rec_timer -= dt;
-        if self.rec_timer <= 0.0 {
-            let auto = matches!(self.rec_k, 1 | 4 | 7 | 10);
-            return !auto;
-        }
-        false
-    }
-
-    /// The open recovery window that wrecks unless saved: the flick it wants and the seconds left. `None` when
-    /// no window is open, or the open one ends by itself (the mildest kinds).
-    pub fn save_prompt(&self) -> Option<(Save, f64)> {
-        if self.reason != 0 || self.rec_timer <= 0.0 {
-            return None;
-        }
-        let save = match self.rec_k {
-            2 | 3 => Save::Forward,
-            5 | 6 => Save::Back,
-            8 | 9 => Save::Left,
-            11 | 12 => Save::Right,
-            _ => return None,
-        };
-        Some((save, self.rec_timer))
     }
 
     /// Clears the wreck after a respawn.
@@ -351,27 +209,13 @@ mod tests {
     }
 
     #[test]
-    fn soft_limit_opens_a_window_a_flick_saves() {
-        // nose-up rate just past soft (-8 x 1.5 = -12 at vy 0): window, then a forward flick saves it
-        let mut c = WreckChecker::default();
-        let mut w = WreckInputs { rate_pitch: -13.0, e_front: 1.0, e_rear: 1.0, ..Default::default() };
-        assert!(!c.frame(&w, 1.0 / 60.0));
-        // so mild a window ends by itself: no prompt
-        assert_eq!(c.save_prompt(), None);
-        w.rate_pitch = 0.0;
-        w.stick = (0.0, 0.6);
-        assert!(!c.frame(&w, 1.0 / 60.0));
-        for _ in 0..120 {
-            assert!(!c.frame(&w, 1.0 / 60.0));
-        }
-        assert_eq!(c.save_prompt(), None);
-        // no save: the window runs out into a wreck
+    fn soft_limit_excursions_do_not_wreck() {
+        // nose-up rate past soft (-8 x 1.5 = -12 at vy 0) but under hard (-15 x 1.5 = -22.5): no wreck, ever
         let mut c = WreckChecker::default();
         let mut w = WreckInputs { rate_pitch: -20.0, e_front: 1.0, e_rear: 1.0, ..Default::default() };
         assert!(!c.frame(&w, 1.0 / 60.0));
-        assert_eq!(c.save_prompt().map(|p| p.0), Some(Save::Forward));
         w.rate_pitch = 0.0;
-        let wrecked = (0..120).any(|_| c.frame(&w, 1.0 / 60.0));
-        assert!(wrecked);
+        assert!(!(0..120).any(|_| c.frame(&w, 1.0 / 60.0)));
+        assert_eq!(c.reason, 0);
     }
 }
