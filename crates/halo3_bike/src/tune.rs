@@ -128,8 +128,36 @@ fn to_json(t: &Tuning) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
+/// The arcade model (Unleashed 0 or Reflex v1 1) to go back to when the
+/// physics switch leaves Reflex.
+static ARCADE_MODEL: std::sync::Mutex<f32> = std::sync::Mutex::new(1.0);
+
+/// The physics switch of the main menu's Settings and the pause menu:
+/// Arcade (the bike's own model, Unleashed or Reflex v1 as the tuning menu
+/// last had it) or Reflex (Reflex's own simulation). Saves the tuning when
+/// it changes. Reflex needs the player's Reflex install: without it this
+/// stays on Arcade and returns false.
+pub fn switch_physics(t: &mut Tuning, reflex: bool) -> bool {
+    if reflex && super::exact::vehicle().is_none() {
+        return false;
+    }
+    let mut arcade = ARCADE_MODEL.lock().unwrap_or_else(|e| e.into_inner());
+    if reflex == (t.model >= 1.5) {
+        return true;
+    }
+    if reflex {
+        *arcade = t.model;
+        t.model = 2.0;
+    } else {
+        t.model = *arcade;
+    }
+    save(t);
+    info!("bike: physics switched to {}", if reflex { "Reflex" } else { "Arcade" });
+    true
+}
+
 /// The tuning ridden last time, or stock.
-fn load() -> Tuning {
+pub fn load() -> Tuning {
     match read_json("bike-tuning.json") {
         Some(serde_json::Value::Object(saved)) => from_json(&saved),
         Some(_) => {

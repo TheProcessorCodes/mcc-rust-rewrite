@@ -16,9 +16,10 @@
 //! it, or d-pad up / down, the up / down arrows or W / S; it is saved when
 //! the game carries on (`EngineVolume`, `bike-sound.json`). Under it the
 //! physics switch: Arcade (the bike's own model, Reflex v1 or Unleashed as
-//! the tuning menu has it) or Reflex (Reflex's own simulation, with MX vs
-//! ATV Reflex installed); X on a pad, P, or a click flips it, and it is
-//! saved at once (`bike-tuning.json`).
+//! the tuning menu has it) or Reflex (Reflex's own simulation); X on a pad,
+//! P, or a click flips it, and it is saved at once (`bike-tuning.json`).
+//! It is only there with MX vs ATV Reflex set up (it is optional); the main
+//! menu's Settings has the same switch.
 //!
 //! With skating turned off in Settings (`SkateEnabled`), the Skate tab says
 //! so and where to turn it back on, instead of listing the buttons.
@@ -46,7 +47,6 @@ impl Plugin for PausePlugin {
             .init_map_resource::<ShownTab>()
             .init_map_resource::<SliderInput>()
             .insert_resource(EngineVolume::load())
-            .init_map_resource::<ArcadeModel>()
             .add_systems(halo3_core::map::MapStartup, spawn_menu)
             .add_systems(
                 PreUpdate,
@@ -104,17 +104,6 @@ struct VolumeText;
 /// The physics switch's two choices, `true` for Reflex.
 #[derive(Component)]
 struct PhysicsChoice(bool);
-
-/// The tuning menu's model to go back to when the switch leaves Reflex
-/// (Reflex v1 unless Unleashed was picked).
-#[derive(Resource)]
-struct ArcadeModel(f32);
-
-impl Default for ArcadeModel {
-    fn default() -> Self {
-        ArcadeModel(1.0)
-    }
-}
 
 const BIKE_TAB: usize = 2;
 /// The Skate tab's index in `TABS`.
@@ -293,7 +282,10 @@ fn volume_slider(p: &mut ChildSpawnerCommands) {
         ));
         r.spawn(text("d-pad up / down, or drag", 16.0, DIM));
     });
-    physics_row(p);
+    // Only with Reflex set up: without it there is nothing to switch to.
+    if halo3_bike::exact::vehicle().is_some() {
+        physics_row(p);
+    }
 }
 
 /// The physics switch row: a label, Arcade and Reflex, how to flip it.
@@ -310,8 +302,7 @@ fn physics_row(p: &mut ChildSpawnerCommands) {
             ..default()
         })
         .with_child(text("Physics", 18.0, LIT));
-        let reflex = if halo3_bike::exact::vehicle().is_some() { "Reflex" } else { "Reflex (needs MX vs ATV Reflex)" };
-        for (choice, name) in [(false, "Arcade"), (true, reflex)] {
+        for (choice, name) in [(false, "Arcade"), (true, "Reflex")] {
             r.spawn((
                 PhysicsChoice(choice),
                 Node {
@@ -319,7 +310,6 @@ fn physics_row(p: &mut ChildSpawnerCommands) {
                     ..default()
                 },
                 BackgroundColor(Color::NONE),
-                Interaction::default(),
             ))
             .with_child(text(name, 18.0, DIM));
         }
@@ -943,51 +933,41 @@ fn physics_switch(
     shown: Res<ShownTab>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
     mut tuning: ResMut<halo3_bike::tune::BikeTuning>,
-    mut arcade: ResMut<ArcadeModel>,
-    mut choices: Query<(&PhysicsChoice, &Interaction, &mut BackgroundColor, &Children)>,
+    mut choices: Query<(&PhysicsChoice, &ComputedNode, &UiGlobalTransform, &mut BackgroundColor, &Children)>,
     mut colours: Query<&mut TextColor>,
 ) {
+    if choices.is_empty() {
+        return;
+    }
     let reflex_now = tuning.0.model >= 1.5;
     let mut want = reflex_now;
     if paused.0 && shown.0 == BIKE_TAB {
         if keys.just_pressed(KeyCode::KeyP) || gamepads.iter().any(|p| p.just_pressed(GamepadButton::West)) {
             want = !reflex_now;
         }
-        for (choice, interaction, _, _) in &choices {
-            if *interaction == Interaction::Pressed {
-                want = choice.0;
+        // Node sizes and the cursor are in physical pixels.
+        let cursor = windows.single().ok().and_then(Window::physical_cursor_position);
+        if let Some(at) = cursor.filter(|_| mouse.just_pressed(MouseButton::Left)) {
+            for (choice, node, transform, _, _) in &choices {
+                if node.contains_point(*transform, at) {
+                    want = choice.0;
+                }
             }
         }
     }
-    // Reflex needs the player's Reflex install.
-    if want && halo3_bike::exact::vehicle().is_none() {
-        want = false;
+    if want != reflex_now && !halo3_bike::tune::switch_physics(&mut tuning.0, want) {
+        want = reflex_now;
     }
-    if want != reflex_now {
-        let t = &mut tuning.0;
-        if want {
-            arcade.0 = t.model;
-            t.model = 2.0;
-        } else {
-            t.model = arcade.0;
-        }
-        halo3_bike::tune::save(t);
-        info!("bike: physics switched to {}", if want { "Reflex" } else { "Arcade" });
-    }
-    for (choice, interaction, mut background, children) in &mut choices {
+    for (choice, _, _, mut background, children) in &mut choices {
         let on = choice.0 == want;
         let fill = if on { Color::srgba(1.0, 0.82, 0.35, 0.25) } else { Color::NONE };
         if background.0 != fill {
             background.0 = fill;
         }
-        let colour = if on {
-            LIT
-        } else if *interaction == Interaction::Hovered {
-            HOVER
-        } else {
-            DIM
-        };
+        let colour = if on { LIT } else { DIM };
         for &child in children {
             if let Ok(mut c) = colours.get_mut(child)
                 && c.0 != colour

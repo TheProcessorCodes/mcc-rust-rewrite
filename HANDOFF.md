@@ -298,8 +298,10 @@ the bike on it:
   `Database\EngineDependencies.dx9.package` (`reflex_assets::vehicle`, turned into the XML
   `reflex_core` reads). `HALO3_REFLEX_VEHICLE=<dump file>` is a developer override. Without Reflex
   the model is not offered (the slider says so) and the bike rides Reflex v1.
-- Picked with the pause menu's dirt bike tab switch, Physics: Arcade / Reflex (X on a pad, P, or a
-  click; saved at once). Arcade is the bike's own model as on master (Reflex v1, or Unleashed if the
+- Picked with the main menu's Settings row "Bike physics" or the pause menu's dirt bike tab switch,
+  Physics: Arcade / Reflex (X on a pad, P, or a click; saved at once). Both are only there with
+  Reflex set up (it is optional); both go through `tune::switch_physics`. `exact::vehicle()` tries
+  again when the Reflex folder changes, so Reflex chosen in Settings counts without a restart. Arcade is the bike's own model as on master (Reflex v1, or Unleashed if the
   tuning menu picked it; the switch goes back to whichever). It is also the third choice on the
   tuning menu's first slider (`model` 2 in `bike-tuning.json`). Of the tuning sliders only Reflex's
   own three act on it: "Reflex engine power" (`reflex_power`, the torque curve times it), "Reflex

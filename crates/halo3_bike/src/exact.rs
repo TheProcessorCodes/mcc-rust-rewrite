@@ -16,7 +16,8 @@
 
 use std::cell::RefCell;
 use std::f32::consts::PI;
-use std::sync::{OnceLock, RwLock};
+use std::path::PathBuf;
+use std::sync::{Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bevy::log::{info, warn};
@@ -136,21 +137,35 @@ pub fn on() -> bool {
     ON.load(Ordering::Relaxed) && vehicle().is_some()
 }
 
-/// The 450F's values from the player's Reflex install, read once.
-/// `HALO3_REFLEX_VEHICLE` (a developer override) names a vehicle dump file
-/// instead (the stock JSON or XML dumps `reflex_core` reads).
+/// The 450F's values from the player's Reflex install, read once it is
+/// there (tried again when the Reflex folder changes, so one chosen in
+/// Settings counts without a restart). `HALO3_REFLEX_VEHICLE` (a developer
+/// override) names a vehicle dump file instead (the stock JSON or XML dumps
+/// `reflex_core` reads).
 pub fn vehicle() -> Option<&'static Vehicle> {
-    static VEHICLE: OnceLock<Option<Vehicle>> = OnceLock::new();
-    VEHICLE.get_or_init(load).as_ref()
+    /// The values once read, else the source last tried.
+    static VEHICLE: Mutex<(Option<&'static Vehicle>, Option<Option<PathBuf>>)> = Mutex::new((None, None));
+    let mut held = VEHICLE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(v) = held.0 {
+        return Some(v);
+    }
+    let source = std::env::var_os("HALO3_REFLEX_VEHICLE").map(PathBuf::from).or_else(reflex_assets::find_reflex);
+    if held.1.as_ref() == Some(&source) {
+        return None;
+    }
+    held.0 = load(source.as_deref()).map(|v| &*Box::leak(Box::new(v)));
+    held.1 = Some(source);
+    held.0
 }
 
-fn load() -> Option<Vehicle> {
-    if let Some(path) = std::env::var_os("HALO3_REFLEX_VEHICLE") {
-        return Vehicle::load(&path)
+fn load(source: Option<&std::path::Path>) -> Option<Vehicle> {
+    let source = source?;
+    if std::env::var_os("HALO3_REFLEX_VEHICLE").is_some() {
+        return Vehicle::load(source)
             .inspect_err(|e| warn!("bike: HALO3_REFLEX_VEHICLE: {e}"))
             .ok();
     }
-    let root = reflex_assets::find_reflex()?;
+    let root = source.to_path_buf();
     let xml = reflex_assets::vehicle::xml(&root, CLASS)
         .inspect_err(|e| warn!("bike: Reflex's {CLASS} physics: {e}"))
         .ok()?;

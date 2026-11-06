@@ -372,7 +372,7 @@ enum MenuButton {
 #[derive(Component)]
 struct SettingsScreen;
 /// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3, 3 username, 4 speed units,
-/// 5 skating on / off.
+/// 5 skating on / off, 6 bike physics (only with Reflex set up).
 #[derive(Component)]
 struct SettingRow(usize);
 #[derive(Component)]
@@ -388,26 +388,39 @@ struct SettingsNote;
 struct SettingsBack;
 
 /// The settings, in row order: three games' folders, the username, the speed
-/// unit, skating on or off.
-const SETTING_GAMES: [&str; 6] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username", "Speedometer", "Skating"];
+/// unit, skating on or off, the bike's physics.
+const SETTING_GAMES: [&str; 7] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username", "Speedometer", "Skating", "Bike physics"];
 /// The row holding the username.
 const USERNAME_ROW: usize = 3;
 /// The row holding the speedometer's unit.
 const UNITS_ROW: usize = 4;
 /// The row turning skating on and off.
 const SKATING_ROW: usize = 5;
+/// The row switching the bike between Arcade and Reflex physics, the last
+/// one; only shown with Reflex set up (it is optional).
+const PHYSICS_ROW: usize = 6;
+
+/// Whether the physics row is there: Reflex is set up.
+fn physics_offered() -> bool {
+    game_paths::reflex_root().is_some()
+}
+
+/// The rows the settings screen has now.
+fn setting_rows() -> usize {
+    if physics_offered() { SETTING_GAMES.len() } else { PHYSICS_ROW }
+}
 
 /// A row's button: games pick a folder, the username is typed, the unit changes.
 fn button_label(row: usize) -> &'static str {
     match row {
         USERNAME_ROW => "EDIT",
-        UNITS_ROW | SKATING_ROW => "CHANGE",
+        UNITS_ROW | SKATING_ROW | PHYSICS_ROW => "CHANGE",
         _ => "SELECT",
     }
 }
 
 /// What each row shows now: the saved folder, or why there is none.
-fn setting_values(unit: SpeedUnit, skate: SkateEnabled) -> [String; 6] {
+fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool) -> [String; 7] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
     let settings = game_paths::settings();
     let reflex = shown(game_paths::reflex_root()).unwrap_or_else(|| {
@@ -430,6 +443,12 @@ fn setting_values(unit: SpeedUnit, skate: SkateEnabled) -> [String; 6] {
         game_paths::username(),
         format!("{} (miles per hour or kilometres per hour)", unit.label()),
         skating.to_string(),
+        if reflex_physics {
+            "Reflex (MX vs ATV Reflex's own bike simulation)"
+        } else {
+            "Arcade (the bike's own physics)"
+        }
+        .to_string(),
     ]
 }
 
@@ -1260,7 +1279,7 @@ fn settings_input(
     gamepads: Query<&Gamepad>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut menu: ResMut<Menu>,
-    (mut unit, mut skate): (ResMut<SpeedUnit>, ResMut<SkateEnabled>),
+    (mut unit, mut skate, mut tuning): (ResMut<SpeedUnit>, ResMut<SkateEnabled>, Option<ResMut<halo3_bike::tune::BikeTuning>>),
     selects: Query<(&SettingSelect, &ComputedNode, &UiGlobalTransform)>,
     back: Query<(&ComputedNode, &UiGlobalTransform), With<SettingsBack>>,
 ) {
@@ -1281,11 +1300,11 @@ fn settings_input(
         menu.setting = menu.setting.saturating_sub(1);
     }
     if keys.any_just_pressed([KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) {
-        menu.setting = (menu.setting + 1).min(SETTING_GAMES.len() - 1);
+        menu.setting = (menu.setting + 1).min(setting_rows() - 1);
     }
     if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]) || pad(GamepadButton::South) {
         let row = menu.setting;
-        select(&mut menu, &mut unit, &mut skate, row);
+        select(&mut menu, &mut unit, &mut skate, tuning.as_deref_mut(), row);
         return;
     }
     if !buttons.just_pressed(MouseButton::Left) {
@@ -1294,9 +1313,9 @@ fn settings_input(
     let Some(at) = windows.single().ok().and_then(Window::physical_cursor_position) else {
         return;
     };
-    if let Some((s, ..)) = selects.iter().find(|(_, n, t)| n.contains_point(**t, at)) {
+    if let Some((s, ..)) = selects.iter().find(|(s, n, t)| s.0 < setting_rows() && n.contains_point(**t, at)) {
         menu.setting = s.0;
-        select(&mut menu, &mut unit, &mut skate, s.0);
+        select(&mut menu, &mut unit, &mut skate, tuning.as_deref_mut(), s.0);
     } else if back.iter().any(|(n, t)| n.contains_point(*t, at)) {
         menu.phase = Phase::Choosing;
     }
@@ -1337,7 +1356,31 @@ fn type_username<'a>(menu: &mut Menu, events: impl Iterator<Item = &'a KeyboardI
 
 /// Opens the folder picker for a game on its own thread; the choice is
 /// checked and saved there, and [`settings_poll`] picks up the outcome.
-fn select(menu: &mut Menu, unit: &mut SpeedUnit, skate: &mut SkateEnabled, row: usize) {
+fn select(
+    menu: &mut Menu,
+    unit: &mut SpeedUnit,
+    skate: &mut SkateEnabled,
+    tuning: Option<&mut halo3_bike::tune::BikeTuning>,
+    row: usize,
+) {
+    if row == PHYSICS_ROW {
+        // The tuning the bike rides on, or the saved one when this app has
+        // no bike (the file is what the next start reads either way).
+        let mut loaded = None;
+        let t = match tuning {
+            Some(t) => &mut t.0,
+            None => loaded.insert(halo3_bike::tune::load()),
+        };
+        let reflex = t.model < 1.5;
+        menu.note = if !halo3_bike::tune::switch_physics(t, reflex) {
+            "Reflex's bike physics could not be read from your MX vs ATV Reflex folder.".to_string()
+        } else if reflex {
+            "The bike rides on Reflex's own simulation. The pause menu's Dirt bike tab switches it too.".to_string()
+        } else {
+            "The bike rides on its own arcade physics. The pause menu's Dirt bike tab switches it too.".to_string()
+        };
+        return;
+    }
     if row == SKATING_ROW {
         skate.0 = !skate.0;
         menu.note = match game_paths::set_skating_enabled(skate.0) {
@@ -1439,14 +1482,16 @@ fn show_settings(
     menu: Res<Menu>,
     unit: Res<SpeedUnit>,
     skate: Res<SkateEnabled>,
-    mut screen: Query<&mut Node, With<SettingsScreen>>,
-    mut rows: Query<(&SettingRow, &mut BackgroundColor, &mut BorderColor), Without<SettingSelect>>,
+    tuning: Option<Res<halo3_bike::tune::BikeTuning>>,
+    mut screen: Query<&mut Node, (With<SettingsScreen>, Without<SettingRow>)>,
+    mut rows: Query<(&SettingRow, &mut BackgroundColor, &mut BorderColor, &mut Node), (Without<SettingSelect>, Without<SettingsScreen>)>,
     mut values: Query<(&SettingValue, &mut Text, &mut TextColor), (Without<SettingsNote>, Without<SettingSelectLabel>)>,
     mut selects: Query<(&SettingSelect, &mut BorderColor), Without<SettingRow>>,
     mut labels: Query<(&SettingSelectLabel, &mut Text, &mut TextColor), (Without<SettingValue>, Without<SettingsNote>)>,
     mut note: Query<&mut Text, (With<SettingsNote>, Without<SettingValue>, Without<SettingSelectLabel>)>,
 ) {
-    if !menu.is_changed() && !unit.is_changed() && !skate.is_changed() {
+    let tuned = tuning.as_ref().is_some_and(|t| t.is_changed());
+    if !menu.is_changed() && !unit.is_changed() && !skate.is_changed() && !tuned {
         return;
     }
     let open = menu.phase == Phase::Settings;
@@ -1457,12 +1502,18 @@ fn show_settings(
         return;
     }
     let busy = |i: usize| menu.picking.as_ref().is_some_and(|p| p.what == Pick::Setting(i));
-    for (row, mut background, mut border) in &mut rows {
+    let offered = setting_rows();
+    for (row, mut background, mut border, mut node) in &mut rows {
+        let display = if row.0 < offered { Display::Flex } else { Display::None };
+        if node.display != display {
+            node.display = display;
+        }
         let on = row.0 == menu.setting;
         background.0 = if on { BAR } else { Color::NONE };
         *border = BorderColor::all(if on { LINE } else { Color::NONE });
     }
-    let now = setting_values(*unit, *skate);
+    let reflex_physics = tuning.map_or_else(|| halo3_bike::tune::load().model, |t| t.0.model) >= 1.5;
+    let now = setting_values(*unit, *skate, reflex_physics);
     for (value, mut text, mut colour) in &mut values {
         text.0.clone_from(&now[value.0]);
         if value.0 == USERNAME_ROW {
