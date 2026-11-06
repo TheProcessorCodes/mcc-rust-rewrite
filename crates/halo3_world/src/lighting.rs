@@ -39,15 +39,46 @@ pub const EXPOSURE: f32 = 4.0;
 /// on: other maps get `EXPOSURE * 2^(stops - VALHALLA_STOPS)`.
 pub const VALHALLA_STOPS: f32 = -4.8365;
 
-/// The map's own exposure in stops (`cfxs +0x18`), set once at startup.
-static MAP_STOPS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+/// What the loaded map's lighting is scaled by: its camera fx exposure and
+/// auto range, and its mean lit surface. One map at a time; the map menu
+/// loads several into one process, so [`reset_map_lighting`] clears them
+/// before each map records its own.
+#[derive(Clone, Copy, Default)]
+struct MapLighting {
+    /// The map's own exposure in stops (`cfxs +0x18`).
+    stops: Option<f32>,
+    /// The camera fx's auto-exposure range (`+0x10`, `+0x14`).
+    auto_range: Option<[f32; 2]>,
+    /// The map's mean lit-surface irradiance luminance.
+    mean: Option<f32>,
+}
+
+static MAP_LIGHTING: std::sync::RwLock<MapLighting> = std::sync::RwLock::new(MapLighting {
+    stops: None,
+    auto_range: None,
+    mean: None,
+});
+
+fn map_lighting() -> MapLighting {
+    *MAP_LIGHTING.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn update_map_lighting(f: impl FnOnce(&mut MapLighting)) {
+    f(&mut MAP_LIGHTING.write().unwrap_or_else(|e| e.into_inner()));
+}
+
+/// Forgets the last map's exposure, auto range and mean, before a map is
+/// loaded (else the first map loaded would light every later one).
+pub fn reset_map_lighting() {
+    update_map_lighting(|l| *l = MapLighting::default());
+}
 
 /// Records the map's camera fx exposure (`blam_geometry::camera_fx`).
 /// Values outside -8..0 stops are ignored (Chillout stores -16.6, which
 /// reads as "auto exposure only"; [`EXPOSURE`] is used there).
 pub fn set_map_exposure(stops: f32) {
     if (-8.0..=0.0).contains(&stops) {
-        let _ = MAP_STOPS.set(stops);
+        update_map_lighting(|l| l.stops = Some(stops));
     }
 }
 
@@ -67,13 +98,10 @@ pub const EXPOSURE_SLOPE: f32 = 0.6;
 /// exposure.
 pub const MAX_EXPOSED_MEAN: f32 = 3.0;
 
-/// The map's mean lit-surface irradiance luminance, set once at startup.
-static SCENE_MEAN: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-
 /// Records the map's mean irradiance ([`scene_mean_irradiance`]).
 pub fn set_scene_mean(mean: f32) {
     if mean.is_finite() && mean > 0.0 {
-        let _ = SCENE_MEAN.set(mean);
+        update_map_lighting(|l| l.mean = Some(mean));
     }
 }
 
@@ -82,6 +110,13 @@ pub fn set_scene_mean(mean: f32) {
 /// lightmap` prints as "mean diffuse irradiance"), or `None` without a
 /// lightmap.
 pub fn scene_mean_irradiance(scene: &Scene, lightmaps: &[Option<LightmapTextures>]) -> Option<f32> {
+    let (sum, n) = scene_irradiance_sum(scene, lightmaps);
+    (n > 0).then(|| sum / n as f32)
+}
+
+/// The sum and count behind [`scene_mean_irradiance`], for a mean over
+/// scenes decoded apart (a mission's BSPs and the rest of its map).
+pub fn scene_irradiance_sum(scene: &Scene, lightmaps: &[Option<LightmapTextures>]) -> (f32, usize) {
     let w = Vec3::new(0.212656, 0.715158, 0.0721856);
     let (mut sum, mut n) = (0.0f32, 0usize);
     for p in scene.placements.iter().filter(|p| p.kind == Kind::Cluster) {
@@ -102,24 +137,21 @@ pub fn scene_mean_irradiance(scene: &Scene, lightmaps: &[Option<LightmapTextures
             n += 1;
         }
     }
-    (n > 0).then(|| sum / n as f32)
+    (sum, n)
 }
-
-/// The camera fx's auto-exposure range (`+0x10`, `+0x14`), set once.
-static AUTO_RANGE: std::sync::OnceLock<[f32; 2]> = std::sync::OnceLock::new();
 
 /// Records the map's auto-exposure range in stops (`camera_fx`).
 pub fn set_auto_range(range: [f32; 2]) {
     if range.iter().all(|r| r.is_finite()) {
-        let _ = AUTO_RANGE.set(range);
+        update_map_lighting(|l| l.auto_range = Some(range));
     }
 }
 
 /// The most the auto exposure brightens a dark place, in stops: the width
-/// of the camera fx's auto range (Valhalla 0..3; 120_halo 0..2), at most
+/// of the camera fx's auto range (Valhalla 0..3; 120_halo 0..4), at most
 /// [`AUTO_MAX_STOPS`].
 fn auto_max_stops() -> f32 {
-    AUTO_RANGE.get().map_or(2.0, |r| (r[1] - r[0]).max(0.0)).min(AUTO_MAX_STOPS)
+    map_lighting().auto_range.map_or(2.0, |r| (r[1] - r[0]).max(0.0)).min(AUTO_MAX_STOPS)
 }
 
 /// Cap on [`auto_max_stops`].
@@ -131,9 +163,16 @@ pub const AUTO_MAX_STOPS: f32 = 3.0;
 /// start, 6.7 stops under the mean; Valhalla's first spawn is 3.6) are brightened, by what lies beyond this.
 pub const AUTO_THRESHOLD: f32 = 4.0;
 
+/// Stops of brightening per stop a place lies beyond [`AUTO_THRESHOLD`]
+/// (up to [`auto_max_stops`]). At 1 the Warthog run's tunnels (4.7 to 5.1
+/// stops under 120_halo's mean) came out at +0.7 to +1.1 and their road
+/// near black; at 2 they get +1.4 to +2.2. Places within the threshold are
+/// not touched. `HALO3_AUTO_GAIN` overrides.
+pub const AUTO_GAIN: f32 = 2.0;
+
 /// A stand-in for Halo's auto exposure: in a place much darker than the
 /// map's mean lit surface ([`AUTO_THRESHOLD`]), the whole picture is
-/// brightened by up to the camera
+/// brightened, [`AUTO_GAIN`] stops per stop beyond it, by up to the camera
 /// fx's auto range (through bevy's colour grading, so the world, the sky,
 /// the haze and the rider move together). The place's light is the lit
 /// surface nearest the camera (`SurfaceLights`, ground first), averaged
@@ -150,7 +189,7 @@ pub fn auto_exposure(
 ) {
     static OFF: std::sync::LazyLock<bool> =
         std::sync::LazyLock::new(|| std::env::var("HALO3_AUTO_EXPOSURE").is_ok_and(|v| v == "0"));
-    let (Some(lights), Some(mean)) = (lights, SCENE_MEAN.get()) else {
+    let (Some(lights), Some(mean)) = (lights, map_lighting().mean) else {
         return;
     };
     if *OFF || lights.0.is_empty() {
@@ -168,7 +207,10 @@ pub fn auto_exposure(
         .map(|n| light.irradiance(*n).max(Vec3::ZERO).dot(w))
         .sum::<f32>()
         / 6.0;
-    let target = ((mean / local.max(1e-4)).log2() - AUTO_THRESHOLD).clamp(0.0, auto_max_stops());
+    static GAIN: std::sync::LazyLock<f32> = std::sync::LazyLock::new(|| {
+        std::env::var("HALO3_AUTO_GAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(AUTO_GAIN)
+    });
+    let target = (((mean / local.max(1e-4)).log2() - AUTO_THRESHOLD) * *GAIN).clamp(0.0, auto_max_stops());
     let stops = match *state {
         Some((s, at)) if at.distance(eye) < 20.0 => s + (target - s) * (1.0 - (-time.delta_secs() / 0.7).exp()),
         _ => target,
@@ -198,14 +240,15 @@ pub fn auto_exposure(
 pub fn exposure() -> f32 {
     let env = |name: &str| std::env::var(name).ok().and_then(|s| s.parse::<f32>().ok());
     env("HALO3_EXPOSURE").unwrap_or_else(|| {
-        let e = match MAP_STOPS.get() {
+        let lighting = map_lighting();
+        let e = match lighting.stops {
             Some(stops) => {
                 let slope = env("HALO3_EXPOSURE_SLOPE").unwrap_or(EXPOSURE_SLOPE);
                 EXPOSURE * (slope * (stops - VALHALLA_STOPS)).exp2()
             }
             None => EXPOSURE,
         };
-        match SCENE_MEAN.get() {
+        match lighting.mean {
             Some(mean) => e.min(MAX_EXPOSED_MEAN / mean),
             None => e,
         }
