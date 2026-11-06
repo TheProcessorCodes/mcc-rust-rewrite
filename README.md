@@ -135,7 +135,10 @@ target\debug\blam.exe anim 120_halo --all
 
 `halo3.exe` with no map opens the map menu: Halo 3, Halo 2, Halo CE, Reach and
 Campaign tabs, each map shown with MCC's own preview picture
-(`Data\UI\texturepacks\levelstexturepack`, read at run time). MCC lets players
+(`Data\UI\texturepacks\levelstexturepack`, read at run time). The Campaign tab
+sorts its missions under Halo CE and Halo 3 (the Warthog runs, played through) and
+Untested (the rest); a page taller than the window scrolls a row at a time as the
+selection moves past its bottom or top row, or with the mouse wheel. MCC lets players
 skip a game's content, so a map whose `.map` file is not in its game's maps
 folder is grayed out, and choosing it shows "You must install these Halo maps
 with MCC" instead of loading (A / B / Enter / Esc or a click closes it). Start

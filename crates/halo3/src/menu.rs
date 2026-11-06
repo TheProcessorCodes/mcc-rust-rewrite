@@ -15,6 +15,11 @@
 //! click and starts it with a double click. On the notice, Enter / Space /
 //! Escape / A / B or a click close it.
 //!
+//! The Campaign tab groups its maps under headings: the missions that have
+//! been played through (Halo CE, Halo 3), then the untested ones. A page
+//! taller than the screen scrolls: moving past its bottom (or top) row moves
+//! it one row, and the mouse wheel scrolls it.
+//!
 //! Until the player's games are set up (`halo3_setup`) the menu opens on
 //! its setup screen instead (`setup.rs`): Halo MCC, then Skate 3, then MX vs
 //! ATV Reflex.
@@ -35,6 +40,7 @@ use std::sync::mpsc::Receiver;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
 use bevy::input::keyboard::{Key, KeyboardInput};
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
@@ -160,24 +166,69 @@ const REACH: &[Entry] = &[
     ("hr:45_aftship", "Zealot", Some("HREACHMP_ZEALOT")),
 ];
 
-/// Halo 3's missions in story order. Crow's Nest has no preview in MCC.
-const CAMPAIGN: &[Entry] = &[
-    ("h3:005_intro", "Arrival", Some("H3_C01_ARRIVAL")),
-    ("h3:010_jungle", "Sierra 117", Some("H3_C02_SIERRA117")),
-    ("h3:020_base", "Crow's Nest", None),
-    ("h3:030_outskirts", "Tsavo Highway", Some("H3_C04_TSAVOHIGHWAY")),
-    ("h3:040_voi", "The Storm", Some("H3_C05_THESTORM")),
-    ("h3:050_floodvoi", "Floodgate", Some("H3_C06_FLOODGATE")),
-    ("h3:070_waste", "The Ark", Some("H3_C07_THEARK")),
-    ("h3:100_citadel", "The Covenant", Some("H3_C08_THECOVENANT")),
-    ("h3:110_hc", "Cortana", Some("H3_C09_CORTANA")),
-    ("h3:120_halo", "Halo", Some("H3_C10_HALO3")),
-    // A mission of ours (`main.rs` `MISSIONS`): Halo from the Warthog run on.
-    ("warthog_run", "The Warthog Run", Some("H3_C10_HALO3")),
-    // Halo CE's: The Maw from the Warthogs on (`MISSIONS`).
-    ("h1:warthog_run", "Halo CE: The Warthog Run", Some("H1_C10_THEMAW")),
-    ("h3:130_epilogue", "Epilogue", Some("H3_C11_EPILOGUE")),
+/// The Campaign tab, under headings: the missions we have played through
+/// by game, then the rest, which nobody has tried yet (Halo 3's in story
+/// order; Crow's Nest has no preview in MCC).
+const CAMPAIGN: &[Section] = &[
+    // Halo CE's: The Maw from the Warthogs on (`main.rs` `MISSIONS`).
+    (Some("HALO CE"), &[("h1:warthog_run", "The Warthog Run", Some("H1_C10_THEMAW"))]),
+    // A mission of ours (`MISSIONS`): Halo from the Warthog run on.
+    (Some("HALO 3"), &[("warthog_run", "The Warthog Run", Some("H3_C10_HALO3"))]),
+    (
+        Some("UNTESTED"),
+        &[
+            ("h3:005_intro", "Arrival", Some("H3_C01_ARRIVAL")),
+            ("h3:010_jungle", "Sierra 117", Some("H3_C02_SIERRA117")),
+            ("h3:020_base", "Crow's Nest", None),
+            ("h3:030_outskirts", "Tsavo Highway", Some("H3_C04_TSAVOHIGHWAY")),
+            ("h3:040_voi", "The Storm", Some("H3_C05_THESTORM")),
+            ("h3:050_floodvoi", "Floodgate", Some("H3_C06_FLOODGATE")),
+            ("h3:070_waste", "The Ark", Some("H3_C07_THEARK")),
+            ("h3:100_citadel", "The Covenant", Some("H3_C08_THECOVENANT")),
+            ("h3:110_hc", "Cortana", Some("H3_C09_CORTANA")),
+            ("h3:120_halo", "Halo", Some("H3_C10_HALO3")),
+            ("h3:130_epilogue", "Epilogue", Some("H3_C11_EPILOGUE")),
+        ],
+    ),
 ];
+
+/// A run of a tab's maps under a heading (`None`: no heading).
+type Section = (Option<&'static str>, &'static [Entry]);
+
+/// Every tab's sections, in [`TABS`] order. A tab's maps are its sections'
+/// entries one after the other.
+const SECTIONS: [&[Section]; TABS.len()] = [&[(None, HALO3)], &[(None, HALO2)], &[(None, HALO1)], &[(None, REACH)], CAMPAIGN];
+
+/// A tab's rows of tiles as (first map, how many): each section starts a new
+/// row.
+fn rows(tab: usize) -> Vec<(usize, usize)> {
+    let mut rows = Vec::new();
+    let mut first = 0;
+    for (_, entries) in SECTIONS[tab] {
+        for at in (0..entries.len()).step_by(COLUMNS) {
+            rows.push((first + at, (entries.len() - at).min(COLUMNS)));
+        }
+        first += entries.len();
+    }
+    rows
+}
+
+/// The tile `dx` tiles along and `dy` rows down from `at`: along runs on
+/// across sections, down keeps the column (or the last tile of a shorter
+/// row); both stop at the ends.
+fn moved(rows: &[(usize, usize)], at: usize, dx: isize, dy: isize) -> usize {
+    let Some(&(last, len)) = rows.last() else {
+        return 0;
+    };
+    let at = (at as isize + dx).clamp(0, (last + len) as isize - 1) as usize;
+    if dy == 0 {
+        return at;
+    }
+    let r = rows.iter().rposition(|&(first, _)| first <= at).unwrap_or(0);
+    let column = at - rows[r].0;
+    let (first, len) = rows[(r as isize + dy).clamp(0, rows.len() as isize - 1) as usize];
+    first + column.min(len - 1)
+}
 
 const KINDS: [&str; 5] = [
     "Halo 3 multiplayer",
@@ -345,8 +396,16 @@ struct LoadingPicture;
 struct RingSegment(usize);
 #[derive(Component)]
 struct TabLabel(usize);
+/// A tab's page of maps, scrolled to keep the picked tile in view
+/// ([`follow`]).
 #[derive(Component)]
 struct TabPage(usize);
+/// A section on a tab's page: tab, its first map.
+#[derive(Component)]
+struct SectionBox(usize, usize);
+/// A tile with its name under it: tab, map.
+#[derive(Component)]
+struct TileCell(usize, usize);
 #[derive(Component)]
 struct Tile(usize, usize);
 #[derive(Component)]
@@ -669,12 +728,13 @@ impl Plugin for MenuPlugin {
             Update,
             (
                 settings_poll.run_if(|menu: Res<Menu>| menu.picking.is_some()),
-                (navigate, mouse, act).run_if(choosing),
+                (navigate, mouse, wheel, act).run_if(choosing),
                 settings_input.run_if(settings_open),
                 setup::input.run_if(setup_open),
                 setup::finish.run_if(|menu: Res<Menu>| menu.setup_finished),
                 dismiss.run_if(missing),
                 show,
+                follow,
                 show_notice,
                 show_settings,
                 setup::show,
@@ -692,9 +752,10 @@ impl Plugin for MenuPlugin {
 /// Every tab's maps, with their pictures; the ones this install lacks are
 /// grayed out.
 fn build_tabs(pack: Option<&Pack>, images: &mut Assets<Image>) -> [Vec<Map>; TABS.len()] {
-    [HALO3, HALO2, HALO1, REACH, CAMPAIGN].map(|entries| {
-        entries
+    SECTIONS.map(|sections| {
+        sections
             .iter()
+            .flat_map(|(_, entries)| entries.iter())
             .map(|&(arg, name, texture)| Map {
                 arg,
                 name,
@@ -996,28 +1057,57 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
         }
         tabs.spawn(text("RB", 15.0, FAINT));
     });
-    // A grid of tiles per tab.
+    // A page per tab: each section's heading and its grid of tiles,
+    // scrolling up and down when they do not fit.
     for (t, maps) in menu.tabs.iter().enumerate() {
         root.spawn((
             TabPage(t),
             Node {
                 width: Val::Percent(92.0),
                 max_width: Val::Vh(165.0),
-                margin: UiRect::top(Val::Vh(3.0)),
-                display: Display::Grid,
-                grid_template_columns: RepeatedGridTrack::flex(COLUMNS as u16, 1.0),
-                column_gap: Val::Vh(1.6),
-                row_gap: Val::Vh(1.6),
+                margin: UiRect::new(Val::Px(0.0), Val::Px(0.0), Val::Vh(3.0), Val::Vh(1.6)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Vh(3.0),
                 flex_grow: 1.0,
-                align_content: AlignContent::Start,
-                overflow: Overflow::clip(),
+                flex_basis: Val::Px(0.0),
+                min_height: Val::Px(0.0),
+                overflow: Overflow::scroll_y(),
                 ..default()
             },
+            ScrollPosition::default(),
         ))
-        .with_children(|grid| {
-            for (i, map) in maps.iter().enumerate() {
-                grid.spawn(Node { flex_direction: FlexDirection::Column, ..default() })
-                    .with_children(|tile| spawn_tile(tile, t, i, map));
+        .with_children(|page| {
+            let mut first = 0;
+            for (heading, entries) in SECTIONS[t] {
+                let range = first..(first + entries.len()).min(maps.len());
+                first += entries.len();
+                page.spawn((
+                    SectionBox(t, range.start),
+                    Node { flex_direction: FlexDirection::Column, flex_shrink: 0.0, row_gap: Val::Px(10.0), ..default() },
+                ))
+                .with_children(|section| {
+                    if let Some(heading) = heading {
+                        section.spawn((
+                            Node { padding: UiRect::bottom(Val::Px(6.0)), border: UiRect::bottom(Val::Px(1.0)), ..default() },
+                            BorderColor::all(LINE),
+                            text(heading, 16.0, FAINT),
+                        ));
+                    }
+                    section
+                        .spawn(Node {
+                            display: Display::Grid,
+                            grid_template_columns: RepeatedGridTrack::flex(COLUMNS as u16, 1.0),
+                            column_gap: Val::Vh(1.6),
+                            row_gap: Val::Vh(1.6),
+                            ..default()
+                        })
+                        .with_children(|grid| {
+                            for i in range {
+                                grid.spawn((TileCell(t, i), Node { flex_direction: FlexDirection::Column, ..default() }))
+                                    .with_children(|tile| spawn_tile(tile, t, i, &maps[i]));
+                            }
+                        });
+                });
             }
         });
     }
@@ -1194,25 +1284,24 @@ fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu
     if key(&[KeyCode::KeyQ]) || pad(GamepadButton::LeftTrigger) {
         menu.tab = (menu.tab + tabs - 1) % tabs;
     }
-    let n = menu.tabs[menu.tab].len();
-    if n == 0 {
+    if menu.tabs[menu.tab].is_empty() {
         return;
     }
     let t = menu.tab;
-    let mut at = menu.pick[t] as isize;
+    let (mut dx, mut dy) = (0, 0);
     if key(&[KeyCode::ArrowLeft, KeyCode::KeyA]) || pad(GamepadButton::DPadLeft) || pushed[0] {
-        at -= 1;
+        dx -= 1;
     }
     if key(&[KeyCode::ArrowRight, KeyCode::KeyD]) || pad(GamepadButton::DPadRight) || pushed[1] {
-        at += 1;
+        dx += 1;
     }
     if key(&[KeyCode::ArrowUp, KeyCode::KeyW]) || pad(GamepadButton::DPadUp) || pushed[2] {
-        at -= COLUMNS as isize;
+        dy -= 1;
     }
     if key(&[KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) || pushed[3] {
-        at += COLUMNS as isize;
+        dy += 1;
     }
-    let at = at.clamp(0, n as isize - 1) as usize;
+    let at = moved(&rows(t), menu.pick[t], dx, dy);
     if at != menu.pick[t] {
         menu.pick[t] = at;
     }
@@ -1229,6 +1318,7 @@ fn mouse(
     mut menu: ResMut<Menu>,
     tabs: Query<(&TabLabel, &ComputedNode, &UiGlobalTransform)>,
     tiles: Query<(&Tile, &ComputedNode, &UiGlobalTransform)>,
+    pages: Query<(&TabPage, &ComputedNode, &UiGlobalTransform)>,
     bar: Query<(&MenuButton, &ComputedNode, &UiGlobalTransform)>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -1243,7 +1333,9 @@ fn mouse(
         return;
     }
     let tab = menu.tab;
-    if let Some((tile, ..)) = tiles.iter().find(|(tile, n, t)| tile.0 == tab && n.contains_point(**t, at)) {
+    // A tile scrolled out of the page is not there to click.
+    let on_page = pages.iter().any(|(page, n, t)| page.0 == tab && n.contains_point(*t, at));
+    if let Some((tile, ..)) = tiles.iter().find(|(tile, n, t)| on_page && tile.0 == tab && n.contains_point(**t, at)) {
         let now = time.elapsed_secs_f64();
         let double = menu.click.is_some_and(|(i, then)| i == tile.1 && now - then < 0.4);
         menu.pick[tile.0] = tile.1;
@@ -1758,7 +1850,7 @@ fn show(
         }
     }
     for (page, mut node) in &mut pages {
-        node.display = if page.0 == menu.tab { Display::Grid } else { Display::None };
+        node.display = if page.0 == menu.tab { Display::Flex } else { Display::None };
     }
     for (label, mut colour, mut border) in &mut labels {
         let on = label.0 == menu.tab;
@@ -1796,6 +1888,68 @@ fn show(
             (Some(map), _) => kind(menu.tab, map).to_string(),
             (None, _) => String::new(),
         };
+    }
+}
+
+/// Scrolls the shown page so the picked tile is all in view: picking a
+/// tile in the row below the page's bottom row moves the page up by that
+/// row, and the same upwards (with the section's heading, for its first
+/// row). Waits for the page to be laid out (just shown, or rebuilt).
+#[allow(clippy::type_complexity)]
+fn follow(
+    menu: Res<Menu>,
+    mut pages: Query<(Entity, &TabPage, &ComputedNode, &UiGlobalTransform, &mut ScrollPosition)>,
+    cells: Query<(&TileCell, &ComputedNode, &UiGlobalTransform)>,
+    sections: Query<(&SectionBox, &ComputedNode, &UiGlobalTransform)>,
+    mut done: Local<Option<(Entity, usize, usize)>>,
+) {
+    let (t, i) = (menu.tab, menu.pick[menu.tab]);
+    let Some((page, _, node, at, mut scroll)) = pages.iter_mut().find(|(_, p, ..)| p.0 == t) else {
+        return;
+    };
+    if *done == Some((page, t, i)) {
+        return;
+    }
+    let Some((_, cell, cell_at)) = cells.iter().find(|(c, ..)| c.0 == t && c.1 == i) else {
+        return;
+    };
+    if node.size.y <= 0.0 || cell.size.y <= 0.0 {
+        return;
+    }
+    // Top and bottom on screen, in physical pixels.
+    let span = |n: &ComputedNode, at: &UiGlobalTransform| (at.translation.y - n.size.y / 2.0, at.translation.y + n.size.y / 2.0);
+    let (page_top, page_bottom) = span(node, at);
+    let (mut top, bottom) = span(cell, cell_at);
+    // A section's first row brings its heading with it.
+    if let Some((section, n, a)) = sections.iter().filter(|(s, ..)| s.0 == t && s.1 <= i).max_by_key(|(s, ..)| s.1)
+        && i - section.1 < COLUMNS
+    {
+        top = span(n, a).0;
+    }
+    let by = if bottom > page_bottom {
+        bottom - page_bottom
+    } else if top < page_top {
+        top - page_top
+    } else {
+        0.0
+    };
+    scroll.y = (scroll.y + by * node.inverse_scale_factor).max(0.0);
+    *done = Some((page, t, i));
+}
+
+/// The mouse wheel scrolls the shown page.
+fn wheel(menu: Res<Menu>, scrolled: Res<AccumulatedMouseScroll>, mut pages: Query<(&TabPage, &mut ScrollPosition)>) {
+    if scrolled.delta.y == 0.0 {
+        return;
+    }
+    let step = match scrolled.unit {
+        MouseScrollUnit::Line => 60.0,
+        MouseScrollUnit::Pixel => 1.0,
+    };
+    for (page, mut scroll) in &mut pages {
+        if page.0 == menu.tab {
+            scroll.y = (scroll.y - scrolled.delta.y * step).max(0.0);
+        }
     }
 }
 
@@ -1912,20 +2066,34 @@ mod tests {
     /// the installed check looks in the right folder.
     #[test]
     fn entries_name_their_game() {
-        for (entries, game) in [
-            (HALO3, Game::Halo3),
-            (HALO2, Game::Halo2),
-            (HALO1, Game::Halo1),
-            (REACH, Game::Reach),
-            (CAMPAIGN, Game::Halo3),
-        ] {
-            for (arg, ..) in entries {
+        for (sections, game) in SECTIONS.iter().zip([Game::Halo3, Game::Halo2, Game::Halo1, Game::Reach, Game::Halo3]) {
+            for (arg, ..) in sections.iter().flat_map(|(_, entries)| entries.iter()) {
                 // A mission (warthog_run) is its map's game; the Campaign
                 // tab also holds Halo CE's Warthog run.
                 let game = if *arg == "h1:warthog_run" { Game::Halo1 } else { game };
                 assert_eq!(crate::codename(map_of(arg)).0, Some(game), "{arg}");
             }
         }
+    }
+
+    /// Up and down keep the column and stop at a section's shorter row;
+    /// along runs across sections.
+    #[test]
+    fn moving_between_sections() {
+        // The Campaign tab: rows of 1, 1, 6 and 5 maps.
+        let campaign = rows(4);
+        assert_eq!(campaign, [(0, 1), (1, 1), (2, 6), (8, 5)]);
+        assert_eq!(moved(&campaign, 0, 0, 1), 1);
+        assert_eq!(moved(&campaign, 1, 0, 1), 2);
+        assert_eq!(moved(&campaign, 7, 0, -1), 1);
+        assert_eq!(moved(&campaign, 7, 0, 1), 12);
+        assert_eq!(moved(&campaign, 4, 0, 1), 10);
+        assert_eq!(moved(&campaign, 12, 0, 1), 12);
+        assert_eq!(moved(&campaign, 0, 0, -1), 0);
+        assert_eq!(moved(&campaign, 1, 1, 0), 2);
+        assert_eq!(moved(&campaign, 12, 1, 0), 12);
+        // One section: rows of six.
+        assert_eq!(moved(&rows(0), 3, 0, 1), 9);
     }
 
     #[test]
