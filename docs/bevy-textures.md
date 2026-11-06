@@ -3,7 +3,7 @@
 Written 2026-10-27 by reading the bevy 0.20.0 / wgpu 30.0.1 sources in the local cargo registry
 (`~\.cargo\registry\src\index.crates.io-*\`) and the IW4L material
 code (<https://github.com/chasmlol/2010-rust-rewrite-mashup>). Everything here is
-about **our own code** in `crates\halo3\src\world.rs`; it does not depend on any map file and
+about **our own code** in `crates\mcc-rust-rewrite\src\world.rs`; it does not depend on any map file and
 contains no Reclaimer facts. The bitmap tag / resource page layout (how to get the BCn bytes out
 of `shared.map`) is another reader's topic; this document starts where that one ends: you hold
 `width`, `height`, a format, and the mip levels as byte slices.
@@ -542,7 +542,7 @@ mips, `docs\iw4l-notes.md` section 8). What its fragment shader does, in words:
 - Material uniform: `xforms: array<vec4, 9>` (per slot `uv * xy + zw`), `layers: vec4` (1.0 for
   each enabled terrain layer), `params = (is_terrain, is_alpha_test, opacity, has_detail)`; nine
   `texture_2d` slots and one shared `Repeat` sampler.
-- Slot meaning (from `halo3_world`): 0 = base map (terrain: the **blend map**), 1..=4 = the four
+- Slot meaning (from `mcc_world`): 0 = base map (terrain: the **blend map**), 1..=4 = the four
   terrain layer base maps, 5..=8 = the four detail maps (non-terrain: 5 = `detail_map`).
 - **Terrain** (`params.x > 0.5`): `blend = sample(slot 0, uv1 transformed by xform 0)`;
   `w = blend.rgba * layers`; if `sum(w) > 1e-4` normalise `w /= sum(w)`, else fall back to equal

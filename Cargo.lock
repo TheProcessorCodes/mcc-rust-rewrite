@@ -2609,250 +2609,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "halo3"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bevy",
- "blam_cache",
- "blam_geometry",
- "blam_h1",
- "blam_h2",
- "blam_reach",
- "blam_script",
- "blam_texture",
- "game_paths",
- "halo3_ai",
- "halo3_anim",
- "halo3_audio",
- "halo3_bike",
- "halo3_core",
- "halo3_effects",
- "halo3_foot",
- "halo3_rider",
- "halo3_script",
- "halo3_setup",
- "halo3_skate",
- "halo3_swim",
- "halo3_textures",
- "halo3_weapons",
- "halo3_world",
-]
-
-[[package]]
-name = "halo3_ai"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_cache",
- "blam_geometry",
- "blam_script",
- "blam_texture",
- "game_paths",
- "halo3_anim",
- "halo3_bike",
- "halo3_core",
- "halo3_foot",
- "halo3_rider",
- "halo3_script",
- "halo3_textures",
- "halo3_weapons",
- "halo3_world",
-]
-
-[[package]]
-name = "halo3_anim"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_anim",
- "blam_cache",
- "blam_geometry",
- "blam_h1",
- "blam_script",
- "game_paths",
- "glam",
- "halo3_bike",
- "halo3_core",
- "halo3_script",
-]
-
-[[package]]
-name = "halo3_audio"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bevy",
- "blam_cache",
- "blam_h1",
- "blam_sound",
- "game_paths",
- "halo3_core",
- "reflex_assets",
- "serde_json",
-]
-
-[[package]]
-name = "halo3_bike"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_geometry",
- "game_paths",
- "halo3_core",
- "halo3_rider",
- "halo3_world",
- "reflex_assets",
- "reflex_bevy",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "halo3_core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bevy",
- "blam_geometry",
- "game_paths",
- "serde_json",
-]
-
-[[package]]
-name = "halo3_effects"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_cache",
- "blam_effect",
- "blam_geometry",
- "blam_h1",
- "blam_script",
- "blam_texture",
- "game_paths",
- "halo3_core",
- "halo3_script",
-]
-
-[[package]]
-name = "halo3_foot"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_geometry",
- "blam_h2",
- "game_paths",
- "halo3_bike",
- "halo3_core",
- "halo3_swim",
-]
-
-[[package]]
-name = "halo3_rider"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_cache",
- "blam_geometry",
- "blam_texture",
- "half",
- "halo3_core",
- "halo3_textures",
- "halo3_world",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "halo3_script"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_cache",
- "blam_geometry",
- "blam_h1",
- "blam_script",
- "blam_sound",
- "game_paths",
- "glam",
- "halo3_core",
-]
-
-[[package]]
-name = "halo3_setup"
-version = "0.1.0"
-dependencies = [
- "blam_cache",
- "game_paths",
- "glam",
- "half",
- "png",
- "rfd",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "halo3_skate"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_geometry",
- "game_paths",
- "halo3_core",
- "skate-host",
-]
-
-[[package]]
-name = "halo3_swim"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_geometry",
- "halo3_core",
-]
-
-[[package]]
-name = "halo3_textures"
-version = "0.1.0"
-dependencies = [
- "blam_cache",
- "blam_geometry",
- "blam_texture",
-]
-
-[[package]]
-name = "halo3_weapons"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "blam_cache",
- "blam_geometry",
- "game_paths",
- "halo3_bike",
- "halo3_core",
- "halo3_foot",
- "halo3_rider",
- "halo3_textures",
- "halo3_world",
-]
-
-[[package]]
-name = "halo3_world"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bevy",
- "blam_cache",
- "blam_geometry",
- "blam_texture",
- "game_paths",
- "halo3_core",
- "halo3_textures",
-]
-
-[[package]]
 name = "harfrust"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3473,6 +3229,250 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
+]
+
+[[package]]
+name = "mcc-rust-rewrite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "blam_cache",
+ "blam_geometry",
+ "blam_h1",
+ "blam_h2",
+ "blam_reach",
+ "blam_script",
+ "blam_texture",
+ "game_paths",
+ "mcc_ai",
+ "mcc_anim",
+ "mcc_audio",
+ "mcc_bike",
+ "mcc_core",
+ "mcc_effects",
+ "mcc_foot",
+ "mcc_rider",
+ "mcc_script",
+ "mcc_setup",
+ "mcc_skate",
+ "mcc_swim",
+ "mcc_textures",
+ "mcc_weapons",
+ "mcc_world",
+]
+
+[[package]]
+name = "mcc_ai"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_cache",
+ "blam_geometry",
+ "blam_script",
+ "blam_texture",
+ "game_paths",
+ "mcc_anim",
+ "mcc_bike",
+ "mcc_core",
+ "mcc_foot",
+ "mcc_rider",
+ "mcc_script",
+ "mcc_textures",
+ "mcc_weapons",
+ "mcc_world",
+]
+
+[[package]]
+name = "mcc_anim"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_anim",
+ "blam_cache",
+ "blam_geometry",
+ "blam_h1",
+ "blam_script",
+ "game_paths",
+ "glam",
+ "mcc_bike",
+ "mcc_core",
+ "mcc_script",
+]
+
+[[package]]
+name = "mcc_audio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "blam_cache",
+ "blam_h1",
+ "blam_sound",
+ "game_paths",
+ "mcc_core",
+ "reflex_assets",
+ "serde_json",
+]
+
+[[package]]
+name = "mcc_bike"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_geometry",
+ "game_paths",
+ "mcc_core",
+ "mcc_rider",
+ "mcc_world",
+ "reflex_assets",
+ "reflex_bevy",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mcc_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "blam_geometry",
+ "game_paths",
+ "serde_json",
+]
+
+[[package]]
+name = "mcc_effects"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_cache",
+ "blam_effect",
+ "blam_geometry",
+ "blam_h1",
+ "blam_script",
+ "blam_texture",
+ "game_paths",
+ "mcc_core",
+ "mcc_script",
+]
+
+[[package]]
+name = "mcc_foot"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_geometry",
+ "blam_h2",
+ "game_paths",
+ "mcc_bike",
+ "mcc_core",
+ "mcc_swim",
+]
+
+[[package]]
+name = "mcc_rider"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_cache",
+ "blam_geometry",
+ "blam_texture",
+ "half",
+ "mcc_core",
+ "mcc_textures",
+ "mcc_world",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mcc_script"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_cache",
+ "blam_geometry",
+ "blam_h1",
+ "blam_script",
+ "blam_sound",
+ "game_paths",
+ "glam",
+ "mcc_core",
+]
+
+[[package]]
+name = "mcc_setup"
+version = "0.1.0"
+dependencies = [
+ "blam_cache",
+ "game_paths",
+ "glam",
+ "half",
+ "png",
+ "rfd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mcc_skate"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_geometry",
+ "game_paths",
+ "mcc_core",
+ "skate-host",
+]
+
+[[package]]
+name = "mcc_swim"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_geometry",
+ "mcc_core",
+]
+
+[[package]]
+name = "mcc_textures"
+version = "0.1.0"
+dependencies = [
+ "blam_cache",
+ "blam_geometry",
+ "blam_texture",
+]
+
+[[package]]
+name = "mcc_weapons"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "blam_cache",
+ "blam_geometry",
+ "game_paths",
+ "mcc_bike",
+ "mcc_core",
+ "mcc_foot",
+ "mcc_rider",
+ "mcc_textures",
+ "mcc_world",
+]
+
+[[package]]
+name = "mcc_world"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "blam_cache",
+ "blam_geometry",
+ "blam_texture",
+ "game_paths",
+ "mcc_core",
+ "mcc_textures",
 ]
 
 [[package]]

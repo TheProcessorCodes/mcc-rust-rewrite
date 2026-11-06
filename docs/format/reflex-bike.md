@@ -1,7 +1,7 @@
 # The Reflex bike: Dakumoto 450F in the Cortana kit
 
 The dirt bike is drawn with MX vs ATV Reflex's own Dakumoto 450F, read at start-up from the
-user's Reflex install (`crates/reflex_assets`, drawn by `crates/halo3_bike/src/model.rs`).
+user's Reflex install (`crates/reflex_assets`, drawn by `crates/mcc_bike/src/model.rs`).
 Nothing from Reflex is in this repo: the code finds the install, reads it read-only and keeps
 the result in memory. Without Reflex the bike is the old stick model.
 
@@ -92,7 +92,7 @@ drawn ones so the tyres sit on the ground.
 
 ## The physics fitted to it (Reflex v1)
 
-`crates/halo3_bike/src/reflex.rs` (`DAKUMOTO_450F`) and `physics.rs`:
+`crates/mcc_bike/src/reflex.rs` (`DAKUMOTO_450F`) and `physics.rs`:
 
 | | Unleashed Pro 250 (before) | now (the 450F) |
 |---|---|---|

@@ -6,7 +6,7 @@
 //! Written from `docs/format/halo1.md` 13, whose layouts were found on the
 //! bytes of `d40` (The Maw) with `docs/format/scripts/probe_h1_effects.py`.
 //! [`crate::effect_library`] turns what is read here into Halo 3's effect
-//! types, so `halo3_effects` plays Halo CE's effects with its own renderer.
+//! types, so `mcc_effects` plays Halo CE's effects with its own renderer.
 //!
 //! Tags are named by their index (the datum's low 16 bits) everywhere here.
 

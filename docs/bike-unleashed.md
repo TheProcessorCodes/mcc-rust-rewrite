@@ -1,6 +1,6 @@
 # The dirt bike: MX vs ATV Unleashed's model
 
-Written 2026-10-28. The viewer's dirt bike (`crates/halo3_bike/src/physics.rs`, numbers in
+Written 2026-10-28. The viewer's dirt bike (`crates/mcc_bike/src/physics.rs`, numbers in
 `unleashed.rs`) rides the way MX vs ATV Unleashed's stock Pro 250 does. This page says how the
 original works in plain words, where each fact came from, and what our version leaves out.
 
@@ -89,7 +89,7 @@ the gas lifts it (175). X also gives a 125 lbf sideways push.
 
 ## Reflex v1 and the tuning menu (2026-10-29)
 
-The bike now rides on **Reflex v1** by default (`crates/halo3_bike/src/reflex.rs`): the model
+The bike now rides on **Reflex v1** by default (`crates/mcc_bike/src/reflex.rs`): the model
 above, unchanged in how it simulates, with stock MX vs ATV Reflex's mx450f numbers and four of
 Reflex's rules (as the earlier Reflex-style bike used):
 

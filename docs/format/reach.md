@@ -197,7 +197,7 @@ layers) over one atlas (Sword Base: 1536 x 1536). Layer 0 is the colour of the m
 mid grey. The colour layers' alphas follow the shadows while their colours stay near full
 brightness, so alpha reads as each lobe's brightness. The exact lobe maths is not worked
 out: the viewer takes `layer0.rgb * layer0.a + layer2.rgb * layer2.a` as a direction-free
-light and scales each map so its lit texels average one level (`halo3_textures::reach`).
+light and scales each map so its lit texels average one level (`mcc_textures::reach`).
 
 Clusters read their atlas texcoords from their mesh's buffer slot 1. An instance is lit
 per pixel when `Lbsp + 0x60` entry `+0` is not -1; its texcoords are then the vertex buffer

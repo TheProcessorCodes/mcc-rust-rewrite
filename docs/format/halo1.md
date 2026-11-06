@@ -282,7 +282,7 @@ planets and rings are single alpha-blended maps.
 
 Checked on `d40` with `probe_h1_scripts.py` (it decompiles a map's scripts). Halo 3's layout
 (`halo-script.md`) with smaller pieces; `blam_h1::script` reads it into Halo 3's
-`blam_script::ScriptData`, so `blam_script`'s decompiler prints it and `halo3_script` runs it.
+`blam_script::ScriptData`, so `blam_script`'s decompiler prints it and `mcc_script` runs it.
 
 | scenario offset | what |
 |---|---|
@@ -320,7 +320,7 @@ minutes seconds` sets it, `hud_get_timer_ticks` reads it in 30ths of a second,
 Checked on `d40` with `probe_h1_effects.py` (`python -I probe_h1_effects.py d40 [effect path]`
 prints an effect and everything it reaches; `--pctl` every particle system; `--hex PATH [SIZE]`
 dumps a tag). Code: `blam_h1::effect` (reader), `blam_h1::effect_library` (into Halo 3's
-effect types, 13.6). Tests: `blam_h1/tests/effects.rs`, `halo3_effects/tests/h1_run_effects.rs`.
+effect types, 13.6). Tests: `blam_h1/tests/effects.rs`, `mcc_effects/tests/h1_run_effects.rs`.
 
 The Warthog run's scripts name their explosions through effect globals (`(global effect
 explosion_large "effects\explosions\large explosion")`, `effect_new explosion_large
@@ -466,10 +466,10 @@ on image 0, sequence 1 four on image 1.
 
 ### 13.6 How they are played (`effect_library`)
 
-Halo CE's tags are turned into Halo 3's (`effects.md`), and `halo3_effects` plays them:
+Halo CE's tags are turned into Halo 3's (`effects.md`), and `mcc_effects` plays them:
 
-- **Events** as they are. **Parts**: `snd!` stays a sound part (`halo3_effects` hands it to
-  `halo3_core::script_sound` as an impulse with the Halo CE tag index and path and where the
+- **Events** as they are. **Parts**: `snd!` stays a sound part (`mcc_effects` hands it to
+  `mcc_core::script_sound` as an impulse with the Halo CE tag index and path and where the
   effect is: the hook for Halo CE sound), `ligh` becomes a light flash, `effe` a child effect,
   `jpt!` a camera-shake request (not used), `pctl` systems (below); `deca` and `garb` stay parts
   that are not played.
@@ -493,7 +493,7 @@ Halo CE's tags are turned into Halo 3's (`effects.md`), and `halo3_effects` play
 - **Bitmaps** become one atlas per tag (every 2D image stacked, mips by averaging), every
   sequence a run of sprites on it, so sprite sheets and image sequences draw alike.
 - **Colours** are real colours in gamma space, made linear, times `COLOUR_SCALE` (1/3: undoes
-  `halo3_effects`' x3 exposure, so a colour reaches the screen as the tag has it).
+  `mcc_effects`' x3 exposure, so a colour reaches the screen as the tag has it).
 
 Not played: decals (`deca`), debris objects (`garb`), damage (`jpt!`), lens flares on lights,
 `part` collision effects, the system states, distribution functions over an event's duration,
@@ -501,7 +501,7 @@ looping effects, the particles' secondary (`zmap`) maps, fade modes and map anim
 ## 14. AI: encounters and actor variants
 
 Checked on `d40` with `probe_h1_ai.py` (`python -I probe_h1_ai.py d40 enc6_1`); read by
-`blam_h1::ai`, placed as `halo3_ai` actors by `crates/halo3/src/halo1_ai.rs`. Where to look
+`blam_h1::ai`, placed as `mcc_ai` actors by `crates/mcc-rust-rewrite/src/halo1_ai.rs`. Where to look
 came from general knowledge of the HEK scenario layout; every offset below was confirmed on
 the bytes (counts, names, positions on the run's road, values that match their meaning).
 
@@ -535,7 +535,7 @@ game): the normal count on easy and normal, the legendary count on legendary, ha
 encounter by its name, in lower case (`enc6_1_flood/squada` for the squad stored as
 `squadA`; `ai_defend enc6_5_cov/evacs` names a platoon of `evacs1` and `evacs2`). The AI
 constants are the scripts' nodes of value type ai (17, section 12) with that text; every one
-of `d40`'s resolves (`blam_h1/tests/ai.rs`). In `halo3_ai` each encounter is a squad group and
+of `d40`'s resolves (`blam_h1/tests/ai.rs`). In `mcc_ai` each encounter is a squad group and
 an AI zone, each platoon a group under it, each squad a squad named `encounter/squad`.
 
 **Actor variant** (`actv`):
@@ -603,7 +603,7 @@ more of the Flood elite's vertices lie within 0.6 wu of their first node.
 ## 15. Animation graphs (`antr`)
 
 Checked with `probe_h1_ai.py` and `blam_h1/tests/ai.rs`; read by `blam_h1::animation`, played
-by `crates/halo3/src/halo1_anim.rs`.
+by `crates/mcc-rust-rewrite/src/halo1_anim.rs`.
 
 | offset | what |
 |---|---|
@@ -719,7 +719,7 @@ half) loses its collision and is not drawn, a platform keeps its rest pose.
 
 Probed 2026-11-03 on The Maw (`d40`) with `probe_h1_sound.py` (`raw TAG`, `lsnd NAME`,
 `snd NAME`, `lst BANK [grep]`, `fsb BANK [first [n]]`, `find NAME`, `check NAME`); code
-`blam_h1::sound` (tags, banks), `fsb_celt` (the codec), `halo3_audio::halo1` (playing).
+`blam_h1::sound` (tags, banks), `fsb_celt` (the codec), `mcc_audio::halo1` (playing).
 Field meanings come from the values (names, lengths, which tags set what) and the public
 HEK field order; no other project's code was read.
 
@@ -880,7 +880,7 @@ computer loops.
   cortana_dialogue_scale)` then `(sleep (max 0 (- (sound_impulse_time snd) 30)))`, so each line
   waits for the one before; `sound_impulse_time` is the sound's length in ticks. Our insertion
   counts `enc6_0_dialog` as passed, which makes its script start `d40_07` at once
-  (`halo3_script/tests/h1_sound.rs`).
+  (`mcc_script/tests/h1_sound.rs`).
 - **Background sound per cluster**: `sbsp + 0x1FC` is the background sound palette (0x74
   each: name, `lsnd` at `+0x20`), `sbsp + 0x208` the sound environment palette (0x50 each:
   name, `snde` at `+0x20`; not used). A cluster (0x68) names its background sound entry at
@@ -897,7 +897,7 @@ computer loops.
   `+0x140`) name the `lsnd` at `+0`. `d40` has 37 (desert wind, computer loops), all on the
   bridge and at the mission's start, none on the run; not played.
 
-### 19.6 How we play it (`halo3_audio::halo1`)
+### 19.6 How we play it (`mcc_audio::halo1`)
 
 The tags become Halo 3's player data (`SoundData`): every `snd!` a `SoundInfo` whose
 "permutations" are bank sample ids (bank index in the top 8 bits), every `lsnd` a

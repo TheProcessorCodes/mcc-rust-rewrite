@@ -1,3 +1,7 @@
+This is **MCC Rust Rewrite** (`mcc-rust-rewrite.exe`, crates `mcc_*`; called "Halo 3 Rust
+rewrite", `halo3.exe` and `halo3_*` until 2026-11-06): Halo maps from the player's own MCC with
+Skate 3 skating and the MX vs ATV Reflex dirt bike.
+
 Read `HANDOFF.md` before doing anything else. It holds the goals, the research done so
 far, the paths on disk and the open decision.
 
@@ -14,8 +18,8 @@ far, the paths on disk and the open decision.
   check it with `html_preview`, then show it with `html_render`, passing the
   `contentHeight` that `html_preview` reported as `height`. Use theme CSS variables
   (`var(--radius)`, `var(--muted-foreground)`), no page background or outer card; three or
-  four full-size PNGs per page is fine. Take the pictures headless (`halo3.exe <map> --shot
-  <dir>`, `halo3.exe --menu-shot FILE ...`, see README), never by opening a window. For
+  four full-size PNGs per page is fine. Take the pictures headless (`mcc-rust-rewrite.exe <map> --shot
+  <dir>`, `mcc-rust-rewrite.exe --menu-shot FILE ...`, see README), never by opening a window. For
   mock-ups before any code exists, draw them as HTML/CSS in the same kind of page.
 - **Game installs are read-only.** Never modify, patch or write into the MCC folder, the
   MW2 folder or the Skate 3 dump. Caches and outputs go inside this project.
@@ -24,9 +28,9 @@ far, the paths on disk and the open decision.
 - **Build for a public release.** Assume a stranger downloads this and has only their own
   MCC install and Skate 3 copy, and maybe MX vs ATV Reflex. Nothing may depend on this PC's paths, the
   `mw2 skate 3` folder or game data in the repo or the release. The one-time first-run setup
-  (`crates/halo3_setup`, README "First run") asks the player to choose the folder of MCC, Skate 3 (extracted or `.iso`) and Reflex in
+  (`crates/mcc_setup`, README "First run") asks the player to choose the folder of MCC, Skate 3 (extracted or `.iso`) and Reflex in
   a folder picker (never searches the disk for them), MCC and Skate 3 required to play, Reflex optional (without it the bike is our own model and sound), checks them, converts what it needs, and saves it all per user in
-  `%LOCALAPPDATA%\Halo3Rewrite`, so it never asks again. New code gets game paths only
+  `%LOCALAPPDATA%\MccRustRewrite`, so it never asks again. New code gets game paths only
   through `crates/game_paths` (`halo3_maps()`, `halo3_map(name)` for tests, `skate_assets()`,
   ...), never a hard-coded `C:\`/`D:\` path; env vars stay as dev overrides. Tests skip quietly
   when a game is not installed, and code still must not crash if a file is missing. Everything Halo needs is read from MCC at run time;
@@ -38,7 +42,7 @@ far, the paths on disk and the open decision.
 - **Licenses**: Gravemind2401's Reclaimer is GPL-3.0. Porting its code line by line makes
   that code GPL-3.0. IW4L is Apache-2.0. Raise this with the user before porting Reclaimer.
   The Skate 3 engine is vendored in `third_party/skate-engine` (GPL-3.0-only, so a released
-  `halo3.exe` is GPL-3.0); the skate crates are built from there, not from `mw2-skate-3-src`.
+  `mcc-rust-rewrite.exe` is GPL-3.0); the skate crates are built from there, not from `mw2-skate-3-src`.
   Any change made there goes in the list in its README.
 - **New work goes in a new worktree.** At the start of a thread, before editing
   anything, create a worktree on a new branch from master (under `.claude/worktrees/`)
@@ -71,10 +75,10 @@ far, the paths on disk and the open decision.
 - **Every checkout builds into the main checkout's `target\`**, so bevy is compiled once.
   From inside the checkout (main or worktree) run
   `& "$(git rev-parse --path-format=absolute --git-common-dir)/../.dev/build-shared.ps1"`
-  (default `cargo build -p halo3`; pass other cargo arguments, e.g. `test -p halo3_bike`).
+  (default `cargo build -p mcc-rust-rewrite`; pass other cargo arguments, e.g. `test -p mcc_bike`).
   It goes through the gate, rebuilds our crates from this checkout when the last build came
-  from another one, and copies the exe to that checkout's `out\bin\halo3.exe`. Hand the user
-  that `out\bin` path to play, never `target\debug\halo3.exe`, which belongs to whichever
+  from another one, and copies the exe to that checkout's `out\bin\mcc-rust-rewrite.exe`. Hand the user
+  that `out\bin` path to play, never `target\debug\mcc-rust-rewrite.exe`, which belongs to whichever
   checkout built last. Don't point plain cargo at the shared `target\`: the shared target
   keeps one copy of each of our crates, and without the script cargo can reuse another
   checkout's copy without noticing.

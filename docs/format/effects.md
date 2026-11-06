@@ -7,9 +7,9 @@ tags (`blam dump`) and walking their blocks with a small explorer, then pinned b
 effect in the map without an error and by values whose meaning is plain (a fireball that lives
 0.5 to 1.5 s, a light that lasts 2 s, a white-to-orange tint, a `snd!` reference).
 
-Code: `crates/blam_effect` (reader, no renderer), `crates/halo3_effects` (the runtime: `sim.rs`
+Code: `crates/blam_effect` (reader, no renderer), `crates/mcc_effects` (the runtime: `sim.rs`
 plays, `draw.rs` and `shaders/particle.wesl` draw), the light term in
-`crates/halo3_world/src/shaders/lightmap.wesl` (`effect_irradiance`).
+`crates/mcc_world/src/shaders/lightmap.wesl` (`effect_irradiance`).
 
 Probe (`python -I`, read-only, in `docs/format/scripts/`):
 
@@ -24,7 +24,7 @@ Pinned by `cargo test`:
   particle systems, the fireball emitter's numbers, the fireball particle's shader, the ejecta's
   attachment and contrail, the light; the giant explosion's events and sparks; every one of
   120_halo's 937 effects (and the 3,193 emitters in them) reads.
-- `crates/halo3_effects/tests/trench_effects.rs`: the run's scripts blowing up plate `100_001c`
+- `crates/mcc_effects/tests/trench_effects.rs`: the run's scripts blowing up plate `100_001c`
   ask for its chunks and `plate_explosion` at the plate, upright, and the player then makes one
   flash, 50 rising fireball particles, the two sounds, five to eight ejecta with contrails that
   follow them, and ends after the 5 s hold; `big_explosions_ambient` plays `giant_explosion` at
@@ -302,7 +302,7 @@ per contrail (our reading). Input 0 is a point's age, as for particles.
 
 How Halo turns size and intensity into a falloff is not decoded (9.5).
 
-## 9. How we play them (`halo3_effects`)
+## 9. How we play them (`mcc_effects`)
 
 ### 9.1 Events
 
@@ -312,7 +312,7 @@ fields). Skipped by their skip fraction. An effect ends when its last event has 
 nothing it made lives. Loops (`+0x18`) are not played: the scripts' effects are one-offs.
 
 Parts at an event's start: `snd!` goes to the sound side as an impulse at the effect
-(`halo3_core::script_sound`), `ligh` becomes a light flash, `effe` a child effect at the same
+(`mcc_core::script_sound`), `ligh` becomes a light flash, `effe` a child effect at the same
 place, `cntl` a contrail on the effect. **Not played**: `bloc` debris (the plate chunks, the
 tunnel half girders), `jpt!` (shock waves, camera shake), `sefc` screen effects, `decs` decals.
 
@@ -356,7 +356,7 @@ blend mode (additive and add_src_times_srcalpha added; alpha blend, pre-multipli
 Not done: depth fade (soft edges where a particle meets a surface), frame blend, fog on
 particles, distortion, mesh (`pmdf`) particles, lit particles.
 
-Brightness is **our choice**: the particles' colour times 3 (`HALO3_EFFECT_EXPOSURE`). With the
+Brightness is **our choice**: the particles' colour times 3 (`MCC_EFFECT_EXPOSURE`). With the
 world's exposure (x8 on 120_halo, which makes up for our lightmaps' scale) every fireball was a
 white blob; at 1 they were faint. How Halo weighs particles against its lightmaps is not
 decoded.
@@ -378,5 +378,5 @@ the light's size. The 0.05 and the 4 are ours: Halo's falloff is not decoded.
 - Particle depth fade, frame blend, mesh particles, distortion; emission shapes beyond disc and
   ring; the second emitter angle (`+0xC8`); output modifiers; looping effects.
 - The weapons' and AI's own impact and muzzle effects still use their stand-ins
-  (`halo3_weapons/src/fire.rs`); switching them to `EffectQueue` needs their effect tags read at
+  (`mcc_weapons/src/fire.rs`); switching them to `EffectQueue` needs their effect tags read at
   load, which is not done.

@@ -351,7 +351,7 @@ fn narrows_counts() {
     assert_eq!(kills, ["kill_drop", "kill_zone1", "kill_zone2", "kill_zone3"]);
     let drop = scene.trigger_volumes.iter().find(|v| v.name == "kill_drop").unwrap();
     // Off the bridge: dead 12 wu under the walkways, where the headless
-    // skate test (`HALO3_SWIM_TEST=20,0,55`) was caught at z 48.6.
+    // skate test (`MCC_SWIM_TEST=20,0,55`) was caught at z 48.6.
     assert!(drop.contains(glam::Vec3::new(20.0, 0.0, 48.6)));
     assert!(drop.contains(glam::Vec3::new(0.0, 0.0, 40.0)));
     assert!(drop.contains(glam::Vec3::new(0.0, 0.0, -53.0)));

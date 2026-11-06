@@ -395,7 +395,7 @@ BSP's two bitmap tag indices and five scales, and every BSP placement carries a
 23 clusters and 184 instances per-pixel, 58 per-vertex, 18 probe, 1 none (the image -1 instance).
 `blam lightmap` uses the same code.
 
-The viewer (`crates/halo3_world/src/lighting.rs`, shader `world/shaders/lightmap.wesl`):
+The viewer (`crates/mcc_world/src/lighting.rs`, shader `world/shaders/lightmap.wesl`):
 
 - per-pixel: both arrays go to the GPU as BC3 `D2Array` images (linear, clamp, bilinear, one
   level), the texcoord as `UV_1`; the fragment shader evaluates 5.1-5.3 with the bump-mapped

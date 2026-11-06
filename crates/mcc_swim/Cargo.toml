@@ -1,0 +1,12 @@
+[package]
+name = "mcc_swim"
+description = "Water, sinking and splashes for the Halo 3 skater"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+blam_geometry = { workspace = true }
+mcc_core = { workspace = true }

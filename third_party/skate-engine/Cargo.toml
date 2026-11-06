@@ -1,6 +1,6 @@
-# The Skate 3 engine crates halo3_skate links, GPL-3.0 (see README.md here).
+# The Skate 3 engine crates mcc_skate links, GPL-3.0 (see README.md here).
 # Their own small workspace, as in the mashup they came from; built as path
-# dependencies of the halo3 workspace, which excludes this folder.
+# dependencies of the mcc-rust-rewrite workspace, which excludes this folder.
 [workspace]
 members = ["crates/skate-core", "crates/skate-data", "crates/skate-net"]
 exclude = ["crates/skate-host"]

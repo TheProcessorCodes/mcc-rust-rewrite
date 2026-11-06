@@ -1,12 +1,12 @@
 //! Where the player's own games are. Nothing here names a folder on any one
 //! PC, and nothing searches the disk: the paths come only from
 //!
-//! 1. dev overrides in the environment (`HALO3_MCC`, `HALO3_MAPS`,
-//!    `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `HALO3_SKATE_ASSETS`, `IW4L_SKATE_ASSETS`,
-//!    `REFLEX_GAME`, `HALO3_LANGUAGE`);
-//! 2. the folders the player chose in first-run setup (`halo3_setup`),
+//! 1. dev overrides in the environment (`MCC_ROOT`, `HALO3_MAPS`,
+//!    `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `MCC_SKATE_ASSETS`, `IW4L_SKATE_ASSETS`,
+//!    `REFLEX_GAME`, `MCC_LANGUAGE`);
+//! 2. the folders the player chose in first-run setup (`mcc_setup`),
 //!    saved in `setup.env` under [`settings_dir`]
-//!    (`%LOCALAPPDATA%\Halo3Rewrite`), so they are asked once per user
+//!    (`%LOCALAPPDATA%\MccRustRewrite`), so they are asked once per user
 //!    however many copies of the exe there are.
 //!
 //! Before setup has run (and without overrides) every lookup is `None`;
@@ -77,9 +77,9 @@ pub fn saved_reflex() -> Option<PathBuf> {
 }
 
 /// Where the setup and the converted Skate 3 data live:
-/// `%HALO3_SETUP_DIR%`, else `%LOCALAPPDATA%\Halo3Rewrite`.
+/// `%MCC_SETUP_DIR%`, else `%LOCALAPPDATA%\MccRustRewrite`.
 pub fn settings_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("HALO3_SETUP_DIR") {
+    if let Some(dir) = std::env::var_os("MCC_SETUP_DIR") {
         return PathBuf::from(dir);
     }
     let base = std::env::var_os("LOCALAPPDATA")
@@ -87,7 +87,26 @@ pub fn settings_dir() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("Halo3Rewrite")
+    let dir = base.join("MccRustRewrite");
+    static MOVED: std::sync::Once = std::sync::Once::new();
+    MOVED.call_once(|| move_old_settings(&base.join("Halo3Rewrite"), &dir));
+    dir
+}
+
+/// Moves the setup saved under the project's old name (`Halo3Rewrite`) to
+/// `new`, once, so a player who set up before the rename is not asked again.
+/// The saved paths that pointed inside the old folder are pointed at the new.
+fn move_old_settings(old: &Path, new: &Path) {
+    if new.exists() || !old.is_dir() || std::fs::rename(old, new).is_err() {
+        return;
+    }
+    let file = new.join("setup.env");
+    let (Some(old_text), Some(new_text)) = (old.to_str(), new.to_str()) else {
+        return;
+    };
+    if let Ok(saved) = std::fs::read_to_string(&file) {
+        let _ = std::fs::write(&file, saved.replace(old_text, new_text));
+    }
 }
 
 /// The saved setup file.
@@ -111,10 +130,10 @@ pub fn mcc_from_pick(picked: &Path) -> Option<PathBuf> {
     picked.ancestors().take(3).find(|p| is_mcc(p)).map(Path::to_path_buf)
 }
 
-/// The MCC install: `%HALO3_MCC%`, the install around `%HALO3_MAPS%`, the
+/// The MCC install: `%MCC_ROOT%`, the install around `%HALO3_MAPS%`, the
 /// one the player chose in setup.
 pub fn mcc_root() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("HALO3_MCC") {
+    if let Some(dir) = std::env::var_os("MCC_ROOT") {
         return Some(PathBuf::from(dir));
     }
     if let Some(maps) = std::env::var_os("HALO3_MAPS").map(PathBuf::from) {
@@ -177,12 +196,12 @@ pub fn reach_maps() -> Option<PathBuf> {
 /// The dialogue languages MCC ships for Halo 3 (`halo3\fmod\pc\<name>.fsb`).
 pub const LANGUAGES: [&str; 6] = ["english", "french", "german", "italian", "mexican", "spanish"];
 
-/// The language Halo 3's dialogue plays in: `%HALO3_LANGUAGE%` (a dev
+/// The language Halo 3's dialogue plays in: `%MCC_LANGUAGE%` (a dev
 /// override), else `LANGUAGE` in the saved setup (`key::LANGUAGE`; setup
 /// does not ask, so it is only there when written by hand), else
 /// `english`. Anything not in [`LANGUAGES`] falls back to `english`.
 pub fn language() -> &'static str {
-    let wanted = std::env::var("HALO3_LANGUAGE")
+    let wanted = std::env::var("MCC_LANGUAGE")
         .ok()
         .or_else(|| settings().get(key::LANGUAGE).map(str::to_string))
         .map(|l| l.trim().to_ascii_lowercase());
@@ -217,10 +236,10 @@ pub fn is_skate_assets(assets: &Path) -> bool {
     SKATE_FILES.iter().all(|f| assets.join(f).is_file())
 }
 
-/// The converted Skate 3 data: `%HALO3_SKATE_ASSETS%` or
+/// The converted Skate 3 data: `%MCC_SKATE_ASSETS%` or
 /// `%IW4L_SKATE_ASSETS%`, else the saved setup. None before setup has run.
 pub fn skate_assets() -> Option<PathBuf> {
-    ["HALO3_SKATE_ASSETS", "IW4L_SKATE_ASSETS"]
+    ["MCC_SKATE_ASSETS", "IW4L_SKATE_ASSETS"]
         .iter()
         .find_map(std::env::var_os)
         .map(PathBuf::from)
@@ -229,11 +248,11 @@ pub fn skate_assets() -> Option<PathBuf> {
 
 /// Whether skating is on (the default). Off, maps load no grind rails, no
 /// skate session and no board, and J does nothing; setup still asks for
-/// Skate 3, as the rider's skeleton comes from it. `HALO3_SKATING=off` (or
+/// Skate 3, as the rider's skeleton comes from it. `MCC_SKATING=off` (or
 /// `on`) overrides the saved choice for a dev run.
 pub fn skating_enabled() -> bool {
     let off = |v: &str| v.trim().eq_ignore_ascii_case("off");
-    match std::env::var("HALO3_SKATING") {
+    match std::env::var("MCC_SKATING") {
         Ok(v) => !off(&v),
         Err(_) => !settings().get(key::SKATING).is_some_and(off),
     }
@@ -350,5 +369,26 @@ mod tests {
         assert_eq!(s.lines.len(), 3);
         s.remove(key::REFLEX);
         assert_eq!(s.get(key::REFLEX), None);
+    }
+
+    #[test]
+    fn old_settings_move_to_the_new_name() {
+        let base = std::env::temp_dir().join(format!("mcc-settings-move-{}", std::process::id()));
+        let (old, new) = (base.join("Halo3Rewrite"), base.join("MccRustRewrite"));
+        std::fs::create_dir_all(old.join("skate-data")).unwrap();
+        let assets = old.join("skate-data").join("assets");
+        let saved = format!("MCC=\"E:\\Games\\MCC\"\nSKATE_ASSETS=\"{}\"\n", assets.display());
+        std::fs::write(old.join("setup.env"), saved).unwrap();
+        move_old_settings(&old, &new);
+        assert!(!old.exists());
+        let s = Settings::read(&new.join("setup.env"));
+        assert_eq!(s.get(key::MCC), Some(r"E:\Games\MCC"));
+        let moved = new.join("skate-data").join("assets");
+        assert_eq!(s.get(key::SKATE_ASSETS), moved.to_str());
+        // Once the new folder exists the old one is left alone.
+        std::fs::create_dir_all(&old).unwrap();
+        move_old_settings(&old, &new);
+        assert!(old.exists());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

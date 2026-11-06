@@ -1,0 +1,39 @@
+[package]
+name = "mcc-rust-rewrite"
+description = "The game: MCC Halo maps with Skate 3 skating and the MX vs ATV Reflex dirt bike; wires the mcc_* crates into an app, screenshots and the pause menu"
+version.workspace = true
+edition.workspace = true
+# Links the GPL-3.0 Skate 3 engine (third_party/skate-engine).
+license = "GPL-3.0-only"
+publish.workspace = true
+
+[[bin]]
+name = "mcc-rust-rewrite"
+path = "src/main.rs"
+
+[dependencies]
+bevy = { workspace = true, features = ["bevy_audio"] }
+blam_cache = { workspace = true }
+blam_geometry = { workspace = true }
+blam_texture = { workspace = true }
+blam_h1 = { workspace = true }
+blam_script = { workspace = true }
+blam_h2 = { workspace = true }
+blam_reach = { workspace = true }
+anyhow = { workspace = true }
+mcc_anim = { workspace = true }
+mcc_ai = { workspace = true }
+game_paths = { workspace = true }
+mcc_setup = { workspace = true }
+mcc_audio = { workspace = true }
+mcc_bike = { workspace = true }
+mcc_core = { workspace = true }
+mcc_effects = { workspace = true }
+mcc_foot = { workspace = true }
+mcc_rider = { workspace = true }
+mcc_script = { workspace = true }
+mcc_skate = { workspace = true }
+mcc_swim = { workspace = true }
+mcc_textures = { workspace = true }
+mcc_weapons = { workspace = true }
+mcc_world = { workspace = true }

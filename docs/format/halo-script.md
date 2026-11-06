@@ -9,7 +9,7 @@ matching contents against things whose meaning is plain (script names, function 
 make sense of their arguments, positions that land in the level).
 
 Code: `crates/blam_script` (reader, decompiler, `blam scripts`), `crates/blam_geometry/src/objects.rs`
-(object collision models and damage sections), `crates/halo3_script` (the runtime).
+(object collision models and damage sections), `crates/mcc_script` (the runtime).
 
 Probes (`python -I`, read-only, in `docs/format/scripts/`):
 
@@ -22,7 +22,7 @@ Probes (`python -I`, read-only, in `docs/format/scripts/`):
 
 Pinned by `cargo test`: `crates/blam_script/tests/maps.rs` (counts below),
 `crates/blam_geometry/tests/objects.rs` (plate collision, damage sections, no BSP floor under the
-plates), `crates/halo3_script/tests/warthog_run.rs` (the run's scripts dropping plates).
+plates), `crates/mcc_script/tests/warthog_run.rs` (the run's scripts dropping plates).
 
 ## 1. Where the scripts are (offsets from the start of the `scnr` tag data)
 
@@ -316,7 +316,7 @@ islands that tip and sink. What happens, in the scripts' own words (`blam script
 Nothing in the run is a crate or effect scenery: the floor is scenery, its collision is the
 scenery's `coll`, and "blow up" and "fall away" are damage sections of the plate's model.
 
-## 10. Our runtime (`crates/halo3_script`)
+## 10. Our runtime (`crates/mcc_script`)
 
 * **Threads.** One per startup, continuous and dormant script; static scripts are called inline.
   Each thread is an explicit stack of frames, so `sleep`, `sleep_until` (default period 30
@@ -333,7 +333,7 @@ scenery's `coll`, and "blow up" and "fall away" are damage sections of the plate
   fly camera, or the skater through `Respawn`), `switch_zone_set`, `current_zone_set`,
   `device_set_position`/`_immediate`/`device_animate_position`/`device_set_position_track`/
   overlay tracks/`device_get_position` (a 0..1 position animated over time), `effect_new*` at
-  flags, points and objects (played from the map's `effe` tags by `halo3_effects`, `effects.md`),
+  flags, points and objects (played from the map's `effe` tags by `mcc_effects`, `effects.md`),
   `kill_volume_enable`/`_disable` (below).
 * **Deliberate difference:** `object_destroy_folder` only removes objects that start absent.
   `object_management` drops the run's plate folders purely to save memory and
@@ -341,34 +341,34 @@ scenery's `coll`, and "blow up" and "fall away" are damage sections of the plate
   wherever you start riding or walking (a bike dropped ahead of the plate triggers used to
   fall through).
 * **Kill volumes** follow the scripts: `kill_volume_disable` / `_enable` switch the volume off
-  and on for the bike, the Spartan and the skater (`halo3_core::falls`). The run's start flag
+  and on for the bike, the Spartan and the skater (`mcc_core::falls`). The run's start flag
   lies inside `kill_100_01`, which is on until `object_management` turns it off; the insertion
   is run for 15 ticks before the first frame so that has happened before anyone can press B, J
   or F. A script teleport also becomes the fallback spot for a fall.
 * **Stubbed:** anything not listed logs once (`script: X is not implemented; does nothing`) and
   returns its type's default (0, false, no object). Cinematics, HUD, fades, saves. The sound functions
   (`sound_looping_*`, `sound_impulse_start` / `_stop`, `sound_class_set_gain`) are queued for the
-  sound side as `halo3_core::script_sound::SoundRequest`s (`sound.md` 8).
+  sound side as `mcc_core::script_sound::SoundRequest`s (`sound.md` 8).
 * **Objects drawn on their own.** Every scene object a script constant names, every object in a
   folder a script names, and every object that starts absent is `SceneObject::dynamic`: the
   world builds its chunks apart (`ObjectChunk`), so the runtime can hide one (`ScriptHidden`) or
   move it (the chunk's `Transform`). On 120_halo that is about 1,300 objects.
 * **Collision.** Every placed object's `coll` is added to the collision (`objects::add_collision`,
   `CollisionSource::Object`). When an object stops being solid (destroyed, dropped, absent, a
-  device on a falling track past 2 %) the runtime tells `halo3_core::objects`; the bike's and
+  device on a falling track past 2 %) the runtime tells `mcc_core::objects`; the bike's and
   the Spartan's collision grid skip its triangles at once, and the skater's collision is rebuilt
   without them a second after the last change (on a helper thread, like a zone-set swap). A
   solid object a script moves (a run island tilting under `tilt_up`) collides where it is drawn:
-  `publish_collision` hands its motion to `halo3_core::objects::set_object_pose`, the bike's world
+  `publish_collision` hands its motion to `mcc_core::objects::set_object_pose`, the bike's world
   looks its triangles up through that motion, the skater's is rebuilt with it.
 * **Starting it.** Off unless asked: `--insertion trench_run` runs `ins_trench_run` as the
   designers did at the console (with the `editor` global on, so `mission_halo` does not run its
   own `start`), `--insertion N` starts at insertion point N, `--scripts` runs from the mission's
-  own start. `HALO3_SCRIPTS=0` turns them off, `HALO3_OBJECT_COLLISION=0` drops object collision.
+  own start. `MCC_SCRIPTS=0` turns them off, `MCC_OBJECT_COLLISION=0` drops object collision.
 
 ### Interface for the AI (enemies agent)
 
-`halo3_script::hooks::AiHooks`, installed with `app.insert_resource(ScriptAi::new(MyAi))`:
+`mcc_script::hooks::AiHooks`, installed with `app.insert_resource(ScriptAi::new(MyAi))`:
 
 ```rust
 pub trait AiHooks: Send + Sync + 'static {
@@ -392,7 +392,7 @@ gives their place for volume tests. `HookContext` has the player's position, the
 
 ### Interface for animation (biped-anim agent)
 
-`halo3_script::hooks::DevicePoser`, installed with `app.insert_resource(ScriptAnimation::new(p))`:
+`mcc_script::hooks::DevicePoser`, installed with `app.insert_resource(ScriptAnimation::new(p))`:
 
 ```rust
 pub trait DevicePoser: Send + Sync + 'static {
@@ -402,7 +402,7 @@ pub trait DevicePoser: Send + Sync + 'static {
 ```
 
 `object` is the `Scene::objects` index and `tag` its `mach` tag (`hlmt + 0x20` is the `jmad`).
-The animation crate on branch `biped-anim` (`halo3_anim`: `AnimModel::load(cache, mach_tag)`,
+The animation crate on branch `biped-anim` (`mcc_anim`: `AnimModel::load(cache, mach_tag)`,
 `Animator::set_position(p)`, `play_named("fall", false)`) fits behind it once both are on
 master: an adapter loads one `AnimModel` per `tag`, sets the position, and returns the root
 node's transform. Until then the stand-in below is used.

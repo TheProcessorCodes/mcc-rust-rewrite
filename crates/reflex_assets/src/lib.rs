@@ -2,8 +2,8 @@
 //! written, never copied into this project): the database/package pairs in
 //! `<Reflex>\Database`, and in them the bike meshes, skeletons and
 //! textures. `bike::load` puts together the Dakumoto 450F with the Cortana
-//! graphics kit for `halo3_bike`; `engine_audio::load_450f` its engine
-//! recordings for `halo3_audio`.
+//! graphics kit for `mcc_bike`; `engine_audio::load_450f` its engine
+//! recordings for `mcc_audio`.
 //!
 //! `docs/format/reflex-bike.md` has the format notes this is written from.
 
@@ -53,7 +53,7 @@ pub fn is_reflex(root: &Path) -> bool {
 }
 
 /// The Reflex install: `$REFLEX_GAME` (a developer override), else the one the
-/// player chose in first-run setup (`halo3_setup`;
+/// player chose in first-run setup (`mcc_setup`;
 /// `game_paths::reflex_root`). `None` when there is no Reflex; the bike is
 /// then drawn as sticks.
 pub fn find_reflex() -> Option<PathBuf> {

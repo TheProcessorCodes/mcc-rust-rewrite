@@ -790,8 +790,8 @@ What each consumer must do:
 |---|---|---|
 | renderer (bevy 0.20 / wgpu) | **no flip**; hand over the decoded order | bevy_pbr 0.20 builds its mesh pipeline as `PrimitiveState { cull_mode: Some(Face::Back), ..default() }` (`bevy_pbr-0.20.0\src\render\mesh.rs` lines 3774-3780), `front_face` is left at wgpu's default `FrontFace::Ccw` (`wgpu-types-29.0.4\src\render.rs` lines 323-325, `#[default] Ccw`, "the default with right handed coordinate spaces"), and `StandardMaterial::cull_mode` defaults to `Some(Face::Back)` (`pbr_material.rs` line 933). The Z-up to Y-up change `(x, y, z) -> (x, z, -y)` is a proper rotation (det +1) and keeps the winding |
 | skate collision soup | **no flip**; do NOT swap vertices 1 and 2 the way IW4L's `extract()` does | the skate engine computes `normal = (b - a) x (c - a)` and treats every triangle as `ONE_SIDED` (`skate-host\src\skate_world.rs` lines 237-246); it wants counter-clockwise seen from the standable side (`render_anim\src\skate\collision.rs` lines 49-54: "IW4 traces clockwise faces; Skate uses counterclockwise faces"). IW4's clip triangles are clockwise, Halo's are already counter-clockwise, so the IW4 swap must not be copied. `to_skate_halo` is the same proper rotation as above |
-| mirrored instance placement (`det(R) < 0`, section 2.2) | swap `i1` and `i2` for that placement only | a reflection reverses the handedness of the triangle; HaloExport does exactly this (`HaloExport\Program.cs` lines 520-525: `det < 0` swaps the 2nd and 3rd index) and so does the Valhalla stand-in (`halo3_world\src\lib.rs` line 530 `flip = determinant3(&matrix) < 0.0`). **Never exercised**: all 262 riverworld and all 834 cyberdyne placements have det exactly +1.0000 (checked by the script) |
-| two-sided materials | not a winding question; if a shader is two-sided, emit the triangle in both orders (what `halo3_world` does for `double_sided` materials, `lib.rs` lines 592-597) | which `rmsh` options mean two-sided is out of scope here |
+| mirrored instance placement (`det(R) < 0`, section 2.2) | swap `i1` and `i2` for that placement only | a reflection reverses the handedness of the triangle; HaloExport does exactly this (`HaloExport\Program.cs` lines 520-525: `det < 0` swaps the 2nd and 3rd index) and so does the Valhalla stand-in (`mcc_world\src\lib.rs` line 530 `flip = determinant3(&matrix) < 0.0`). **Never exercised**: all 262 riverworld and all 834 cyberdyne placements have det exactly +1.0000 (checked by the script) |
+| two-sided materials | not a winding question; if a shader is two-sided, emit the triangle in both orders (what `mcc_world` does for `double_sided` materials, `lib.rs` lines 592-597) | which `rmsh` options mean two-sided is out of scope here |
 
 ### Evidence
 
@@ -833,7 +833,7 @@ What each consumer must do:
    same thing.
 
 5. **The proven chain in the Valhalla stand-in** (`mashup-halo3-valhalla`): glTF triangles (counter-
-   clockwise front, the Halo order) -> `halo3_world` swaps to clockwise for IW4's tracer
+   clockwise front, the Halo order) -> `mcc_world` swaps to clockwise for IW4's tracer
    (`lib.rs` lines 586-588, comment at line 116 "wound clockwise seen from the side that blocks")
    -> IW4L's `extract()` swaps back to counter-clockwise for the skate engine (`collision.rs` lines
    49-54). Net effect: the skate engine receives the Halo order unchanged, and Valhalla and The Pit

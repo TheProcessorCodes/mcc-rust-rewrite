@@ -142,7 +142,7 @@ fn check_setups(bank: &Bank, setups: &Setups) -> Result<()> {
     Ok(())
 }
 
-/// The dialogue bank of `language` (one of [`LANGUAGES`]) in the `halo3`
+/// The dialogue bank of `language` (one of [`LANGUAGES`]) in the `mcc-rust-rewrite`
 /// folder: `fmod\pc\<language>.fsb`.
 pub fn language_bank(halo3_dir: &Path, language: &str) -> Result<PathBuf> {
     if !LANGUAGES.contains(&language) {

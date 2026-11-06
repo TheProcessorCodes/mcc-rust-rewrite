@@ -1,5 +1,5 @@
 # Link with LLVM's lld, which ships with the Rust toolchain, instead of MSVC's
-# link.exe: linking the halo3 binary is most of an incremental build, and
+# link.exe: linking the mcc-rust-rewrite binary is most of an incremental build, and
 # link.exe takes 5-7 GB and tens of seconds on bevy's debug info. Changing the
 # linker rebuilds every crate once.
 [target.x86_64-pc-windows-msvc]

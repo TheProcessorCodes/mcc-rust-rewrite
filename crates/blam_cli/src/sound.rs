@@ -13,7 +13,7 @@
 //!   speaker, effect, `snd!` and its length in the language bank
 //!   (`sound.md` 11)
 //!
-//! The dialogue bank is the setup's language (`HALO3_LANGUAGE` overrides).
+//! The dialogue bank is the setup's language (`MCC_LANGUAGE` overrides).
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

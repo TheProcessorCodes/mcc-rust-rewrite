@@ -1,5 +1,5 @@
 //! Halo CE's effects turned into Halo 3's effect types
-//! ([`blam_effect::Library`]), so `halo3_effects` plays them with the
+//! ([`blam_effect::Library`]), so `mcc_effects` plays them with the
 //! renderer it already has: an effect's events, its `part` particles as
 //! emitters, its `pctl` particle systems as one emitter per particle state
 //! (fire, then smoke), its lights as flashes, its sounds handed on by tag.
@@ -26,17 +26,17 @@ use blam_texture::shader::{Blend, Shader, ShaderMap, Xform};
 use crate::effect::{self, Orientation, ParticleShader, PointPhysics};
 use crate::{Map, Result};
 
-/// A light's intensity as `halo3_effects` reads it (its `LIGHT_SCALE`
+/// A light's intensity as `mcc_effects` reads it (its `LIGHT_SCALE`
 /// makes 20 about one unit of irradiance): our choice, by eye, for every
 /// Halo CE effect light at the start of its life (20 turned the whole
 /// Warthog bay flat orange).
 pub const LIGHT_INTENSITY: f32 = 12.0;
-/// What particle colours are multiplied by: `halo3_effects` multiplies
+/// What particle colours are multiplied by: `mcc_effects` multiplies
 /// every particle by its exposure (3), chosen for Halo 3's run; this
 /// undoes it, so a Halo CE colour reaches the screen as the tag has it
 /// (at x3 the grey smoke plume came out white).
 pub const COLOUR_SCALE: f32 = 1.0 / 3.0;
-/// `halo3_effects` lights reach this many times a light's size.
+/// `mcc_effects` lights reach this many times a light's size.
 const LIGHT_RANGE_PER_SIZE: f32 = 4.0;
 /// Halo CE runs at 30 ticks a second.
 const TICKS: f32 = 30.0;

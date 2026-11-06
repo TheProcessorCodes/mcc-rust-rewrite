@@ -137,7 +137,7 @@ bounds" are inferred, not confirmed):
 | `biped` | 0.5 | 0.25 | 0, 0 | 0, 0 | 6.5, 8.5 | 0, 0 |
 | `object_fragile` | 0 | 0 | 0, 0 | 0, 0 | 0.025, 0.5 | 0, 0 |
 
-Our reading, used by `halo3_ai` for the dirt bike running into actors: +0x00 is the damage scale
+Our reading, used by `mcc_ai` for the dirt bike running into actors: +0x00 is the damage scale
 the vehicle applies (1.2) and +0x08 / +0x0C a speed band in wu/s (3 to 8, about 33 to 88 km/h)
 over which a hit goes from no damage to the full `collision` effect. So a bike hit deals
 `100 x 1.2 x clamp((closing speed - 3) / (8 - 3), 0, 1)`. The engine's own use of acceleration,

@@ -14,7 +14,7 @@ squad `343_spark` places palette character 0 `monitor` holding palette weapon 17
 
 Code: `crates/blam_geometry/src/ai.rs` (reader), `crates/blam_cli/src/ai.rs` (`blam ai <map>
 [--squads] [--zones] [--characters]`), `crates/blam_geometry/tests/ai.rs` (pinned counts), the game
-side `crates/halo3_ai`. Probe: `python -I docs/format/scripts/probe_ai.py <map>
+side `crates/mcc_ai`. Probe: `python -I docs/format/scripts/probe_ai.py <map>
 [summary|squads|survey|chars|zones]`.
 
 Units: world units (wu, 1 wu = 3.048 m), radians, seconds; +Z up.
@@ -214,7 +214,7 @@ model's (the infection form's says 1: they pop at a touch; its character inherit
 bytes: 35 rows of four floats, one per difficulty (easy, normal, heroic, legendary). On 120_halo
 the first row is **0.1, 0.775, 1.0, 1.6**, which by its shape and its place (Halo CE's difficulty
 block starts with "enemy damage") reads as the scale on the damage enemies deal to the player;
-`halo3_ai` applies it (`blam_geometry::ai::enemy_damage_scales`). The other rows (for example
+`mcc_ai` applies it (`blam_geometry::ai::enemy_damage_scales`). The other rows (for example
 `+0x30` 1.4 / 1.0 / 0.7 / 0.3, `+0x130` 0.1 / 0.5 / 0.75 / 1.0, `+0x150` 4 / 2 / 1 / 0.25) are not
 named or used.
 
@@ -245,7 +245,7 @@ too; the game places almost all of these by script (`ai_place`).
 2. "Major upgrade", grenade type, swarm count and the placement script index are inferred from their
    values only.
 3. Which perception element applies when (`ai\generic` has four, the pure forms one).
-4. Speeds: Halo moves actors by their animations' root motion (`jmad`), not read; `halo3_ai` uses its
+4. Speeds: Halo moves actors by their animations' root motion (`jmad`), not read; `mcc_ai` uses its
    own per-type speeds until the animation code supplies them.
-5. The damage effects' head-shot and material responses: `halo3_ai` doubles a head hit on an
+5. The damage effects' head-shot and material responses: `mcc_ai` doubles a head hit on an
    unshielded non-Flood actor as a stand-in.

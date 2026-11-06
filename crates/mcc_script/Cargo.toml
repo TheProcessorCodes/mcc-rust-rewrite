@@ -1,0 +1,21 @@
+[package]
+name = "mcc_script"
+description = "Runs a Halo 3 map's own HaloScript: script threads, objects, devices, trigger volumes, with hooks for the AI and animation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+glam = { workspace = true }
+blam_cache = { workspace = true }
+blam_geometry = { workspace = true }
+blam_script = { workspace = true }
+blam_sound = { workspace = true }
+game_paths = { workspace = true }
+mcc_core = { workspace = true }
+
+[dev-dependencies]
+blam_h1 = { workspace = true }
+game_paths = { workspace = true }

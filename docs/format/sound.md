@@ -297,9 +297,9 @@ clear the globals; three places switch a piece to its alternate loop
    10 s), clears `g_music_120_15`: the piece stops, which on the alternate loop plays the 77 s
    alternate outro (the finale) after the playing loop.
 
-Pinned by `halo3_script/tests/trench_music.rs`, which drives the player through those volumes.
+Pinned by `mcc_script/tests/trench_music.rs`, which drives the player through those volumes.
 
-**How we play a piece** (`halo3_audio/src/music.rs`):
+**How we play a piece** (`mcc_audio/src/music.rs`):
 
 * Start: each track plays its intro, then picks loop permutations at random (never the same one
   twice running) with no gap. A track with the fade-in flag ramps up over its fade-in time. A
@@ -355,11 +355,11 @@ The sound mix tag (`snmx`, `sound\sound_mix`, one per map) is not decoded: a few
 (`0x04` -2, `0x10` -2, `0x24`..`0x34` -6 / -9, `0x40` -10, `0x48` 4) and a `snd!` reference at
 `0x94`; probably the first-person and speaker mix.
 
-**Our mix on top** (`halo3_audio`): music at 0 dB class gain as tagged. Sound scenery a further
+**Our mix on top** (`mcc_audio`): music at 0 dB class gain as tagged. Sound scenery a further
 -9 dB and weapons +6 dB over their class (`SCENERY_GAIN`, `WEAPON_GAIN`: our choices, see the
 code). Every voice is on a bus (music: classes 32, 38; dialogue: 19, 46 to 48; ambience:
 backgrounds, details, sound scenery, classes 33 and 34; effects: the rest, weapons, board sounds)
-whose volume is the player's slider. Measured headless on the Warthog run (`HALO3_AUDIO_TRACE=1`,
+whose volume is the player's slider. Measured headless on the Warthog run (`MCC_AUDIO_TRACE=1`,
 `audio levels` lines, RMS before the master volume): music -18 dBFS, ambience next to two plates
 -25 dBFS (before: about -11).
 
@@ -401,7 +401,7 @@ So a line's length in the player's language is `PCM bytes / (channels x 2) / 480
 `.info` alone (`blam_sound::info_seconds`). The `snd!`'s own longest-permutation field
 (`+0x14`, 2,133 ms for `120mg_030_cor`) is the English length.
 
-The language is the setup's `LANGUAGE` (`game_paths::language`; `HALO3_LANGUAGE` overrides),
+The language is the setup's `LANGUAGE` (`game_paths::language`; `MCC_LANGUAGE` overrides),
 English when unset. Setup does not ask yet.
 
 ### 11.2 `mdlg`, mission dialogue
@@ -448,13 +448,13 @@ The scenario does not seem to reference the `mdlg` in its first 4 KiB; it is rea
   `120_08_trench_encounter_120`, `trench_run_120_trig02`, `_trig10`, `_trig14`).
   `md_09_cortana_hints` first waits for the hallway before the run (`120_07_c_hall_end`), which
   `ins_trench_run` puts the player past; our `trench_run` insertion counts that volume as passed
-  (`setup::PASSED_ON_THE_WAY`). Pinned by `halo3_script/tests/trench_dialogue.rs`.
+  (`setup::PASSED_ON_THE_WAY`). Pinned by `mcc_script/tests/trench_dialogue.rs`.
 * Levels: the class's -3 dB plus the sound's playback gain (-3 dB on most of Cortana's run
   lines, -5 on `120mg_010`), on the dialogue bus (the pause menu's Dialogue slider). A line
   decodes at about -16 dBFS RMS (`120mg_030_cor`), so it plays near -22 dBFS against the run's
   music at about -18 to -21. While a line plays the other buses duck by the classes' `+0x5C`
   (section 9): music -3 dB (class 32), effects -6 dB (class 4), ambience 0 (class 33), fading
-  over 0.5 s. Measured headless on `warthog_run` (`HALO3_AUDIO_TRACE=1`, riding from just before
+  over 0.5 s. Measured headless on `warthog_run` (`MCC_AUDIO_TRACE=1`, riding from just before
   the first volume): Cortana about -22 to -25 dBFS, the music -18.6 dBFS, -19.6 over a window
   that was mostly ducked. Not compared with the real game.
 * Not done: the effects (`cortana_mission`, the radio filters, `radio_3d`); AI combat dialogue

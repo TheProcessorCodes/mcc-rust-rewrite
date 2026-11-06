@@ -108,7 +108,7 @@ impl Session {
         self.input = ControllerInput::default();
         Ok(self.pose())
     }
-    /// Gives the board, its hook and the skater's body this velocity (halo3:
+    /// Gives the board, its hook and the skater's body this velocity (mcc-rust-rewrite:
     /// getting on the board while moving, off the bike or from a run). The
     /// teleport in `activate` leaves them at rest; this seeds momentum the
     /// way `apply_vehicle_ejection` does, but keeps him standing on the board.
@@ -132,7 +132,7 @@ impl Session {
         self.input = ControllerInput::default();
         self.markers.suspend();
     }
-    /// Where the session marker is set, if it is (halo3: the session flag).
+    /// Where the session marker is set, if it is (mcc-rust-rewrite: the session flag).
     pub fn session_marker(&self) -> Option<Vec3> {
         self.markers.position()
     }
