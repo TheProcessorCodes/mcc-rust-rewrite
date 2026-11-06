@@ -3,8 +3,7 @@ name = "mcc-rust-rewrite"
 description = "The game: MCC Halo maps with Skate 3 skating and the MX vs ATV Reflex dirt bike; wires the mcc_* crates into an app, screenshots and the pause menu"
 version.workspace = true
 edition.workspace = true
-# Links the GPL-3.0 Skate 3 engine (third_party/skate-engine).
-license = "GPL-3.0-only"
+license.workspace = true
 publish.workspace = true
 
 [[bin]]

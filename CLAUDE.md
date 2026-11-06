@@ -39,8 +39,10 @@ far, the paths on disk and the open decision.
 - **Code elsewhere on disk is reference, not ours to edit.** `mw2-skate-3-src`,
   `reflex-tools` and the Reclaimer clone belong to other work. Read them and copy what
   helps into this project; do not change them without asking.
-- **Licenses**: Gravemind2401's Reclaimer is GPL-3.0. Porting its code line by line makes
-  that code GPL-3.0. IW4L is Apache-2.0. Raise this with the user before porting Reclaimer.
+- **Licenses**: this project is GPL-3.0-only (workspace `license` in `Cargo.toml`, text in
+  `LICENSE`). Gravemind2401's Reclaimer is GPL-3.0; the user chose not to port its code, so
+  raise it with them before porting Reclaimer. IW4L is Apache-2.0, which may be used in a
+  GPL-3.0 work: keep its notice in files copied from it, and keep `LICENSE-APACHE`.
   The Skate 3 engine is vendored in `third_party/skate-engine` (GPL-3.0-only, so a released
   `mcc-rust-rewrite.exe` is GPL-3.0); the skate crates are built from there, not from `mw2-skate-3-src`.
   Any change made there goes in the list in its README.
