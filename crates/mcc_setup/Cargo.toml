@@ -1,0 +1,19 @@
+[package]
+name = "mcc_setup"
+description = "First-run setup: find MCC, take Skate 3 (.iso or default.xex), convert it once, save the paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+blam_cache = { workspace = true }
+game_paths = { workspace = true }
+glam = { workspace = true }
+# The board and rig export (`board.rs`, from IW4L).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+half = "2"
+png = "0.18"
+# Native message boxes and file pickers, as IW4L's launcher uses.
+rfd = { version = "0.15", default-features = false }

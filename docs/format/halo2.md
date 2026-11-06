@@ -358,7 +358,7 @@ texcoords.
 
 How the game combines the light with the surface is not in the map (MCC's PC shaders are not
 in the `.map`). The viewer treats the texel as a gamma-space colour that multiplies the
-surface, doubled (`halo3::halo2::LIGHTMAP_SCALE`, picked by eye on Lockout): dark blue snow
+surface, doubled (`mcc_rust_rewrite::halo2::LIGHTMAP_SCALE`, picked by eye on Lockout): dark blue snow
 outside, warm lamp pools inside.
 
 ## 11. Weapons
@@ -370,7 +370,7 @@ tags live in `shared.map`.
 block (+0x90, palette +0x98; empty on Lockout). Weapons and grenades are **netgame equipment**
 (scenario +0x120), each naming an item collection; what a player spawns with is the **starting
 equipment** (+0x128). Before this reader the viewer read neither, so walking on a Halo 2 map gave
-no weapon at all: the Halo 3 weapon loader (`halo3_weapons::assets::load`) needs a Halo 3 cache
+no weapon at all: the Halo 3 weapon loader (`mcc_weapons::assets::load`) needs a Halo 3 cache
 file, and the Halo 2 path never called anything in its place.
 
 ### 11.1 Netgame equipment (+0x120, 0x90 each)
@@ -442,7 +442,7 @@ range and velocities. The damage effect is not read.
 
 `halo2.rs` reads the above, decodes the weapons' third-person models through the same render
 model path as scenery (`blam_h2::decode_models`, so the compression bounds of section 5 apply:
-the battle rifle is 0.30 wu long) and hands them to `halo3_weapons::assets::from_scene`. Walking
+the battle rifle is 0.30 wu long) and hands them to `mcc_weapons::assets::from_scene`. Walking
 then works as on Halo 3 maps: the SMG in hand, the 14 netgame weapons lying where the scenario
 puts them, picked up, swapped and fired with the numbers above. Not done: grenades and other
 `eqip` items are not placed; items rest at the netgame point as stored (the game drops them to
@@ -514,8 +514,8 @@ the middle; the upper box shoves him out over the top towards world -Y (into the
 degrees down, which kills most of the upward speed and puts him on the upper floor.
 `crates/blam_h2/tests/lockout.rs` (`lockout_lift`) pins both boxes.
 
-Walked headless on the real collision (`crates/halo3_foot/tests/lockout_lift.rs`, and
-`halo3 lockout --shot DIR --foot --view "-1.5,12.53,-11.9,-90,0"` with `HALO3_FOOT_WALK=0,0`):
+Walked headless on the real collision (`crates/mcc_foot/tests/lockout_lift.rs`, and
+`mcc-rust-rewrite lockout --shot DIR --foot --view "-1.5,12.53,-11.9,-90,0"` with `MCC_FOOT_WALK=0,0`):
 standing on the pad at z -12.2 he rises at 4 wu/s, peaks at z -6.2 after 2.2 s and lands at
 (-2.07, 9.38, -8.10), on the upper walkway 4.1 wu above the pad, facing into the map.
 
@@ -538,8 +538,8 @@ Each step a body touching a volume (within its radius) gets, from each volume it
   the overshoot to Havok's damping; the settling time is our own choice;
 - no gravity while any volume it touches negates gravity.
 
-Walking (`halo3_foot`) and the dirt bike (`halo3_bike`, unless the volume ignores vehicles) take
-the push through `halo3_core::lifts::Lifts`. The skateboard does not: the Skate 3 engine runs its
+Walking (`mcc_foot`) and the dirt bike (`mcc_bike`, unless the volume ignores vehicles) take
+the push through `mcc_core::lifts::Lifts`. The skateboard does not: the Skate 3 engine runs its
 own physics and takes no outside push. Swimming has no lifts.
 
 ## 13. Sound (`snd!`, `lsnd`, `ugh!`, `sounds_*.dat`)

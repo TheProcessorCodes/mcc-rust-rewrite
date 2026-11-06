@@ -58,7 +58,7 @@ instead (one bone, weight 1).
    bind) and, per piece, either a bone index (rigid) or the skin arrays.
 3. `scene.rs`: `Mesh.skin: Option<Skin>` and `Scene.skeletons`; a `Placement` may name a
    skeleton.
-4. `halo3 --model <mode tag path>`: opens a map, decodes one render model, shows it in bind
+4. `mcc-rust-rewrite --model <mode tag path>`: opens a map, decodes one render model, shows it in bind
    pose with its bones as small gizmo axes (gizmos are enabled); `--bones` prints the node
    tree with names. This checks skinning before any skate code exists.
 5. Retarget table: Halo node names -> the 35 skate bones (`rig.rs` has the MW2 table;

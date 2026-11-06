@@ -35,7 +35,7 @@ impl Runtime {
     pub fn load(root: &std::path::Path) -> Result<Self,String> { Ok(Self{session:SessionMarker::default(),validation:validation::Validation::load(root)?}) }
     pub fn suspend(&mut self) { self.session.hold.cancel(); self.session.blocked_until_release=true; self.session.ui_time=0.; }
     pub fn collect_time(&mut self,dt:f64) { self.session.ui_time+=dt; }
-    /// The marker's position, if one is set (halo3: the session flag).
+    /// The marker's position, if one is set (mcc-rust-rewrite: the session flag).
     pub fn position(&self) -> Option<Vec3> { self.session.marker.map(|m| Vec3::from_slice(&m.transform[3][..3])) }
     pub fn advance(&mut self,input:&ControllerInput,physics:&GamePhysics,skater:&mut SkaterRuntime) {
         update(&mut self.session,input,physics,skater,&self.validation);

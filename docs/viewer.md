@@ -1,11 +1,11 @@
-# The viewer (`halo3`)
+# The viewer (`mcc-rust-rewrite`)
 
 Opens a map and lets you fly through it: goal 2 of the handoff, the noclip.
 
 ```
-cargo build -p halo3
-& "target\debug\halo3.exe" riverworld
-& "target\debug\halo3.exe" --test-scene
+cargo build -p mcc-rust-rewrite
+& "target\debug\mcc-rust-rewrite.exe" riverworld
+& "target\debug\mcc-rust-rewrite.exe" --test-scene
 ```
 
 A bare map name is looked up in the MCC install first-run setup saved
@@ -15,7 +15,7 @@ the camera without any map decoding.
 Headless pictures (no window; `shot.rs`):
 
 ```
-target\debug\halo3.exe riverworld --shot out\shots --view spawn --view overview --view spawn12 --view 10,-20,5,90,-10
+target\debug\mcc-rust-rewrite.exe riverworld --shot out\shots --view spawn --view overview --view spawn12 --view 10,-20,5,90,-10
 ```
 
 A view is `x,y,z,yaw,pitch` in Halo units and degrees, `spawn` / `spawnN` the start (or Nth)
@@ -35,7 +35,7 @@ middle.
 | P | print the camera's position in Halo units to the console |
 | V | show or hide the game's real collision: green shell for surfaces, red for invisible walls |
 | F, or gamepad d-pad up | on foot / fly (see "On foot" below) |
-| J | skate / fly (`crates/halo3_skate/src/lib.rs`) |
+| J | skate / fly (`crates/mcc_skate/src/lib.rs`) |
 | B, or gamepad View / Back | dirt bike / fly (see "Dirt bike" below) |
 | PageDown / PageUp | next / previous zone set (campaign maps) |
 | Home | load every BSP at once |
@@ -68,19 +68,19 @@ textures and lightmaps it uses; see "Streaming and culling" below. What is
 loaded first:
 
 ```
-& "target\debug\halo3.exe" 120_halo                 # the zone set the start is in (zone set 0)
-& "target\debug\halo3.exe" 120_halo --zone 6        # by index ...
-& "target\debug\halo3.exe" 120_halo --zone 120_110_120   # ... or by name
-& "target\debug\halo3.exe" 120_halo --bsps 7,8,9    # any BSPs (indices in the scenario)
-& "target\debug\halo3.exe" 120_halo --all-bsps      # everything (overlaps)
+& "target\debug\mcc-rust-rewrite.exe" 120_halo                 # the zone set the start is in (zone set 0)
+& "target\debug\mcc-rust-rewrite.exe" 120_halo --zone 6        # by index ...
+& "target\debug\mcc-rust-rewrite.exe" 120_halo --zone 120_110_120   # ... or by name
+& "target\debug\mcc-rust-rewrite.exe" 120_halo --bsps 7,8,9    # any BSPs (indices in the scenario)
+& "target\debug\mcc-rust-rewrite.exe" 120_halo --all-bsps      # everything (overlaps)
 ```
 
 The console prints the zone sets and BSPs at start. As you fly or skate
 through the scenario's zone-set switch volumes the zone set follows, as in the
 game: entering a `begin_zone_set:` volume builds the next zone set's BSPs in
 the background, entering a `zone_set:` volume switches to it
-(`HALO3_ZONE_TRIGGERS=0` turns this off; it is off for `--shot` unless
-`HALO3_ZONE_TRIGGERS=1`, and whenever `--bsps`, `--all-bsps` or Home chose
+(`MCC_ZONE_TRIGGERS=0` turns this off; it is off for `--shot` unless
+`MCC_ZONE_TRIGGERS=1`, and whenever `--bsps`, `--all-bsps` or Home chose
 BSPs by hand). PageDown / PageUp still step by hand.
 
 Objects follow their origin BSP (objects with none always show); a sky shows
@@ -104,8 +104,8 @@ in 4.6 s, the skater's own data 6 s). Rails over all 11 BSPs would take 16 s
 and give 58,600, most of them ledges under the run the player never reaches.
 
 `world/zones.rs` is the API: `LoadedBsps` (wanted mask, shown mask, zone set,
-sky), `load_zone_set`, `load_bsps`. `HALO3_SKY=0` hides the sky, for telling
-sky pieces from the world. `HALO3_ZONE_SWITCH_TEST=N@S` switches to zone set N
+sky), `load_zone_set`, `load_bsps`. `MCC_SKY=0` hides the sky, for telling
+sky pieces from the world. `MCC_ZONE_SWITCH_TEST=N@S` switches to zone set N
 after S seconds of skating (or of running), for testing without a keyboard.
 
 ## Streaming and culling
@@ -135,12 +135,12 @@ after S seconds of skating (or of running), for testing without a keyboard.
   and a flood through the cluster portals, keeping the screen rectangle each
   portal covers, marks the clusters that can be seen; chunks of the others
   are hidden (`docs/format/sbsp-portals.md` 4). A camera in no cluster (in a
-  wall, outside the level) sees the whole BSP. `HALO3_PORTALS=0` turns it off.
+  wall, outside the level) sees the whole BSP. `MCC_PORTALS=0` turns it off.
 - **Size.** Chunks of props whose largest member covers less than 1.5 pixels
   (bounding radius, 720-line view) are hidden, as are BSP instances smaller
   than their own fade size (`docs/format/lod.md`; Halo 3 has no other LOD or
   draw-distance data). The sky is never culled but by the frustum.
-  `HALO3_MIN_PIXELS=0` turns the size rule off.
+  `MCC_MIN_PIXELS=0` turns the size rule off.
 
 `--bench N` times N frames before each `--shot` picture (waiting for the GPU
 every frame) and logs what was drawn and the portal state. Measured
@@ -159,7 +159,7 @@ On this GPU the frame is bound by pixel shading (water, terrain blends,
 haze), not triangles, so halving the triangles barely moves the frame time
 except with every BSP loaded; the wins are in GPU memory (zone set 6: 227 MiB
 of textures uploaded instead of 383) and on slower GPUs. Pictures with and
-without the culling match (`HALO3_PORTALS=0 HALO3_MIN_PIXELS=0`; under 0.1 % of
+without the culling match (`MCC_PORTALS=0 MCC_MIN_PIXELS=0`; under 0.1 % of
 pixels differ, a few far props).
 
 ## Frame and units
@@ -185,7 +185,7 @@ bitmap once; `world.rs` turns them into one shared bevy `Image` per bitmap.
 | foliage (`rmfl`) and any `alpha_test simple` shader | `AlphaMode::Mask(0.5)` on the base map's alpha, or on `alpha_test_map` when the shader has its own (grates; Last Resort's palm fronds cut by their bump map's alpha), both sides drawn. The lighting shader is also the depth prepass's fragment shader, so maps with water (which get a depth prepass) cut the same way there; with bevy's own prepass the whole frond cards hid what was behind them and showed the haze colour |
 | `blend_mode` alpha_blend / pre_multiplied_alpha / additive / multiply | `Blend` / `Premultiplied` / `Add` / `Multiply`, no shadows. Multiply decals (High Ground's `medical_decals` on the medical crates) are drawn unlit, unexposed and unfogged: they scale the lit surface under them by their own colour. Lit and exposed, their white background times the exposure brightened what lay under them and washed the red crosses out |
 | opaque shaders | `Opaque`: the base map's alpha is a specular mask, not transparency, and is ignored |
-| terrain (`rmtr`) | the **four-layer blend**, in the lighting shader (see "Terrain" below). If the blend map or every layer fails to decode, or with `HALO3_TERRAIN_BLEND=0`, the single layer the blend map weights most over the whole map, as HaloExport does |
+| terrain (`rmtr`) | the **four-layer blend**, in the lighting shader (see "Terrain" below). If the blend map or every layer fails to decode, or with `MCC_TERRAIN_BLEND=0`, the single layer the blend map weights most over the whole map, as HaloExport does |
 | water (`rmw `) | its own water material: animated waves, sky reflection, murk and foam (see "Water" below) |
 | alpha-blended `two_detail` shaders whose detail maps scroll (Valhalla's waterfall) | the water material's flow mode: the maps scroll by the shader's own functions (see "Water") |
 | spawn markers: placements of `respawn_point`, `*_initial_spawn_point`, `*_respawn_zone` objects, and the `objects\multi\shaders\spawn_point*` and `shaders\invalid` shaders | not drawn: Forge shows them, a game never does (they were the black discs and white plasma columns on every map) |
@@ -223,7 +223,7 @@ the `global_albedo_tint`; the lightmap shader (`world/shaders/lightmap.wesl`,
 - weight of layer N = blend map channel N (red, green, blue, alpha). A layer
   whose `material_N` is `off` gets weight 0. The weights are then divided by
   their sum. The blend maps are already authored to sum to about 1, so this
-  changes little; `HALO3_TERRAIN_RAW=1` skips it so the two can be compared;
+  changes little; `MCC_TERRAIN_RAW=1` skips it so the two can be compared;
 - layer N = `base_map_m_N(uv * xform) * detail_map_m_N(uv * xform) *
   4.595`, both sampled as sRGB like every colour map. 4.595 = 2^2.2
   (`DETAIL_MULTIPLIER` in `world/lighting.rs`) makes a detail map's mid grey
@@ -284,11 +284,11 @@ reflection, with their vertex irradiance standing in for the surroundings
 (that is what turned The Construct's and The Citadel's black Forerunner
 blocks into the reflective panels they are: a near-black albedo under a
 strong specular mask).
-`HALO3_MATERIALS=0` turns all of this off (base colour and lightmap only, as
-before), `HALO3_SPECULAR` scales the specular (0 turns it off) and
-`HALO3_SELF_ILLUM` the self-illumination, `HALO3_REFLECTIONS=0` the cube
+`MCC_MATERIALS=0` turns all of this off (base colour and lightmap only, as
+before), `MCC_SPECULAR` scales the specular (0 turns it off) and
+`MCC_SELF_ILLUM` the self-illumination, `MCC_REFLECTIONS=0` the cube
 maps (back to the SH stand-in; `mirror` and `view` are the checks of
-`cubemaps.md` 4), `HALO3_CUBE_SCALE` their level and `HALO3_PARALLAX=0`
+`cubemaps.md` 4), `MCC_CUBE_SCALE` their level and `MCC_PARALLAX=0`
 parallax, for comparisons.
 
 Not yet: `two_detail`'s second detail map, change colours, decal
@@ -327,8 +327,8 @@ shaders, keeping their lightmap, and gives the camera a depth prepass when the m
 - **Waterfalls**: an alpha-blended `two_detail` shader whose detail maps scroll (Valhalla's
   `vahalla_waterfall`) is drawn as base x detail x detail2 with the xforms moving, lit by the
   lightmap: the water runs down the fall.
-- `HALO3_WATER_OFF=<bits>` turns parts off for comparison (1 waves, 2 foam, 64 lightmap,
-  128 sky reflection; see `WaterShading::params3`). `HALO3_WATER_MASKS=1` samples the painted
+- `MCC_WATER_OFF=<bits>` turns parts off for comparison (1 waves, 2 foam, 64 lightmap,
+  128 sky reflection; see `WaterShading::params3`). `MCC_WATER_MASKS=1` samples the painted
   masks (shape, watercolor, painted foam) at the mesh UV, which is the wrong texcoord: they
   come out in triangle patches (water.md 4.1), so they are off by default.
 
@@ -342,13 +342,13 @@ surface are dropped (`rails::out_of_deep_water`; Last Resort's sea bed had a 108
 no drag (the engine takes no outside forces). The fly camera passes through water. Log lines
 start with `water:`.
 
-For testing without a pad, `HALO3_SWIM_TEST=x,y,z` throws the skater to that Halo point once it
-has stood on dry ground for a second, and `HALO3_SKATE_FOR=<s>` rides that long before the
+For testing without a pad, `MCC_SWIM_TEST=x,y,z` throws the skater to that Halo point once it
+has stood on dry ground for a second, and `MCC_SKATE_FOR=<s>` rides that long before the
 `--skate` pictures:
 
 ```
-$env:HALO3_SWIM_TEST="70,20,1.0"; $env:HALO3_SKATE_FOR="8"
-& "target\debug\halo3.exe" riverworld --shot out\shots\lake --skate --view "79.76,-56.73,1.5,-88,0"
+$env:MCC_SWIM_TEST="70,20,1.0"; $env:MCC_SKATE_FOR="8"
+& "target\debug\mcc-rust-rewrite.exe" riverworld --shot out\shots\lake --skate --view "79.76,-56.73,1.5,-88,0"
 ```
 
 **Falling out of the map** (`falls.rs`). Guardian floats over a misty abyss. The scenario
@@ -369,8 +369,8 @@ tops under the bridge (z 44 to 48.7) are inside `kill_drop`, so their rails are 
 1,090 of 4,204). Headless check:
 
 ```
-$env:HALO3_SWIM_TEST="20,0,55"; $env:HALO3_SKATE_FOR="8"
-& "target\debug\halo3.exe" chill --shot .scratch\shots\chill\fall --skate --view spawn
+$env:MCC_SWIM_TEST="20,0,55"; $env:MCC_SKATE_FOR="8"
+& "target\debug\mcc-rust-rewrite.exe" chill --shot .scratch\shots\chill\fall --skate --view spawn
 ```
 
 throws the skater off the side of the bridge; it logs `fall: into kill_drop at halo [20.03,
@@ -458,8 +458,8 @@ Halo's auto exposure, the result is held so that the map's mean lit-surface
 irradiance (every 25th BSP cluster vertex, luminance) comes out at most 3.0
 (`MAX_EXPOSED_MEAN`; Valhalla is at 1.2): only Sandbox (mean 1.23, x2.45)
 and Sandtrap (1.15, x2.6) are held back. The log prints it (`camera fx ...:
-exposure -2.51 stops, mean irradiance 0.101 -> x10.51`). `HALO3_EXPOSURE` sets a fixed
-multiplier, `HALO3_EXPOSURE_SLOPE` the 0.6. Not done: Halo's own auto
+exposure -2.51 stops, mean irradiance 0.101 -> x10.51`). `MCC_EXPOSURE` sets a fixed
+multiplier, `MCC_EXPOSURE_SLOPE` the 0.6. Not done: Halo's own auto
 
 **Auto exposure** (a stand-in for Halo's): in a place more than 4 stops darker than the map's
 mean lit surface the picture is brightened, by the darkness beyond those 4 stops and at most the
@@ -467,7 +467,7 @@ width of the camera fx's auto range (`+0x10..+0x14`; Valhalla 0..3, 120_halo 0..
 colour grading so world, sky, haze and rider move together. The place's light is the lit surface
 nearest the camera averaged over six directions; it adapts over about a second, snaps when the
 camera jumps, and never darkens. 120_halo's start, inside `120_bsp_010` (whose lightmap is about a
-quarter as bright as the outdoor BSPs'), gets +2.7 stops; Valhalla's shaded first spawn (3.6 stops under) nothing. `HALO3_AUTO_EXPOSURE=0` turns it off.
+quarter as bright as the outdoor BSPs'), gets +2.7 stops; Valhalla's shaded first spawn (3.6 stops under) nothing. `MCC_AUTO_EXPOSURE=0` turns it off.
 exposure and tonemap curve, the probes' L2 terms.
 
 The log says how each placement was lit, e.g. Valhalla:
@@ -510,11 +510,11 @@ The log says how each placement was lit, e.g. Valhalla:
 - **Campaign clusters** name their own setting (see "Zone sets" above); when the camera is in
   one, that setting replaces both the level and the sky setting. Lit sky surfaces are scaled by
   their shader's `diffuse_coefficient` (120_halo's ring plates: 0.3).
-- `HALO3_HAZE` scales the world haze's density (`0` turns it off) for comparisons.
+- `MCC_HAZE` scales the world haze's density (`0` turns it off) for comparisons.
 - **Night skies.** Halo's source of light for lit sky surfaces is not decoded; every map gets
   the sunlit Valhalla irradiance, except the maps listed in `NIGHT_SKIES` (`world/sky.rs`):
   Blackout (`lockout`) gets a tenth of it, since its sky dome is a white lit surface and its
-  sea a lit plane (`docs/format/sky-and-atmosphere.md` 7). `HALO3_SKY_LIGHT` sets the fraction
+  sea a lit plane (`docs/format/sky-and-atmosphere.md` 7). `MCC_SKY_LIGHT` sets the fraction
   for any map. Sky self-illumination: `from_diffuse` glows with the albedo, `plasma` (Blackout's
   aurora) with its alpha mask through the overlay colour.
 - Below a setting's sea level the density stays at the sea level's (world haze and sky alike):
@@ -535,8 +535,8 @@ exposure curve is not decoded (the `cfxs` exposure is, see "Lighting"); no sun g
 
 F (or the controller's d-pad up) drops the Spartan on the ground under the
 camera; F again flies. `--foot` starts on foot at the start spawn. Code:
-`crates/halo3_foot/src/` (`physics.rs` the body, `pose.rs` the skeleton,
-`lib.rs` controls and camera) and `crates/halo3_weapons/src/`.
+`crates/mcc_foot/src/` (`physics.rs` the body, `pose.rs` the skeleton,
+`lib.rs` controls and camera) and `crates/mcc_weapons/src/`.
 
 | controller | keyboard and mouse | effect |
 |---|---|---|
@@ -556,7 +556,7 @@ camera; F again flies. `--foot` starts on foot at the start spawn. Code:
 wu/s² on the ground and 1.05 in the air; crouched 0.9 wu/s; body 0.725 wu tall
 (0.5 crouched), 0.175 wu radius; eyes at 0.62 wu (0.45); ground up to 50°
 holds him. The jump is the tag's 3.08 wu/s under 9.78 m/s² gravity, a 1.48 wu
-(4.5 m) jump: high, and unchecked against the real game; `HALO3_JUMP=<metres>`
+(4.5 m) jump: high, and unchecked against the real game; `MCC_JUMP=<metres>`
 sets the jump height instead. The step he walks up without jumping (0.45 m)
 is ours: Halo has no such number.
 
@@ -577,7 +577,7 @@ helmet.
 
 **Weapons.** The map's weapons lie where the scenario places them (42 on
 Valhalla, nine kinds); taken ones come back after the placement's respawn
-time. He starts with the sniper rifle (`halo3_foot::STARTING_WEAPONS`; the assault rifle on a map without one). Walking over a weapon he lacks takes it
+time. He starts with the sniper rifle (`mcc_foot::STARTING_WEAPONS`; the assault rifle on a map without one). Walking over a weapon he lacks takes it
 into a free hand; over one he carries, takes its ammo; E swaps. Magazines,
 spare rounds, rounds per second, bursts (battle rifle), single shots,
 charging (plasma pistol, Spartan laser), spread, zoom levels, projectile
@@ -589,15 +589,15 @@ shotgun shell), the shotgun's 15 pellets, the battery use, charge times,
 grenades falling under gravity. Nothing takes damage yet. The HUD shows the
 crosshair (red when empty), both weapons' ammo, and prompts.
 
-Headless check: `halo3 riverworld --shot DIR --foot --view spawn12` stands him
-at spawn 12 for `HALO3_SKATE_FOR` seconds, then takes the rider pictures;
-`HALO3_FOOT_WALK=x,y` holds the stick (X right, Y forward) and
-`HALO3_FOOT_FIRE=1` holds the trigger (the log counts rounds and hits).
+Headless check: `mcc-rust-rewrite riverworld --shot DIR --foot --view spawn12` stands him
+at spawn 12 for `MCC_SKATE_FOR` seconds, then takes the rider pictures;
+`MCC_FOOT_WALK=x,y` holds the stick (X right, Y forward) and
+`MCC_FOOT_FIRE=1` holds the trigger (the log counts rounds and hits).
 
 ## Dirt bike
 
 B (or the controller's View / Back button) drops a dirt bike under the camera
-with the Spartan standing on it; B again flies. Code: `crates/halo3_bike/src/`
+with the Spartan standing on it; B again flies. Code: `crates/mcc_bike/src/`
 (`physics.rs` the bike, `unleashed.rs` its numbers, `pose.rs` the rider,
 `lib.rs` controls, camera and the stick model). The handling is MX vs ATV
 Unleashed's stock Pro 250 (`docs/bike-unleashed.md`):
@@ -619,7 +619,7 @@ stiff stance (attack position) kept on the pegs and grips by IK. The bike is a
 stick model of unlit cylinders for now. It rides on the loaded zone set's
 collision. Tuning constants are at the top of `physics.rs`.
 
-Engine sound (`crates/halo3_audio/src/engine.rs`); H or a click of the left stick turns
+Engine sound (`crates/mcc_audio/src/engine.rs`); H or a click of the left stick turns
 it off and on, and the log says which. The Dakumoto 450F's own 54 recordings, read from the user's Reflex install
   (`docs/format/reflex-engine-audio.md`), played the way Reflex plays them, which a
   recording of the game showed (2026-10-30): never pitched, always at the level they were
@@ -638,20 +638,20 @@ Without Reflex the bike is silent (a synthesised engine was tried and dropped on
 menu's Dirt bike tab has an engine volume slider (drag or click it, or d-pad up / down,
 the up / down arrows, W / S); it starts at 70 % and is saved to `bike-sound.json` next to
 the exe when the game carries on.
-`HALO3_ENGINE_WAV=DIR cargo test -p halo3_audio engine` writes the recordings over a
+`MCC_ENGINE_WAV=DIR cargo test -p mcc_audio engine` writes the recordings over a
 scripted nine-second ride to `DIR\engine-reflex.wav`.
 
-Headless check: `halo3 riverworld --shot DIR --bike --view spawn50` rides from
-spawn 50 holding `HALO3_BIKE_THROTTLE` (default 0.4) for `HALO3_SKATE_FOR`
+Headless check: `mcc-rust-rewrite riverworld --shot DIR --bike --view spawn50` rides from
+spawn 50 holding `MCC_BIKE_THROTTLE` (default 0.4) for `MCC_SKATE_FOR`
 seconds, then takes the rider pictures.
 
 ## Sound
 
-`crates/halo3_audio/src/` plays Halo 3's own sound from the user's install: the
+`crates/mcc_audio/src/` plays Halo 3's own sound from the user's install: the
 `snd!` / `lsnd` / `ssce` tags of the map (`crates/blam_sound`, `docs/format/sound.md`) and
 the samples of MCC's FMOD bank `halo3\fmod\pc\sfx.fsb` (Vorbis, decoded with lewton;
 the Vorbis setup headers are rebuilt from the user's `halo3.dll`). Nothing is copied into
-this repo. `HALO3_AUDIO=0` turns sound off; `--shot` never opens the sound device.
+this repo. `MCC_AUDIO=0` turns sound off; `--shot` never opens the sound device.
 
 - **Mixer** (`mixer.rs`): one endless 48 kHz stereo source handed to bevy_audio, into which
   every voice is mixed, with its own gains, pitch (playback rate) and a soft limiter.
@@ -702,17 +702,17 @@ this repo. `HALO3_AUDIO=0` turns sound off; `--shot` never opens the sound devic
   Each scales its bus in the mixer, on top of the tag and class gains and the scripts'
   `sound_class_set_gain`. They are saved to `sound-levels.json` next to the exe and read at
   start. `-` / `=` change the master and K mutes, anywhere, and the sliders follow.
-  `HALO3_VOLUME` overrides the saved master (developer override).
+  `MCC_VOLUME` overrides the saved master (developer override).
 
-Headless check: `HALO3_AUDIO_TRACE=1` with `--shot` runs all of this without a sound device
+Headless check: `MCC_AUDIO_TRACE=1` with `--shot` runs all of this without a sound device
 and logs, 0.3 s after each view, the cluster, background layers and their fade, the sound
 scenery in range with distance and gain, and the decoded clips; and every 5 s an `audio
 levels` line: each bus's RMS level (dBFS, before the master), the volumes and the scripts'
 class gains:
 
 ```
-$env:HALO3_AUDIO_TRACE="1"
-target\debug\halo3.exe riverworld --shot .scratch\shots --view "96,-140,2,90,0" --view spawn
+$env:MCC_AUDIO_TRACE="1"
+target\debug\mcc-rust-rewrite.exe riverworld --shot .scratch\shots --view "96,-140,2,90,0" --view spawn
 ```
 
 `blam sound <map> list | show TAG | wav TAG... | check` lists, inspects and decodes the same
@@ -729,9 +729,9 @@ Halo 2 multiplayer maps from MCC (classic graphics, `halo2\h2_maps_win64_dx11`) 
 way:
 
 ```
-& "target\debug\halo3.exe" coagulation
-& "target\debug\halo3.exe" "<MCC>\halo2\h2_maps_win64_dx11\coagulation.map"
-target\debug\halo3.exe coagulation --shot .scratch\shots\coagulation --view spawn --view overview
+& "target\debug\mcc-rust-rewrite.exe" coagulation
+& "target\debug\mcc-rust-rewrite.exe" "<MCC>\halo2\h2_maps_win64_dx11\coagulation.map"
+target\debug\mcc-rust-rewrite.exe coagulation --shot .scratch\shots\coagulation --view spawn --view overview
 ```
 
 A bare name is tried as a Halo 3 map first, then in `%HALO2_MAPS%` (default: the MCC folder
@@ -743,7 +743,7 @@ maps too.
 
 `crates/blam_h2` (`docs/format/halo2.md`) decodes the whole map up front into the same `Scene`
 (clusters, instances, scenery, crates, sky, the collision BSP, the 123 player starting
-locations as spawns) and the viewer's material looks (`crates/halo3/src/halo2.rs`), so flying,
+locations as spawns) and the viewer's material looks (`crates/mcc-rust-rewrite/src/halo2.rs`), so flying,
 skating (J), the dirt bike (B), rails and the fall-out-of-the-world respawn work unchanged.
 With no atmosphere tag the camera gets a fog that never thickens (the world shaders need the
 fog binding).
@@ -751,7 +751,7 @@ fog binding).
 Lighting: Halo 2's lightmap (`docs/format/halo2.md` 10). `blam_h2` packs each BSP's pages into
 one atlas and gives every cluster and instance with a page per-pixel lighting; the light
 fixtures and the objects take the nearest lit surface's light, as on Halo 3 maps. The pages are
-plain colours while the lightmap shader reads Halo 3's SH coefficients, so `halo3::halo2`
+plain colours while the lightmap shader reads Halo 3's SH coefficients, so `mcc_rust_rewrite::halo2`
 writes each colour as the constant term alone, which lights every normal the same.
 `HALO2_LIGHTMAP_SCALE` (default 1.15) multiplies it. The sky's fog (`halo2.md` 7) becomes a
 linear distance fog, and its colour fills the background: Lockout's blue mist, Coagulation's

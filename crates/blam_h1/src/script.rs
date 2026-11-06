@@ -1,6 +1,6 @@
 //! Halo CE's compiled HaloScript, read into the same
 //! [`blam_script::ScriptData`] the Halo 3 reader makes, so the Halo 3
-//! runtime (`halo3_script`) runs it and `blam_script`'s decompiler prints
+//! runtime (`mcc_script`) runs it and `blam_script`'s decompiler prints
 //! it.
 //!
 //! Written from `docs/format/halo1.md` 12, checked on the bytes of `d40`

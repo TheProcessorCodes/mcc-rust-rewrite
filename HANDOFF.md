@@ -1,4 +1,12 @@
-# Halo 3 Rust rewrite: handoff
+# MCC Rust Rewrite: handoff
+
+The project is **MCC Rust Rewrite** (`mcc-rust-rewrite.exe`, crates `mcc_*`): Halo maps from the
+player's own Master Chief Collection (Halo 3 first, also Halo 2, Halo CE and Reach) with **Skate 3
+skating** (the Skate 3 engine, fed from the player's Skate 3 copy) and an **MX vs ATV Reflex dirt
+bike** (Reflex's own bike simulation; its Dakumoto 450F model and sound from the player's Reflex
+when they have it). Until 2026-11-06 it was "Halo 3 Rust rewrite": `halo3.exe`, crates `halo3_*`,
+settings in `%LOCALAPPDATA%\Halo3Rewrite` (moved to `MccRustRewrite` on first launch). Older notes
+below, and in other projects, may still use those names.
 
 First written 2026-10-27 at the end of a research thread in `mw2-skate-3-src`; last
 rewritten 2026-10-28 after the lighting, rider, campaign, streaming, water, sound and
@@ -47,11 +55,11 @@ A Cargo workspace (`cargo build`, `cargo test`). Crates (`README.md` "Layout" ha
 | `blam_sound` | sound tags and MCC's FMOD bank (`halo3\fmod\pc\sfx.fsb`, Vorbis, setup headers rebuilt from the user's `halo3.dll`), decoded with lewton |
 | `blam_cli` | the `blam` tool: tags, dumps, geometry and rails to OBJ, bitmaps to PNG, shaders, lightmaps, sound, scripts, animations |
 | `blam_script` | the scenario's HaloScript: scripts, globals, expression nodes, the names they use; decompiled to source |
-| `halo3_script` | runs a map's scripts in the game (threads, objects, devices, trigger volumes, insertions), with AI and animation hooks |
+| `mcc_script` | runs a map's scripts in the game (threads, objects, devices, trigger volumes, insertions), with AI and animation hooks |
 | `blam_anim` | animation graphs (`jmad`) and their codec data; poses sampled and blended for skinning |
 | `reflex_assets` | reads the user's MX vs ATV Reflex install for the bike model (no bevy) |
-| `halo3` | the game binary (bevy 0.20): the map menu, wires the runtime crates into an app, the pause menu, headless screenshots |
-| `halo3_core`, `halo3_world`, `halo3_textures`, `halo3_audio`, `halo3_skate`, `halo3_rider`, `halo3_bike`, `halo3_foot`, `halo3_weapons`, `halo3_swim` | the runtime, split out of `halo3` on 2026-10-28 for faster rebuilds |
+| `mcc-rust-rewrite` | the game binary (bevy 0.20): the map menu, wires the runtime crates into an app, the pause menu, headless screenshots |
+| `mcc_core`, `mcc_world`, `mcc_textures`, `mcc_audio`, `mcc_skate`, `mcc_rider`, `mcc_bike`, `mcc_foot`, `mcc_weapons`, `mcc_swim` | the runtime, split out of `mcc-rust-rewrite` on 2026-10-28 for faster rebuilds |
 
 What the game does now:
 
@@ -69,13 +77,13 @@ What the game does now:
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
 - **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great".
-- **Dirt bike.** B rides it, with Master Chief on it (`halo3_bike`). It is drawn as Reflex's Dakumoto 450F in the user's Cortana graphics kit, read from their own MX vs ATV Reflex install (`reflex_assets`, `docs/format/reflex-bike.md`); without Reflex it is the old stick model. Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`), or, since 2026-11-06, Reflex's own simulation ("Reflex", `exact.rs`, see "Reflex's own simulation" below); 0 while riding opens the physics tuning menu (`tune.rs`), whose first slider picks Unleashed, Reflex v1 or Reflex (see "Dirt bike" below).
+- **Dirt bike.** B rides it, with Master Chief on it (`mcc_bike`). It is drawn as Reflex's Dakumoto 450F in the user's Cortana graphics kit, read from their own MX vs ATV Reflex install (`reflex_assets`, `docs/format/reflex-bike.md`); without Reflex it is the old stick model. Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`), or, since 2026-11-06, Reflex's own simulation ("Reflex", `exact.rs`, see "Reflex's own simulation" below); 0 while riding opens the physics tuning menu (`tune.rs`), whose first slider picks Unleashed, Reflex v1 or Reflex (see "Dirt bike" below).
 - **On foot.** F walks the Spartan (`foot/`): the map's own movement numbers (`blam movement`,
   `docs/format/movement.md`), a capsule on the collision, a made-up gait on the skate skeleton,
   shoulder and eye cameras. He carries the map's weapons (`weapons/`, `blam weapons`,
   `docs/format/weapons.md`): placed where the scenario puts them, picked up, fired with the tags'
   rates, magazines, bursts, charge and zoom, projectiles traced against the collision. He starts
-  with the sniper rifle on every map (`halo3_foot::STARTING_WEAPONS`). The user has walked,
+  with the sniper rifle on every map (`mcc_foot::STARTING_WEAPONS`). The user has walked,
   jumped, fired and reloaded in it. Open: the tag's jump looks high (4.5 m); no damage,
   no Halo animations, no first-person arms.
 - **Campaign, 120_halo.** Its 8 zone sets switch by PageUp / PageDown, `--zone`, or the scenario's own switch volumes as you move. You start at the player starting location (`docs/format/zone-sets.md`).
@@ -96,22 +104,22 @@ What the game does now:
   getting back on from walking keeps it too. Bike and board swap straight over (2026-11-03): J or
   both sticks on the bike puts you on the board, B or View / Back on the board puts you on the
   bike, each at the other's speed (the board takes it along the ground; `Session::launch` in the
-  vendored skate-host seeds the board and skater with it, tested in `halo3_skate`). If the skate
+  vendored skate-host seeds the board and skater with it, tested in `mcc_skate`). If the skate
   session is not ready, a swap to the board lands you on foot instead. Not playtested yet.
-- **Map menu (2026-10-31).** `halo3.exe` with no map opens it (`halo3/src/menu.rs`): Halo 3, Halo 2
+- **Map menu (2026-10-31).** `mcc-rust-rewrite.exe` with no map opens it (`mcc-rust-rewrite/src/menu.rs`): Halo 3, Halo 2
   and Campaign tabs listing every map in the user's MCC install, with MCC's own preview pictures
   read from `Data\UI\texturepacks\levelstexturepack` at run time. Start Game decodes the map on a
   thread behind a Halo-ring loading screen and puts it into the same window. The screen stays
-  up ("Preparing bike collision and skate") until the map's `halo3_core::map::Warmup` work is
-  done: the bike / on-foot / enemy collision world (`halo3_bike::SharedWorld`, built once on a
+  up ("Preparing bike collision and skate") until the map's `mcc_core::map::Warmup` work is
+  done: the bike / on-foot / enemy collision world (`mcc_bike::SharedWorld`, built once on a
   thread) and the first skate session; at most 180 s. Until then game time stands still and
-  nothing plays (`halo3_core::map::Playing`, 2026-11-01): no scripts or dialogue, no controls, no AI,
+  nothing plays (`mcc_core::map::Playing`, 2026-11-01): no scripts or dialogue, no controls, no AI,
   no run clock; the same on a restart. Every map is offered:
   a headless load of all 47 maps not checked by hand (Halo 3 multiplayer, campaign and Halo 2) drew
   each one with textures and lighting; they have not been walked for spawns, collision or water.
   Crow's Nest has no preview picture in MCC. A map named on the command line skips the menu.
 - **Skating optional (2026-11-02).** Settings on the map menu has a Skating row (on by default,
-  `SKATING=off` in `setup.env`, `halo3_core::skate::SkateEnabled`). Off, a map loads no grind
+  `SKATING=off` in `setup.env`, `mcc_core::skate::SkateEnabled`). Off, a map loads no grind
   rails, skate session or board (Valhalla ready in 0.8 s instead of 8.1 s), J does nothing on
   foot or flying, and the pause menu's Skate tab says it is off and to turn it on in Settings.
   Skate 3 is still required at first-run setup (the rider's and the Spartan's skeleton).
@@ -120,7 +128,7 @@ What the game does now:
   Dialogue sliders. Q goes back to the map menu (unloading the map in place), or quits when the game
   was started on a map.
 - **Window.** Opens borderless fullscreen.
-- **Headless screenshots.** `halo3.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits. Claude may run this on its own to check visuals; it never opens a window.
+- **Headless screenshots.** `mcc-rust-rewrite.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits. Claude may run this on its own to check visuals; it never opens a window.
 
 Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has numbers):
 
@@ -149,27 +157,27 @@ Narrows, Isolation and Sandbox were "written, not built yet" when their README e
 made; they are on master now and build with the rest. This audit did not re-run their tests.
 
 Run it (build from the checkout through `.dev\build-shared.ps1`, see CLAUDE.md, then play that
-checkout's `out\bin` copy; `target\debug\halo3.exe` belongs to whichever checkout built last):
+checkout's `out\bin` copy; `target\debug\mcc-rust-rewrite.exe` belongs to whichever checkout built last):
 
 ```
 & "$(git rev-parse --path-format=absolute --git-common-dir)/../.dev/build-shared.ps1"
-& ".\out\bin\halo3.exe" riverworld
-& ".\out\bin\halo3.exe" 120_halo --zone 6 --music 120_music_15
+& ".\out\bin\mcc-rust-rewrite.exe" riverworld
+& ".\out\bin\mcc-rust-rewrite.exe" 120_halo --zone 6 --music 120_music_15
 ```
 
 **First-run setup (2026-10-29; in the game's own screen since 2026-11-02).** The first windowed
-launch opens the map menu on its setup screen (`crates/halo3/src/menu/setup.rs`): Halo MCC, then
+launch opens the map menu on its setup screen (`crates/mcc-rust-rewrite/src/menu/setup.rs`): Halo MCC, then
 Skate 3 (the MW2 Skate 3 folder for its converter, then `.iso` or `default.xex`, converted there
 with its progress shown), then MX vs ATV Reflex or Skip, each row a folder picker; no native
-message boxes any more (`halo3_setup` returns the problems as text). It covers MCC, Skate 3
+message boxes any more (`mcc_setup` returns the problems as text). It covers MCC, Skate 3
 and MX vs ATV Reflex (MCC and Skate 3 required, Reflex optional since
 2026-10-31: without it the bike is `stand_in.rs` and silent), converts Skate 3 once and saves everything in
-`%LOCALAPPDATA%\Halo3Rewrite` (`crates/halo3_setup`, README "First run"). All game paths go
+`%LOCALAPPDATA%\MccRustRewrite` (`crates/mcc_setup`, README "First run"). All game paths go
 through `crates/game_paths`; no code names a folder on this PC any more. The Skate 3
 converter is not shipped (2026-10-31): setup asks for the player's MW2 Skate 3 folder and runs
 its `skate\iw4l-skate-convert.exe`. Still open for a public release: only MCC's
 Halo 3 builds in `blam_cache::KNOWN_BUILDS` are read (setup says so when the build is newer).
-The full-dump disc offsets (XGD2/XGD3 video partition) in `halo3_setup/src/xiso.rs` are from
+The full-dump disc offsets (XGD2/XGD3 video partition) in `mcc_setup/src/xiso.rs` are from
 the format, not checked on a real full dump; a trimmed image was.
 
 ## What is left
@@ -249,13 +257,13 @@ menu's Dirt bike tab (`bike-sound.json`). Still a guess: which pool plays in whi
 - `halo-script` also merges `biped-anim`, `enemies-ai`, `mission-music` and `music-volume`
   into one build for 120_halo.
 - `biped-anim`: reads `jmad` animation graphs (`blam_anim`, `blam anim`) and plays them
-  (`halo3_anim`, `halo3 --anim-test`). Not yet driving the on-foot Spartan.
+  (`mcc_anim`, `mcc-rust-rewrite --anim-test`). Not yet driving the on-foot Spartan.
 - `enemies-ai`: reads the scenario's AI (squads, cells, starting locations, characters) and puts
   120_halo's squads in as actors that see, move, fight, hurt and die.
 - `halo-script`: reads HaloScript (`blam_script`, `blam scripts`) and runs the map's own scripts
-  (`halo3_script`); object collision models and damage sections; the Warthog run's floor
+  (`mcc_script`); object collision models and damage sections; the Warthog run's floor
   collapses.
-- `first-run-setup`: the one-time MCC / Skate 3 / Reflex setup (`game_paths`, `halo3_setup`);
+- `first-run-setup`: the one-time MCC / Skate 3 / Reflex setup (`game_paths`, `mcc_setup`);
   Reflex optional, with the stand-in bike.
 
 **Not started:**
@@ -277,9 +285,9 @@ Halo) or the look fixes above.
 - Worktrees you did not create in this thread, and any locked agent worktree, belong to the
   user's other sessions; leave them alone.
 - `.gitattributes` forces LF.
-- **The map is a phase of the app** (`halo3_core/src/map.rs`), so the menu can load and unload maps
-  in one window. In a map crate: start-up systems go in `halo3_core::map::MapStartup` (not
-  `Startup`); every `Update` / `PreUpdate` / `PostUpdate` system gets `.run_if(halo3_core::map::ready)`;
+- **The map is a phase of the app** (`mcc_core/src/map.rs`), so the menu can load and unload maps
+  in one window. In a map crate: start-up systems go in `mcc_core::map::MapStartup` (not
+  `Startup`); every `Update` / `PreUpdate` / `PostUpdate` system gets `.run_if(mcc_core::map::ready)`;
   per-map resources use `MapAppExt`: `init_map_resource` (reset on unload) instead of
   `init_resource`, and `remove_on_map_unload` for resources a system inserts later. `main.rs` is
   `load` (decode, no bevy), `install` (resources into the world) and `run`; whatever `install`
@@ -291,12 +299,12 @@ Halo) or the look fixes above.
 The user's `reflex-physics` workspace (`D:\reflex-physics`) rebuilt Reflex's bike step by step from
 the decompile and checked it frame by frame against recordings of the game (`reflex_core`), with a
 Bevy adapter (`reflex_bevy`). Both are vendored in `third_party/reflex-physics` (its README lists
-our changes; no licence chosen yet, ask before a release). `crates/halo3_bike/src/exact.rs` rides
+our changes; no licence chosen yet, ask before a release). `crates/mcc_bike/src/exact.rs` rides
 the bike on it:
 
 - The 450F's 108 values come from the player's Reflex install: the BXML asset `mx450f_vehicle` in
   `Database\EngineDependencies.dx9.package` (`reflex_assets::vehicle`, turned into the XML
-  `reflex_core` reads). `HALO3_REFLEX_VEHICLE=<dump file>` is a developer override. Without Reflex
+  `reflex_core` reads). `MCC_REFLEX_VEHICLE=<dump file>` is a developer override. Without Reflex
   the model is not offered (the slider says so) and the bike rides Reflex v1.
 - Picked with the main menu's Settings row "Bike physics" or the pause menu's dirt bike tab switch,
   Physics: Arcade / Reflex (X on a pad, P, or a click; saved at once). Both are only there with
@@ -307,7 +315,7 @@ the bike on it:
   own three act on it: "Reflex engine power" (`reflex_power`, the torque curve times it), "Reflex
   gearing" (`reflex_gearing`, Reflex's garage gearing multiplier) and "Reflex traction"
   (`reflex_traction`, both tyres' `StaticMuRoll`: drive and brake grip; cornering stays Reflex's).
-- Launch, measured on a flat floor (`cargo test -p halo3_bike --lib speed_table -- --ignored
+- Launch, measured on a flat floor (`cargo test -p mcc_bike --lib speed_table -- --ignored
   --nocapture`; `launch_trace` prints a launch frame by frame): stock Reflex 0-60 mph 3.85 s, top
   71.9 mph (drag, not the 88.7 mph limiter in 5th). Its launch is traction bound: in 1st the rear
   spins at the 9,200 rpm limiter (~16 m/s slip), so power alone does nothing for 0-60. Power 1.35 /
@@ -328,7 +336,7 @@ the bike on it:
 - Crashes: only a chassis crash point touching, or a pitch / yaw rate or tyre load past Reflex's hard
   limits (upstream 15a977d dropped the game's stick-flick recovery window between the soft and hard
   limits, so those never wreck; the on-screen save prompt that went with it is gone too).
-- Tests: `cargo test -p halo3_bike --lib exact` (flat floor: settles 0.59 m up, 4 s full gas =
+- Tests: `cargo test -p mcc_bike --lib exact` (flat floor: settles 0.59 m up, 4 s full gas =
   61 m and 27 m/s in 5th, steers the right way, a launch speed carries over) and
   `--test reflex_on_halo` (Valhalla's collision: settles on both wheels, 23 m in 2.5 s, no sinking,
   no crash). Both skip without Reflex / MCC. Not playtested yet.
@@ -339,13 +347,13 @@ the bike on it:
 ## Dirt bike (2026-10-28)
 
 The bike now rides on MX vs ATV Unleashed's stock Pro 250 model (`docs/bike-unleashed.md`,
-`crates/halo3_bike/src/unleashed.rs`), read from a decompile of the fan client's `mxacore.dll` and
+`crates/mcc_bike/src/unleashed.rs`), read from a decompile of the fan client's `mxacore.dll` and
 the user's own Unleashed `.phy` files. The earlier physics are on `backup/bike-physics-master-2026-10-28`
 and `backup/bike-physics-reflex-2026-10-28`. Playtested (see below); the doc lists what is
 not ported (clutch boost, surfaces, tricks, Unleashed's wreck rules).
 
 2026-10-29: the user called the Unleashed bike the best base so far and asked to tweak it back
-towards Reflex. "Reflex v1" (`crates/halo3_bike/src/reflex.rs`) keeps Unleashed's simulation with
+towards Reflex. "Reflex v1" (`crates/mcc_bike/src/reflex.rs`) keeps Unleashed's simulation with
 Reflex's numbers and steering, lean and grip rules, and is the default; the tuning menu (0) is
 back, with Unleashed as a switch. The user has ridden it since (the throttle work below); the
 doc's "Reflex v1" section has the details.
@@ -369,10 +377,10 @@ the game.
 
 The scenario's compiled scripts are read (`blam_script`, `docs/format/halo-script.md`):
 `blam scripts 120_halo` prints all 731 scripts as Lisp-like source, `--functions` the 281
-functions they call, `--grep TEXT` one topic. The game runs them (`halo3_script`) when asked:
+functions they call, `--grep TEXT` one topic. The game runs them (`mcc_script`) when asked:
 
 ```
-& "<worktree>\out\bin\halo3.exe" 120_halo --insertion trench_run
+& "<worktree>\out\bin\mcc-rust-rewrite.exe" 120_halo --insertion trench_run
 ```
 
 runs `ins_trench_run` the way Bungie's designers did at the console: zone set
@@ -386,24 +394,24 @@ the run's plates are its only floor, so before this the whole run had no collisi
 
 Stubs and hooks: AI (`ai_place warthog01` etc.) goes to `AiHooks` (enemies agent), device
 animation (the run's two sinking islands) to `DevicePoser` (animation agent) with a made-up
-sink as the fallback, effects go to `halo3_effects` (see "Explosion effects"), cinematics / HUD are no-ops that log
+sink as the fallback, effects go to `mcc_effects` (see "Explosion effects"), cinematics / HUD are no-ops that log
 once (sound is played: see "Mission music"). Without `--insertion` / `--scripts` nothing changes from before except object collision.
-Tested headless (`halo3_script/tests/warthog_run.rs` drives the player through the run's
+Tested headless (`mcc_script/tests/warthog_run.rs` drives the player through the run's
 volumes and checks plates drop); awaiting the user's playtest.
 
 First playtest (2026-10-29): B, J and F started back at the crash site and walking was stuck.
 Cause: the run's start flag lies inside the kill volume `kill_100_01`, which the game's scripts
 switch off when the zone set loads, but our kill volumes were always on, so every rider "fell"
 at once and went back to the map's old start (outside the loaded collision: a fall loop).
-Fixed: kill volumes follow `kill_volume_enable` / `_disable` (`halo3_core::falls`), the
+Fixed: kill volumes follow `kill_volume_enable` / `_disable` (`mcc_core::falls`), the
 insertion runs 15 ticks before the first frame, a script teleport becomes the fallback spot,
 and the run's plate folders are no longer dropped for memory (`object_destroy_folder` only
 removes script-created objects), so the floor is there wherever you start. Checked headless
-with `HALO3_SCRIPT_TRACE=1` (player position once a second) for the bike, on foot
-(`HALO3_FOOT_WALK=0,1`) and skating, at the start flag and dropped straight onto the plates.
+with `MCC_SCRIPT_TRACE=1` (player position once a second) for the bike, on foot
+(`MCC_FOOT_WALK=0,1`) and skating, at the start flag and dropped straight onto the plates.
 ## Animation (2026-10-29, branch `biped-anim`)
 
-Halo 3's own animations read from the maps: `blam_anim` (reader), `halo3_anim` (playback),
+Halo 3's own animations read from the maps: `blam_anim` (reader), `mcc_anim` (playback),
 `blam anim` (CLI), `docs/format/animation.md` (layout, byte checks), probe
 `docs/format/scripts/probe_animation.py`. Every codec found in the installed maps decodes
 (static, every-frame with i16 or f32 rotations, byte and word keyframes); 120_halo decodes 5881
@@ -412,13 +420,13 @@ and by headless shots (`--anim-test`): the flood combat form walking and swingin
 elite, Master Chief running with a rifle and a sentinel aiming all hold together. Not playtested;
 nothing in the game uses it yet except `--anim-test`.
 
-The API for the enemies, script and on-foot code (`crates/halo3_anim/src/lib.rs`):
+The API for the enemies, script and on-foot code (`crates/mcc_anim/src/lib.rs`):
 
 ```rust
 // Once per object type, from the map (bipd, mach, vehi, hlmt or jmad tag):
 let model: Arc<AnimModel> = AnimModel::load(cache, tag)?;          // or load_path(cache, path)
 // The skinned mesh: joints in render model node order, inverse binds from the model.
-let joints = halo3_anim::spawn_joints(&mut commands, &model);      // AnimJoints
+let joints = mcc_anim::spawn_joints(&mut commands, &model);      // AnimJoints
 let binds = model.inverse_bindposes();                             // SkinnedMeshInverseBindposes
 // The actor entity (Transform = where it stands, renderer frame) gets:
 let mut a = Animator::new(model.clone()).with_seed(n);
@@ -431,19 +439,19 @@ a.take_root_motion();                      // dx, dy, dz (wu, own frame), dyaw s
 a.set_position(0.0..=1.0);                 // device machines: device:position
 a.play_named("fall", false);               // any animation by full name
 commands.entity(actor).insert((a, joints));
-app.add_plugins(halo3_anim::AnimPlugin);   // advances and poses joints in PostUpdate
+app.add_plugins(mcc_anim::AnimPlugin);   // advances and poses joints in PostUpdate
 ```
 
 Without bevy, `Animator::model_matrices()` gives one model-space matrix per node (Halo model
-frame; multiply by `halo3_anim::halo_to_render()` and the actor's transform). 120_halo's
+frame; multiply by `mcc_anim::halo_to_render()` and the actor's transform). 120_halo's
 machines with graphs all use `device:position` (doors, the `plates\island_test` and
 `plates\pillar_fall` pieces, terminals, the monitor); the island plates also carry `fall`,
 `tilt`, `tilt_up`, `other_fall`, `other_tilt` and `device:power`.
 
-Master Chief instead of the made-up gait (not done): `halo3_foot` builds a skate-skeleton pose
-that `halo3_rider` retargets. The jmad route would skip both: load
+Master Chief instead of the made-up gait (not done): `mcc_foot` builds a skate-skeleton pose
+that `mcc_rider` retargets. The jmad route would skip both: load
 `objects\characters\masterchief\masterchief` (campaign maps; on Valhalla `mp_masterchief` uses
-the same graph, 952 animations, and all 51 nodes match), draw him skinned the way `crates/halo3/src/anim_test.rs` does,
+the same graph, 952 animations, and all 51 nodes match), draw him skinned the way `crates/mcc-rust-rewrite/src/anim_test.rs` does,
 and drive an `Animator` from the foot state: stance `combat:rifle:<weapon type>` (or
 `crouch:...`), `play("move_front" | "move_back" | "move_left" | "move_right" | "idle" |
 "turn_left" | "airborne" | "land_soft")`, `aim(0, pitch, moving)`, `overlay("fire_1")`. Its
@@ -453,7 +461,7 @@ Open: overlay rotation order and the aim grid's up/down are inferred, not proven
 (footstep sounds), IK and transitions are not read; Halo's full fallback rules are approximated.
 ## Enemies and AI (2026-10-29, worktree `enemies-ai`)
 
-`crates/halo3_ai`, reader `blam_geometry::ai`, format `docs/format/ai.md`, CLI `blam ai <map>
+`crates/mcc_ai`, reader `blam_geometry::ai`, format `docs/format/ai.md`, CLI `blam ai <map>
 [--squads] [--zones] [--characters]`, tests `crates/blam_geometry/tests/ai.rs`. Built and checked
 with headless shots; not playtested.
 
@@ -478,15 +486,15 @@ with headless shots; not playtested.
   carrier spawns, no infection reanimating corpses. (Until 2026-11-03 the AI only fought while you
   were on foot; it now fights you on the bike and the board too, see "Enemies attack the rider".)
 
-**For the script agent** (all in `halo3_core::ai`, no dependency on `halo3_ai` needed):
+**For the script agent** (all in `mcc_core::ai`, no dependency on `mcc_ai` needed):
 `MessageWriter<AiCommand>` with `Place { who: AiRef::named("sentinels"), count: None }` (`ai_place`;
 squad or group names, `squad/cell` takes the squad), `Erase` (`ai_erase`), `Kill` (`ai_kill`),
-`Allegiance { a, b, allied }` (`ai_allegiance`, teams in `halo3_core::ai::team`). Read
+`Allegiance { a, b, allied }` (`ai_allegiance`, teams in `mcc_core::ai::team`). Read
 `Res<AiCensus>` for `ai_living_count` / `ai_spawn_count` (squads and groups by name). When scripts
 start, set `ResMut<AutoPlace>` to `AutoPlace::Off`. `Res<PlayerVitality>` has the player's state.
 
-Adapter for `halo3_script` (branch `halo-script`, whose `AiHooks::call` is synchronous with no ECS
-access): take a clone of the `halo3_core::ai::AiBridge` resource (the AI plugin inits it; it is an
+Adapter for `mcc_script` (branch `halo-script`, whose `AiHooks::call` is synchronous with no ECS
+access): take a clone of the `mcc_core::ai::AiBridge` resource (the AI plugin inits it; it is an
 `Arc<Mutex<..>>`) into a struct implementing `AiHooks`, and map `ai_place` ->
 `bridge.send(AiCommand::Place { who: AiRef::named(name), count })`, `ai_erase` / `ai_kill` likewise,
 `ai_allegiance` / `ai_allegiance_remove` -> `Allegiance`, `ai_living_count` ->
@@ -503,7 +511,7 @@ unit's `jmad` tag index) and `ActorActivity` (state Idle / Alert / Moving / Firi
 Dead, Halo-frame velocity, yaw, aim, time in state). Write joint transforms and the skinned meshes
 follow; set `posed_externally` once you do. The dead tip over by their root transform.
 
-Adapter for `halo3_anim` (branch `biped-anim`) once both are on master: its `pose_joints` writes
+Adapter for `mcc_anim` (branch `biped-anim`) once both are on master: its `pose_joints` writes
 joint `GlobalTransform`s as `owner * halo_to_render() * node` after propagation, but an actor's root
 already carries the Halo axes and world-unit scale (`place::root_transform`). So at spawn, give the
 root a child with `Transform::from_matrix(halo_to_render().inverse())` holding
@@ -515,8 +523,8 @@ they would need re-parenting to the posed hand (one `GlobalTransform` write afte
 
 ## Scripts, AI and animation connected (2026-10-30, branch `halo-script`)
 
-- **Scripts -> AI**: `halo3_script::BridgeAi` (`ai_bridge.rs`) implements `AiHooks` over
-  `halo3_core::ai::AiBridge`: `ai_place` (with count), `ai_erase`, `ai_kill`, `ai_allegiance(_remove)`
+- **Scripts -> AI**: `mcc_script::BridgeAi` (`ai_bridge.rs`) implements `AiHooks` over
+  `mcc_core::ai::AiBridge`: `ai_place` (with count), `ai_erase`, `ai_kill`, `ai_allegiance(_remove)`
   (teams by name or enum index), `ai_living_count`, `ai_spawn_count`; `None` for the rest. `main`
   installs it whenever scripts and the AI both run, and sets `AutoPlace::Off` while scripts run.
   `--insertion trench_run` places `arbiter_trench/trench` (the Arbiter) at once, then the run's
@@ -524,7 +532,7 @@ they would need re-parenting to the posed hand (one `GlobalTransform` write afte
   `trench_sentinel_100_*`, `trench_carrier_100_01`, `trench_combat_forms01..04`, ...). Vehicle crews
   (`warthog01`, `chopper*`, `secret_egg*`) have no character and place nobody (`ai: placed warthog01
   (0 actors)`). Without `--insertion` / `--scripts` the free-roam `AutoPlace` works as before.
-- **Animation -> actors** (`halo3_ai/src/animate.rs`): every actor whose unit has a graph with the
+- **Animation -> actors** (`mcc_ai/src/animate.rs`): every actor whose unit has a graph with the
   drawn skeleton (all 15 characters on 120_halo) gets an `Animator`. Instead of the child entity +
   `AnimJoints` sketched above, the pose's local node transforms are written into the
   `ActorSkeleton` joints' own `Transform`s (same frame as a `jmad` frame), so the skinned meshes,
@@ -536,14 +544,14 @@ they would need re-parenting to the posed hand (one `GlobalTransform` write afte
   (the AI then no longer tips the body over); the aim overlay towards `ActorActivity::aim`;
   `fire_1` every 0.25 s while firing. Walkers' run speed (`ActorKind::speed`) is now their
   `move_front` root-motion speed. Sentinels and the monitor hover with `idle` + aim.
-- **Animation -> devices** (`halo3_anim/src/devices.rs`): `MachinePoser` implements `DevicePoser`
+- **Animation -> devices** (`mcc_anim/src/devices.rs`): `MachinePoser` implements `DevicePoser`
   for every scripted `mach`: the root node posed by the scripts' position track (`other_fall`,
   `fall`, else `device:position`) with the overlay track (`tilt_up`, `tilt`, `other_tilt`) on top,
   both relative to their first frames, so position 0 leaves the object where the scenario put it.
   A falling device keeps its collision until its root node has dropped 1.5 wu (`DEVICE_DROP`); until
   then its collision moves with it (see "Warthog run collision fixes" below). The made-up sink is now only
   the fallback for machines without a graph.
-- Checked: `cargo test -p halo3_script` (bridge), `-p halo3_anim` (`tests/islands.rs`: 100_island01
+- Checked: `cargo test -p mcc_script` (bridge), `-p mcc_anim` (`tests/islands.rs`: 100_island01
   tilts while solid, falls 50+ wu and stops being solid), headless `--insertion trench_run` shots
   walking the camera through the run's triggers (squads placed, posed Flood and Sentinels, the
   island tipping mid-fall) and a free-roam `--foot` shot at the crash site. Not playtested.
@@ -561,7 +569,7 @@ Two bugs from the first bike playtest of `--insertion trench_run`:
   (it falls only on `trench_run_100_trig07`, north of the island, or after 40 s, as in the game),
   its collision covers the whole top, and the kill volume over it (`kill_100_02a`) only comes on
   at `trench_run_100_trig08`. Fix: solid objects a script moves publish their motion
-  (`halo3_core::objects::set_object_pose`, from `halo3_script::publish_collision`); the bike's
+  (`mcc_core::objects::set_object_pose`, from `mcc_script::publish_collision`); the bike's
   collision world (also the Spartan's, the AI's and the guns') looks their triangles up where
   they are now, and the skater's collision is rebuilt with them a second after they settle. The
   lurch is too fast for the bike's springs (about 2.5 wu/s up), so the bike and the Spartan are
@@ -576,12 +584,12 @@ Two bugs from the first bike playtest of `--insertion trench_run`:
   every seam between loaded BSPs, on every map. Also in that tunnel: a `guard_rail` crate
   (folder `trench_run_100_crates`) lies across the right half at y = 21; it is drawn and solid
   here, where the game's Warthog would push the crate aside.
-- Checked: `halo3_anim/tests/warthog_run_collision.rs` (scripts headless, the bike's own world:
+- Checked: `mcc_anim/tests/warthog_run_collision.rs` (scripts headless, the bike's own world:
   95 points round island 1 within 0.07 wu of the drawn island before, during and after the tilt
   and 20 s riding round; a bike standing on it stays 0.22 wu above it through the lurch; floor
   and no wall at 1 m steps through the first tunnel at x 52 and 58.7; it fails on the seam
   without the fix), `blam_geometry/tests/objects.rs` (`seam_between_loaded_bsps_is_open`),
-  headless `--bike` runs with `HALO3_SCRIPT_TRACE=1`: through the tunnel the bike crosses
+  headless `--bike` runs with `MCC_SCRIPT_TRACE=1`: through the tunnel the bike crosses
   y = 37.5 at 100 km/h; onto island 1 it is lifted with the island (z -28.2 -> -23.5) where
   before the carrying it fell through. Not playtested.
 
@@ -619,7 +627,7 @@ the phmo.
 dropped the same twelve but kept them, so more were in sight at once. Nothing drops extra:
 damage goes only to the objects a call names, and none comes down early.
 
-**Now** (`halo3_script/src/crate_physics.rs`, `objects.rs`): a loosened girder swings down about
+**Now** (`mcc_script/src/crate_physics.rs`, `objects.rs`): a loosened girder swings down about
 its hinge under gravity (sub-stepped pendulum, inertia from its collision's corners), bouncing
 off the hinge's 30 degree limit or the road with the phmo's restitution, and comes to rest
 hanging (about 6 s). `100_hw_ceiling10`, its hinge broken, falls free as a rigid body (gravity,
@@ -633,13 +641,13 @@ its limits); not compared with the real game.
 
 What it looks like: in the first tunnel the girders hang from one wall down to 1 to 2 wu over
 the road (`100_hw_ceiling14` reaches it); in the second, where the road lies lower, they hang 8
-to 16 wu up. `HALO3_SCRIPT_TRACE=1` logs every object a script damages.
+to 16 wu up. `MCC_SCRIPT_TRACE=1` logs every object a script damages.
 
-Checked: `halo3_anim/tests/tunnel_falls.rs` (scripts headless through both tunnels: exactly the
+Checked: `mcc_anim/tests/tunnel_falls.rs` (scripts headless through both tunnels: exactly the
 scripts' girders move, `100_hw_ceiling10` falls free, every one turns more than 5 degrees, rests
 within 15 s, solid, no corner in the floor, at its limit or on the road, the bike's world meets
 its top where it lies), the `crate_physics` unit tests (a beam swings to its limit; a dropped
-beam bounces and sleeps), all `halo3_anim`, `halo3_script`, `halo3_effects` tests. Shots:
+beam bounces and sleeps), all `mcc_anim`, `mcc_script`, `mcc_effects` tests. Shots:
 `out\shots\girder_swing\` in the `girder-tumble` worktree. Awaiting the user's playtest.
 
 ## Mission music (2026-10-30, branch `mission-music`)
@@ -649,13 +657,13 @@ The `lsnd` tags are now read in full (`docs/format/sound.md` 5 and 8, probe
 flags, the tracks' fade-in / fade-out / cross-fade-alternate flags and cross-fade time. The
 scripts' `sound_looping_start` / `_stop` / `_stop_immediately` / `_set_alternate`,
 `sound_impulse_start` / `_stop` and `sound_class_set_gain` (music and amb) reach the sound
-through a queue in `halo3_core::script_sound` (the VM's only change: those functions, which used
-to log "not implemented"). `halo3_audio/src/music.rs` plays the pieces: intro, random loop bars
+through a queue in `mcc_core::script_sound` (the VM's only change: those functions, which used
+to log "not implemented"). `mcc_audio/src/music.rs` plays the pieces: intro, random loop bars
 back to back, the alternate on a bar boundary through its transition or by cross-fade, the
 outro / alternate outro / fade on stop, music time, stops-music. On the Warthog run
 (`--insertion trench_run`) `120_music_15` starts on the first stretch, goes to its alternate on
 leaving the second island and plays its 77 s finale at the last stretch
-(`halo3_script/tests/trench_music.rs`). M / Shift+M / N / `--music` still work on top. Without
+(`mcc_script/tests/trench_music.rs`). M / Shift+M / N / `--music` still work on top. Without
 scripts nothing changes. Not done: dialogue (language banks), `lsnd` layers, the music class's
 mix level, cinematic music. Awaiting the user's playtest.
 
@@ -669,10 +677,10 @@ effects -12 to -15. We were not reading it, so effects and ambience played 9 to 
 gain (`SoundInfo::gain_db`); sound scenery a further -9 dB, weapons +6 dB (our choices,
 commented). Headless on the run: music -18 dBFS, ambience next to two plates -25 (was about
 -11). The mixer has buses (music, ambience, effects, dialogue) with per-bus volumes and level
-meters; `HALO3_AUDIO_TRACE=1` logs `audio levels` every 5 s. The pause menu has a fifth tab,
+meters; `MCC_AUDIO_TRACE=1` logs `audio levels` every 5 s. The pause menu has a fifth tab,
 **Sound**: Master, Music, Effects, Ambience, Dialogue sliders, 0-200 % (100 % = the game's
 mix), keyboard / pad / mouse, saved to `sound-levels.json` next to the exe
-(`halo3_audio/src/levels.rs`); `-` / `=` / K drive the same Master value. A slider multiplies
+(`mcc_audio/src/levels.rs`); `-` / `=` / K drive the same Master value. A slider multiplies
 on top of the scripts' `sound_class_set_gain` (music, amb). Awaiting the user's playtest.
 
 ## The frigate, the end of the run, and `trench_end` (2026-10-30, branch `halo-script`)
@@ -685,7 +693,7 @@ data:
 - **Machines stand in their animation.** The frigate's model lies nose along +Y; frame 0 of its
   `device:position` track turns the root a quarter turn. The game never shows a machine
   unanimated, so every machine with a graph now stands in its `device:position` pose at
-  position 0, laid over the rest pose as the clip's kind says (an overlay adds; `halo3_anim::devices::place_machines`, called in `main` before the
+  position 0, laid over the rest pose as the clip's kind says (an overlay adds; `mcc_anim::devices::place_machines`, called in `main` before the
   collision is built; `docs/format/animation.md` 10.3). That turns the open hangar (under the
   stern, 13 wu wide, 8 high, 34 deep) to face the run. The islands move by about 0.3 wu with it. (Read as whole values instead, the islands sank 56 wu out of sight; the user saw them gone. `tests/machines_at_rest.rs` now pins every machine within 1 wu of its placement.)
 - **Rotation order.** Composed about the world's axes as Reclaimer does (`scenario::rotation`);
@@ -702,7 +710,7 @@ won on that (or `game_won` / `end_mission`) and stops the thread there (no cutsc
 frigate stays); the scripts stop. The dirt bike counts as the Mongoose (`secret_egg/mongoose`,
 `vm::PLAYER_RIDE_STANDS_IN_FOR`): headless at full throttle from `trench_end` it reaches 125 km/h,
 flies through `end_trilogy03` and only grazes `end_trilogy01`'s bottom corner, then drops just
-under the hangar's floor. `halo3/src/finish.rs` stops play and shows MISSION COMPLETE with the
+under the hangar's floor. `mcc-rust-rewrite/src/finish.rs` stops play and shows MISSION COMPLETE with the
 time (game time from the first frame the player is in control after loading, so pauses do not
 count and deaths do not reset it), Restart run or Quit; styled like the pause menu. Since the
 master merge (2026-10-31) Restart unloads the map and loads it again in the same window (the map
@@ -714,19 +722,19 @@ goes back to the map menu, or closes the game when it was started on a map.
 `120_100_110`, `120_110_120`: only their BSPs (040, 100, 110, 120: indices 4, 7, 8, 9) are
 decoded, and `Zones::allowed` refuses any other zone set (trigger volumes, scripts, Page keys).
 It is a tile on the menu's Campaign tab ("The Warthog Run", MCC's Halo picture) and starts with
-`halo3.exe warthog_run`. Objects of the other BSPs are still decoded (never uploaded).
+`mcc-rust-rewrite.exe warthog_run`. Objects of the other BSPs are still decoded (never uploaded).
 
 **Starts.** A named insertion now starts on the dirt bike (`--foot`: on foot) where it puts the
 player. `trench_run`: the flag `trench_run_player0`, on the floor; the flag has no facing set
 (+X, into the side of the canyon the run starts in), so the start faces up the canyon to the run's
 first trigger, `120_08_trench_encounter_100` (`setup::FACE_TOWARDS`). `trench_end` (ours,
-`halo3_script::setup::insertion`): `ins_trench_run`, then zone set `120_110_120` and the run's
+`mcc_script::setup::insertion`): `ins_trench_run`, then zone set `120_110_120` and the run's
 last waypoint `trench_run_nav08` (75 wu before the ramp), facing `trench_run_nav09` in the
 hangar mouth; `object_management` then switches the run's kill volumes off and makes the frigate's
-lift shafts. Tests: `halo3_anim/tests/frigate.rs`.
+lift shafts. Tests: `mcc_anim/tests/frigate.rs`.
 
 ```
-& "<worktree>\out\bin\halo3.exe" 120_halo --insertion trench_end
+& "<worktree>\out\bin\mcc-rust-rewrite.exe" 120_halo --insertion trench_end
 ```
 
 **Dialogue (2026-10-31, branch `mission-dialogue`, awaiting the user's playtest).** The
@@ -737,11 +745,11 @@ decodes. The scripts name lines, not tags: the map's mission dialogue tag (`mdlg
 `SoundTags::mission_dialogue`) maps `120mg_030` to its speaker (`cor`) and `snd!`.
 `ai_play_line_on_object`, `ai_play_line` and `vs_play_line` now queue the line as a one-shot and
 return its length in ticks, and `sound_impulse_language_time` returns a sound's length, from the
-language bank's `.info` (`halo3_script::dialogue`), so the scripts' `(sleep (ai_play_line...))`
+language bank's `.info` (`mcc_script::dialogue`), so the scripts' `(sleep (ai_play_line...))`
 wait as long as the take. Lines play on the dialogue bus at their class and tag gains (-6 dB on
 most of Cortana's), and the other buses duck under them by the classes' dialogue ducking (music
 -3 dB, effects -6 dB). The language is English unless `setup.env` has `LANGUAGE=french` (or
-german, italian, mexican, spanish; setup does not ask) or `HALO3_LANGUAGE` overrides.
+german, italian, mexican, spanish; setup does not ask) or `MCC_LANGUAGE` overrides.
 `docs/format/sound.md` 11 has the format; `blam sound 120_halo dialogue --grep 120mg` lists the
 lines.
 
@@ -754,10 +762,10 @@ the insertion starts past, so `trench_run` counts `120_07_c_hall_end` as passed
 first stretch and then crosses it within a second, `md_09`'s once-a-second check misses it and the
 hint lines stay silent until the countdown.
 
-Checked: `halo3_script/tests/trench_dialogue.rs` (the six lines at their volumes, `120mg_040`
+Checked: `mcc_script/tests/trench_dialogue.rs` (the six lines at their volumes, `120mg_040`
 915 ticks plus `120mg_030`'s 64 ticks after it, `120mg_050` right after `040`),
 `blam_sound/tests/install.rs` (`english_dialogue_bank_and_mission_dialogue`), and a headless
-`warthog_run --bike --view -178,-300,-4,90` with `HALO3_AUDIO_TRACE=1`: `120mg_010`, `030`,
+`warthog_run --bike --view -178,-300,-4,90` with `MCC_AUDIO_TRACE=1`: `120mg_010`, `030`,
 `040` (32.6 s after `030`) and `050` played, Cortana about -22 to -25 dBFS against the music at
 -18.6. Not done: the voice effects (Cortana's `cortana_mission`, the radio filters), AI combat
 chatter (`udlg`), placing `ai_play_line` lines at the actor. For the playtest: is Cortana loud
@@ -767,7 +775,7 @@ enough over the music (the Dialogue slider goes to 200 %)?
 The stand-in flashes are gone. The scripts' `effect_new`, `effect_new_random`,
 `effect_new_at_ai_point`, `effect_new_on_object_marker` and the effects of the damage sections
 they hit (both of a response's effects: a plate's `destroy` plays its chunks and the trench's
-`plate_explosion`) go into `halo3_core::effects::EffectQueue`; `halo3_effects` plays them from
+`plate_explosion`) go into `mcc_core::effects::EffectQueue`; `mcc_effects` plays them from
 the map's tags, read with their bitmaps while the map loads (`main.rs`: the scripts'
 referenced `effe` tags plus their objects' damage effects; 64 effects, 48 particles, 7
 contrails, 8 lights, 35 bitmaps on the run, 0.1 s). Reader `blam_effect`, format
@@ -781,9 +789,9 @@ contrails, 8 lights, 35 bitmaps on the run, 0.1 s). Reader `blam_effect`, format
   maps, billboards (camera facing, stretched along the velocity for sparks), blend modes;
   effects a particle carries (the ejecta each carry a flaming contrail); contrails (`cntl`:
   points a second, point life, width, colour, alpha, black point); light flashes (`ligh`) lit
-  into the world by a term added to `lightmap.wesl`; sounds (`snd!`) through `halo3_audio`.
+  into the world by a term added to `lightmap.wesl`; sounds (`snd!`) through `mcc_audio`.
 - **Our choices (commented in the code)**: particles at 3x their authored colour
-  (`HALO3_EFFECT_EXPOSURE`; the world's x8 exposure turned fireballs white); particles leave
+  (`MCC_EFFECT_EXPOSURE`; the world's x8 exposure turned fireballs white); particles leave
   along the effect's up axis; light falloff 4x the light's size, its strength scaled by 0.05;
   every particle material is drawn once invisibly at the start so the first explosion is not
   lost to shader compiles.
@@ -792,20 +800,20 @@ contrails, 8 lights, 35 bitmaps on the run, 0.1 s). Reader `blam_effect`, format
   the object's origin), soft particle edges, mesh particles. The plates' `fall` effects only
   hold a `bloc` and a `jpt!`, so a dropping plate has no effect to show (its fall is still
   ours). The weapons' and AI's impact effects are unchanged (their stand-ins in
-  `halo3_weapons/src/fire.rs`; switching them over needs their tags read at load).
+  `mcc_weapons/src/fire.rs`; switching them over needs their tags read at load).
 - Checked: `blam_effect/tests/run_effects.rs` (the plate explosion's and the giant explosion's
-  layouts, every effect in 120_halo reads), `halo3_effects/tests/trench_effects.rs` (the run's
+  layouts, every effect in 120_halo reads), `mcc_effects/tests/trench_effects.rs` (the run's
   scripts blow up `100_001c` and the player makes the flash, 50 rising fireball particles, the
   sounds and five to eight ejecta with contrails; the giant explosions go off at the
-  scripts' points), all `halo3_script` and `halo3_anim` tests. Headless shots:
+  scripts' points), all `mcc_script` and `mcc_anim` tests. Headless shots:
   `out\shots\plate_explosion\120_halo_2.png`, `_3.png` (plate `100_001c` blowing up, from the
   run's first trigger), `out\shots\giant4\120_halo_6.png`, `_9.png` (the first giant
-  explosion in the canyon, from `120_08_trench_encounter_100`). `HALO3_EFFECT_TRACE=1` logs
-  every effect started; `HALO3_SHOT_NEXT_WAIT` spaces later `--shot` views for time series.
+  explosion in the canyon, from `120_08_trench_encounter_100`). `MCC_EFFECT_TRACE=1` logs
+  every effect started; `MCC_SHOT_NEXT_WAIT` spaces later `--shot` views for time series.
 
 ## Halo CE's Warthog run (2026-11-02, branch `h1-warthog-run`)
 
-`halo3.exe h1:warthog_run`, or the Campaign tab's "Halo CE: The Warthog Run" tile (MCC's
+`mcc-rust-rewrite.exe h1:warthog_run`, or the Campaign tab's "Halo CE: The Warthog Run" tile (MCC's
 `H1_C10_THEMAW` picture). The Maw (`h1:d40`) from where the Warthogs wait at the top of the
 lift; the walk before is left out (the user asked for only the part in the Warthog). The dirt
 bike stands in for the Warthog, as on Halo 3's run. Built on what Halo 3's run taught:
@@ -817,13 +825,13 @@ bike stands in for the Warthog, as on Halo 3's run. Built on what Halo 3's run t
   overlap is never drawn twice and there is no seam to open (Halo 3's `drop_seams` problem).
 - **The map's own scripts on Halo 3's runtime.** `blam_h1::script` reads Halo CE's scripts
   into Halo 3's `blam_script::ScriptData` (20-byte nodes, Halo CE's value type numbers mapped
-  to Halo 3's; `halo1.md` 12, probe `probe_h1_scripts.py`), and `halo3_script` runs them
+  to Halo 3's; `halo1.md` 12, probe `probe_h1_scripts.py`), and `mcc_script` runs them
   unchanged except for new functions: the HUD countdown (`hud_set_timer_time`,
   `hud_get_timer_ticks`, `pause_hud_timer`, `show_hud_timer`, `hud_set_timer_warning_time`;
   `vm::HudTimer`), `game_lost` (`Runtime::mission_lost`), `switch_bsp`
   (`Config::bsp_zone_sets`), and `Config::won_at` / `lost_at`: a call of one of those scripts
   ends the mission there, so the outro cutscene (teleports, BSP switches) never plays.
-- **Begun like an insertion** (`halo3_script::h1::THE_MAW`): the mission's own startup
+- **Begun like an insertion** (`mcc_script::h1::THE_MAW`): the mission's own startup
   (`mission`) is stopped, `diff_control` runs to its end first (`Runtime::run_now`; Legendary
   takes a minute off the countdown), `section6`, `section7` and `timer_begin` are woken, and
   `section6` / `enc6_0_dialog` count as passed (the lift top and the walk to the jeeps).
@@ -844,10 +852,10 @@ bike stands in for the Warthog, as on Halo 3's run. Built on what Halo 3's run t
   the full 6:00; in the game it starts on the lift ride, some 20 s earlier.
 
 Checked: `blam_h1/tests/scripts.rs` (298 scripts, 66 globals, the countdown and finish read
-back; the BSP switches), `halo3_script/tests/h1_warthog_run.rs` (the countdown starts at 6:00
+back; the BSP switches), `mcc_script/tests/h1_warthog_run.rs` (the countdown starts at 6:00
 and 5:00 on Legendary; driven through the run's volumes it pauses at `enc6_6_1`, resumes, and
 `grand_finale` wins; standing still, the countdown runs out and loses), every
-`halo3_script` / `halo3_anim` test (Halo 3's run unchanged). Headless: the bike leaves the bay
+`mcc_script` / `mcc_anim` test (Halo 3's run unchanged). Headless: the bike leaves the bay
 and turns into the run; shots along the run to the Longsword (`out\shots\h1route\` in the
 worktree); the floor traced along the run's line (y = -4) has no gap wider than the narrow
 slots in the middle of the road. The run's haze is the map's own: the run's clusters see
@@ -857,16 +865,16 @@ slots in the middle of the road. The run's haze is the map's own: the run's clus
 with Halo CE's own tags from `d40.map` (`docs/format/halo1.md` 13). `blam_h1::effect` reads
 `effe`, `part`, `pctl` (particle systems: fire turning to smoke), `ligh`, `pphy` and bitmap
 sequences; `blam_h1::effect_library` turns them into Halo 3's effect types, so
-`halo3_effects` plays them with its renderer unchanged (`halo3/src/halo1_effects.rs` loads the
+`mcc_effects` plays them with its renderer unchanged (`mcc-rust-rewrite/src/halo1_effects.rs` loads the
 11 effects the scripts name, with their bitmaps as atlases, 0.1 s). Seen: the light flash
 lighting the trench orange, the fire puffs (added), the smoke plume they turn into (blended),
 the drifting smoke, the panel debris specks. The scripts' ambient explosions also go off along
-the run, as in the game. The effects' sounds go to `halo3_core::script_sound` as impulses with
+the run, as in the game. The effects' sounds go to `mcc_core::script_sound` as impulses with
 the Halo CE `snd!` tag index, path and position: the hook for Halo CE sound playback. Not played:
 debris objects (`garb`), decals, damage (`jpt!`: no area damage to the rider), lens flares.
-Headless: `HALO3_SHOT_EFFECT='effects\explosions\large explosion@x,y,z'` sets an effect off
+Headless: `MCC_SHOT_EFFECT='effects\explosions\large explosion@x,y,z'` sets an effect off
 before the first `--shot` picture (`shot.rs`). Tests: `blam_h1/tests/effects.rs`,
-`halo3_effects/tests/h1_run_effects.rs` (driven through the run, every explosion the scripts set
+`mcc_effects/tests/h1_run_effects.rs` (driven through the run, every explosion the scripts set
 off is a converted effect at a cutscene flag; a large explosion plays its flash, sound, fire,
 smoke).
 
@@ -887,7 +895,7 @@ reach them (`docs/format/halo1.md` 16 to 18, probe `probe_h1_objects.py`):
   object's BSP mask. On the run: 60 oxygen tanks and 5 field generators in BSP 7's tunnels;
   the Longsword (`fighterbomber_scenery`), the flames and sparks have no collision model, as in
   the game.
-- **Scripts** (`halo3_script::h1_objects`, `h1::runtime_with_devices`): the same object table
+- **Scripts** (`mcc_script::h1_objects`, `h1::runtime_with_devices`): the same object table
   Halo 3's scripts use, from the scene without a cache file, so `object_create` /
   `object_destroy` / `object_hide`, `device_*` and collision removal (`publish_collision`) work
   as on 120_halo. New in the VM for both games: `object_create_containing`,
@@ -905,18 +913,18 @@ reach them (`docs/format/halo1.md` 16 to 18, probe `probe_h1_objects.py`):
 Checked: `blam_h1/tests/objects.rs` (the mask; a tank's collision box equals its drawn box; the
 run's line y = -4 from x -115 to 1052, 0.3 and 0.8 wu over the floor: the only objects met are
 four oxygen tanks, `bsp_8_22`, `23` at x 995 and `bsp_8_74`, `75` at x 1021, each with a free
-line within 6 wu beside it; no machine), `halo3_anim/tests/h1_objects.rs` (the bike at full
+line within 6 wu beside it; no machine), `mcc_anim/tests/h1_objects.rs` (the bike at full
 throttle stops at `bsp_8_75` and rides on without object collision; the scripts find
 `bsp_8_*` by name, the absent ones do not collide until created, `object_destroy_all` /
-`object_create_containing` at `grand_finale`, the run still won), `halo3_script` unit tests
+`object_create_containing` at `grand_finale`, the run still won), `mcc_script` unit tests
 (an automatic door opens, holds, closes; an unpowered one stays shut). Not playtested.
 
-**Enemies (2026-11-03, branch `h1-enemies`).** The run's encounters are `halo3_ai` actors,
+**Enemies (2026-11-03, branch `h1-enemies`).** The run's encounters are `mcc_ai` actors,
 placed, killed and counted by the map's own scripts through the same `AiBridge` Halo 3 uses.
 `blam_h1::ai` reads encounters, squads, platoons, starting and firing positions and the actor
 variant palette (`actv` -> `actr`, `bipd`, `coll`, `weap`, `proj`, `jpt!`); `blam_h1::skeleton`
 the models' nodes and markers (rotations stored conjugated); `blam_h1::animation` the `antr`
-graphs; `halo1.md` 14 and 15, probe `probe_h1_ai.py`. `crates/halo3/src/halo1_ai.rs` turns them
+graphs; `halo1.md` 14 and 15, probe `probe_h1_ai.py`. `crates/mcc-rust-rewrite/src/halo1_ai.rs` turns them
 into `AiAssets` (each encounter a squad group and an AI zone, each platoon a group, each squad
 `encounter/squad`, lower case, its count for the difficulty) and an arsenal of the actors'
 weapons; `halo1_anim.rs` plays idle, moves (at the actor's ground speed) and melee from the
@@ -946,7 +954,7 @@ FMOD banks in `halo1\sound\pc` (`game_paths::halo1_sound()`), found by tag path 
 (BSD-3-Clause, C, built by the new crate `fsb_celt` with `cc`; needs MSVC's C compiler, which
 the Rust MSVC toolchain already has). `blam_h1::sound` reads `snd!`, `lsnd`, the script
 sound references, each BSP's background sound per cluster (with its own cluster finder from
-the collision tree) and the banks; `halo3_audio::halo1` turns them into Halo 3's player data,
+the collision tree) and the banks; `mcc_audio::halo1` turns them into Halo 3's player data,
 so `music.rs` plays them unchanged (`MapSound::Halo1`). On the run: `d40_07` from the start
 (the insertion passes `enc6_0_dialog`, whose script starts it), its alternate
 (`string_idea`, cross-faded over 6 s) at the Pelican scene, `d40_08` after it, the one-shot
@@ -956,8 +964,8 @@ English otherwise or when a line is missing), each script sleeping as long as it
 (`sound_impulse_time`, from the tag's own PCM length); the trench's `interior_*_trench`
 background loops by cluster. Every `snd!` of the map is playable by tag index, so effects
 can sound: push `SoundRequest::Impulse { tag, name, at: Some(pos), scale }` into
-`ScriptSounds` (`halo3_audio/src/halo1.rs` header). Levels are our choice (no class tag in
-Halo CE): music and lines as tagged, effects -6 dB, ambience -12 dB. Headless at the run's start (`HALO3_AUDIO_TRACE=1 --shot`): `d40_07` -13 to -18 dBFS, Cortana -14 to -17, the trench background (its loop and the `muffled_explosions` it scatters every 0.5 to 2 s, details a further -6 dB) -18 to -21 (it was -12, over the music, at the tags' own gains). Not done: pitch, reverb
+`ScriptSounds` (`mcc_audio/src/halo1.rs` header). Levels are our choice (no class tag in
+Halo CE): music and lines as tagged, effects -6 dB, ambience -12 dB. Headless at the run's start (`MCC_AUDIO_TRACE=1 --shot`): `d40_07` -13 to -18 dBFS, Cortana -14 to -17, the trench background (its loop and the `muffled_explosions` it scatters every 0.5 to 2 s, details a further -6 dB) -18 to -21 (it was -12, over the music, at the tags' own gains). Not done: pitch, reverb
 (`snde`), sound scenery (none on the run), the cutscenes' 5.1 music, the Warthog's engine
 sounds (in no bank). Awaiting the user's playtest.
 
@@ -968,10 +976,10 @@ load).
 playtest).** The AI fought only the Spartan on foot; on the bike the run's Flood and Sentinels
 ignored you. Now:
 
-- **One body for the player** (`halo3_core::ai::PlayerBody`, written by `halo3_ai/src/player.rs`
+- **One body for the player** (`mcc_core::ai::PlayerBody`, written by `mcc_ai/src/player.rs`
   every frame from the Spartan, the bike's `BikeMotion` or the skater's `SkateMotion`): feet, a
   hit capsule, velocity. The brain sees, hears, chases, leads and swings at it; the actors' rounds
-  (`halo3_weapons/src/fire.rs`) hit it and fly on the shared collision (`SharedWorld`, the one
+  (`mcc_weapons/src/fire.rs`) hit it and fly on the shared collision (`SharedWorld`, the one
   the bike rides), not only the on-foot one; the damage goes to the same shields and health.
   On the bike the capsule stands round the rider (2.5 m, radius 0.63; ours): hits on the bike
   count as hits on him, the bike has no health of its own.
@@ -983,18 +991,18 @@ ignored you. Now:
   prints tracking and leading.
 - **Difficulty**: what actors deal the player is scaled by the globals' first difficulty row
   (`matg` +0x410: 0.1 / 0.775 / 1.0 / 1.6 for easy / normal / heroic / legendary; our reading,
-  `docs/format/ai.md` 8), by `--difficulty` (`halo3_core::ai::Difficulty`, normal by default).
+  `docs/format/ai.md` 8), by `--difficulty` (`mcc_core::ai::Difficulty`, normal by default).
   On foot too.
 - **The engine is heard**: a moving bike is heard like gunfire within half the character's
   hearing distance (our share), so a squad you pass behind turns and fights. Without it a
   squad facing away never saw a rider going by (sight is the character's 50 deg cone).
 - **Death and respawn on the bike**: health decides; a hit does not knock him off (Halo 3's
   vehicles do not throw their drivers). While he is dead the bike's controls go dead
-  (`halo3_core::ai::PlayerRespawn::dead`) and it rolls on; after 3 s it is put down at his last
-  quiet checkpoint (`PlayerRespawn::bike`, taken by `halo3_bike`) with full shields and health.
+  (`mcc_core::ai::PlayerRespawn::dead`) and it rolls on; after 3 s it is put down at his last
+  quiet checkpoint (`PlayerRespawn::bike`, taken by `mcc_bike`) with full shields and health.
   Checkpoints are taken on the bike while it is upright on both wheels and no enemy has seen him
   for 3 s. On the board he comes back through the skate engine's respawn
-  (`halo3_core::skate::Respawn`). The HUD bars, the red flash and "You died" show in all three.
+  (`mcc_core::skate::Respawn`). The HUD bars, the red flash and "You died" show in all three.
 - **Splatter**: the bike hurts what it runs into (`player.rs` `ram`, a capsule along the bike,
   swept from last frame so a fast bike cannot skip a small actor). From the map: the global
   `jpt! globals\collision_damage\collision` (100) times the Mongoose's `cddf`
@@ -1004,20 +1012,20 @@ ignored you. Now:
   (`docs/format/weapons.md` 6a, `blam_geometry::weapons::read_vehicle_collision`). Slower,
   the bike only shoves them aside. The body is thrown along the bike's way. The bike does not
   slow down, the rider takes nothing, and actors are not solid to the bike's physics.
-- Checked: `halo3_ai/tests/rider.rs` (120_halo's AI and weapons in a bare app on the run's
+- Checked: `mcc_ai/tests/rider.rs` (120_halo's AI and weapons in a bare app on the run's
   collision, the rider stood in by `BikeMotion`): `trench_sentinel_100_1` hears the bike going
   past at 8 m/s, fires its beams and hurts him within the first 30 s, kills him, the bike's
   controls go dead and he is sent back to his checkpoint with full shields and health; riding
   at 20 m/s into a `trench_combat_forms01` elite kills it. `blam_geometry/tests/weapons.rs`
   `mongoose_collision_damage` and `ai.rs` `enemy_damage_by_difficulty` pin the numbers. Unit tests for the segment distance and the
-  ramp. All `halo3_ai`, `halo3_script`, `halo3_anim` (but `frigate`, see below) and
-  `halo3_effects` tests pass.
+  ramp. All `mcc_ai`, `mcc_script`, `mcc_anim` (but `frigate`, see below) and
+  `mcc_effects` tests pass.
 - Rounds that hit a body (an actor or the rider) no longer leave a scorch mark hanging in the air.
-- Headless shots (`HALO3_AI_PLACE=squad,...` places squads as play begins whatever the scripts do,
-  a dev hook for this; `HALO3_AI_TRACE=1` logs every hit on the player and every splatter):
+- Headless shots (`MCC_AI_PLACE=squad,...` places squads as play begins whatever the scripts do,
+  a dev hook for this; `MCC_AI_TRACE=1` logs every hit on the player and every splatter):
   `out\shots\sentinel_beams\120_halo_0.png`, `_1.png` (`trench_sentinel_100_1`'s beams on a
-  stopped rider, from `warthog_run --bike --view 92,-147,-29,180,0`, `HALO3_GOD=1
-  HALO3_BIKE_THROTTLE=0 HALO3_SKATE_FOR=4`), `out\shots\flood_charge_4\120_halo_0.png`
+  stopped rider, from `warthog_run --bike --view 92,-147,-29,180,0`, `MCC_GOD=1
+  MCC_BIKE_THROTTLE=0 MCC_SKATE_FOR=4`), `out\shots\flood_charge_4\120_halo_0.png`
   (`trench_combat_forms01` charging and swinging at him in the first tunnel, `--view
   55,-2,-33,90,0`), in the worktree. A ride at throttle 0.4 into all eight combat forms of
   `01` and `02` killed him within two seconds at normal before the difficulty scale (they fire
@@ -1029,7 +1037,7 @@ ignored you. Now:
   second, so a few sentinels together drain a standing rider in two or three seconds (the
   targets' material responses and the difficulty scaling are not read; the same on foot).
   Carriers do not spawn infection forms; no grenades; the Flood do not leap onto the bike. The
-  rider's death has no animation; the bike just rolls on. `halo3_anim/tests/frigate.rs` does
+  rider's death has no animation; the bike just rolls on. `mcc_anim/tests/frigate.rs` does
   not build on master (it uses `setup::START_AHEAD`, which no longer exists); not touched here.
 
 **The missing Flood, Halo 3's shield meter and its sounds (2026-11-03, branch
@@ -1037,13 +1045,13 @@ ignored you. Now:
 Sentinels on the run, for several builds.
 
 - **Why there were no Flood**: the scripts place them (`100_trench_run_encounters01` and on,
-  checked by `halo3_ai/tests/warthog_flood.rs`, which runs `ins_trench_run` and rides the
+  checked by `mcc_ai/tests/warthog_flood.rs`, which runs `ins_trench_run` and rides the
   trigger volumes in order with the AI in a bare app). The first tunnel's twelve combat forms
   (`trench_combat_forms01..03`, placed at `tunnel01_trig01`) are put among the six
   `trench_sentinel_100_4` (placed earlier, at `trench_run_100_trig08`, in the same room): a
   scripted Flood-Sentinel fight for the rider to ride into. At full damage the sentinel beams
   (4 a hit, 30 hits a second) killed all twelve within a second of their placement
-  (`HALO3_AI_TRACE=1` now logs who killed whom), seconds before the rider got there; the same
+  (`MCC_AI_TRACE=1` now logs who killed whom), seconds before the rider got there; the same
   for the later tunnels (`trench_combat_forms04` with `trench_sentinel_110_11`, 06..08 with
   `trench_sentinel_110_1`). Fix: actors hurting actors deal 0.2 of the damage effect's number
   (`vitality.rs` `AI_VS_AI`; ours: the material responses that make such fights last in the
@@ -1056,7 +1064,7 @@ Sentinels on the run, for several builds.
   no render or collision geometry, no object, under them in BSPs 040, 100 and 110. They are
   placed (14 infection forms, 2 carriers) and hang there unseen, far from the route. Not fixed;
   `cs_swarm_from` / `cs_swarm_to` are not run either.
-- **Shield meter** (`halo3_ai/src/hud.rs`): the map's own bitmaps of the Spartan HUD
+- **Shield meter** (`mcc_ai/src/hud.rs`): the map's own bitmaps of the Spartan HUD
   (`chdt ui\chud\spartan`), `ui\chud\bitmaps\shield_meter` and `shield_border`, decoded with
   `blam_texture`. They are chud shader masks: alpha the shape, green the shading, the meter's
   blue a ramp left to right (16..239) that the chud shader compares with the shield fraction, so
@@ -1065,12 +1073,12 @@ Sentinels on the run, for several builds.
   screen), the tints (pale blue, red under a quarter) and the border flashing red four times a
   second while the shields are empty are ours. Halo 3 shows no health meter for the Chief, so
   the placeholder health bar is gone; the red flash and "You died" stay. On foot, bike and board
-  alike. `HALO3_SHIELD=0.2` (dev) pins the shields for pictures.
+  alike. `MCC_SHIELD=0.2` (dev) pins the shields for pictures.
 - **Shield sounds**: the HUD globals' sound list (20-byte entries next to `chgd
   ui\chud\globals`, a tag ref and a flag each): `sound\game_sfx\ui\shield_hit` (snd!),
   `shield_charge\shield_charge`, `shield_low\shield_low` and `shield_depleted\shield_depleted`
   (lsnd); the list's next four are the rocket and missile launchers' lock tones, and there is no
-  low-health sound. `halo3_core::ai::ShieldSounds`; `halo3_audio` loads them with the map,
+  low-health sound. `mcc_core::ai::ShieldSounds`; `mcc_audio` loads them with the map,
   `hud.rs` plays them through the script sound queue (the tags' sound classes pick bus and
   gain): the hit one-shot as the shields drop, the charge loop while they fill, low under a
   quarter, depleted while empty (thresholds ours). Not found: the block header that points at the
@@ -1079,7 +1087,7 @@ Sentinels on the run, for several builds.
   ramp's half point near the middle, the four sound tags and their classes), unit tests for the
   fill columns and the loop choice. Shots: `out\shots\shield_1\120_halo_0.png` (full),
   `out\shots\shield_0.2\120_halo_0.png` (low), `out\shots\shield_0\120_halo_0.png` (empty), from
-  `warthog_run --bike --view -174.5,-351.4,-1.7,92,0` with `HALO3_SHIELD`.
+  `warthog_run --bike --view -174.5,-351.4,-1.7,92,0` with `MCC_SHIELD`.
 - Also seen: a plain `--shot` with no ride (`riverworld --shot DIR`) panics on a missing
   resource, on master too; not touched.
 
@@ -1130,7 +1138,7 @@ Sentinels on the run, for several builds.
 | george0815/halo-3-recomp | static recompilation of the Xbox 360 `default.xex` into C++ | boots to menu; needs a 360 dump; no licence stated |
 | ElDewrito + TagTool | Halo Online mod; TagTool (GPL-3.0) documents Gen3 tag layouts | TagTool's definitions were the source of the collision BSP facts |
 | Assembly | tag editor with plugin XMLs (GPL-3.0) | MCC Halo 3 sbsp/zone/play plugin offsets cross-checked |
-| Rust Halo 3 rewrite | none existed before this folder | this is it |
+| Rust Halo 3 rewrite | none existed before this folder | this is it (now MCC Rust Rewrite) |
 
 ## User preferences
 

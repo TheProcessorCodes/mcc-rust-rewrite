@@ -1,0 +1,26 @@
+[package]
+name = "mcc_ai"
+description = "The scenario's squads as actors: placed, drawn, hurt and fighting, with the player's shields and health"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy = { workspace = true }
+blam_cache = { workspace = true }
+blam_geometry = { workspace = true }
+blam_texture = { workspace = true }
+mcc_bike = { workspace = true }
+mcc_core = { workspace = true }
+mcc_foot = { workspace = true }
+mcc_rider = { workspace = true }
+mcc_textures = { workspace = true }
+mcc_weapons = { workspace = true }
+mcc_world = { workspace = true }
+mcc_anim = { workspace = true }
+
+[dev-dependencies]
+game_paths = { workspace = true }
+mcc_script = { workspace = true }
+blam_script = { workspace = true }

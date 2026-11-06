@@ -1,6 +1,6 @@
 # MX vs ATV Reflex: engine sounds
 
-What `reflex_assets::engine_audio` reads and `halo3_audio::engine` plays. Worked out
+What `reflex_assets::engine_audio` reads and `mcc_audio::engine` plays. Worked out
 2026-10-30 from the user's Steam install (read-only); nothing from it is copied into
 this project.
 

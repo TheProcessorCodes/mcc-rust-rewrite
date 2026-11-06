@@ -6,7 +6,7 @@ own probes (`blam dump`, `blam shader`, small Python readers); no GPL code or pl
 Field names are ours, chosen for what the data does; where a meaning is a guess it says so.
 
 Code: `crates/blam_geometry/src/atmosphere.rs` (reader, tests pin the numbers below),
-`crates/halo3_world/src/sky.rs` and `world/shaders/sky.wesl` (drawing).
+`crates/mcc_world/src/sky.rs` and `world/shaders/sky.wesl` (drawing).
 
 ## 1. Where things are
 
@@ -236,7 +236,7 @@ Avalanche at x17 and Standoff at x20, plausibly because the game's auto exposure
 Values outside -8..0 stops (Chillout's -16.6) are ignored and get the plain x4. Sandbox's
 lightmap is so bright (mean E 1.35) that its -3.32 stops still blow it out; the viewer caps the
 exposure so that the mean E (luminance) comes out at most 3.0 (`docs/viewer.md`, "Lighting").
-`HALO3_EXPOSURE` (a fixed multiplier) and `HALO3_EXPOSURE_SLOPE` override.
+`MCC_EXPOSURE` (a fixed multiplier) and `MCC_EXPOSURE_SLOPE` override.
 
 ## 6. The Pit (cyberdyne)
 
@@ -269,7 +269,7 @@ The sky model holds the whole night outside the rig, all ordinary `rmsh` shaders
 
 Because the dome is white and lit, the sky only comes out dark when its light is dim; with the
 daylight of section 4 the dome, the sea and the mist were white. `sky.rs` lists Blackout as a
-night sky (`NIGHT_SKIES`) and gives its lit sky pieces a tenth of that light (`HALO3_SKY_LIGHT`
+night sky (`NIGHT_SKIES`) and gives its lit sky pieces a tenth of that light (`MCC_SKY_LIGHT`
 overrides): a dark navy sky, a black sea under white floes, the moon and its halo. The aurora is
 drawn like the world's plasma (the mask's alpha times the band colours' mean), times the
 overlay's colour: blue-green curtains; the crawling noise bands and the warp are not drawn, so

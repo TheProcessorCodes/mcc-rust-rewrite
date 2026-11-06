@@ -222,7 +222,7 @@ pub fn decode(
     let bounds = geometry::read_bounds(cache, bounds_block)?;
     let resource = GeometryResource::load(resources, resource)?;
 
-    // The lightmap: its bitmaps (the viewer decodes them, `halo3_textures`
+    // The lightmap: its bitmaps (the viewer decodes them, `mcc_textures`
     // `reach.rs`) and, per instance, whether it is lit per pixel and the
     // vertex buffer of its texcoords.
     let mut lightmap: Option<(u32, Block, Block)> = None;

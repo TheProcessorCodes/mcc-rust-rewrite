@@ -236,7 +236,7 @@ Inferred from the shape of the tag and the values, not proven:
   the air, and a 2011 Bungie.net measurement on the Halo 3 disc (forum post 3291870, default
   traits) gives about 1.4 s, with the feet rising about 1.45 Spartan heights (~1.05 wu). Both fit
   the tag's 3.08 wu/s jump with g ≈ 4.5 wu/s², so the Spartan's own gravity seems stronger than
-  the falling-damage g. `halo3_foot` uses 4.5 wu/s² on foot (`FOOT_GRAVITY`: 1.37 s, 1.05 wu).
+  the falling-damage g. `mcc_foot` uses 4.5 wu/s² on foot (`FOOT_GRAVITY`: 1.37 s, 1.05 wu).
   The 4.5 is measured by eye, not read from the engine. A frame count of a standing jump in MCC
   would pin it down: g = 2 × 3.08 / airtime.
 - **Walk speed** at player information `+0x00` (0.512): the field before "run forward" in Halo's

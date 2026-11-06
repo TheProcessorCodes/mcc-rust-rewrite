@@ -1,8 +1,8 @@
 # Reflex bike physics (vendored)
 
 MX vs ATV Reflex's dirt-bike simulation as a library: `reflex_core` (engine-independent, Reflex units)
-and `reflex_bevy` (the Bevy 0.20 adapter). `crates/halo3_bike` links `reflex_bevy` for the "Reflex"
-bike model (`crates/halo3_bike/src/exact.rs`). They are copied here so the project builds from one
+and `reflex_bevy` (the Bevy 0.20 adapter). `crates/mcc_bike` links `reflex_bevy` for the "Reflex"
+bike model (`crates/mcc_bike/src/exact.rs`). They are copied here so the project builds from one
 download. They contain no Reflex code or data: the vehicle values are read at run time from the
 player's own Reflex install (`reflex_assets::vehicle`).
 
@@ -35,4 +35,4 @@ recordings of the game. Make changes there first where possible, then copy them 
 ## Licence
 
 No licence has been chosen for `reflex-physics` yet. It is the user's own code; pick one before a
-public release (it links into `halo3.exe`, which is GPL-3.0-only because of the Skate 3 engine).
+public release (it links into `mcc-rust-rewrite.exe`, which is GPL-3.0-only because of the Skate 3 engine).

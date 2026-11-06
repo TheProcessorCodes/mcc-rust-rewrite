@@ -1,6 +1,6 @@
 //! Decodes the user's MCC Reach multiplayer maps, when installed, and pins
 //! what each holds (MCC update 13, build `Jun 21 2023 15:35:31`). Each was
-//! also drawn headlessly (`halo3 hr:NAME --shot`) and looked at.
+//! also drawn headlessly (`mcc-rust-rewrite hr:NAME --shot`) and looked at.
 
 use std::path::PathBuf;
 

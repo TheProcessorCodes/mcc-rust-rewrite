@@ -2,7 +2,7 @@
 
 Written 2026-10-29 from our own probes of the user's `riverworld.map` (Valhalla). Read by
 `crates/blam_sound/src/weapons.rs` (`WeaponSoundReader`) and the sound classes by
-`blam_sound::tags::SoundTags::classes`; played by `crates/halo3_audio/src/weapons.rs`; probed by
+`blam_sound::tags::SoundTags::classes`; played by `crates/mcc_audio/src/weapons.rs`; probed by
 `scripts/probe_weapon_sounds.py [map] [--all] [--classes]`; pinned by
 `crates/blam_sound/tests/weapons.rs`. Offsets were found by scanning tag data for references and
 blocks (`h3_common.Map.scan`) and comparing the same field across weapons; names are ours, from what

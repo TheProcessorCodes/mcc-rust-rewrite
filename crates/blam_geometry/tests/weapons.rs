@@ -165,7 +165,7 @@ fn valhalla_weapon_meshes_decode() {
 
 /// The Mongoose's splatter numbers on 120_halo: the global collision damage
 /// effect deals 100, its `cddf` (`vehicle_small`) scales by 1.2 over 3..8
-/// wu/s. The dirt bike uses these (`halo3_ai`).
+/// wu/s. The dirt bike uses these (`mcc_ai`).
 #[test]
 fn mongoose_collision_damage() {
     let Some(path) = map("120_halo") else { return };

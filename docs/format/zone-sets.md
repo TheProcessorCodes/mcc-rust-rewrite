@@ -9,7 +9,7 @@ contents against things whose meaning is obvious (zone set names that list their
 that land on the ground, string ids that name zone sets).
 
 Code: `crates/blam_geometry/src/zones.rs` (reader and tests), `sbsp.rs` (cluster sky index),
-`scenario.rs` (object origin BSP, sky masks), viewer `crates/halo3_world/src/zones.rs`.
+`scenario.rs` (object origin BSP, sky masks), viewer `crates/mcc_world/src/zones.rs`.
 
 Probe: `python -I docs/format/scripts/probe_scnr_blocks.py <map> [scan length hex] [mode]`, mode
 `OFF:STRIDE:N` dumps N elements of the block at scnr + OFF, `origin:OFF:STRIDE` groups a

@@ -57,20 +57,20 @@ cube is not known; this is our reading of the numbers.
 
 ## 4. Checks (Valhalla, headless shots)
 
-- `HALO3_REFLECTIONS=view` draws, on every world surface, the cube seen straight along the
+- `MCC_REFLECTIONS=view` draws, on every world surface, the cube seen straight along the
   view ray. With the camera at a capture point it should look like the world: from cube 8
   (66.67, -60.08, 1.83) looking along +X the tower, the river and the far shore of the cube
   land on the tower, river and shore of the world. That fixed the axes (identity).
-- `HALO3_REFLECTIONS=mirror` makes every surface a mirror of the cubes: looking straight
+- `MCC_REFLECTIONS=mirror` makes every surface a mirror of the cubes: looking straight
   down at a floor shows the sky.
 - `CUBE_SCALE` was set by comparing the `view` shot with the normal one, region by region
   (mean display luminance): 0.12. That is about a mean albedo, as it should be: the cube
   holds light reflected off the surfaces round its point, the SH the light falling on them.
-  `HALO3_CUBE_SCALE` overrides it.
+  `MCC_CUBE_SCALE` overrides it.
 - 2026-11-06: raised to 1.0. At 0.12 surfaces whose look is mostly reflection went near
   black: the Warthog run's metal road in the tunnels measured 7 (display luminance, 0-255)
   where the SH stand-in gave 34. At 1.0 Valhalla's spawn, overview and spawn12 shots come
-  out as bright as with `HALO3_REFLECTIONS=0` (82 / 111 / 62), so the cubes keep their pattern
+  out as bright as with `MCC_REFLECTIONS=0` (82 / 111 / 62), so the cubes keep their pattern
   at the level the stand-in had.
 
 ## 5. Choosing cubes in the viewer
@@ -83,7 +83,7 @@ top two bits, 10 bits a cube). The pixel blends them by inverse squared distance
 them at a mip from the material: Cook-Torrance from its roughness lobe times
 `env_roughness_scale`, the phong models at level 1, glass sharp. `per_pixel` environment
 maps (the shader's own cube) are drawn with the level's cubes too. Halo 2, Reach and the
-test scene have no cubes and keep the SH stand-in (`HALO3_REFLECTIONS=0` brings it back
+test scene have no cubes and keep the SH stand-in (`MCC_REFLECTIONS=0` brings it back
 everywhere).
 
 ## 6. Parallax

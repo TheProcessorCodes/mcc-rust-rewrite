@@ -4,7 +4,7 @@
 //! (`HR_MX_GraphicKits`, else `MX_GraphicKits`), painted Cortana
 //! (`cortana.rs`) unless the user's kit already is.
 //!
-//! Everything comes out in `halo3_bike`'s bike frame: metres, +Y up, +Z
+//! Everything comes out in `mcc_bike`'s bike frame: metres, +Y up, +Z
 //! forward, +X the rider's left (Reflex has +X on the right, left-handed),
 //! triangles wound for a right-handed renderer. The origin is Reflex's
 //! model origin, which sits on the bike's centre of mass.

@@ -47,6 +47,6 @@ Halo 3 does not appear to.)
 
 A size rule for everything that is not structure or sky: a chunk of instances or objects is hidden
 when its largest placement's bounding radius covers less than 1.5 pixels of a 720-line view at the
-chunk's nearest point (`MIN_PIXELS`, `HALO3_MIN_PIXELS` to change, 0 to turn off). Clusters and
+chunk's nearest point (`MIN_PIXELS`, `MCC_MIN_PIXELS` to change, 0 to turn off). Clusters and
 the sky are never dropped by size; the sky is never portal-culled either. Props are chunked by
 size class (bounding radius under 1.5 wu, under 6 wu, larger) so the small ones go first.

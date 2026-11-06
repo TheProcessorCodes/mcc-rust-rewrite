@@ -364,7 +364,7 @@ the Rust port should keep the composition order switchable and check one tilted 
 **Settled by the map data (2026-10-30): Reclaimer's order.** 120_halo's Forward Unto Dawn
 (`trench_frigate`, a machine) is placed with yaw 180 degrees and pitch +0.0428 rad (2.45
 degrees) over the end of the Warthog run, and its hangar is the run's goal, so the fit shows
-which order the level was built with (`halo3_anim/tests/frigate.rs`):
+which order the level was built with (`mcc_anim/tests/frigate.rs`):
 
 | | intrinsic `Rz(yaw) Ry(-pitch) Rx(roll)` | extrinsic (Reclaimer) `Rx(roll) Ry(-pitch) Rz(yaw)` |
 |---|---|---|

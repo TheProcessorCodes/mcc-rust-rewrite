@@ -1,6 +1,6 @@
 //! Halo CE's effects on The Maw (`d40`): every effect the scripts name is
 //! read with everything it reaches (`docs/format/halo1.md` 13) and turned
-//! into Halo 3's effect types for `halo3_effects`. Skips quietly when the
+//! into Halo 3's effect types for `mcc_effects`. Skips quietly when the
 //! map is not installed.
 
 use std::path::PathBuf;
