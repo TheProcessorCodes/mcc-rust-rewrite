@@ -253,11 +253,12 @@ fn publish_motion(riding: Res<Riding>, mut motion: ResMut<halo3_core::bike::Bike
     let m = match riding.bike.as_ref() {
         Some(b) => {
             let s = physics::setup();
+            let (min_rpm, max_rpm) = b.exact().map_or((s.min_rpm, s.max_rpm()), |e| e.rpm_range());
             halo3_core::bike::BikeMotion {
                 riding: true,
                 rpm: b.engine.rpm,
-                min_rpm: s.min_rpm,
-                max_rpm: s.max_rpm(),
+                min_rpm,
+                max_rpm,
                 throttle: b.gas(),
                 speed: b.velocity.length(),
                 gear: b.engine.gear,

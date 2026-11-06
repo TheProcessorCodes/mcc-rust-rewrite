@@ -247,6 +247,8 @@ impl Exact {
         bike.steer = -s.steer_angle;
         bike.wheel_spin = s.wheels[1].spin;
         bike.engine.rpm = s.rpm;
+        // The engine sound picks its takes by the throttle the engine gets.
+        bike.set_gas(self.bike.sim().ctl.throttle as f32);
         bike.engine.gear = s.gear.saturating_sub(1) as usize;
         bike.engine.locked = true;
         bike.crashed = s.crashed.then(|| self.bike.sim().wreck.wreck_timer.max(0.0) as f32);
@@ -273,6 +275,13 @@ impl Exact {
     /// What the simulation did last frame (speed, rpm, gear, wheels).
     pub fn state(&self) -> &ReflexBikeState {
         &self.state
+    }
+
+    /// The engine's idle and limiter, rpm.
+    pub fn rpm_range(&self) -> (f32, f32) {
+        let p = &self.bike.sim().params;
+        let rpm = |w: f64| (w * reflex_core::RPM_PER_RAD_S) as f32;
+        (rpm(p.engine_min_speed), rpm(p.engine_max_speed))
     }
 
     /// The forward speed Reflex reports, m/s.
@@ -354,6 +363,8 @@ mod tests {
         assert!(moved.x.abs() < moved.z * 0.2, "drifted {moved:?}");
         assert!(bike.speed() > 10.0, "speed {:.1}", bike.speed());
         assert!(bike.engine.gear >= 1, "still in first");
+        // The engine sound hears the gas.
+        assert!(bike.gas() > 0.9, "gas {:.2}", bike.gas());
         assert!(bike.up().y > 0.9);
     }
 

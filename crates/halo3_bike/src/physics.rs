@@ -703,6 +703,11 @@ impl Bike {
         self.held.gas
     }
 
+    /// Sets what `gas` reports (Reflex's simulation keeps its own throttle).
+    pub(crate) fn set_gas(&mut self, gas: f32) {
+        self.held.gas = gas;
+    }
+
     pub fn grounded(&self) -> usize {
         self.wheels.iter().filter(|w| w.contact.is_some()).count()
     }
