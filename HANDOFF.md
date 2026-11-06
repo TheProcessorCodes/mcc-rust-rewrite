@@ -298,8 +298,13 @@ the bike on it:
   `Database\EngineDependencies.dx9.package` (`reflex_assets::vehicle`, turned into the XML
   `reflex_core` reads). `HALO3_REFLEX_VEHICLE=<dump file>` is a developer override. Without Reflex
   the model is not offered (the slider says so) and the bike rides Reflex v1.
-- Third choice on the tuning menu's first slider (`model` 2 in `bike-tuning.json`); the other
-  sliders do nothing on it. Stock is still Reflex v1, so a saved `bike-tuning.json` keeps
+- Third choice on the tuning menu's first slider (`model` 2 in `bike-tuning.json`); of the other
+  sliders only its own two act on it: "Reflex engine power" (`reflex_power`, the torque curve times
+  it) and "Reflex gearing" (`reflex_gearing`, Reflex's garage gearing multiplier). Measured on a flat
+  floor (`cargo test -p halo3_bike --lib speed_table -- --ignored --nocapture`): stock tops out at
+  71.9 mph (drag, not the 88.7 mph limiter in 5th), 40-70 mph in 4.4 s; power 1.35 / gearing 0.87
+  (what the user asked for, +10 mph, set in their `bike-tuning.json`) 82.4 mph, 40-70 in 2.1 s.
+  0-60 stays about 3.6 s whatever the power (traction / wheelie bound). Stock is still Reflex v1, so a saved `bike-tuning.json` keeps
   whatever was picked.
 - `physics::Bike` stays what the rest of the game reads: after each frame the simulation's pose
   (chassis centre of mass minus `MassProps_MainBodyCMOffset` = the model's origin), speeds, steer,

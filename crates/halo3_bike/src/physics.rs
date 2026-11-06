@@ -58,7 +58,7 @@ pub fn setup() -> Arc<Setup> {
 
 /// Rides on `tuning` from the next step on.
 pub fn set_tuning(tuning: &Tuning) {
-    exact::set_on(tuning.model >= 1.5);
+    exact::set(tuning.model >= 1.5, tuning.reflex_power, tuning.reflex_gearing);
     *SETUP.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(tuning.setup()));
 }
 
@@ -602,7 +602,7 @@ pub struct Bike {
     platform: Option<(u32, Mat4)>,
     /// Riding on Reflex's own simulation (`exact.rs`) instead of ours, and
     /// the choice's generation when that was decided.
-    exact: Option<Box<Exact>>,
+    pub(crate) exact: Option<Box<Exact>>,
     exact_generation: u64,
 }
 

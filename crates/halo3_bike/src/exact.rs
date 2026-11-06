@@ -16,7 +16,7 @@
 
 use std::cell::RefCell;
 use std::f32::consts::PI;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bevy::log::{info, warn};
@@ -33,15 +33,70 @@ use super::physics::{Bike, Controls, FRAME_LIFT, Hit, World, front_leg, rear_leg
 const CLASS: &str = "mx450f";
 
 static ON: AtomicBool = AtomicBool::new(false);
-/// Counts the switches, so a bike sees when the choice changed under it.
+/// Counts the changes, so a bike sees when the choice changed under it.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+/// The tuning menu's Reflex engine power and gearing multipliers.
+static TUNE: RwLock<(f32, f32)> = RwLock::new((1.0, 1.0));
 
 /// Rides bikes on Reflex's simulation (when the vehicle values could be
-/// read); a bike already out switches at its next step.
-pub fn set_on(on: bool) {
-    if ON.swap(on, Ordering::Relaxed) != on {
+/// read), with its torque times `power` and its gear ratios times
+/// `gearing`; a bike already out takes the change at its next step.
+pub fn set(on: bool, power: f32, gearing: f32) {
+    let mut tune = TUNE.write().unwrap_or_else(|e| e.into_inner());
+    let changed = ON.swap(on, Ordering::Relaxed) != on || *tune != (power, gearing);
+    *tune = (power, gearing);
+    if changed {
         GENERATION.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+/// Switches Reflex's simulation on or off, keeping the tuning.
+pub fn set_on(on: bool) {
+    let (power, gearing) = tune();
+    set(on, power, gearing);
+}
+
+fn tune() -> (f32, f32) {
+    *TUNE.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The 450F with its torque curve times `power`.
+fn tuned(power: f32) -> Option<Vehicle> {
+    let mut v = vehicle()?.clone();
+    if let Some(reflex_core::Value::Curve(c)) = v.values.get_mut("Engine_TorqueCurve") {
+        let k = power as f64;
+        c.y.iter_mut().for_each(|y| *y *= k);
+        c.mleft *= k;
+        c.mright *= k;
+    }
+    Some(v)
+}
+
+/// The stock 450F's peak torque: N·m and rpm.
+pub fn peak_torque() -> Option<(f32, f32)> {
+    let c = vehicle()?.curve("Engine_TorqueCurve")?;
+    let (lo, hi) = (c.x.first().copied()?, c.x.last().copied()?);
+    let (rpm, lbf_ft) = (0..=400)
+        .map(|i| {
+            let x = lo + (hi - lo) * i as f64 / 400.0;
+            (x, c.eval(x))
+        })
+        .fold((0.0, f64::MIN), |a, b| if b.1 > a.1 { b } else { a });
+    Some(((lbf_ft * 1.355_818) as f32, rpm as f32))
+}
+
+/// Road speed at the limiter in 5th with the gear ratios times `gearing`, km/h.
+pub fn top_of_fifth(gearing: f32) -> Option<f32> {
+    let p = reflex_core::Params::with_garage(
+        vehicle()?,
+        reflex_core::Garage {
+            gearing: gearing as f64,
+            ..Default::default()
+        },
+    );
+    let ratio = *p.gear_ratios.last()?;
+    let ft_s = p.engine_max_speed / ratio * p.tyres[1].radius;
+    Some((ft_s * reflex_core::FT_TO_M * 3.6) as f32)
 }
 
 /// Changes each time [`set_on`] switches.
@@ -132,9 +187,14 @@ impl reflex_core::Ground for Ground<'_> {
 impl Exact {
     /// A simulation for `bike`, placed where it stands at its first step.
     pub fn new(bike: &Bike) -> Option<Exact> {
-        let vehicle = vehicle()?.clone();
+        let (power, gearing) = tune();
+        Exact::tuned(bike, power, gearing)
+    }
+
+    /// The same with the engine power and gearing multipliers given.
+    pub fn tuned(bike: &Bike, power: f32, gearing: f32) -> Option<Exact> {
         Some(Exact {
-            bike: ReflexBike::new(vehicle),
+            bike: ReflexBike::new(tuned(power)?).with_garage(1.0, gearing as f64, 1.0),
             state: ReflexBikeState::default(),
             placed: false,
             written: (bike.position, bike.rotation, bike.velocity),
@@ -319,6 +379,42 @@ mod tests {
     fn ride(world: &World, bike: &mut Bike, c: Controls, seconds: f32) {
         for _ in 0..(seconds * 60.0) as usize {
             bike.step(world, c, 1.0 / 60.0);
+        }
+    }
+
+    /// Full gas from a standstill on a long floor: 40-70 mph time and top speed, mph.
+    fn run(power: f32, gearing: f32) -> Option<(f32, f32)> {
+        let s = 3000.0;
+        let world = World::new([
+            ([Vec3::new(-s, 0.0, -s), Vec3::new(-s, 0.0, s), Vec3::new(s, 0.0, s)], false),
+            ([Vec3::new(-s, 0.0, -s), Vec3::new(s, 0.0, s), Vec3::new(s, 0.0, -s)], false),
+        ]);
+        let mut bike = Bike::dropped(&world, Vec3::new(0.0, 2.0, -2900.0), 0.0);
+        bike.exact = Some(Box::new(Exact::tuned(&bike, power, gearing)?));
+        ride(&world, &mut bike, Controls::default(), 1.0);
+        let gas = Controls { throttle: 1.0, ..Default::default() };
+        let (mut t40, mut t70, mut top) = (f32::NAN, f32::NAN, 0.0f32);
+        for i in 0..(40 * 60) {
+            bike.step(&world, gas, 1.0 / 60.0);
+            let mph = bike.speed() / 0.44704;
+            if t40.is_nan() && mph >= 40.0 {
+                t40 = i as f32 / 60.0;
+            }
+            if t70.is_nan() && mph >= 70.0 {
+                t70 = i as f32 / 60.0;
+            }
+            top = top.max(mph);
+        }
+        Some((t70 - t40, top))
+    }
+
+    #[test]
+    #[ignore = "prints numbers for tuning; run with --ignored --nocapture"]
+    fn speed_table() {
+        for (p, g) in [(1.0, 1.0), (1.3, 0.88), (1.35, 0.87), (1.5, 0.9), (1.6, 0.88)] {
+            if let Some((t, top)) = run(p, g) {
+                eprintln!("power {p:.2} gearing {g:.2}: 40-70 mph {t:.2} s, top {top:.1} mph, limiter in 5th {:.1} mph", top_of_fifth(g).unwrap() / 1.609);
+            }
         }
     }
 

@@ -5,7 +5,8 @@
 //! The first slider picks the model the others start from: Unleashed's
 //! Pro 250 as it is, Reflex v1 (`reflex.rs`), or Reflex itself (`exact.rs`,
 //! Reflex's own simulation; only with Reflex installed). Reflex itself takes
-//! none of the other sliders: it rides as the game does. Drag a slider with the
+//! only its own two sliders (engine power and gearing) and none of the
+//! others: it rides as the game does. Drag a slider with the
 //! mouse, or pick one with W / S, the up / down arrows or the d-pad and move
 //! it with A / D, left / right. Right-click a slider, or press Backspace (X
 //! on a pad), to put it back to stock; Delete (Y on a pad) puts them all
@@ -220,7 +221,7 @@ fn gear_top(s: &Setup, gear: usize) -> f32 {
     s.max_rpm() / RPM / s.ratio(gear) * s.rear.radius * KMH
 }
 
-const KNOBS: [Knob; 20] = [
+const KNOBS: [Knob; 22] = [
     Knob {
         key: "model",
         group: "Model",
@@ -241,6 +242,36 @@ const KNOBS: [Knob; 20] = [
             } else {
                 format!("{}: {:.0} kg with the rider", s.name, s.mass)
             }
+        },
+    },
+    Knob {
+        key: "reflex_power",
+        group: "Reflex itself",
+        name: "Reflex engine power",
+        low: "less",
+        high: "more",
+        range: (0.5, 2.0),
+        step: 0.05,
+        get: |t| t.reflex_power,
+        set: |t, v| t.reflex_power = v,
+        show: |_, v| match super::exact::peak_torque() {
+            Some((nm, rpm)) => format!("peak {:.0} N·m at {rpm:.0} rpm (x{v:.2})", nm * v),
+            None => "needs MX vs ATV Reflex installed".into(),
+        },
+    },
+    Knob {
+        key: "reflex_gearing",
+        group: "",
+        name: "Reflex gearing",
+        low: "taller",
+        high: "shorter",
+        range: (0.6, 1.5),
+        step: 0.01,
+        get: |t| t.reflex_gearing,
+        set: |t, v| t.reflex_gearing = v,
+        show: |_, v| match super::exact::top_of_fifth(v) {
+            Some(kmh) => format!("{:.0} km/h ({:.0} mph) at the limiter in 5th (x{v:.2})", kmh, kmh / 1.609),
+            None => "needs MX vs ATV Reflex installed".into(),
         },
     },
     Knob {
