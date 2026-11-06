@@ -4,7 +4,7 @@ description = "Decodes FMOD FSB5 CELT samples (MCC Halo CE's sound banks) with t
 version.workspace = true
 edition.workspace = true
 # Our Rust code; the C decoder it builds (third_party/celt-0.11.0) is BSD-3-Clause.
-license = "Apache-2.0 AND BSD-3-Clause"
+license = "GPL-3.0-only AND BSD-3-Clause"
 publish.workspace = true
 links = "celt0110"
 

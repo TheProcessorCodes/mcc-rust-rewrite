@@ -29,7 +29,8 @@ and C (halo-3-recomp) are off the table unless the user reopens them.
 The licence question is handled by **not porting code**: Reclaimer, TagTool and Assembly are all
 GPL-3.0, so the readers were written from format facts (offsets, sizes, meanings) recorded in our
 own words under `docs/format/`, each verified against the bytes of the user's maps with small
-Python probes (`docs/format/scripts/`). This project stays Apache-2.0 like IW4L. Nobody has
+Python probes (`docs/format/scripts/`). The project is GPL-3.0-only (it was Apache-2.0 until
+2026-11-06; it links the GPL-3.0 Skate 3 engine). Nobody has
 copied a line of C# or XML; keep it that way, or raise it with the user first.
 
 ## What is done

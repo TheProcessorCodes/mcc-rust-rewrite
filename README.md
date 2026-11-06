@@ -437,10 +437,13 @@ lists all 20).
 
 ## Licence
 
-Our own crates are Apache-2.0 (`LICENSE-APACHE`). `halo3.exe` links the Skate 3 engine in
-`third_party/skate-engine`, which is GPL-3.0-only, so `halo3` and `halo3_skate`, and any
-released `halo3.exe`, are distributed under the GNU General Public License version 3 only
-(`LICENSE`), with this source. Apache-2.0 code may be used in a GPL-3.0 work. The Skate 3
+The whole project, every crate and any released `halo3.exe`, is distributed under the GNU
+General Public License version 3 only (`LICENSE`), with this source, the same licence as the
+Skate 3 engine it links (`third_party/skate-engine`). A few files are copied or adapted from
+IW4L, which is Apache-2.0 (`blam_geometry/src/rails.rs`, `halo3_setup/src/board.rs`, the
+retarget in `halo3_rider`); Apache-2.0 code may be used in a GPL-3.0 work, and its licence
+text stays in `LICENSE-APACHE` as Apache-2.0 asks. The CELT decoder in
+`third_party/celt-0.11.0` keeps its BSD-3-Clause licence (`COPYING`). The Skate 3
 converter `iw4l-skate-convert.exe` is not shipped; it comes from the player's MW2 Skate 3
 download, with its own licence files. None of this
 grants rights to any game's code, data, assets or trademarks; the player brings their own copies.

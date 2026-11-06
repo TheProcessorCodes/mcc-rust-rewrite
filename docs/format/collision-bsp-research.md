@@ -657,8 +657,8 @@ therefore absent."
 
 Practical reading (not legal advice): the **facts** recorded here (offsets, sizes, field
 meanings, the walk order) are what we implement from; the C# source and the XML plugins are
-GPL-3.0 expression and must not be copied into this repo or ported line by line (that would
-make the Rust reader GPL-3.0, conflicting with the Apache-2.0 IW4L lineage in HANDOFF.md).
+GPL-3.0 expression and must not be copied into this repo or ported line by line (the
+project has since become GPL-3.0-only, but the user's decision not to port code stands).
 This document deliberately contains no code from any of the three projects; the probe script
 was written from the facts. Raise the GPL question with the user before anyone ports code.
 

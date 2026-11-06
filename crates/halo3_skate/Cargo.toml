@@ -3,8 +3,7 @@ name = "halo3_skate"
 description = "Skating on Halo 3 maps through the Skate 3 engine (skate-host)"
 version.workspace = true
 edition.workspace = true
-# Links the GPL-3.0 Skate 3 engine (third_party/skate-engine).
-license = "GPL-3.0-only"
+license.workspace = true
 publish.workspace = true
 
 [dependencies]
