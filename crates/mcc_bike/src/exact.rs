@@ -3,8 +3,8 @@
 //! `third_party/reflex-physics`) reimplements the game's four-body bike
 //! step by step and was checked frame by frame against recordings of the
 //! game; `reflex_bevy` puts it in Bevy's frame. The Dakumoto 450F's values
-//! (`mx450f_vehicle`) are read from the player's own Reflex install
-//! (`reflex_assets::vehicle`), so without Reflex this model is not offered
+//! (`mx450f_vehicle`) are imported once from the player's own Reflex install
+//! (`reflex_assets::imported`), so without Reflex this model is not offered
 //! and the bike rides Reflex v1.
 //!
 //! The rest of the game keeps reading `physics::Bike`: after every frame
@@ -31,7 +31,7 @@ use reflex_bevy::{ReflexBike, ReflexBikeState, ReflexInput};
 use super::physics::{Bike, Controls, FRAME_LIFT, Hit, World, front_leg, rear_leg};
 
 /// The bike class read from Reflex: the Dakumoto 450F the model draws.
-const CLASS: &str = "mx450f";
+const CLASS: &str = reflex_assets::imported::CLASS;
 
 static ON: AtomicBool = AtomicBool::new(false);
 /// Counts the changes, so a bike sees when the choice changed under it.
@@ -137,9 +137,9 @@ pub fn on() -> bool {
     ON.load(Ordering::Relaxed) && vehicle().is_some()
 }
 
-/// The 450F's values from the player's Reflex install, read once it is
-/// there (tried again when the Reflex folder changes, so one chosen in
-/// Settings counts without a restart). `MCC_REFLEX_VEHICLE` (a developer
+/// The 450F's values imported from the player's Reflex
+/// (`reflex_assets::imported`), read once they are there (tried again when
+/// Reflex is set up, so one chosen in Settings counts without a restart). `MCC_REFLEX_VEHICLE` (a developer
 /// override) names a vehicle dump file instead (the stock JSON or XML dumps
 /// `reflex_core` reads).
 pub fn vehicle() -> Option<&'static Vehicle> {
@@ -149,7 +149,10 @@ pub fn vehicle() -> Option<&'static Vehicle> {
     if let Some(v) = held.0 {
         return Some(v);
     }
-    let source = std::env::var_os("MCC_REFLEX_VEHICLE").map(PathBuf::from).or_else(reflex_assets::find_reflex);
+    // Without the override only whether Reflex is there matters: the path is a marker.
+    let source = std::env::var_os("MCC_REFLEX_VEHICLE")
+        .map(PathBuf::from)
+        .or_else(|| reflex_assets::imported::available().then(|| PathBuf::from("imported")));
     if held.1.as_ref() == Some(&source) {
         return None;
     }
@@ -165,8 +168,7 @@ fn load(source: Option<&std::path::Path>) -> Option<Vehicle> {
             .inspect_err(|e| warn!("bike: MCC_REFLEX_VEHICLE: {e}"))
             .ok();
     }
-    let root = source.to_path_buf();
-    let xml = reflex_assets::vehicle::xml(&root, CLASS)
+    let xml = reflex_assets::imported::vehicle_xml()
         .inspect_err(|e| warn!("bike: Reflex's {CLASS} physics: {e}"))
         .ok()?;
     let v = Vehicle::from_xml_str(&xml)

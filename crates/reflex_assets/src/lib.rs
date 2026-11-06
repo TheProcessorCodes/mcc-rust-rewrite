@@ -3,7 +3,8 @@
 //! `<Reflex>\Database`, and in them the bike meshes, skeletons and
 //! textures. `bike::load` puts together the Dakumoto 450F with the Cortana
 //! graphics kit for `mcc_bike`; `engine_audio::load_450f` its engine
-//! recordings for `mcc_audio`.
+//! recordings for `mcc_audio`. `imported` copies what those need out of
+//! the install once, at setup, and the game reads that copy afterwards.
 //!
 //! `docs/format/reflex-bike.md` has the format notes this is written from.
 
@@ -11,6 +12,7 @@ pub mod bike;
 pub mod bxml;
 pub mod cortana;
 pub mod engine_audio;
+pub mod imported;
 pub mod model;
 pub mod package;
 pub mod surface;

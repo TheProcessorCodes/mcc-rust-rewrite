@@ -79,7 +79,7 @@ the format descriptions the code is written from.
 | `third_party/reflex-physics` | MX vs ATV Reflex's bike simulation (`reflex_core`, `reflex_bevy`), vendored from the user's `reflex-physics` workspace (its README says what we changed) |
 | `crates/mcc_rider` | the Spartan on the board |
 | `crates/mcc_bike` | the dirt bike (Reflex's own simulation from `third_party/reflex-physics`, or MX vs ATV Unleashed's model with Reflex's numbers), drawn as Reflex's Dakumoto 450F in the Cortana kit |
-| `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model (no bevy) |
+| `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model, and imports what the bike needs once at setup (no bevy) |
 | `crates/mcc_foot` | the Spartan on foot |
 | `crates/mcc_script` | runs a map's own scripts: threads at 30 ticks a second, objects created, destroyed, dropped and moved, devices, trigger volumes, insertion points; hooks for the AI and device animation |
 | `crates/mcc_effects` | plays the effects the scripts and damaged objects ask for from the map's `effe` tags: particles, contrails, light flashes, sounds |
@@ -116,10 +116,15 @@ launch.
 3. **MX vs ATV Reflex** (PC, optional; the dirt bike's model and engine sound). The folder
    with its `Database` folder, or Skip. Without it the
    bike is our own stand-in model (`crates/mcc_bike/src/stand_in.rs`) with no engine
-   sound, and the answer is saved like a folder (`REFLEX=skip`).
+   sound, and the answer is saved like a folder (`REFLEX=skip`). Reflex is needed only this
+   once: what the bike uses (the 450F model in the Cortana kit, its engine recordings and its
+   physics values, about 10 MB) is copied out when the folder is chosen
+   (`reflex_assets::imported`), and the game reads that copy from then on, so Reflex may be
+   moved or uninstalled afterwards. A setup from before this is imported the first time the
+   bike is loaded.
 
-The answers and the converted Skate 3 data go in `%LOCALAPPDATA%\MccRustRewrite` (`setup.env`,
-`skate-data\`), per user, so every copy of the exe shares them. `mcc-rust-rewrite --setup` asks again
+The answers, the converted Skate 3 data and the imported Reflex pieces go in
+`%LOCALAPPDATA%\MccRustRewrite` (`setup.env`, `skate-data\`, `reflex-1\`), per user, so every copy of the exe shares them. `mcc-rust-rewrite --setup` asks again
 (the converted Skate 3 data is replaced only once a new conversion succeeds); Settings on the
 map menu changes one game at a time. Headless `--shot` and `--menu-shot` runs never ask or
 write the setup (except `--menu-shot --menu-setup [--menu-step N]`, which draws the setup

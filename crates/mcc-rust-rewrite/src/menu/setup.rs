@@ -190,7 +190,10 @@ fn row_value(row: SetupRow) -> (String, bool) {
             .get(game_paths::key::SKATE_SOURCE)
             .map_or_else(|| ("Converted".to_string(), true), |s| (s.to_string(), true)),
         SetupRow::Skate => not_set(),
-        SetupRow::Reflex => game_paths::reflex_root().map_or_else(not_set, shown),
+        SetupRow::Reflex if mcc_setup::reflex_answered() && !game_paths::reflex_skipped() => {
+            game_paths::reflex_chosen().map_or_else(|| ("Imported".to_string(), true), shown)
+        }
+        SetupRow::Reflex => not_set(),
         SetupRow::NoReflex if game_paths::reflex_skipped() => {
             ("Chosen: the bike is our own model, with no engine sound".to_string(), true)
         }
