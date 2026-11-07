@@ -11,7 +11,10 @@ files, own renderer on bevy and wgpu.
 On those maps you can:
 
 - **skate** with Skate 3's own physics (the Skate 3 engine in
-  `third_party/skate-engine`, fed from the player's own copy of Skate 3);
+  `third_party/skate-engine`, fed from the player's own copy of Skate 3). The skating
+  comes from chasm's [2010 Rust Rewrite Mashup](https://github.com/chasmlol/2010-rust-rewrite-mashup)
+  (MW2 Skate 3), which built it on the
+  [Skate 3 Rust Engine](https://github.com/SK8-ENGINE/skate-3-rust-engine);
 - **ride a dirt bike**, with MX vs ATV Reflex's own bike simulation and, when
   the player has Reflex, its Dakumoto 450F model and engine sound (our own
   stand-in bike without it);
