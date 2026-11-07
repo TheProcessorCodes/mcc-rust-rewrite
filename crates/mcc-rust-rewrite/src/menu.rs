@@ -10,7 +10,9 @@
 //! out, and starting it shows a notice to install it with MCC instead of
 //! loading.
 //!
-//! Keys: arrows / WASD / d-pad / left stick move, Q / E / LB / RB change tab,
+//! Keys: arrows / WASD / d-pad / left stick move, Q / E, Tab / Shift+Tab,
+//! Page Up / Page Down or LB / RB change tab (the hints by the tabs show Q / E,
+//! or LB / RB when a controller was used last, `key_hint.rs`),
 //! Enter / Space / A start, Escape / B exit. The mouse selects a tile with a
 //! click and starts it with a double click. On the notice, Enter / Space /
 //! Escape / A / B or a click close it.
@@ -52,6 +54,7 @@ use mcc_core::units::SpeedUnit;
 use mcc_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady, Playing, Warmup};
 
 use crate::Game;
+use crate::key_hint::{self, KeyHint};
 
 const TABS: [&str; 5] = ["HALO 3", "HALO 2", "HALO CE", "REACH", "CAMPAIGN"];
 const COLUMNS: usize = 6;
@@ -965,20 +968,8 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
                 },
             ))
             .with_children(|b| {
-                b.spawn((
-                    Node {
-                        width: Val::Px(26.0),
-                        height: Val::Px(26.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border_radius: BorderRadius::MAX,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.85, 0.33, 0.31)),
-                ))
-                .with_child(text("B", 15.0, Color::BLACK));
+                key_hint::badge(b, "B", "Esc", Color::srgb(0.85, 0.33, 0.31));
                 b.spawn(text("BACK", 20.0, DIM));
-                b.spawn(text("(Esc)", 15.0, FAINT));
             });
         });
 }
@@ -1011,20 +1002,8 @@ fn spawn_notice(screen: &mut ChildSpawnerCommands) {
                     ..default()
                 })
                 .with_children(|b| {
-                    b.spawn((
-                        Node {
-                            width: Val::Px(26.0),
-                            height: Val::Px(26.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border_radius: BorderRadius::MAX,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.37, 0.75, 0.29)),
-                    ))
-                    .with_child(text("A", 15.0, Color::BLACK));
+                    key_hint::badge(b, "A", "Enter", Color::srgb(0.37, 0.75, 0.29));
                     b.spawn(text("OK", 20.0, LIT));
-                    b.spawn(text("(Enter / Esc)", 15.0, FAINT));
                 });
         });
 }
@@ -1044,7 +1023,7 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
         BorderColor::all(LINE),
     ))
     .with_children(|tabs| {
-        tabs.spawn(text("LB", 15.0, FAINT));
+        tabs.spawn((KeyHint { pad: "LB", keys: "Q" }, text("Q", 15.0, FAINT)));
         for (i, name) in TABS.iter().enumerate() {
             tabs.spawn((
                 TabLabel(i),
@@ -1058,7 +1037,7 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
                 text(name, 22.0, DIM),
             ));
         }
-        tabs.spawn(text("RB", 15.0, FAINT));
+        tabs.spawn((KeyHint { pad: "RB", keys: "E" }, text("E", 15.0, FAINT)));
     });
     // A page per tab: each section's heading and its grid of tiles,
     // scrolling up and down when they do not fit.
@@ -1149,24 +1128,12 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
                 },
             ))
             .with_children(|b| {
-                b.spawn((
-                    Node {
-                        width: Val::Px(26.0),
-                        height: Val::Px(26.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border_radius: BorderRadius::MAX,
-                        ..default()
-                    },
-                    BackgroundColor(colour),
-                ))
-                .with_child(text(letter, 15.0, Color::BLACK));
+                key_hint::badge(b, letter, key, colour);
                 if button == MenuButton::Start {
                     b.spawn((StartLabel, text(label, 20.0, LIT)));
                 } else {
                     b.spawn(text(label, 20.0, DIM));
                 }
-                b.spawn(text(&format!("({key})"), 15.0, FAINT));
             });
     }
     });
@@ -1281,10 +1248,12 @@ fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu
         return;
     }
     let tabs = TABS.len();
-    if key(&[KeyCode::KeyE, KeyCode::Tab]) || pad(GamepadButton::RightTrigger) {
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let tab_key = keys.just_pressed(KeyCode::Tab);
+    if key(&[KeyCode::KeyE, KeyCode::PageDown]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger) {
         menu.tab = (menu.tab + 1) % tabs;
     }
-    if key(&[KeyCode::KeyQ]) || pad(GamepadButton::LeftTrigger) {
+    if key(&[KeyCode::KeyQ, KeyCode::PageUp]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger) {
         menu.tab = (menu.tab + tabs - 1) % tabs;
     }
     if menu.tabs[menu.tab].is_empty() {

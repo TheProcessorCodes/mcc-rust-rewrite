@@ -308,21 +308,9 @@ pub(super) fn spawn(screen: &mut ChildSpawnerCommands) {
                     },
                 ))
                 .with_children(|b| {
-                    b.spawn((
-                        Node {
-                            width: Val::Px(26.0),
-                            height: Val::Px(26.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border_radius: BorderRadius::MAX,
-                            ..default()
-                        },
-                        BackgroundColor(colour),
-                    ))
-                    .with_child(text(letter, 15.0, Color::BLACK));
+                    crate::key_hint::badge(b, letter, key, colour);
                     let lit = if button == BarButton::Choose { LIT } else { DIM };
                     b.spawn((BarLabel(button), text("", 20.0, lit)));
-                    b.spawn(text(&format!("({key})"), 15.0, FAINT));
                 });
             }
         });
@@ -403,12 +391,14 @@ pub(super) fn input(
     if key(&[KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) || pushed[1] {
         menu.setting = (menu.setting + 1).min(rows - 1);
     }
-    if key(&[KeyCode::KeyQ]) || pad(GamepadButton::LeftTrigger) {
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let tab_key = keys.just_pressed(KeyCode::Tab);
+    if key(&[KeyCode::KeyQ]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger) {
         let step = menu.step.saturating_sub(1);
         go(&mut menu, step);
         say(&mut menu, "", false);
     }
-    if (key(&[KeyCode::KeyE, KeyCode::Tab]) || pad(GamepadButton::RightTrigger)) && step_done(menu.step) {
+    if (key(&[KeyCode::KeyE]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger)) && step_done(menu.step) {
         let step = menu.step + 1;
         go(&mut menu, step);
         say(&mut menu, "", false);

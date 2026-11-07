@@ -196,7 +196,12 @@ fn spawn_screen(mut commands: Commands) {
                     height: Val::Px(8.0),
                     ..default()
                 });
-                panel.spawn(text("Enter or A: choose    R: restart    Q or View (Back): quit", 15.0, DIM));
+                panel.spawn(crate::key_hint::hint(
+                    "A: choose    View (Back): quit",
+                    "Enter: choose    R: restart    Q: quit",
+                    15.0,
+                    DIM,
+                ));
             });
         });
 }
