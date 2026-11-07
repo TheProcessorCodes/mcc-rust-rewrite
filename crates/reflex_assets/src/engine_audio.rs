@@ -55,12 +55,19 @@ pub struct Engine {
 
 pub fn load_450f(root: &Path) -> Result<Engine, Error> {
     let pkg = Package::open(&root.join("Database"), "VehicleEngineAudio")?;
-    let bank = pkg.get("MXVehicleEngineSize_MX450f", "MX_450F_bank01", "soundbnk")?;
-    let fev = pkg.get("MXVehicleEngineSize_MX450f", "MX_450F_01", "sound")?;
+    let (fev, bank) = raw_450f(&pkg)?;
     Ok(Engine {
         clips: read_bank(&bank)?,
         defs: sound_defs(&fev)?,
     })
+}
+
+/// The 450F's event file and sample bank, as stored in
+/// `VehicleEngineAudio` (for [`sound_defs`] and [`read_bank`]).
+pub fn raw_450f(pkg: &Package) -> Result<(Vec<u8>, Vec<u8>), Error> {
+    let fev = pkg.get("MXVehicleEngineSize_MX450f", "MX_450F_01", "sound")?;
+    let bank = pkg.get("MXVehicleEngineSize_MX450f", "MX_450F_bank01", "soundbnk")?;
+    Ok((fev, bank))
 }
 
 /// A u32-length-prefixed, NUL-terminated string at `p`, and the offset after it.

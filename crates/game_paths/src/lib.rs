@@ -76,6 +76,34 @@ pub fn saved_reflex() -> Option<PathBuf> {
     settings().get(key::REFLEX).map(PathBuf::from).filter(|p| is_reflex(p))
 }
 
+/// Where what the game needs from Reflex is kept once imported
+/// (`reflex_assets::imported`): `reflex-1` under [`settings_dir`]. The
+/// number goes up when the import's files change, so an old one is redone.
+pub fn reflex_import_dir() -> PathBuf {
+    settings_dir().join("reflex-1")
+}
+
+/// Whether Reflex has been imported (its `done` file is written last).
+pub fn reflex_imported() -> bool {
+    reflex_import_dir().join("done").is_file()
+}
+
+/// Whether the bike has Reflex's model, sound and physics: imported, or an
+/// install still there to import from. Once imported the install is not
+/// looked at again. Never when the player chose to go without Reflex.
+pub fn reflex_ready() -> bool {
+    !reflex_skipped() && (reflex_imported() || reflex_root().is_some())
+}
+
+/// The Reflex folder the player chose, as saved, whether or not it is still
+/// there (to show in the settings). None when skipped or never chosen.
+pub fn reflex_chosen() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("REFLEX_GAME").filter(|v| v != REFLEX_SKIPPED) {
+        return Some(PathBuf::from(p));
+    }
+    settings().get(key::REFLEX).filter(|v| *v != REFLEX_SKIPPED).map(PathBuf::from)
+}
+
 /// Where the setup and the converted Skate 3 data live:
 /// `%MCC_SETUP_DIR%`, else `%LOCALAPPDATA%\MccRustRewrite`.
 pub fn settings_dir() -> PathBuf {

@@ -11,8 +11,10 @@
 //!   (`default.xex` with `data` beside it) or the disc image (`.iso`), from
 //!   which the few files skating needs are converted once with that
 //!   converter;
-//! - MX vs ATV Reflex, optional: the dirt bike's model and engine sound.
-//!   Without it the bike is our own model and has no engine sound.
+//! - MX vs ATV Reflex, optional: the dirt bike's model, engine sound and
+//!   physics, copied out once when it is chosen (`reflex_assets::imported`),
+//!   so the folder is not needed afterwards. Without it the bike is our own
+//!   model and has no engine sound.
 //!
 //! MCC and Skate 3 are required: until both are set up the game stays on the
 //! setup screen. Going without Reflex is remembered like a folder. The
@@ -142,9 +144,10 @@ pub fn skate_ready() -> bool {
     game_paths::skate_assets().is_some_and(|a| game_paths::is_skate_assets(&a))
 }
 
-/// Whether Reflex has been chosen or declined.
+/// Whether Reflex has been chosen (and imported, or still there to import
+/// from) or declined. An imported Reflex counts after its folder has gone.
 pub fn reflex_answered() -> bool {
-    game_paths::reflex_root().is_some() || game_paths::reflex_skipped()
+    game_paths::reflex_skipped() || (game_paths::reflex_chosen().is_some() && game_paths::reflex_ready())
 }
 
 /// The Skate 3 converter already known: `%MCC_SKATE_CONVERTER%` or the
@@ -160,6 +163,7 @@ pub fn converter() -> Option<PathBuf> {
 /// Plays without Reflex: the bike is our own model, with no engine sound.
 /// Saved, so it is not asked again.
 pub fn skip_reflex() -> Result<(), String> {
+    let _ = std::fs::remove_dir_all(game_paths::reflex_import_dir());
     let path = game_paths::settings_path();
     let mut settings = Settings::read(&path);
     settings.set(key::REFLEX, game_paths::REFLEX_SKIPPED);
@@ -284,6 +288,9 @@ pub fn select_reflex() -> Result<Option<PathBuf>, String> {
             picked.display()
         ));
     }
+    // Copied out once, so the folder is not needed again.
+    reflex_assets::imported::import(&picked)
+        .map_err(|e| format!("Could not read what the bike needs from {}: {e}", picked.display()))?;
     save(key::REFLEX, &picked)?;
     Ok(Some(picked))
 }

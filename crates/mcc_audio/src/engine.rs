@@ -584,7 +584,7 @@ pub fn bike_engine(
         e.tried = true;
         let (tx, rx) = channel();
         std::thread::spawn(move || {
-            let bank = reflex_assets::find_reflex().and_then(|root| match reflex_assets::engine_audio::load_450f(&root) {
+            let bank = game_paths::reflex_ready().then(reflex_assets::imported::engine).and_then(|r| match r {
                 Ok(clips) => Some(Bank::from_reflex(clips)),
                 Err(err) => {
                     warn!("bike: Reflex engine sounds: {err}");

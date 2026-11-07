@@ -173,7 +173,11 @@ with its progress shown), then MX vs ATV Reflex or Skip, each row a folder picke
 message boxes any more (`mcc_setup` returns the problems as text). It covers MCC, Skate 3
 and MX vs ATV Reflex (MCC and Skate 3 required, Reflex optional since
 2026-10-31: without it the bike is `stand_in.rs` and silent), converts Skate 3 once and saves everything in
-`%LOCALAPPDATA%\MccRustRewrite` (`crates/mcc_setup`, README "First run"). All game paths go
+`%LOCALAPPDATA%\MccRustRewrite`. Since 2026-11-06 (branch `reflex-import`, user's ask) Reflex is
+read only once: choosing its folder imports the 450F model, engine bank and `mx450f_vehicle`
+into `reflex-1\` there (`reflex_assets::imported`, 0.7 s, 10 MB), and the bike, sound, physics
+and menus use that (`game_paths::reflex_ready`), so the install may go away; an older setup is
+imported on the first bike load. Skip deletes the import (`crates/mcc_setup`, README "First run"). All game paths go
 through `crates/game_paths`; no code names a folder on this PC any more. The Skate 3
 converter is not shipped (2026-10-31): setup asks for the player's MW2 Skate 3 folder and runs
 its `skate\iw4l-skate-convert.exe`. Still open for a public release: only MCC's

@@ -3411,6 +3411,7 @@ dependencies = [
  "glam",
  "half",
  "png",
+ "reflex_assets",
  "rfd",
  "serde",
  "serde_json",

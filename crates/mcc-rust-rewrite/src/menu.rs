@@ -461,7 +461,7 @@ const PHYSICS_ROW: usize = 6;
 
 /// Whether the physics row is there: Reflex is set up.
 fn physics_offered() -> bool {
-    game_paths::reflex_root().is_some()
+    game_paths::reflex_ready()
 }
 
 /// The rows the settings screen has now.
@@ -482,9 +482,12 @@ fn button_label(row: usize) -> &'static str {
 fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool) -> [String; 7] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
     let settings = game_paths::settings();
-    let reflex = shown(game_paths::reflex_root()).unwrap_or_else(|| {
-        if game_paths::reflex_skipped() { "Not used (optional)" } else { "Not set (optional)" }.to_string()
-    });
+    let reflex = match game_paths::reflex_chosen() {
+        Some(p) if game_paths::reflex_imported() => format!("Imported from {}", p.display()),
+        chosen => shown(chosen.filter(|_| game_paths::reflex_ready())).unwrap_or_else(|| {
+            if game_paths::reflex_skipped() { "Not used (optional)" } else { "Not set (optional)" }.to_string()
+        }),
+    };
     let skate_folder = settings
         .get(game_paths::key::SKATE_SOURCE)
         .map(str::to_owned)

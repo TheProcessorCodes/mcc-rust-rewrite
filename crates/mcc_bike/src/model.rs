@@ -60,23 +60,22 @@ struct Built {
     lit_at: Option<Vec3>,
 }
 
-/// Starts reading the 450F off the Reflex install, or hands over the
-/// stand-in when there is none.
+/// Starts reading the 450F imported from Reflex (`reflex_assets::imported`),
+/// or hands over the stand-in when there is none.
 pub(crate) fn start(mut mesh: ResMut<BikeMesh>) {
     let (send, receive) = channel();
     mesh.loading = Some(Mutex::new(receive));
-    let Some(root) = reflex_assets::find_reflex() else {
+    if !reflex_assets::imported::available() {
         info!("bike: no MX vs ATV Reflex; drawing our own stand-in bike");
         let _ = send.send(Ok(super::stand_in::model()));
         return;
-    };
+    }
     std::thread::spawn(move || {
         let started = std::time::Instant::now();
-        let model = reflex_assets::bike::load(&root).map_err(|e| e.to_string());
+        let model = reflex_assets::imported::bike().map_err(|e| e.to_string());
         if let Ok(m) = &model {
             info!(
-                "bike: Dakumoto 450F from {} ({} parts, kit: {}) in {:.2} s",
-                root.display(),
+                "bike: Dakumoto 450F imported from Reflex ({} parts, kit: {}) in {:.2} s",
                 m.parts.len(),
                 m.kit,
                 started.elapsed().as_secs_f32()

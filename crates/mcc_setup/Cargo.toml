@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 blam_cache = { workspace = true }
 game_paths = { workspace = true }
+# Reflex is imported when it is chosen.
+reflex_assets = { workspace = true }
 glam = { workspace = true }
 # The board and rig export (`board.rs`, from IW4L).
 serde = { version = "1", features = ["derive"] }
