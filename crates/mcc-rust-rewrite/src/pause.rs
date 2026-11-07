@@ -941,7 +941,8 @@ fn engine_slider(
 
 /// The physics switch on the dirt bike tab: X on a pad, P, or a click on a
 /// choice. Switching saves the tuning at once; the bike takes it at its
-/// next step.
+/// next step. Maps without the bike (a `--shot` that doesn't ride) have no
+/// tuning, so the switch does nothing there.
 #[allow(clippy::too_many_arguments)]
 fn physics_switch(
     paused: Res<Paused>,
@@ -950,13 +951,13 @@ fn physics_switch(
     gamepads: Query<&Gamepad>,
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut tuning: ResMut<mcc_bike::tune::BikeTuning>,
+    tuning: Option<ResMut<mcc_bike::tune::BikeTuning>>,
     mut choices: Query<(&PhysicsChoice, &ComputedNode, &UiGlobalTransform, &mut BackgroundColor, &Children)>,
     mut colours: Query<&mut TextColor>,
 ) {
-    if choices.is_empty() {
+    let Some(mut tuning) = tuning.filter(|_| !choices.is_empty()) else {
         return;
-    }
+    };
     let reflex_now = tuning.0.model >= 1.5;
     let mut want = reflex_now;
     if paused.0 && shown.0 == BIKE_TAB {
