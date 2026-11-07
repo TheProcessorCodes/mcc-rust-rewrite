@@ -54,7 +54,7 @@ use mcc_core::units::SpeedUnit;
 use mcc_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady, Playing, Warmup};
 
 use crate::Game;
-use crate::key_hint::KeyHint;
+use crate::key_hint::{self, KeyHint};
 
 const TABS: [&str; 5] = ["HALO 3", "HALO 2", "HALO CE", "REACH", "CAMPAIGN"];
 const COLUMNS: usize = 6;
@@ -965,20 +965,8 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
                 },
             ))
             .with_children(|b| {
-                b.spawn((
-                    Node {
-                        width: Val::Px(26.0),
-                        height: Val::Px(26.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border_radius: BorderRadius::MAX,
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.85, 0.33, 0.31)),
-                ))
-                .with_child(text("B", 15.0, Color::BLACK));
+                key_hint::badge(b, "B", "Esc", Color::srgb(0.85, 0.33, 0.31));
                 b.spawn(text("BACK", 20.0, DIM));
-                b.spawn(text("(Esc)", 15.0, FAINT));
             });
         });
 }
@@ -1011,20 +999,8 @@ fn spawn_notice(screen: &mut ChildSpawnerCommands) {
                     ..default()
                 })
                 .with_children(|b| {
-                    b.spawn((
-                        Node {
-                            width: Val::Px(26.0),
-                            height: Val::Px(26.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border_radius: BorderRadius::MAX,
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.37, 0.75, 0.29)),
-                    ))
-                    .with_child(text("A", 15.0, Color::BLACK));
+                    key_hint::badge(b, "A", "Enter", Color::srgb(0.37, 0.75, 0.29));
                     b.spawn(text("OK", 20.0, LIT));
-                    b.spawn(text("(Enter / Esc)", 15.0, FAINT));
                 });
         });
 }
@@ -1149,24 +1125,12 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
                 },
             ))
             .with_children(|b| {
-                b.spawn((
-                    Node {
-                        width: Val::Px(26.0),
-                        height: Val::Px(26.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border_radius: BorderRadius::MAX,
-                        ..default()
-                    },
-                    BackgroundColor(colour),
-                ))
-                .with_child(text(letter, 15.0, Color::BLACK));
+                key_hint::badge(b, letter, key, colour);
                 if button == MenuButton::Start {
                     b.spawn((StartLabel, text(label, 20.0, LIT)));
                 } else {
                     b.spawn(text(label, 20.0, DIM));
                 }
-                b.spawn(text(&format!("({key})"), 15.0, FAINT));
             });
     }
     });

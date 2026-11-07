@@ -305,21 +305,9 @@ pub(super) fn spawn(screen: &mut ChildSpawnerCommands) {
                     },
                 ))
                 .with_children(|b| {
-                    b.spawn((
-                        Node {
-                            width: Val::Px(26.0),
-                            height: Val::Px(26.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border_radius: BorderRadius::MAX,
-                            ..default()
-                        },
-                        BackgroundColor(colour),
-                    ))
-                    .with_child(text(letter, 15.0, Color::BLACK));
+                    crate::key_hint::badge(b, letter, key, colour);
                     let lit = if button == BarButton::Choose { LIT } else { DIM };
                     b.spawn((BarLabel(button), text("", 20.0, lit)));
-                    b.spawn(text(&format!("({key})"), 15.0, FAINT));
                 });
             }
         });

@@ -280,7 +280,7 @@ fn volume_slider(p: &mut ChildSpawnerCommands) {
             },
             text("70 %", 18.0, Color::WHITE),
         ));
-        r.spawn(text("d-pad up / down, or drag", 16.0, DIM));
+        r.spawn(crate::key_hint::hint("d-pad up / down, or drag", "W / S or up / down, or drag", 16.0, DIM));
     });
     // Only with Reflex set up: without it there is nothing to switch to.
     if mcc_bike::exact::vehicle().is_some() {
@@ -313,7 +313,7 @@ fn physics_row(p: &mut ChildSpawnerCommands) {
             ))
             .with_child(text(name, 18.0, DIM));
         }
-        r.spawn(text("X or P, or click", 16.0, DIM));
+        r.spawn(crate::key_hint::hint("X, or click", "P, or click", 16.0, DIM));
     });
 }
 
@@ -334,8 +334,9 @@ fn skate_off_notice(p: &mut ChildSpawnerCommands) {
     .with_children(|n| {
         n.spawn(text("Skating is turned off", 24.0, LIT));
         n.spawn(text("This map was loaded without the skateboard or its grind rails.", 18.0, Color::WHITE));
-        n.spawn(text(
-            "To skate, go back to the map menu, open Settings (F1 or X) and turn Skating on.",
+        n.spawn(crate::key_hint::hint(
+            "To skate, go back to the map menu, open Settings (X) and turn Skating on.",
+            "To skate, go back to the map menu, open Settings (F1) and turn Skating on.",
             18.0,
             Color::WHITE,
         ));
@@ -371,9 +372,9 @@ fn spawn_menu(
     commands.insert_resource(ShownTab(shown));
     let campaign = zones.is_some_and(|z| !z.layout.zone_sets.is_empty());
     let leave = if map_menu.is_some() {
-        "Q or View (Back) to go back to the map menu"
+        ("View (Back) to go back to the map menu", "Q to go back to the map menu")
     } else {
-        "Q or View (Back) to quit the game"
+        ("View (Back) to quit the game", "Q to quit the game")
     };
     commands
         .spawn((
@@ -402,10 +403,15 @@ fn spawn_menu(
             ))
             .with_children(|panel| {
                 panel.spawn(text("PAUSED", 36.0, Color::WHITE));
-                panel.spawn(text("Esc or Start to resume", 16.0, DIM));
-                panel.spawn(text(leave, 16.0, DIM));
+                panel.spawn(crate::key_hint::hint("Start to resume", "Esc to resume", 16.0, DIM));
+                panel.spawn(crate::key_hint::hint(leave.0, leave.1, 16.0, DIM));
                 if campaign {
-                    panel.spawn(text("R or Y to restart the level from the beginning", 16.0, DIM));
+                    panel.spawn(crate::key_hint::hint(
+                        "Y to restart the level from the beginning",
+                        "R to restart the level from the beginning",
+                        16.0,
+                        DIM,
+                    ));
                 }
                 panel
                     .spawn(Node {
@@ -551,13 +557,22 @@ fn sound_page(panel: &mut ChildSpawnerCommands, levels: Option<&SoundLevels>) {
                 height: Val::Px(8.0),
                 ..default()
             });
-            for line in [
-                "Up / down (W / S, d-pad, left stick): pick a slider. Left / right (arrow keys, d-pad, left stick): move it.",
-                "Or click and drag a bar with the mouse. The tick marks 100 %, the game's own mix.",
-                "K mutes and - / = change the master at any time. Saved next to the game, in sound-levels.json.",
-                "LB / RB or A / D: the other tabs.",
+            for (pad, keys) in [
+                (
+                    "Up / down (d-pad, left stick): pick a slider. Left / right (d-pad, left stick): move it.",
+                    "Up / down (W / S, arrow keys): pick a slider. Left / right (arrow keys): move it.",
+                ),
+                (
+                    "Or click and drag a bar with the mouse. The tick marks 100 %, the game's own mix.",
+                    "Or click and drag a bar with the mouse. The tick marks 100 %, the game's own mix.",
+                ),
+                (
+                    "Saved next to the game, in sound-levels.json.",
+                    "K mutes and - / = change the master at any time. Saved next to the game, in sound-levels.json.",
+                ),
+                ("LB / RB: the other tabs.", "A / D: the other tabs."),
             ] {
-                p.spawn(text(line, 15.0, DIM));
+                p.spawn(crate::key_hint::hint(pad, keys, 15.0, DIM));
             }
         });
 }
