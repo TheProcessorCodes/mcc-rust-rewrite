@@ -57,9 +57,11 @@
 //! lists the controls (`pause.rs`).
 //! ```
 //!
-//! The first launch asks for the player's own MCC and Skate 3 (`.iso` or
-//! `default.xex`), both required, and MX vs ATV Reflex if they have it, and
-//! saves the answers (`mcc_setup`); `--setup` asks again. `<map>` is looked up in that MCC's
+//! The first launch asks for the player's own MCC (required), Skate 3
+//! (`.iso` or `default.xex`) and MX vs ATV Reflex if they have them, and
+//! saves the answers (`mcc_setup`); `--setup` asks again. Without Skate 3
+//! there is no skateboard, and the Spartan's skeleton is Master Chief's own
+//! from MCC (`mcc_rider::chief_rig`). `<map>` is looked up in that MCC's
 //! `halo3\maps` (`%HALO3_MAPS%` overrides), Halo 2 maps (`coagulation`,
 //! `lockout`, or `h2:NAME`) in its `halo2\h2_maps_win64_dx11`
 //! (`%HALO2_MAPS%`; `halo2.rs`). Halo 3's Blackout, whose file is
@@ -163,13 +165,13 @@ fn codename(arg: &str) -> (Option<Game>, &str) {
 fn main() -> anyhow::Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let help = matches!(args.first().map(String::as_str), Some("--help" | "-h"));
-    // First-run setup: MCC and Skate 3 (required) and Reflex (optional),
-    // asked once and saved (`mcc_setup`); `--setup` asks again. Until they
-    // are set up the window opens on the menu's setup screen
+    // First-run setup: MCC (required), Skate 3 and Reflex (each optional,
+    // or skipped), asked once and saved (`mcc_setup`); `--setup` asks again.
+    // Until they are answered the window opens on the menu's setup screen
     // (`menu/setup.rs`), and a map named on the command line waits for the
     // next launch. Headless runs (`--shot`, `--menu-shot`) never ask: they
-    // need the setup done (or the dev overrides), except `--menu-setup`
-    // shots of the setup screen itself.
+    // need MCC set up (or the dev overrides), except `--menu-setup` shots of
+    // the setup screen itself, and `--skate` needs Skate 3 as well.
     let redo = args.iter().any(|a| a == "--setup");
     args.retain(|a| a != "--setup");
     if !help && args.first().map(String::as_str) != Some("--test-scene") {
@@ -186,13 +188,18 @@ fn main() -> anyhow::Result<()> {
             }
         } else if !args.iter().any(|a| a == "--menu-setup") {
             mcc_setup::check().map_err(anyhow::Error::msg)?;
+            // A skating shot would wait minutes for a skater that never
+            // comes.
+            if args.iter().any(|a| a == "--skate") && !game_paths::skate_ready() {
+                anyhow::bail!("--skate needs Skate 3 set up (it is skipped or missing; add it in Settings)");
+            }
         }
     }
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") => {
             eprintln!("usage:
   mcc-rust-rewrite [--foot]                                             the map menu
-  mcc-rust-rewrite --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-setup [--menu-step N]] [--size WxH]
+  mcc-rust-rewrite --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-row N] [--menu-loading | --menu-missing | --menu-settings [--menu-step 1] | --menu-setup [--menu-step N]] [--size WxH]
   mcc-rust-rewrite <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   mcc-rust-rewrite warthog_run [--foot] [--difficulty ...]             the Warthog run of 120_halo, timed
   mcc-rust-rewrite h1:warthog_run [--foot] [--difficulty ...]          Halo CE's Warthog run (The Maw), against its countdown
@@ -797,6 +804,32 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         scene.trigger_volumes.clone(),
         scene.water_triangles(),
     ));
+    // The rider's skeleton: Skate 3's skater when Skate 3 is set up, else
+    // Master Chief's own, made from the model just decoded (rider, foot and
+    // bike read it in the map's start-up, next frame).
+    if game_paths::skate_ready() {
+        w.remove_resource::<mcc_core::skate::HaloRig>();
+        eprintln!("rider: Skate 3's skater skeleton (rig.json)");
+    } else {
+        match chief.as_ref().map(|c| rider::chief_rig(c, mcc_core::skate::scale())) {
+            Some(Ok(rig)) => {
+                eprintln!("rider: Master Chief's own skeleton, {} bones (Skate 3 is not set up)", rig.names.len());
+                w.insert_resource(rig);
+            }
+            Some(Err(e)) => {
+                eprintln!("rider: Master Chief's skeleton is not usable ({e}); no rider is drawn");
+                w.remove_resource::<mcc_core::skate::HaloRig>();
+            }
+            None => {
+                eprintln!("rider: no Master Chief on this map and no Skate 3; no rider is drawn");
+                w.remove_resource::<mcc_core::skate::HaloRig>();
+            }
+        }
+    }
+    // Skating as the player left it in Settings, read again for each map:
+    // Skate 3 may have been set up since the game started.
+    let skate_shot = args.iter().any(|a| a == "--skate");
+    w.insert_resource(mcc_core::skate::SkateEnabled(skate_shot || mcc_core::skate::SkateEnabled::load().0));
     w.insert_resource(rider::PendingChief(chief));
     w.insert_resource(bike::BikeInput(std::sync::Arc::new(scene.collision.clone())));
     if let Some(t) = foot_tuning {

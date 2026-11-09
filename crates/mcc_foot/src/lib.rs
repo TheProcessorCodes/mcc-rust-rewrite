@@ -39,7 +39,10 @@ use mcc_bike::physics::World;
 use mcc_bike::pose::Rig;
 use mcc_core::coords::{to_halo, to_render, to_render_dir};
 use mcc_core::fly_camera::FlyCamera;
-use mcc_core::skate::{Bail, Dismount, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, board_pressed, dpad_up_alone, skating_on};
+use mcc_core::skate::{
+    Bail, Dismount, HaloRig, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, board_pressed, dpad_up_alone,
+    skating_on,
+};
 use mcc_core::zones::LoadedBsps;
 
 use physics::{Controls, Spartan};
@@ -131,8 +134,13 @@ impl OnFoot {
     }
 }
 
-fn setup(mut foot: ResMut<OnFoot>) {
-    match Rig::load(&assets_root().join("rig.json")) {
+fn setup(mut foot: ResMut<OnFoot>, halo: Option<Res<HaloRig>>) {
+    // Skate 3's skater, or without Skate 3 the Spartan's own skeleton.
+    let rig = match halo.as_deref() {
+        Some(h) => Rig::from_binds(h.names.clone(), h.binds.clone(), "Master Chief's skeleton"),
+        None => Rig::load(&assets_root().join("rig.json")),
+    };
+    match rig {
         Ok(r) => foot.rig = Some(r),
         Err(e) => warn!("on foot: {e}; the Spartan is left off"),
     }
@@ -268,7 +276,7 @@ pub fn walk(
             }
             return;
         }
-        if rider.active {
+        if rider.active || rider.bike {
             // The d-pad's up is also the board's and the bike's jump off
             // (`Dismount`), which they handle.
             if keys.just_pressed(KeyCode::KeyF) {
@@ -393,7 +401,7 @@ pub fn walk(
         let (bones, weapon) = pose::foot_pose(rig, &foot.gait);
         rider.bones = bones.into_iter().map(|m| place * m).collect();
         foot.weapon_world = weapon.map(|w| Mat4::from_scale(Vec3::splat(1.0 / k)) * place * w);
-        if rider.names.len() != rig.names.len() {
+        if rider.names != rig.names {
             rider.names = rig.names.clone();
         }
         rider.active = true;
