@@ -17,8 +17,8 @@
 //! | Y | R | stand the bike back up |
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`mcc_foot`) |
 //! | both sticks clicked | J | onto the skateboard, keeping the bike's speed (`mcc_skate`) |
-//! | LB + d-pad down | | set the session marker (`marker.rs`) |
-//! | LB + d-pad up (hold) | | back to the session marker |
+//! | LB + d-pad down | | set the session marker (`marker.rs`), shared with the board |
+//! | LB + d-pad up (hold) | | back to the session marker, set on the bike or the board |
 //! | left stick click | H | engine sound on / off (`mcc_audio::engine`) |
 //! | | 0 | physics tuning menu (`tune.rs`) |
 //!
@@ -246,6 +246,8 @@ struct Riding {
     look: Vec3,
     /// Kept while off the bike, as the skate's is.
     marker: marker::SessionMarker,
+    /// The shared session marker last taken up (`SessionFlag::set_since`).
+    marker_seen: u64,
 }
 
 /// The bike's state for the engine sound (`mcc_audio`).
@@ -586,7 +588,14 @@ fn ride(
     };
     let dt = time.delta_secs().min(0.1);
 
-    // The session marker: LB + d-pad, as on the board.
+    // The session marker: LB + d-pad, as on the board. One set on the board
+    // is the bike's to go back to too, and the other way round.
+    if let Some(m) = flag.set_since(&mut riding.marker_seen, Ride::Bike) {
+        riding.marker.marker = Some(marker::Marker {
+            position: m.ground + Vec3::Y * (physics::rest_height() + 0.05),
+            heading: m.heading,
+        });
+    }
     let buttons = pad.map_or_else(marker::MarkerButtons::default, |p| marker::MarkerButtons {
         modifier: p.pressed(B::LeftTrigger),
         set: p.just_pressed(B::DPadDown),
@@ -605,7 +614,11 @@ fn ride(
             let ground = world
                 .raycast_far(bike.position + Vec3::Y * 0.5, Vec3::NEG_Y, 10.0)
                 .map_or(bike.position - Vec3::Y * physics::rest_height(), |h| h.point);
-            flag.0 = Some(ground);
+            flag.set(mcc_core::flag::Marker {
+                ground,
+                heading: bike.heading(),
+                by: Ride::Bike,
+            });
             info!("bike: session marker placed");
         }
         marker::Action::Refused => info!("bike: session marker refused (not upright on both wheels)"),

@@ -24,6 +24,12 @@ setup.
 - `skate-host/src/physics/bridge.rs`: `Session::session_marker()`, and
   `skate-host/src/session_marker/mod.rs`: `Runtime::position()`. Both report where the
   session marker is, for the session flag `mcc_skate` draws (2026-10-30).
+- `skate-host/src/physics/bridge.rs`: `Session::session_marker()` also gives the marker's
+  heading, and `Session::set_session_marker(position, heading)` sets it from outside;
+  `skate-host/src/session_marker/mod.rs`: `Runtime::position()` became `Runtime::get()`,
+  `Runtime::set()` is new, and a marker's stance is optional (a marker set from outside keeps
+  the skater's stance). The dirt bike and the board share one session marker in mcc-rust-rewrite
+  (2026-11-09).
 - `skate-host/src/physics/bridge.rs`: `Session::launch(velocity)`, which gives the board, its
   hook and the skater's body a velocity right after `activate`, so mcc-rust-rewrite can put the rider on
   the board moving (off the bike or from a run) (2026-11-03).

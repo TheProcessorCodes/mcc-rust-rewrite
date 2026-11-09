@@ -132,9 +132,17 @@ impl Session {
         self.input = ControllerInput::default();
         self.markers.suspend();
     }
-    /// Where the session marker is set, if it is (mcc-rust-rewrite: the session flag).
-    pub fn session_marker(&self) -> Option<Vec3> {
-        self.markers.position()
+    /// Where the session marker is set and the way it faces (a heading about
+    /// +Y, as `activate` takes it), if it is (mcc-rust-rewrite: the session flag,
+    /// shared with the dirt bike).
+    pub fn session_marker(&self) -> Option<(Vec3, f32)> {
+        self.markers.get()
+    }
+    /// Sets the session marker from outside (mcc-rust-rewrite: a marker set on the
+    /// dirt bike): on the board at `position`, facing `heading`. Holding
+    /// LB + d-pad up goes back to it.
+    pub fn set_session_marker(&mut self, position: [f32; 3], heading: f32) {
+        self.markers.set(Vec3::from_array(position), heading);
     }
     pub fn advance(&mut self) -> Result<(), String> {
         self.input.publish_actions();
