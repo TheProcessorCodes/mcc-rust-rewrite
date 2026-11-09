@@ -1,7 +1,8 @@
 //! The skater's state other crates read: the pose (`mcc_rider` draws it,
 //! `mcc_bike` borrows it), the ride (`mcc_audio`), the respawn
 //! request (`mcc_swim`) and the camera marker. The engine that fills
-//! them is `mcc_skate`.
+//! them is `mcc_skate`. Without Skate 3 the skeleton they pose is Master
+//! Chief's own ([`HaloRig`]).
 
 use std::path::PathBuf;
 
@@ -10,18 +11,36 @@ use bevy::prelude::*;
 /// What IW4L ships: a Spartan-sized skater (`docs/skate-interface.md` 10).
 pub const DEFAULT_SCALE: f32 = 33.0 * 0.0254;
 
-/// Whether skating is on (Settings on the main menu, `game_paths::skating_enabled`).
-/// Read as a map starts: off, `mcc_skate` builds no grind rails or skate
-/// session, `mcc_rider` loads no board, and J does nothing. `main` inserts
-/// it and the menu's settings screen changes it; without it, skating is on.
+/// Whether skating is on (Settings on the main menu, `game_paths::skating_enabled`):
+/// never without Skate 3 set up. Read as a map starts: off, `mcc_skate`
+/// builds no grind rails or skate session, `mcc_rider` loads no board, and J
+/// does nothing. `main` inserts it and the menu's settings screen changes it;
+/// without it, skating is on.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SkateEnabled(pub bool);
 
 impl SkateEnabled {
-    /// The saved choice.
+    /// The saved choice, off while Skate 3 is not set up.
     pub fn load() -> SkateEnabled {
         SkateEnabled(game_paths::skating_enabled())
     }
+}
+
+/// Master Chief's own skeleton, used when Skate 3 is not set up
+/// (`game_paths::skate_ready`): the rider (`mcc_rider`), the Spartan on foot
+/// (`mcc_foot`) and on the bike (`mcc_bike`) pose it in place of Skate 3's
+/// `rig.json`. Built from the map's Master Chief in memory as each map
+/// loads, never written to disk, and not there while Skate 3 is set up.
+///
+/// It names Skate 3's bones (`HIPS`, `LEFTUPLEG`, ...) and gives each one's
+/// bind pose in skate metres, the same frame as `rig.json`'s bind; the two
+/// lists run in step.
+#[derive(Resource, Clone, Debug)]
+pub struct HaloRig {
+    /// The bones, by their Skate 3 names.
+    pub names: Vec<String>,
+    /// Each bone's bind pose (skate metres, `rig.json`'s frame).
+    pub binds: Vec<Mat4>,
 }
 
 /// Whether skating is on, for systems that take `Option<Res<SkateEnabled>>`.
@@ -176,7 +195,9 @@ pub fn scale() -> f32 {
 
 /// The player's converted Skate 3 data, as first-run setup saved it
 /// (`mcc_setup`; `%MCC_SKATE_ASSETS%` overrides), else the folder setup
-/// converts into, which stays empty until the player gives Skate 3.
+/// converts into, which stays empty until the player gives Skate 3. Not
+/// read when Skate 3 was skipped: [`HaloRig`] stands in for its `rig.json`
+/// and skating is off.
 pub fn assets_root() -> PathBuf {
     game_paths::skate_assets()
         .unwrap_or_else(|| game_paths::settings_dir().join("skate-data").join("assets"))

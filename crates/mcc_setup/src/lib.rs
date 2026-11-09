@@ -4,22 +4,24 @@
 //! setup screen (`mcc-rust-rewrite` `menu/setup.rs`), in this order:
 //!
 //! - Halo: The Master Chief Collection (its Halo 3 build is checked);
-//! - MW2 Skate 3 (the 2010 Rust Rewrite Mashup), for IW4L's Skate 3
-//!   converter in it, `skate\iw4l-skate-convert.exe` (this game does not
-//!   ship it);
-//! - Skate 3 for Xbox 360: a folder holding the extracted game
+//! - Skate 3 for Xbox 360, optional: a folder holding the extracted game
 //!   (`default.xex` with `data` beside it) or the disc image (`.iso`), from
-//!   which the few files skating needs are converted once with that
-//!   converter;
+//!   which the few files skating needs are converted once with IW4L's Skate
+//!   3 converter, `skate\iw4l-skate-convert.exe` in MW2 Skate 3 (the 2010
+//!   Rust Rewrite Mashup; this game does not ship it), whose folder is
+//!   chosen first. Without Skate 3 there is no skateboard or grind rails,
+//!   and the Spartan's skeleton comes from MCC's Master Chief
+//!   (`mcc_core::skate::HaloRig`);
 //! - MX vs ATV Reflex, optional: the dirt bike's model, engine sound and
 //!   physics, copied out once when it is chosen (`reflex_assets::imported`),
 //!   so the folder is not needed afterwards. Without it the bike is our own
 //!   model and has no engine sound.
 //!
-//! MCC and Skate 3 are required: until both are set up the game stays on the
-//! setup screen. Going without Reflex is remembered like a folder. The
-//! answers go in `setup.env` (`game_paths::settings_path`) and every later
-//! launch goes straight to the map menu; `mcc-rust-rewrite --setup` asks again.
+//! MCC is required: until it is set up the game stays on the setup screen.
+//! Going without Skate 3 or Reflex is remembered like a folder, and either
+//! can be added later in Settings. The answers go in `setup.env`
+//! (`game_paths::settings_path`) and every later launch goes straight to the
+//! map menu; `mcc-rust-rewrite --setup` asks again.
 //!
 //! The `select_*` functions each open one folder picker, check the choice
 //! and save it; they block, so the game calls them on a thread. Nothing here
@@ -77,30 +79,33 @@ pub fn progress() -> String {
     PROGRESS.lock().map(|p| p.clone()).unwrap_or_default()
 }
 
-/// Checks that MCC and Skate 3 are set up, without asking anything or
-/// writing the setup (only the skateboard files beside the converted data
-/// are made when missing). Uses only what is saved, or the dev overrides.
-/// An `Err` says what is missing. Reflex is optional here: without it the
-/// bike is our own.
+/// Checks that MCC is set up, without asking anything or writing the setup.
+/// Uses only what is saved, or the dev overrides. An `Err` says what is
+/// missing. Skate 3 and Reflex are optional here: when Skate 3's converted
+/// data is there, the skateboard files beside it are made if missing, and a
+/// failure is only logged (Skate 3 is then not ready, so there is no
+/// skating); without Reflex the bike is our own.
 pub fn check() -> Result<(), String> {
     mcc_ready().map_err(|e| match e {
         Missing::NotSet => format!("Halo: The Master Chief Collection is not set up yet. {RUN_SETUP}"),
         Missing::Unreadable(e) => e,
     })?;
-    let assets = game_paths::skate_assets()
-        .filter(|a| game_paths::is_skate_assets(a))
-        .ok_or_else(|| format!("Skate 3 is not set up yet. {RUN_SETUP}"))?;
-    board::ensure(&assets).map_err(|e| format!("Could not prepare the skateboard: {e}"))
+    if let Some(assets) = game_paths::skate_assets().filter(|a| game_paths::is_skate_assets(a))
+        && let Err(e) = board::ensure(&assets)
+    {
+        eprintln!("setup: could not prepare the skateboard: {e}");
+    }
+    Ok(())
 }
 
-/// Whether the setup screen must be shown: MCC or Skate 3 is missing (or
-/// unusable), or Reflex has been neither chosen nor declined.
+/// Whether the setup screen must be shown: MCC is missing (or unusable), or
+/// Skate 3 or Reflex has been neither set up nor declined.
 pub fn needs_setup() -> bool {
     if let Err(e) = check() {
         eprintln!("setup: {e}");
         return true;
     }
-    !reflex_answered()
+    !skate_answered() || !reflex_answered()
 }
 
 /// Forgets the saved games (`mcc-rust-rewrite --setup`), so the setup screen asks for
@@ -139,9 +144,15 @@ pub fn mcc_ready() -> Result<(), Missing> {
     check_mcc(&saved).map_err(Missing::Unreadable)
 }
 
-/// Whether the converted Skate 3 data is there.
+/// Whether Skate 3 is set up: converted, with the skateboard files beside
+/// it, and not skipped (`game_paths::skate_ready`).
 pub fn skate_ready() -> bool {
-    game_paths::skate_assets().is_some_and(|a| game_paths::is_skate_assets(&a))
+    game_paths::skate_ready()
+}
+
+/// Whether Skate 3 has been set up or declined.
+pub fn skate_answered() -> bool {
+    game_paths::skate_skipped() || game_paths::skate_ready()
 }
 
 /// Whether Reflex has been chosen (and imported, or still there to import
@@ -168,6 +179,28 @@ pub fn skip_reflex() -> Result<(), String> {
     let mut settings = Settings::read(&path);
     settings.set(key::REFLEX, game_paths::REFLEX_SKIPPED);
     settings.write(&path)
+}
+
+/// Plays without Skate 3: no skateboard or grind rails, and the Spartan's
+/// skeleton comes from MCC's Master Chief. Like going without Reflex, the
+/// converted data is deleted; the MW2 Skate 3 converter stays known, so
+/// adding Skate 3 later starts on the Skate 3 folder. Saved, so it is not
+/// asked again; choosing a Skate 3 folder later ([`select_skate`]) replaces it.
+pub fn skip_skate() -> Result<(), String> {
+    skip_skate_in(&game_paths::settings_dir(), &game_paths::settings_path())
+}
+
+/// [`skip_skate`] for the setup saved in `settings_file`, whose converted
+/// data is kept in `dir`. Only the folders setup itself makes there are deleted,
+/// never one a dev override names.
+fn skip_skate_in(dir: &Path, settings_file: &Path) -> Result<(), String> {
+    for made in ["skate-data", "skate-data-new", "skate-disc"] {
+        let _ = std::fs::remove_dir_all(dir.join(made));
+    }
+    let mut settings = Settings::read(settings_file);
+    settings.set(key::SKATE_ASSETS, game_paths::SKATE_SKIPPED);
+    settings.remove(key::SKATE_SOURCE);
+    settings.write(settings_file)
 }
 
 /// Whether the install's Halo 3 is a build the readers understand.
@@ -558,6 +591,41 @@ mod tests {
         std::fs::create_dir_all(root.join("empty")).unwrap();
         assert!(skate_source(&root.join("empty")).is_err());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Skipping Skate 3 saves the skip, forgets the folder, keeps the
+    /// converter and deletes what setup converted, in a made-up setup.
+    #[test]
+    fn skipping_skate_deletes_the_conversion_and_keeps_the_converter() {
+        use game_paths::{Settings, key};
+        let dir = std::env::temp_dir().join(format!("mcc-skip-skate-{}", std::process::id()));
+        let made = ["skate-data", "skate-data-new", "skate-disc"];
+        for d in made {
+            std::fs::create_dir_all(dir.join(d).join("assets")).unwrap();
+            std::fs::write(dir.join(d).join("assets").join("rig.json"), b"{}").unwrap();
+        }
+        std::fs::create_dir_all(dir.join("reflex-1")).unwrap();
+        let file = dir.join("setup.env");
+        let mut s = Settings::default();
+        s.set(key::MCC, r"E:\Games\MCC");
+        s.set_path(key::SKATE_ASSETS, &dir.join("skate-data").join("assets"));
+        s.set(key::SKATE_SOURCE, r"E:\Games\Skate 3");
+        s.set(key::SKATE_CONVERTER, r"E:\Games\MW2 Skate 3\skate\iw4l-skate-convert.exe");
+        s.write(&file).unwrap();
+
+        super::skip_skate_in(&dir, &file).unwrap();
+        let s = Settings::read(&file);
+        assert_eq!(s.get(key::SKATE_ASSETS), Some(game_paths::SKATE_SKIPPED));
+        assert_eq!(s.get(key::SKATE_SOURCE), None);
+        assert_eq!(s.get(key::SKATE_CONVERTER), Some(r"E:\Games\MW2 Skate 3\skate\iw4l-skate-convert.exe"));
+        assert_eq!(s.get(key::MCC), Some(r"E:\Games\MCC"));
+        for d in made {
+            assert!(!dir.join(d).exists(), "{d} is still there");
+        }
+        assert!(dir.join("reflex-1").is_dir(), "Reflex's import was touched");
+        // Skipping again (nothing left to delete) is fine.
+        super::skip_skate_in(&dir, &file).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// `board.json` and `rig.json` from the user's converted data match what
