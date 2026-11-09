@@ -356,6 +356,7 @@ pub fn decode(
     resources: &Resources<'_>,
     sbsp: &TagEntry,
     bsp_index: u32,
+    dropped_instances: &[u32],
     collision: &mut Collision,
 ) -> Result<CollisionStats> {
     let base = cache.tag_offset(sbsp)?;
@@ -448,13 +449,18 @@ pub fn decode(
     }
 
     // Instanced geometry: each definition's collision placed by every
-    // instance that uses it, unless the instance is render-only.
+    // instance that uses it, unless the instance is render-only or was
+    // left out of the render (`sbsp::only_pit_fire`).
     let defs = res.block(root + 0x18)?;
     let def_stride = 0xC4;
     res.elements(defs, def_stride, "instanced geometry definitions")?;
     let mut def_triangles: Vec<Option<Vec<CollisionTriangle>>> = vec![None; defs.count];
     let instances = cache.reader_at(base + 0x1C0).block()?;
-    for o in instances.elements(120) {
+    for (i, o) in instances.elements(120).enumerate() {
+        if dropped_instances.contains(&(i as u32)) {
+            stats.instances_skipped += 1;
+            continue;
+        }
         let mut r = cache.reader_at(o);
         let scale = r.f32()?;
         let rows = [r.f32x3()?, r.f32x3()?, r.f32x3()?];
