@@ -77,7 +77,7 @@ What the game does now:
   - Skate collision is the real collision BSP; grind rails come from IW4L's lip detector.
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
-- **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great".
+- **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great". Without Skate 3 the skeleton is his own, 27 of those bones on his joints (see "Skate 3 optional" below).
 - **Dirt bike.** B rides it, with Master Chief on it (`mcc_bike`). It is drawn as Reflex's Dakumoto 450F in the user's Cortana graphics kit, read from their own MX vs ATV Reflex install (`reflex_assets`, `docs/format/reflex-bike.md`); without Reflex it is the old stick model. Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`), or, since 2026-11-06, Reflex's own simulation ("Reflex", `exact.rs`, see "Reflex's own simulation" below); 0 while riding opens the physics tuning menu (`tune.rs`), whose first slider picks Unleashed, Reflex v1 or Reflex (see "Dirt bike" below).
 - **On foot.** F walks the Spartan (`foot/`): the map's own movement numbers (`blam movement`,
   `docs/format/movement.md`), a capsule on the collision, a made-up gait on the skate skeleton,
@@ -127,13 +127,16 @@ What the game does now:
   `SKATING=off` in `setup.env`, `mcc_core::skate::SkateEnabled`). Off, a map loads no grind
   rails, skate session or board (Valhalla ready in 0.8 s instead of 8.1 s), J does nothing on
   foot or flying, and the pause menu's Skate tab says it is off and to turn it on in Settings.
-  Skate 3 is still required at first-run setup (the rider's and the Spartan's skeleton).
+  Since 2026-11-09 (#1) Skate 3 itself is optional: without it skating is always off
+  (`game_paths::skating_enabled` needs `skate_ready()`), the Skate tab says skating needs
+  Skate 3 and how to add it, the Skating row offers SET UP instead of the toggle, and the
+  Spartan is posed on Master Chief's own skeleton (see "Skate 3 optional" below).
 - **Pause menu.** Escape or Start. It has tabs for free roam, on foot, dirt bike (with the engine
   volume slider) and skate controls, and a Sound tab with the Master / Music / Effects / Ambience /
   Dialogue sliders. Q goes back to the map menu (unloading the map in place), or quits when the game
   was started on a map.
 - **Window.** Opens borderless fullscreen.
-- **Headless screenshots.** `mcc-rust-rewrite.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits. Claude may run this on its own to check visuals; it never opens a window.
+- **Headless screenshots.** `mcc-rust-rewrite.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits (MCC must be set up; `--skate` needs Skate 3 too). Claude may run this on its own to check visuals; it never opens a window.
 
 Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has numbers):
 
@@ -173,11 +176,14 @@ checkout's `out\bin` copy; `target\debug\mcc-rust-rewrite.exe` belongs to whiche
 **First-run setup (2026-10-29; in the game's own screen since 2026-11-02).** The first windowed
 launch opens the map menu on its setup screen (`crates/mcc-rust-rewrite/src/menu/setup.rs`): Halo MCC, then
 Skate 3 (the MW2 Skate 3 folder for its converter, then `.iso` or `default.xex`, converted there
-with its progress shown), then MX vs ATV Reflex or Skip, each row a folder picker; no native
+with its progress shown) or Without Skate 3, then MX vs ATV Reflex or Skip, each row a folder picker; no native
 message boxes any more (`mcc_setup` returns the problems as text). It covers MCC, Skate 3
-and MX vs ATV Reflex (MCC and Skate 3 required, Reflex optional since
-2026-10-31: without it the bike is `stand_in.rs` and silent), converts Skate 3 once and saves everything in
-`%LOCALAPPDATA%\MccRustRewrite`. Since 2026-11-06 (branch `reflex-import`, user's ask) Reflex is
+and MX vs ATV Reflex (only MCC required; Reflex optional since 2026-10-31: without it the
+bike is `stand_in.rs` and silent; Skate 3 optional since 2026-11-09, #1: without it there is
+no skateboard and the Spartan's skeleton is Master Chief's own, see "Skate 3 optional"),
+converts Skate 3 once when it is given and saves everything in
+`%LOCALAPPDATA%\MccRustRewrite`. The screen comes back until MCC is set up and Skate 3 and
+Reflex are each set up or skipped (`mcc_setup::needs_setup`); Settings adds either later. Since 2026-11-06 (branch `reflex-import`, user's ask) Reflex is
 read only once: choosing its folder imports the 450F model, engine bank and `mx450f_vehicle`
 into `reflex-1\` there (`reflex_assets::imported`, 0.7 s, 10 MB), and the bike, sound, physics
 and menus use that (`game_paths::reflex_ready`), so the install may go away; an older setup is
@@ -304,6 +310,61 @@ Halo) or the look fixes above.
   `load` (decode, no bevy), `install` (resources into the world) and `run`; whatever `install`
   inserts must be listed for removal in `MenuPlugin::build`. Anything left out carries over into the
   next map.
+
+## Skate 3 optional (2026-11-09, #1)
+
+Branch `1-skate-optional`. Only MCC is required: without Skate 3 the player walks, shoots,
+flies and rides the bike as Master Chief, and can add Skate 3 later in Settings for the
+skateboard. Players with Skate 3 see no change.
+
+- **The choice.** Setup's Skate 3 step is optional, with a Without Skate 3 row (SKIP) that
+  skips the MW2 Skate 3 converter too. `mcc_setup::skip_skate` saves `SKATE_ASSETS=skip`
+  (`game_paths::SKATE_SKIPPED`, like `REFLEX=skip`), removes `SKATE_SOURCE`, keeps
+  `SKATE_CONVERTER` and deletes the `skate-data`, `skate-data-new` and `skate-disc` folders
+  setup made. Choosing a folder later overwrites the key, and `--setup` asks again.
+  `MCC_SKATE_ASSETS=skip` does the same for a dev run; an override naming a folder wins over a
+  saved skip.
+- **One test for Skate 3.** `game_paths::skate_ready()`: not skipped, the converted data there,
+  and `rig.json` and `board.json` beside it. `skating_enabled()` needs it, so nothing turns
+  skating on without Skate 3, and `install` reads `SkateEnabled` again for each map (Skate 3
+  added in Settings counts from the next map). `mcc_setup::check()` needs MCC only, so headless
+  runs do too (`--skate` without Skate 3 exits at once); `needs_setup()` shows the screen until
+  Skate 3 is ready or skipped (`skate_answered()`), so a conversion that left no usable
+  `rig.json` / `board.json` goes back to the Skate 3 step.
+- **The skeleton, `mcc_core::skate::HaloRig`.** On foot and on the bike `rig.json` was the only
+  thing taken from Skate 3. Without it `install` (`main.rs`) builds a rig from the `ChiefModel`
+  the map load already decodes (the map's own Master Chief, or riverworld's for Halo CE, Halo 2
+  and Reach, as the rider borrows it) with `mcc_rider::chief_rig` (`halo_rig.rs`): 27 bones
+  under Skate 3's names. The 21 `MAPPING` bones sit on their Halo joints, seen through
+  `halo_to_skate(k)` and the quarter turn about Y the rider falls back to for his facing, as
+  places only (no turn); SPINE1, SPINE3 and NECK1 sit halfway between their neighbours; the
+  board's three are at the origin (foot and bike put them under him every frame). It is
+  inserted only while Skate 3 is not ready and removed otherwise and on map unload; rider, foot
+  and bike take it over `rig.json` when it is there. It is made in memory from the player's MCC
+  as each map loads, with no Skate 3 numbers and nothing written to disk. A joint that is
+  missing or not finite, a mapped segment under 1 mm or a limb under 0.01 is refused by name;
+  then no body is drawn, but walking and riding still work.
+- **Why the retarget is exact.** Off the board only the joints' places matter. Foot and bike
+  write each bone as a move times its bind, and the rider takes the bind off again (`bind⁻¹ ·
+  fit · H`), so a bind's turn cancels; other crates read bone positions, never their axes. With
+  every skate joint on his own joint, `follow` finds the facing to be the quarter turn, every
+  segment already pointing the right way and his feet already flat, so in the bind pose each of
+  his joints lands where his model puts it: he is drawn undistorted, in his own proportions
+  (`docs/rider.md` "Without Skate 3" has the working). On the board this would not hold, as the
+  skate engine poses whole bone frames against Skate 3's own binds, but the two never meet:
+  the Halo rig needs Skate 3 not ready, and skating needs it ready.
+- **Skate 3 owners keep `rig.json`** on foot and on the bike, so their look does not change.
+  The same `--shot` with and without `MCC_SKATE_ASSETS=skip` compares the two. No pose numbers
+  were retuned for his skeleton: the shots had his feet on the pegs and his hands on the grips
+  and the rifle. `mcc_bike::pose::Rig::from_binds` checks either rig (both sides' limb names,
+  finite binds, limb length), and `limb` no longer panics.
+- **Menus.** Settings' Skate 3 and Skating rows say Skate 3 is not used or needed and offer
+  SET UP, which opens setup's Skate 3 step from Settings (`setup::open_from_settings`); the
+  pause menu's Skate tab says "Skating needs Skate 3" and the J rows are marked.
+- **Tests.** Unit tests on a made-up biped (our own numbers), and `mcc_rider/tests/halo_rig.rs`
+  on riverworld and 120_halo with ranges only, skipping without MCC; no tag values are written
+  down. Not playtested yet. Follow-up: #6 (the bike tab's session marker row still mentions
+  the board).
 
 ## Reflex's own simulation (2026-11-06, branch `reflex-core-physics`)
 
@@ -467,6 +528,10 @@ and drive an `Animator` from the foot state: stance `combat:rifle:<weapon type>`
 `crouch:...`), `play("move_front" | "move_back" | "move_left" | "move_right" | "idle" |
 "turn_left" | "airborne" | "land_soft")`, `aim(0, pitch, moving)`, `overlay("fire_1")`. Its
 run is 2.3 wu/s of root motion, so `set_speed(ground speed / 2.3)` keeps the feet from sliding.
+A step on the way (2026-11-09, #1): without Skate 3 the skate skeleton the gait poses is
+already Master Chief's own (`mcc_rider::chief_rig`, his joints where his model puts them; see
+"Skate 3 optional"), so the made-up gait moves his real joints with his own proportions. The
+jmad route would still replace the gait itself.
 
 Open: overlay rotation order and the aim grid's up/down are inferred, not proven; frame events
 (footstep sounds), IK and transitions are not read; Halo's full fallback rules are approximated.

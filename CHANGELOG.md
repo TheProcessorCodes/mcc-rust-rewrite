@@ -8,6 +8,8 @@ merge history.
 ## 2026-11-09
 
 ### Changed
+- Skate 3 is optional at first-run setup: without it you still walk, shoot, fly and ride the
+  dirt bike as Master Chief, and you can add it later in Settings for the skateboard (#1).
 - The dirt bike and the board share one session marker: set it on either and both go back to it.
 - The project keeps this changelog (#4).
 
