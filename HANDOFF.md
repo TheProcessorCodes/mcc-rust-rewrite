@@ -287,6 +287,8 @@ Halo) or the look fixes above.
 
 ## Working rules for agents
 
+- Open work is tracked in GitHub issues from 2026-11-09 (CLAUDE.md, "Work is tracked in
+  GitHub issues"); the to-do lists in this file are older and move to issues as they are touched.
 - New work goes in a new worktree under `.claude/worktrees/`, on its own branch from master
   (CLAUDE.md). The skate crates are in the tree (`third_party/skate-engine`), so a worktree
   needs nothing outside it.
