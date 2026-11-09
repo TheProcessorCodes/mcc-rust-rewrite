@@ -206,9 +206,10 @@ fn spawn_screen(mut commands: Commands) {
         });
 }
 
-/// Starts the clock the first time the player is in control.
+/// Starts the clock the first time the player is in control: skating, on
+/// foot or on the bike (with or without a body drawn).
 fn clock(time: Res<Time<Virtual>>, rider: Option<Res<RiderPose>>, scripts: Option<Res<Scripts>>, mut clock: ResMut<RunClock>) {
-    if scripts.is_none() || clock.started.is_some() || !rider.is_some_and(|r| r.active) {
+    if scripts.is_none() || clock.started.is_some() || !rider.is_some_and(|r| r.active || r.foot || r.bike) {
         return;
     }
     clock.started = Some(time.elapsed_secs_f64());
