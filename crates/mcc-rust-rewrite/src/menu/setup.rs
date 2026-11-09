@@ -10,9 +10,9 @@
 //!
 //! While Skate 3 is not set up, the settings screen opens the Skate 3 step
 //! on its own ([`open_from_settings`]), so a player who skipped it can add it
-//! later with the same rows, text and conversion progress. The other steps
-//! cannot be reached from there, and B or a finished choice goes back to
-//! Settings.
+//! later with the same rows, text and conversion progress (less the text's
+//! pointers to Settings). The other steps cannot be reached from there, and
+//! B or a finished choice goes back to Settings.
 //!
 //! Keys: up / down (W / S, d-pad, left stick) pick a row, Enter / Space / A
 //! choose it, Q / E / LB / RB go between steps (forward only past a finished
@@ -120,6 +120,10 @@ const INTRO: &str = "This game is played with your own copies of these games. On
 /// What the screen says at the top when Settings opened it.
 const FROM_SETTINGS: &str = "Skate 3 is optional: it adds the skateboard. Set it up here, or go back to Settings.";
 
+/// The Skate 3 step's last words, left off when Settings opened the step:
+/// the player is in Settings already.
+const LATER_IN_SETTINGS: &str = " You can add Skate 3 later in Settings.";
+
 /// The colour of a note that is a problem.
 const ERROR: Color = Color::srgb(0.95, 0.47, 0.43);
 
@@ -140,6 +144,9 @@ pub(super) struct StepLabel(usize);
 /// A step's page.
 #[derive(Component)]
 pub(super) struct StepPage(usize);
+/// A paragraph of a step's text: the step, then which paragraph.
+#[derive(Component)]
+pub(super) struct About(usize, usize);
 #[derive(Component)]
 pub(super) struct RowNode(SetupRow);
 #[derive(Component)]
@@ -240,7 +247,8 @@ fn unready_skate(menu: &mut Menu) {
 }
 
 /// What a row shows: the saved folder, or why there is none.
-fn row_value(row: SetupRow) -> (String, bool) {
+/// `from_settings`: Settings opened the screen, so Skip does not point there.
+fn row_value(row: SetupRow, from_settings: bool) -> (String, bool) {
     let shown = |p: std::path::PathBuf| (p.display().to_string(), true);
     let not_set = || ("Not set".to_string(), false);
     match row {
@@ -257,6 +265,7 @@ fn row_value(row: SetupRow) -> (String, bool) {
         SetupRow::NoSkate if game_paths::skate_skipped() => {
             ("Chosen: no skateboard (walk, fly and ride the bike)".to_string(), true)
         }
+        SetupRow::NoSkate if from_settings => ("Keep playing without the skateboard".to_string(), false),
         SetupRow::NoSkate => ("Play without the skateboard; add Skate 3 later in Settings".to_string(), false),
         SetupRow::Reflex if mcc_setup::reflex_answered() && !game_paths::reflex_skipped() => {
             game_paths::reflex_chosen().map_or_else(|| ("Imported".to_string(), true), shown)
@@ -335,8 +344,8 @@ pub(super) fn spawn(screen: &mut ChildSpawnerCommands) {
                         title.spawn(text(step.title, 30.0, Color::WHITE));
                         title.spawn(text(if step.required { "REQUIRED" } else { "OPTIONAL" }, 15.0, FAINT));
                     });
-                for line in step.about {
-                    page.spawn((Node { max_width: Val::Px(1180.0), ..default() }, text(line, 18.0, DIM)));
+                for (j, line) in step.about.iter().enumerate() {
+                    page.spawn((About(i, j), Node { max_width: Val::Px(1180.0), ..default() }, text(line, 18.0, DIM)));
                 }
                 page.spawn(Node { height: Val::Px(14.0), ..default() });
                 for &row in step.rows {
@@ -418,6 +427,11 @@ fn spawn_row(page: &mut ChildSpawnerCommands, row: SetupRow) {
     });
 }
 
+/// How many rows the step on screen has.
+pub(super) fn row_count(menu: &Menu) -> usize {
+    STEPS[menu.step].rows.len()
+}
+
 /// The row with the focus.
 fn focused(menu: &Menu) -> SetupRow {
     let rows = STEPS[menu.step].rows;
@@ -454,7 +468,7 @@ pub(super) fn input(
     }
     let key = |k: &[KeyCode]| keys.any_just_pressed(k.iter().copied());
     let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
-    let rows = STEPS[menu.step].rows.len();
+    let rows = row_count(&menu);
     // Opened from Settings, the Skate 3 step is the only one.
     let one_step = menu.setup_return.is_some();
     if key(&[KeyCode::Escape, KeyCode::Backspace]) || pad(GamepadButton::East) {
@@ -670,7 +684,17 @@ pub(super) fn show(
     mut nodes: Query<(Option<&SetupScreen>, Option<&StepPage>, Option<&StepTabs>, &mut Node)>,
     mut frames: Query<(Option<&StepLabel>, Option<&RowNode>, Option<&RowButton>, Option<&mut BackgroundColor>, &mut BorderColor)>,
     mut texts: Query<(
-        AnyOf<(&StepLabel, &RowValue, &RowButtonLabel, &SetupNote, &StepCount, &BarLabel, &SetupHeading, &SetupIntro)>,
+        AnyOf<(
+            &StepLabel,
+            &RowValue,
+            &RowButtonLabel,
+            &SetupNote,
+            &StepCount,
+            &BarLabel,
+            &SetupHeading,
+            &SetupIntro,
+            &About,
+        )>,
         &mut Text,
         &mut TextColor,
     )>,
@@ -722,11 +746,14 @@ pub(super) fn show(
         }
     }
     let progress = mcc_setup::progress();
-    for ((step, value, label, note, count, bar, heading, intro), mut text, mut colour) in &mut texts {
+    for ((step, value, label, note, count, bar, heading, intro, about), mut text, mut colour) in &mut texts {
         if heading.is_some() {
             text.0 = if one_step { "SETTINGS" } else { "WELCOME" }.to_string();
         } else if intro.is_some() {
             text.0 = if one_step { FROM_SETTINGS } else { INTRO }.to_string();
+        } else if let Some(about) = about {
+            let line = STEPS[about.0].about[about.1];
+            text.0 = if one_step { line.strip_suffix(LATER_IN_SETTINGS).unwrap_or(line) } else { line }.to_string();
         } else if let Some(step) = step {
             let mark = if step.0 == menu.step || !done[step.0] {
                 ""
@@ -744,7 +771,7 @@ pub(super) fn show(
                 FAINT
             };
         } else if let Some(value) = value {
-            let (shown, set) = row_value(value.0);
+            let (shown, set) = row_value(value.0, one_step);
             text.0 = shown;
             colour.0 = if set { DIM } else { FAINT };
         } else if let Some(label) = label {
@@ -793,5 +820,8 @@ mod tests {
         // The Skate 3 step's rows are where `first_row` and `advance` expect
         // them: the converter, then Skate 3.
         assert_eq!(STEPS[1].rows[..2], [SetupRow::Converter, SetupRow::Skate]);
+        // Opened from Settings, the Skate 3 step leaves off its pointer to
+        // Settings.
+        assert!(STEPS[1].about.last().is_some_and(|l| l.ends_with(LATER_IN_SETTINGS)));
     }
 }

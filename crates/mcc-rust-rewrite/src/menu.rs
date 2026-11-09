@@ -756,9 +756,11 @@ impl Plugin for MenuPlugin {
             // Settings opens.
             setup::open_from_settings(&mut menu, SKATE_ROW, "");
         }
-        // `--menu-row N`: the focus on that row.
-        if let Some(row) = value(args, "--menu-row").and_then(|s| s.parse().ok()) {
-            menu.setting = row;
+        // `--menu-row N`: the focus on that row, or the last one the screen
+        // has (a row past it would be chosen as a game's folder).
+        if let Some(row) = value(args, "--menu-row").and_then(|s| s.parse::<usize>().ok()) {
+            let rows = if menu.phase == Phase::Setup { setup::row_count(&menu) } else { setting_rows() };
+            menu.setting = row.min(rows - 1);
         }
         app.insert_resource(menu)
         .add_systems(Startup, spawn)
@@ -1484,8 +1486,7 @@ fn select(
         // Nothing to turn on or convert again yet: the setup screen's Skate 3
         // step, with its converter row and progress. The saved Skating choice
         // stays as it was, for when Skate 3 is added.
-        let note =
-            if row == SKATING_ROW { "Skating needs Skate 3. Set it up here, or go back to Settings." } else { "" };
+        let note = if row == SKATING_ROW { "Skating needs Skate 3." } else { "" };
         setup::open_from_settings(menu, row, note);
         return;
     }
