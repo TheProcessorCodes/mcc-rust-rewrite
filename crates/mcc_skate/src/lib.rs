@@ -32,7 +32,7 @@ use skate_host::bridge::{InputFrame, Pose, PreparedCollision, Session};
 use blam_geometry::{Collision, TriggerVolume, rails};
 
 use mcc_core::coords::{to_halo_dir, to_render};
-use mcc_core::flag::SessionFlag;
+use mcc_core::flag::{Marker, SessionFlag};
 use mcc_core::fly_camera::FlyCamera;
 pub use mcc_core::skate::{Respawn, RiderPose, SkateMotion, Skating, assets_root, scale};
 use mcc_core::skate::{Bail, Dismount, Mount, Ride, SkateEnabled, bail_pressed, skating_on};
@@ -105,6 +105,9 @@ enum Job {
     Activate(u64, [f32; 3], f32, f32, [f32; 3]),
     Step(u64, f32, InputFrame, f32),
     Suspend,
+    /// A session marker set on the bike: the engine's marker moves here
+    /// (skate space) facing this heading, so the board goes back to it too.
+    Marker([f32; 3], f32),
 }
 
 enum Reply {
@@ -114,8 +117,8 @@ enum Reply {
     Activated(u64, Pose),
     Pose(u64, Pose),
     /// The engine's session marker moved here (skate space, 0.2 m above
-    /// the deck).
-    Marker(Vec3),
+    /// the deck), facing this heading.
+    Marker(Vec3, f32),
     Error(String),
 }
 
@@ -146,6 +149,8 @@ struct Host {
     /// The removed- plus moved-objects generations the skate world was
     /// built with (`mcc_core::objects`).
     removed: u64,
+    /// The shared session marker last taken up (`SessionFlag::set_since`).
+    marker_seen: u64,
 }
 
 impl Default for Host {
@@ -168,6 +173,7 @@ impl Default for Host {
             swapping: false,
             warmed: None,
             removed: 0,
+            marker_seen: 0,
         }
     }
 }
@@ -239,6 +245,10 @@ fn skate_world(
     (triangles, rails)
 }
 
+/// How high the engine's session marker sits above the ground, skate
+/// metres: 0.2 m above the deck, which rides about 0.1 m up.
+const MARKER_ABOVE_GROUND: f32 = 0.3;
+
 /// The [`Warmup`] name of the first skate session.
 const WARMUP: &str = "skate";
 
@@ -308,7 +318,7 @@ fn start_worker(
                 // The latest world request, for dropping stale installs.
                 let mut request = 0u64;
                 // The session marker last reported.
-                let mut marker: Option<Vec3> = None;
+                let mut marker: Option<(Vec3, f32)> = None;
                 while let Ok(job) = jobs.recv() {
                     let job = match job {
                         Job::World(mask) if session.is_some() => {
@@ -418,6 +428,11 @@ fn start_worker(
                             accumulated = 0.0;
                             session.suspend_input();
                         }
+                        Job::Marker(position, heading) => {
+                            session.set_session_marker(position, heading);
+                            // Not reported back: it came from the bike.
+                            marker = session.session_marker();
+                        }
                         Job::Step(request, dt, input, aspect) => {
                             if request != epoch {
                                 continue;
@@ -443,8 +458,8 @@ fn start_worker(
                                 let now = session.session_marker();
                                 if now != marker {
                                     marker = now;
-                                    if let Some(m) = now
-                                        && publish.send(Reply::Marker(m)).is_err()
+                                    if let Some((m, heading)) = now
+                                        && publish.send(Reply::Marker(m, heading)).is_err()
                                     {
                                         break;
                                     }
@@ -617,9 +632,14 @@ fn update(
             }
             Reply::Activated(e, p) | Reply::Pose(e, p) if e == host.epoch => latest = Some(p),
             Reply::Activated(..) | Reply::Pose(..) => {}
-            Reply::Marker(m) => {
-                // The deck rides about 0.1 m up: the flag goes in the ground.
-                flag.0 = Some((m - Vec3::Y * 0.3) / host.scale);
+            Reply::Marker(m, heading) => {
+                // The flag goes in the ground under it, and the bike goes
+                // back to it too.
+                flag.set(Marker {
+                    ground: (m - Vec3::Y * MARKER_ABOVE_GROUND) / host.scale,
+                    heading,
+                    by: Ride::Board,
+                });
             }
             Reply::Error(e) => failed = Some(e),
         }
@@ -667,6 +687,13 @@ fn update(
     let Some(send) = host.send.clone() else {
         return;
     };
+    // A session marker set on the bike: the board goes back to it too.
+    if host.ready
+        && let Some(m) = flag.set_since(&mut host.marker_seen, Ride::Board)
+    {
+        let position = (m.ground * k + Vec3::Y * MARKER_ABOVE_GROUND).to_array();
+        let _ = send.send(Job::Marker(position, m.heading));
+    }
     if new_world && host.ready {
         // The session exists: the new collision is built beside it and
         // swapped in; the ride goes on meanwhile.
@@ -910,6 +937,50 @@ mod tests {
             session.tick(Default::default()).unwrap();
         }
         session.pose().velocity
+    }
+
+    /// A marker set from outside (on the bike) is the board's to go back to:
+    /// holding LB + d-pad up puts the skater there, facing its way.
+    #[test]
+    fn the_board_goes_back_to_a_marker_set_on_the_bike() {
+        let Some(root) = game_paths::skate_assets().filter(|r| game_paths::is_skate_assets(r)) else {
+            eprintln!("skipped: Skate 3 is not set up");
+            return;
+        };
+        let floor = vec![
+            [[-200.0, 0.0, -200.0], [-200.0, 0.0, 200.0], [200.0, 0.0, 200.0]],
+            [[-200.0, 0.0, -200.0], [200.0, 0.0, 200.0], [200.0, 0.0, -200.0]],
+        ];
+        let mut session = Session::new(&root, floor, vec![], [0.0; 3], 0.0).unwrap();
+        session.activate([0.0, 0.3, 0.0], 0.0).unwrap();
+        let target = [20.0, MARKER_ABOVE_GROUND, -10.0];
+        let heading = 1.0;
+        session.set_session_marker(target, heading);
+        let (at, h) = session.session_marker().unwrap();
+        assert!(at.distance(Vec3::from_array(target)) < 1e-5, "{at}");
+        assert!((h - heading).abs() < 1e-5, "{h}");
+
+        let dt = session.period();
+        let mut packet = 0;
+        let mut frames = |session: &mut Session, buttons: u16, n: usize| {
+            for _ in 0..n {
+                packet += 1;
+                session.collect(InputFrame::from_pad(buttons, [0, 0], [0, 0], [0, 0], packet), dt);
+                session.advance().unwrap();
+            }
+        };
+        // LB let go first (getting on ignores it until then), then LB +
+        // d-pad up held for a second, then the sticks at rest while he lands.
+        frames(&mut session, 0, 10);
+        frames(&mut session, 0x0100 | 0x0001, 60);
+        frames(&mut session, 0, 60);
+        let pose = session.pose();
+        let feet = pose.root.w_axis.truncate();
+        assert!(
+            Vec2::new(feet.x - target[0], feet.z - target[2]).length() < 1.0,
+            "the skater is at {feet}, the marker at {target:?}"
+        );
+        assert_eq!(session.session_marker().map(|(p, _)| p), Some(at), "the marker stays");
     }
 
     #[test]

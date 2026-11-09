@@ -107,6 +107,10 @@ What the game does now:
   bike, each at the other's speed (the board takes it along the ground; `Session::launch` in the
   vendored skate-host seeds the board and skater with it, tested in `mcc_skate`). If the skate
   session is not ready, a swap to the board lands you on foot instead. Not playtested yet.
+  The session marker is shared too (2026-11-09, `mcc_core::flag`): LB + d-pad down on either
+  ride sets the one marker (and moves the red flag), and LB + d-pad up held on either ride goes
+  back to it, so the board returns to a marker set on the bike and the bike to one set on the
+  board (the vendored skate-host's `Session::set_session_marker`). Not playtested yet.
 - **Map menu (2026-10-31).** `mcc-rust-rewrite.exe` with no map opens it (`mcc-rust-rewrite/src/menu.rs`): Halo 3, Halo 2
   and Campaign tabs listing every map in the user's MCC install, with MCC's own preview pictures
   read from `Data\UI\texturepacks\levelstexturepack` at run time. Start Game decodes the map on a

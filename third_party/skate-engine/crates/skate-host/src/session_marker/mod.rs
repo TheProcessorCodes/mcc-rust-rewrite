@@ -7,7 +7,9 @@ use skate_core::physics::{board::BodyId, skeleton_animation_record::AnimationPar
 struct Marker {
     transform: AnimationPartTransform,
     on_board: bool,
-    foot_forward: bool,
+    /// `None` for a marker set from outside (`Runtime::set`): the skater
+    /// keeps the stance he has when he goes back to it.
+    foot_forward: Option<bool>,
     generation: u64,
 }
 
@@ -35,8 +37,32 @@ impl Runtime {
     pub fn load(root: &std::path::Path) -> Result<Self,String> { Ok(Self{session:SessionMarker::default(),validation:validation::Validation::load(root)?}) }
     pub fn suspend(&mut self) { self.session.hold.cancel(); self.session.blocked_until_release=true; self.session.ui_time=0.; }
     pub fn collect_time(&mut self,dt:f64) { self.session.ui_time+=dt; }
-    /// The marker's position, if one is set (mcc-rust-rewrite: the session flag).
-    pub fn position(&self) -> Option<Vec3> { self.session.marker.map(|m| Vec3::from_slice(&m.transform[3][..3])) }
+    /// The marker's position and its heading about +Y (forward being
+    /// `(sin, 0, cos)`, as `Session::activate` takes it), if one is set
+    /// (mcc-rust-rewrite: the session flag, shared with the dirt bike).
+    pub fn get(&self) -> Option<(Vec3, f32)> {
+        self.session.marker.map(|m| {
+            let forward = Vec3::from_slice(&m.transform[2][..3]);
+            (Vec3::from_slice(&m.transform[3][..3]), forward.x.atan2(forward.z))
+        })
+    }
+    /// Sets the marker from outside (mcc-rust-rewrite: a marker set on the dirt
+    /// bike): on the board at `position`, upright, facing `heading` about +Y.
+    /// Holding LB + d-pad up then goes back to it as to one set here.
+    pub fn set(&mut self, position: Vec3, heading: f32) {
+        let basis = Mat3::from_rotation_y(heading).to_cols_array_2d();
+        let mut transform = [[0.; 4]; 4];
+        for i in 0..3 {
+            transform[i][..3].copy_from_slice(&basis[i]);
+        }
+        transform[3] = position.extend(0.).to_array();
+        self.session.marker = Some(Marker {
+            transform,
+            on_board: true,
+            foot_forward: None,
+            generation: 0,
+        });
+    }
     pub fn advance(&mut self,input:&ControllerInput,physics:&GamePhysics,skater:&mut SkaterRuntime) {
         update(&mut self.session,input,physics,skater,&self.validation);
     }
@@ -97,7 +123,7 @@ fn update(session:&mut SessionMarker,input:&ControllerInput,physics:&GamePhysics
             session.marker = Some(Marker {
                 transform,
                 on_board,
-                foot_forward: skater.animation.foot_forward(),
+                foot_forward: Some(skater.animation.foot_forward()),
                 generation: 0,
             });
             bevy::log::info!("Skate session marker placed");
@@ -125,7 +151,10 @@ fn update(session:&mut SessionMarker,input:&ControllerInput,physics:&GamePhysics
             if let Some(target) = session.marker {
                 match skater.player_input.request_teleport(target.transform) {
                     Ok(()) => {
-                        skater.animation.restore_foot_forward(target.foot_forward);
+                        let foot_forward = target
+                            .foot_forward
+                            .unwrap_or_else(|| skater.animation.foot_forward());
+                        skater.animation.restore_foot_forward(foot_forward);
                         skater
                             .teleport_state
                             .request_manual(target.transform, target.on_board);

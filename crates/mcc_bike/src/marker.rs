@@ -8,6 +8,11 @@
 //!   more). Within half a metre nothing happens; one hold returns once.
 //! - Getting on the bike ignores LB until it is let go, as the skate does
 //!   after a suspend.
+//!
+//! The bike and the board share one marker (`mcc_core::flag`): one set on
+//! the board becomes the bike's to go back to, and one set here the
+//! board's. `lib.rs` hands them over; `SessionMarker::marker` is always the
+//! latest, wherever it was set.
 
 use bevy::prelude::Vec3;
 
