@@ -11,6 +11,9 @@ merge history.
 - The dirt bike and the board share one session marker: set it on either and both go back to it.
 - The project keeps this changelog (#4).
 
+### Fixed
+- Warthog run: the glowing orange lumps at the foot of the trench cliffs are gone (#5).
+
 ## 2026-11-06
 
 ### Added
