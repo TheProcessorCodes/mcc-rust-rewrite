@@ -1,32 +1,43 @@
 //! The first-run setup screen: the menu opens on it until the player's games
 //! are set up (`mcc_setup::needs_setup`), and `mcc-rust-rewrite --setup` brings it
-//! back. Three steps, in the menu's own look: Halo MCC, then Skate 3 (the
-//! MW2 Skate 3 folder for its converter, then Skate 3 itself, converted
-//! there and then), then MX vs ATV Reflex, which can be skipped. Each row's
-//! Select opens a folder picker on a thread (`mcc_setup::select_*`, the
-//! same ones the settings screen uses); a good choice moves on to the next
-//! step that is not done, and once all are done the map menu shows.
+//! back. Three steps, in the menu's own look: Halo MCC, the only one
+//! required; then Skate 3 (the MW2 Skate 3 folder for its converter, then
+//! Skate 3 itself, converted there and then), which can be skipped; then MX
+//! vs ATV Reflex, which can be skipped too. Each row's Select opens a folder
+//! picker on a thread (`mcc_setup::select_*`, the same ones the settings
+//! screen uses); a good choice moves on to the next step that is not done,
+//! and once all are done the map menu shows.
+//!
+//! While Skate 3 is not set up, the settings screen opens the Skate 3 step
+//! on its own ([`open_from_settings`]), so a player who skipped it can add it
+//! later with the same rows, text and conversion progress. The other steps
+//! cannot be reached from there, and B or a finished choice goes back to
+//! Settings.
 //!
 //! Keys: up / down (W / S, d-pad, left stick) pick a row, Enter / Space / A
 //! choose it, Q / E / LB / RB go between steps (forward only past a finished
-//! one), Escape / B go back a step, or close the game on the first. The
-//! mouse clicks rows' buttons, the steps and the bar's buttons.
+//! one), Escape / B go back a step, or close the game on the first (or go
+//! back to Settings, when opened from there). The mouse clicks rows'
+//! buttons, the steps and the bar's buttons.
 
 use std::sync::Mutex;
 
 use bevy::prelude::*;
 use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
+use mcc_core::skate::SkateEnabled;
 use mcc_setup::Missing;
 
 use super::{BAR, DIM, FAINT, LINE, LIT, Menu, Phase, Pick, Picking, refresh_maps, text};
 
-/// A row on the setup screen: a folder to choose, or Reflex declined.
+/// A row on the setup screen: a folder to choose, or Skate 3 or Reflex
+/// declined.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum SetupRow {
     Mcc,
     Converter,
     Skate,
+    NoSkate,
     Reflex,
     NoReflex,
 }
@@ -37,6 +48,7 @@ impl SetupRow {
             SetupRow::Mcc => "Halo MCC",
             SetupRow::Converter => "MW2 Skate 3",
             SetupRow::Skate => "Skate 3",
+            SetupRow::NoSkate => "Without Skate 3",
             SetupRow::Reflex => "MX vs ATV Reflex",
             SetupRow::NoReflex => "Without Reflex",
         }
@@ -44,7 +56,7 @@ impl SetupRow {
 
     fn button(self) -> &'static str {
         match self {
-            SetupRow::NoReflex => "SKIP",
+            SetupRow::NoSkate | SetupRow::NoReflex => "SKIP",
             _ => "SELECT",
         }
     }
@@ -75,15 +87,18 @@ const STEPS: [Step; 3] = [
     Step {
         tab: "SKATE 3",
         title: "Skate 3",
-        required: true,
+        required: false,
         about: &[
-            "Skating, the rider and the on-foot Spartan use Skate 3's skater, from your own Xbox 360 copy: the \
-             extracted game (default.xex with its data folder) or the folder holding its disc image (.iso).",
+            "Skate 3 adds the skateboard: skate every map and grind its rails. It comes from your own Xbox 360 \
+             copy: the extracted game (default.xex with its data folder) or the folder holding its disc image \
+             (.iso).",
             "It is converted once by the Skate 3 converter that comes with MW2 Skate 3, which this game does not \
              ship. Download MW2 Skate 3 from the Releases page of github.com/chasmlol/2010-rust-rewrite-mashup \
              and choose its folder first. Converting takes a few minutes.",
+            "Without it you still walk and shoot as Master Chief, fly, and ride the dirt bike. You can add \
+             Skate 3 later in Settings.",
         ],
-        rows: &[SetupRow::Converter, SetupRow::Skate],
+        rows: &[SetupRow::Converter, SetupRow::Skate, SetupRow::NoSkate],
     },
     Step {
         tab: "MX VS ATV REFLEX",
@@ -98,14 +113,27 @@ const STEPS: [Step; 3] = [
 ];
 
 /// What the screen says at the top.
-const INTRO: &str = "This game is played with your own copies of these games. Choose each one's folder once; \
-                     you can change them later in Settings.";
+const INTRO: &str = "This game is played with your own copies of these games. Only Halo MCC is required: Skate 3 \
+                     adds the skateboard, and MX vs ATV Reflex its own dirt bike and engine sound. Choose each \
+                     one's folder once; you can add or change them later in Settings.";
+
+/// What the screen says at the top when Settings opened it.
+const FROM_SETTINGS: &str = "Skate 3 is optional: it adds the skateboard. Set it up here, or go back to Settings.";
 
 /// The colour of a note that is a problem.
 const ERROR: Color = Color::srgb(0.95, 0.47, 0.43);
 
 #[derive(Component)]
 pub(super) struct SetupScreen;
+/// The heading at the top: WELCOME, or SETTINGS when Settings opened it.
+#[derive(Component)]
+pub(super) struct SetupHeading;
+/// The line under the heading.
+#[derive(Component)]
+pub(super) struct SetupIntro;
+/// The row of steps along the top (hidden when Settings opened the screen).
+#[derive(Component)]
+pub(super) struct StepTabs;
 /// A step's name in the row along the top.
 #[derive(Component)]
 pub(super) struct StepLabel(usize);
@@ -133,12 +161,22 @@ pub(super) enum BarButton {
 #[derive(Component)]
 pub(super) struct BarLabel(BarButton);
 
-/// Whether a step's game is set up (Reflex: chosen or declined).
+/// Whether a step's game is set up (Skate 3 and Reflex: set up or
+/// declined).
 fn step_done(step: usize) -> bool {
     match step {
         0 => mcc_setup::mcc_ready().is_ok(),
-        1 => mcc_setup::skate_ready(),
+        1 => mcc_setup::skate_answered(),
         _ => mcc_setup::reflex_answered(),
+    }
+}
+
+/// Whether a step's game was declined (Skate 3 or Reflex skipped).
+fn step_skipped(step: usize) -> bool {
+    match step {
+        1 => game_paths::skate_skipped(),
+        2 => game_paths::reflex_skipped(),
+        _ => false,
     }
 }
 
@@ -166,12 +204,38 @@ fn say(menu: &mut Menu, note: impl Into<String>, error: bool) {
 /// Opens the screen on `step`, or the first one not done.
 pub(super) fn open(menu: &mut Menu, step: Option<usize>) {
     menu.phase = Phase::Setup;
+    menu.setup_return = None;
     go(menu, step.unwrap_or_else(|| first_open_step().unwrap_or(0)));
     say(menu, "", false);
     if menu.step == 0
         && let Err(Missing::Unreadable(e)) = mcc_setup::mcc_ready()
     {
         say(menu, e, true);
+    }
+    if menu.step == 1 {
+        unready_skate(menu);
+    }
+}
+
+/// Opens the Skate 3 step from the settings screen, to add Skate 3 later,
+/// saying `note`: B goes back to Settings on `back_row`, and so does a
+/// finished choice ([`finish`]).
+pub(super) fn open_from_settings(menu: &mut Menu, back_row: usize, note: &str) {
+    menu.phase = Phase::Setup;
+    menu.setup_return = Some(back_row);
+    // The press that opened it does not choose a row here as well ([`input`]).
+    menu.fresh = true;
+    go(menu, 1);
+    say(menu, note, false);
+    unready_skate(menu);
+}
+
+/// On the Skate 3 step: Skate 3 converted but not ready (`mcc_setup::check`
+/// could not make its skateboard files) says so, and the ways on.
+fn unready_skate(menu: &mut Menu) {
+    let converted = game_paths::skate_assets().is_some_and(|a| game_paths::is_skate_assets(&a));
+    if converted && !mcc_setup::skate_ready() {
+        say(menu, "Skate 3's skateboard files could not be made. Select Skate 3 again, or Skip.", true);
     }
 }
 
@@ -190,6 +254,10 @@ fn row_value(row: SetupRow) -> (String, bool) {
             .get(game_paths::key::SKATE_SOURCE)
             .map_or_else(|| ("Converted".to_string(), true), |s| (s.to_string(), true)),
         SetupRow::Skate => not_set(),
+        SetupRow::NoSkate if game_paths::skate_skipped() => {
+            ("Chosen: no skateboard (walk, fly and ride the bike)".to_string(), true)
+        }
+        SetupRow::NoSkate => ("Play without the skateboard; add Skate 3 later in Settings".to_string(), false),
         SetupRow::Reflex if mcc_setup::reflex_answered() && !game_paths::reflex_skipped() => {
             game_paths::reflex_chosen().map_or_else(|| ("Imported".to_string(), true), shown)
         }
@@ -218,12 +286,13 @@ pub(super) fn spawn(screen: &mut ChildSpawnerCommands) {
             BorderColor::all(LINE),
         ))
         .with_children(|head| {
-            head.spawn(text("WELCOME", 22.0, LIT));
-            head.spawn(text(INTRO, 17.0, DIM));
+            head.spawn((SetupHeading, text("WELCOME", 22.0, LIT)));
+            head.spawn((SetupIntro, text(INTRO, 17.0, DIM)));
         });
     // The steps, drawn like the map menu's tabs.
     screen
         .spawn((
+            StepTabs,
             Node {
                 margin: UiRect::top(Val::Vh(3.0)),
                 column_gap: Val::Px(36.0),
@@ -378,9 +447,16 @@ pub(super) fn input(
     if menu.picking.is_some() || menu.setup_finished {
         return;
     }
+    // Opened from Settings this frame: the press that did it is done.
+    if menu.fresh {
+        menu.fresh = false;
+        return;
+    }
     let key = |k: &[KeyCode]| keys.any_just_pressed(k.iter().copied());
     let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
     let rows = STEPS[menu.step].rows.len();
+    // Opened from Settings, the Skate 3 step is the only one.
+    let one_step = menu.setup_return.is_some();
     if key(&[KeyCode::Escape, KeyCode::Backspace]) || pad(GamepadButton::East) {
         back(&mut menu, &mut exit);
         return;
@@ -393,12 +469,15 @@ pub(super) fn input(
     }
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let tab_key = keys.just_pressed(KeyCode::Tab);
-    if key(&[KeyCode::KeyQ]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger) {
+    if !one_step && (key(&[KeyCode::KeyQ]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger)) {
         let step = menu.step.saturating_sub(1);
         go(&mut menu, step);
         say(&mut menu, "", false);
     }
-    if (key(&[KeyCode::KeyE]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger)) && step_done(menu.step) {
+    if !one_step
+        && (key(&[KeyCode::KeyE]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger))
+        && step_done(menu.step)
+    {
         let step = menu.step + 1;
         go(&mut menu, step);
         say(&mut menu, "", false);
@@ -426,7 +505,7 @@ pub(super) fn input(
         }
     } else if let Some(StepLabel(i)) = step {
         // Back to any step, forward only past finished ones.
-        if (0..*i).all(step_done) {
+        if !one_step && (0..*i).all(step_done) {
             go(&mut menu, *i);
             say(&mut menu, "", false);
         }
@@ -441,9 +520,14 @@ pub(super) fn input(
     }
 }
 
-/// Back a step, or out of the game from the first.
+/// Back a step, or out of the game from the first; opened from Settings,
+/// back to Settings.
 fn back(menu: &mut Menu, exit: &mut MessageWriter<AppExit>) {
-    if menu.step == 0 {
+    if let Some(row) = menu.setup_return.take() {
+        menu.phase = Phase::Settings;
+        menu.setting = row;
+        say(menu, "", false);
+    } else if menu.step == 0 {
         exit.write(AppExit::Success);
     } else {
         let step = menu.step - 1;
@@ -453,9 +537,17 @@ fn back(menu: &mut Menu, exit: &mut MessageWriter<AppExit>) {
 }
 
 /// A row chosen: open its folder picker on a thread ([`picked`] takes the
-/// outcome), or decline Reflex at once.
+/// outcome), or decline Skate 3 or Reflex at once.
 fn choose(menu: &mut Menu, row: SetupRow) {
     match row {
+        SetupRow::NoSkate => match mcc_setup::skip_skate() {
+            Ok(()) => {
+                eprintln!("setup: playing without Skate 3");
+                say(menu, "Playing without Skate 3: no skateboard. You can add it later in Settings.", false);
+                advance(menu, row);
+            }
+            Err(e) => say(menu, e, true),
+        },
         SetupRow::NoReflex => match mcc_setup::skip_reflex() {
             Ok(()) => {
                 say(menu, "Playing without Reflex: the bike is our own model.", false);
@@ -465,7 +557,12 @@ fn choose(menu: &mut Menu, row: SetupRow) {
         },
         SetupRow::Skate if mcc_setup::converter().is_none() => {
             menu.setting = 0;
-            say(menu, "Choose your MW2 Skate 3 folder first: its converter turns Skate 3 into what this game reads.", true);
+            say(
+                menu,
+                "Choose your MW2 Skate 3 folder first: its converter turns Skate 3 into what this game reads. \
+                 Or Skip to play without Skate 3.",
+                true,
+            );
         }
         _ => {
             let (send, receive) = std::sync::mpsc::channel();
@@ -506,10 +603,15 @@ pub(super) fn picked(menu: &mut Menu, row: SetupRow, outcome: Result<Option<std:
 }
 
 /// After a good choice: on to Skate 3 itself after the converter, else the
-/// next step not done, else the maps.
+/// next step not done, else the maps. Opened from Settings: back there once
+/// Skate 3 is set up or skipped.
 fn advance(menu: &mut Menu, row: SetupRow) {
     if row == SetupRow::Converter && !mcc_setup::skate_ready() {
         menu.setting = 1;
+        return;
+    }
+    if menu.setup_return.is_some() {
+        menu.setup_finished = step_done(1);
         return;
     }
     match first_open_step() {
@@ -519,13 +621,40 @@ fn advance(menu: &mut Menu, row: SetupRow) {
 }
 
 /// Every game is set up: the map menu, built again from the MCC chosen.
+/// Opened from Settings: back to Settings, saying what changed. Either way
+/// skating is read again (`SkateEnabled`), as Skate 3 may just have been set
+/// up or skipped.
 pub(super) fn finish(world: &mut World) {
-    {
+    let skating = SkateEnabled::load();
+    world.insert_resource(skating);
+    let from_settings = {
         let mut menu = world.resource_mut::<Menu>();
         menu.setup_finished = false;
-        menu.phase = Phase::Choosing;
-        menu.setting = 0;
-        say(&mut menu, "", false);
+        match menu.setup_return.take() {
+            Some(row) => {
+                menu.phase = Phase::Settings;
+                menu.setting = row;
+                let note = if !mcc_setup::skate_ready() {
+                    "Playing without Skate 3. SET UP on the Skate 3 row adds it any time."
+                } else if skating.0 {
+                    "Saved Skate 3. Skating is on: J (or both sticks clicked) gets on the board."
+                } else {
+                    "Saved Skate 3. Skating is off; the Skating row turns it on."
+                };
+                say(&mut menu, note, false);
+                true
+            }
+            None => {
+                menu.phase = Phase::Choosing;
+                menu.setting = 0;
+                say(&mut menu, "", false);
+                false
+            }
+        }
+    };
+    if from_settings {
+        eprintln!("settings: Skate 3 {}", if mcc_setup::skate_ready() { "set up" } else { "skipped" });
+        return;
     }
     eprintln!("setup: done");
     refresh_maps(world);
@@ -533,14 +662,15 @@ pub(super) fn finish(world: &mut World) {
 
 /// Draws the setup screen: shown in [`Phase::Setup`], the step's page, the
 /// rows' folders, the focus, the note (the conversion's progress while it
-/// runs) and the bar.
+/// runs) and the bar. Opened from Settings it is headed SETTINGS, without
+/// the other steps.
 #[allow(clippy::type_complexity)]
 pub(super) fn show(
     menu: Res<Menu>,
-    mut nodes: Query<(Option<&SetupScreen>, Option<&StepPage>, &mut Node)>,
+    mut nodes: Query<(Option<&SetupScreen>, Option<&StepPage>, Option<&StepTabs>, &mut Node)>,
     mut frames: Query<(Option<&StepLabel>, Option<&RowNode>, Option<&RowButton>, Option<&mut BackgroundColor>, &mut BorderColor)>,
     mut texts: Query<(
-        AnyOf<(&StepLabel, &RowValue, &RowButtonLabel, &SetupNote, &StepCount, &BarLabel)>,
+        AnyOf<(&StepLabel, &RowValue, &RowButtonLabel, &SetupNote, &StepCount, &BarLabel, &SetupHeading, &SetupIntro)>,
         &mut Text,
         &mut TextColor,
     )>,
@@ -550,7 +680,7 @@ pub(super) fn show(
         // Only the conversion's progress changes meanwhile.
         if converting && menu.phase == Phase::Setup {
             let progress = mcc_setup::progress();
-            for ((_, _, _, note, _, _), mut text, _) in &mut texts {
+            for ((_, _, _, note, ..), mut text, _) in &mut texts {
                 if note.is_some() && !progress.is_empty() {
                     let line = format!("Converting Skate 3. This takes a few minutes.\n{progress}");
                     if text.0 != line {
@@ -562,11 +692,14 @@ pub(super) fn show(
         return;
     }
     let open = menu.phase == Phase::Setup;
-    for (screen, page, mut node) in &mut nodes {
+    let one_step = menu.setup_return.is_some();
+    for (screen, page, tabs, mut node) in &mut nodes {
         if screen.is_some() {
             node.display = if open { Display::Flex } else { Display::None };
         } else if let Some(page) = page {
             node.display = if open && page.0 == menu.step { Display::Flex } else { Display::None };
+        } else if tabs.is_some() {
+            node.display = if one_step { Display::None } else { Display::Flex };
         }
     }
     if !open {
@@ -589,9 +722,19 @@ pub(super) fn show(
         }
     }
     let progress = mcc_setup::progress();
-    for ((step, value, label, note, count, bar), mut text, mut colour) in &mut texts {
-        if let Some(step) = step {
-            let mark = if step.0 != menu.step && done[step.0] { "  (done)" } else { "" };
+    for ((step, value, label, note, count, bar, heading, intro), mut text, mut colour) in &mut texts {
+        if heading.is_some() {
+            text.0 = if one_step { "SETTINGS" } else { "WELCOME" }.to_string();
+        } else if intro.is_some() {
+            text.0 = if one_step { FROM_SETTINGS } else { INTRO }.to_string();
+        } else if let Some(step) = step {
+            let mark = if step.0 == menu.step || !done[step.0] {
+                ""
+            } else if step_skipped(step.0) {
+                "  (skipped)"
+            } else {
+                "  (done)"
+            };
             text.0 = format!("{}  {}{mark}", step.0 + 1, STEPS[step.0].tab);
             colour.0 = if step.0 == menu.step {
                 LIT
@@ -615,11 +758,15 @@ pub(super) fn show(
             };
             colour.0 = if menu.note_is_error && !converting { ERROR } else { DIM };
         } else if count.is_some() {
-            text.0 = format!("STEP {} OF {}", menu.step + 1, STEPS.len());
+            text.0 = if one_step {
+                "SETTINGS: SKATE 3".to_string()
+            } else {
+                format!("STEP {} OF {}", menu.step + 1, STEPS.len())
+            };
         } else if let Some(bar) = bar {
             text.0 = match bar.0 {
                 BarButton::Choose => focus.button(),
-                BarButton::Back if menu.step == 0 => "EXIT",
+                BarButton::Back if menu.step == 0 && !one_step => "EXIT",
                 BarButton::Back => "BACK",
             }
             .to_string();
@@ -636,8 +783,15 @@ mod tests {
         for step in &STEPS {
             assert!(!step.rows.is_empty() && !step.about.is_empty());
         }
-        // MCC and Skate 3 are required; only Reflex can be skipped.
-        assert!(STEPS[0].required && STEPS[1].required && !STEPS[2].required);
-        assert!(STEPS.iter().flat_map(|s| s.rows).filter(|r| **r == SetupRow::NoReflex).count() == 1);
+        // Only MCC is required; Skate 3 and Reflex can each be skipped, on
+        // their own step.
+        assert!(STEPS[0].required && !STEPS[1].required && !STEPS[2].required);
+        let count = |row: SetupRow| STEPS.iter().flat_map(|s| s.rows).filter(|r| **r == row).count();
+        assert_eq!(count(SetupRow::NoSkate), 1);
+        assert_eq!(count(SetupRow::NoReflex), 1);
+        assert!(STEPS[1].rows.contains(&SetupRow::NoSkate) && STEPS[2].rows.contains(&SetupRow::NoReflex));
+        // The Skate 3 step's rows are where `first_row` and `advance` expect
+        // them: the converter, then Skate 3.
+        assert_eq!(STEPS[1].rows[..2], [SetupRow::Converter, SetupRow::Skate]);
     }
 }
