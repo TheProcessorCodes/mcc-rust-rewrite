@@ -37,8 +37,7 @@ read from the player's own MCC install.
 
 ![Campaign: the two Warthog runs, and the untested Halo 3 missions](docs/screenshots/menu-campaign.jpg)
 
-The exe is `mcc-rust-rewrite.exe`. The project was called "Halo 3 in Rust"
-(`halo3.exe`, `halo3_*` crates) until 2026-11-06.
+The exe is `mcc-rust-rewrite.exe`.
 
 `HANDOFF.md` has the goals, the research and the open decisions. `docs/` holds
 the format descriptions the code is written from.
