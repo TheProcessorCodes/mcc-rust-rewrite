@@ -282,11 +282,17 @@ fn start_worker(
     let Some(collision) = input.0.take() else {
         return;
     };
-    // Skating turned off in Settings: no grind rails, no skate world, no
-    // session thread, nothing to wait for on the loading screen.
+    // Skating off: no grind rails, no skate world, no session thread,
+    // nothing to wait for on the loading screen. Off because Skate 3 is not
+    // set up (skipped in the first-run setup), or turned off in Settings.
     if !skating_on(enabled.as_deref()) {
-        host.status = "skating is off (Settings)".into();
-        info!("skate: off in Settings; no rails or skate session for this map");
+        if game_paths::skate_ready() {
+            host.status = "skating is off (Settings)".into();
+            info!("skate: off in Settings; no rails or skate session for this map");
+        } else {
+            host.status = "skating needs Skate 3 (Settings)".into();
+            info!("skate: Skate 3 is not set up; no rails or skate session for this map");
+        }
         return;
     }
     let root = assets_root();

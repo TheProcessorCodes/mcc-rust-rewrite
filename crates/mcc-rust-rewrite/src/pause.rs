@@ -21,8 +21,11 @@
 //! It is only there with MX vs ATV Reflex set up (it is optional); the main
 //! menu's Settings has the same switch.
 //!
-//! With skating turned off in Settings (`SkateEnabled`), the Skate tab says
-//! so and where to turn it back on, instead of listing the buttons.
+//! With skating off (`SkateEnabled`), the Skate tab says why and how to
+//! turn it on instead of listing the buttons: turned off in Settings, or
+//! Skate 3 not set up (skipped in the first-run setup,
+//! `game_paths::skate_ready`), which Settings can add. The skateboard's
+//! rows (J) on the other tabs say the same in short.
 //!
 //! The skate buttons are the stock Skate 3 layout the engine maps them
 //! through (`skate-core` `input/controller.rs` and `gameplay_map.rs`: A and
@@ -317,8 +320,40 @@ fn physics_row(p: &mut ChildSpawnerCommands) {
     });
 }
 
-/// The Skate tab while skating is off: what happened and how to turn it on.
-fn skate_off_notice(p: &mut ChildSpawnerCommands) {
+/// Why skating is off for this map, which the Skate tab and the
+/// skateboard's rows say.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SkateOff {
+    /// The player turned Skating off in Settings.
+    Settings,
+    /// Skate 3 is not set up: skipped in the first-run setup, or its
+    /// converted data is gone.
+    NoSkate3,
+}
+
+impl SkateOff {
+    /// Why skating is off, or None when it is on. Without Skate 3 set up
+    /// that is the reason whatever Settings says, as turning Skating on
+    /// would not bring it back.
+    fn find(skating: bool, skate_ready: bool) -> Option<SkateOff> {
+        match (skating, skate_ready) {
+            (true, _) => None,
+            (false, true) => Some(SkateOff::Settings),
+            (false, false) => Some(SkateOff::NoSkate3),
+        }
+    }
+
+    /// What a skateboard row in a controls list says in place of what it does.
+    fn label(self) -> &'static str {
+        match self {
+            SkateOff::Settings => "skateboard (skating is off in Settings)",
+            SkateOff::NoSkate3 => "skateboard (needs Skate 3)",
+        }
+    }
+}
+
+/// The Skate tab while skating is off: why, and how to turn it on.
+fn skate_off_notice(p: &mut ChildSpawnerCommands, off: SkateOff) {
     p.spawn((
         Node {
             flex_direction: FlexDirection::Column,
@@ -332,25 +367,46 @@ fn skate_off_notice(p: &mut ChildSpawnerCommands) {
         BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.05)),
     ))
     .with_children(|n| {
-        n.spawn(text("Skating is turned off", 24.0, LIT));
-        n.spawn(text("This map was loaded without the skateboard or its grind rails.", 18.0, Color::WHITE));
-        n.spawn(crate::key_hint::hint(
-            "To skate, go back to the map menu, open Settings (X) and turn Skating on.",
-            "To skate, go back to the map menu, open Settings (F1) and turn Skating on.",
-            18.0,
-            Color::WHITE,
-        ));
+        match off {
+            SkateOff::Settings => {
+                n.spawn(text("Skating is turned off", 24.0, LIT));
+                n.spawn(text("This map was loaded without the skateboard or its grind rails.", 18.0, Color::WHITE));
+                n.spawn(crate::key_hint::hint(
+                    "To skate, go back to the map menu, open Settings (X) and turn Skating on.",
+                    "To skate, go back to the map menu, open Settings (F1) and turn Skating on.",
+                    18.0,
+                    Color::WHITE,
+                ));
+            }
+            SkateOff::NoSkate3 => {
+                n.spawn(text("Skating needs Skate 3", 24.0, LIT));
+                n.spawn(text(
+                    "This game was set up without Skate 3, so maps load without the skateboard or grind rails.",
+                    18.0,
+                    Color::WHITE,
+                ));
+                n.spawn(crate::key_hint::hint(
+                    "To add it, go back to the map menu, open Settings (X) and choose Skate 3.",
+                    "To add it, go back to the map menu, open Settings (F1) and choose Skate 3.",
+                    18.0,
+                    Color::WHITE,
+                ));
+            }
+        }
         n.spawn(text("It takes effect on the next map you load.", 16.0, DIM));
     });
 }
 
-/// A controls list with the skateboard's rows (J) marked as off.
-fn without_skating<const N: usize>(rows: &[[&'static str; N]], on: bool) -> Vec<[&'static str; N]> {
+/// A controls list with the skateboard's rows marked as off, saying why:
+/// J on free roam and on foot, "click both sticks (J)" on the dirt bike.
+fn without_skating<const N: usize>(rows: &[[&'static str; N]], off: Option<SkateOff>) -> Vec<[&'static str; N]> {
     rows.iter()
         .map(|r| {
             let mut r = *r;
-            if !on && r[0] == "J" {
-                r[N - 1] = "skateboard (skating is off in Settings)";
+            if let Some(off) = off
+                && (r[0] == "J" || r[0].ends_with("(J)"))
+            {
+                r[N - 1] = off.label();
             }
             r
         })
@@ -364,7 +420,7 @@ fn spawn_menu(
     zones: Option<Res<mcc_world::zones::Zones>>,
     skate: Option<Res<mcc_core::skate::SkateEnabled>>,
 ) {
-    let skating = mcc_core::skate::skating_on(skate.as_deref());
+    let off = SkateOff::find(mcc_core::skate::skating_on(skate.as_deref()), game_paths::skate_ready());
     // `MCC_SHOT_PAUSE_TAB=N` (dev, for headless shots): the menu is drawn
     // open on tab N (the game is not paused).
     let open_on = std::env::var("MCC_SHOT_PAUSE_TAB").ok().and_then(|s| s.parse::<usize>().ok()).filter(|&t| t < SOUND_TAB);
@@ -440,7 +496,7 @@ fn spawn_menu(
                     shown,
                     ["Keyboard", "Controller", ""],
                     [260.0, 200.0, 320.0],
-                    &without_skating(FREE_ROAM, skating),
+                    &without_skating(FREE_ROAM, off),
                     |_| {},
                 );
                 page(
@@ -449,14 +505,21 @@ fn spawn_menu(
                     shown,
                     ["Keyboard", "Controller", ""],
                     [260.0, 200.0, 320.0],
-                    &without_skating(FOOT, skating),
+                    &without_skating(FOOT, off),
                     |_| {},
                 );
-                page(panel, BIKE_TAB, shown, ["Controller", ""], [260.0, 520.0], BIKE, volume_slider);
-                if skating {
-                    page(panel, SKATE_TAB, shown, ["Controller", ""], [260.0, 520.0], SKATE, |_| {});
-                } else {
-                    page(panel, SKATE_TAB, shown, [], [], &[], skate_off_notice);
+                page(
+                    panel,
+                    BIKE_TAB,
+                    shown,
+                    ["Controller", ""],
+                    [260.0, 520.0],
+                    &without_skating(BIKE, off),
+                    volume_slider,
+                );
+                match off {
+                    None => page(panel, SKATE_TAB, shown, ["Controller", ""], [260.0, 520.0], SKATE, |_| {}),
+                    Some(off) => page(panel, SKATE_TAB, shown, [], [], &[], |p| skate_off_notice(p, off)),
                 }
                 sound_page(panel, levels.as_deref());
             });
@@ -991,5 +1054,45 @@ fn physics_switch(
                 c.0 = colour;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Without Skate 3 that is the reason skating is off, whatever
+    /// Settings says; with skating on there is nothing to say.
+    #[test]
+    fn skate_3_missing_is_the_reason_before_settings() {
+        assert_eq!(SkateOff::find(true, true), None);
+        assert_eq!(SkateOff::find(false, true), Some(SkateOff::Settings));
+        assert_eq!(SkateOff::find(false, false), Some(SkateOff::NoSkate3));
+        // A `--skate` shot forces skating on.
+        assert_eq!(SkateOff::find(true, false), None);
+    }
+
+    /// The rows the reason replaces, by their first column.
+    fn marked<const N: usize>(rows: &[[&'static str; N]], off: SkateOff) -> Vec<&'static str> {
+        without_skating(rows, Some(off))
+            .iter()
+            .filter(|r| r[N - 1] == off.label())
+            .map(|r| r[0])
+            .collect()
+    }
+
+    /// Every list's skateboard row says why skating is off, the dirt bike's
+    /// "(J)" row too, and nothing else changes; with skating on, nothing does.
+    #[test]
+    fn only_the_skateboard_rows_are_marked() {
+        for off in [SkateOff::Settings, SkateOff::NoSkate3] {
+            assert_eq!(marked(FREE_ROAM, off), ["J"]);
+            assert_eq!(marked(FOOT, off), ["J"]);
+            assert_eq!(marked(BIKE, off), ["click both sticks (J)"]);
+        }
+        assert_eq!(without_skating(FREE_ROAM, None), FREE_ROAM);
+        assert_eq!(without_skating(FOOT, None), FOOT);
+        assert_eq!(without_skating(BIKE, None), BIKE);
+        assert_ne!(SkateOff::Settings.label(), SkateOff::NoSkate3.label());
     }
 }
