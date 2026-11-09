@@ -1,0 +1,41 @@
+name: Bug report
+description: Something crashes, looks wrong or plays wrong.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please don't attach files from MCC, Skate 3 or Reflex (maps, textures, sounds, dumps).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: input
+    id: map
+    attributes:
+      label: Map and ride
+      placeholder: e.g. Valhalla (riverworld), on the dirt bike
+  - type: dropdown
+    id: games
+    attributes:
+      label: Games set up
+      multiple: true
+      options:
+        - Halo MCC
+        - Skate 3 (extracted folder)
+        - Skate 3 (.iso)
+        - MX vs ATV Reflex
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release name or commit you built.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log or error
+      description: Console output or panic message, if there was one.
+      render: text

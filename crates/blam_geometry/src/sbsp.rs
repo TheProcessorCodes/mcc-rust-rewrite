@@ -262,8 +262,10 @@ pub fn decode(
         let rows = [r.f32x3()?, r.f32x3()?, r.f32x3()?];
         let translation = Vec3::from(r.f32x3()?);
         let section = r.at(o + 0x34).i16()?;
+        let flags = r.at(o + 0x36).u16()?;
         let texcoord_block = r.at(o + 0x38).i16()?;
         let name = r.at(o + 0x54).string_id()?;
+        let pathfinding = r.at(o + 0x58).u16()?;
         let fade_pixels = [r.at(o + 0x6C).u16()?, r.at(o + 0x6E).u16()?];
         let Some(mesh) = usize::try_from(section)
             .ok()
@@ -271,6 +273,13 @@ pub fn decode(
         else {
             continue;
         };
+        if flags & INSTANCE_COLLIDABLE == 0
+            && pathfinding == PATHFINDING_STATIC
+            && only_pit_fire(scene, mesh)
+        {
+            stats.dropped_instances.push(i as u32);
+            continue;
+        }
         let (transform, mirrored) = matrix_from_rows(rows, translation.to_array(), scale);
         let lighting = match &records {
             Some(r) => r
@@ -315,6 +324,30 @@ pub fn decode(
     Ok(stats)
 }
 
+/// Instance flag (+0x36) bit 3: the engine collides with this instance
+/// (`collision-bsp-research.md` 10).
+const INSTANCE_COLLIDABLE: u16 = 0x8;
+/// Instance pathfinding policy (+0x58) "static": AI walk round it as a solid.
+const PATHFINDING_STATIC: u16 = 1;
+
+/// Whether every part of a mesh is drawn with 120_halo's `firey_pit`, the
+/// glow of the pit floor far below the Warthog run. In `120_bsp_110` the
+/// trench's 68 boulders (`rock_small` ... `rock_huge_capped`) carry that
+/// shader and no collision, though their pathfinding says solid, while the
+/// same rocks in 100 and 120 are `rock_basic_trench` and collidable; Halo 3
+/// shows no glowing boulders there, so these instances are not placed
+/// (issue #5). The pit floor's own quads (`_firey_pit_01` ... `_04`,
+/// pathfinding "none") and the cluster geometry with the shader stay.
+fn only_pit_fire(scene: &Scene, mesh: u32) -> bool {
+    let parts = &scene.meshes[mesh as usize].parts;
+    !parts.is_empty()
+        && parts.iter().all(|p| {
+            scene.materials[p.material as usize]
+                .tag_path
+                .eq_ignore_ascii_case(r"levels\solo\120_halo\shaders\firey_pit")
+        })
+}
+
 /// The cluster portals at sbsp + 0x7C, 40 bytes each
 /// (`docs/format/sbsp-portals.md` 1). Portals naming a cluster the BSP does
 /// not have are dropped.
@@ -357,7 +390,7 @@ pub fn leaf_clusters(cache: &CacheFile, sbsp: &TagEntry) -> Result<Vec<i8>> {
 }
 
 /// Counts worth printing after a decode.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct BspStats {
     pub clusters: u32,
     pub cluster_placements: u32,
@@ -366,4 +399,7 @@ pub struct BspStats {
     pub sections: u32,
     pub sections_with_geometry: u32,
     pub shaders: u32,
+    /// Instances left out on purpose ([`only_pit_fire`]); collision skips
+    /// them too.
+    pub dropped_instances: Vec<u32>,
 }

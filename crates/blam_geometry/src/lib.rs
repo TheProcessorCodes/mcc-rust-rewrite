@@ -135,7 +135,7 @@ pub fn decode_into(
             );
         }
         if options.collision {
-            match collision::decode(cache, &resources, bsp.sbsp, bsp.index, &mut scene.collision) {
+            match collision::decode(cache, &resources, bsp.sbsp, bsp.index, &s.dropped_instances, &mut scene.collision) {
                 Ok(c) => {
                     if options.verbose {
                         eprintln!(
