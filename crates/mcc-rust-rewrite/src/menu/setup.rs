@@ -120,6 +120,10 @@ const INTRO: &str = "This game is played with your own copies of these games. On
 /// What the screen says at the top when Settings opened it.
 const FROM_SETTINGS: &str = "Skate 3 is optional: it adds the skateboard. Set it up here, or go back to Settings.";
 
+/// The same once Skate 3 is set up.
+const FROM_SETTINGS_READY: &str =
+    "Skate 3 is set up. Convert it again or go without it here, or go back to Settings.";
+
 /// The Skate 3 step's last words, left off when Settings opened the step:
 /// the player is in Settings already.
 const LATER_IN_SETTINGS: &str = " You can add Skate 3 later in Settings.";
@@ -768,7 +772,12 @@ pub(super) fn show(
         if heading.is_some() {
             text.0 = if one_step { "SETTINGS" } else { "WELCOME" }.to_string();
         } else if intro.is_some() {
-            text.0 = if one_step { FROM_SETTINGS } else { INTRO }.to_string();
+            text.0 = match one_step {
+                true if mcc_setup::skate_ready() => FROM_SETTINGS_READY,
+                true => FROM_SETTINGS,
+                false => INTRO,
+            }
+            .to_string();
         } else if let Some(about) = about {
             let line = STEPS[about.0].about[about.1];
             text.0 = if one_step { line.strip_suffix(LATER_IN_SETTINGS).unwrap_or(line) } else { line }.to_string();
