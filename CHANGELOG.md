@@ -16,6 +16,7 @@ merge history.
 - A clutch for the bike's Reflex physics: hold RB or E (#17).
 - Settings has an Armour colour row for the Spartan on multiplayer maps (#18).
 - A soft shadow under you on foot, on the board and on the bike shrinks and fades as you rise (#30).
+- Man cannons and gravity lifts launch the skateboard, and Halo 3's man cannons now throw you on foot and on the bike too (#29).
 
 ### Fixed
 - Pause menu: the Dirt bike tab no longer says A backs the bike up; the brake held at a

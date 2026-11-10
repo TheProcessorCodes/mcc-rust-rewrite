@@ -539,8 +539,42 @@ Each step a body touching a volume (within its radius) gets, from each volume it
 - no gravity while any volume it touches negates gravity.
 
 Walking (`mcc_foot`) and the dirt bike (`mcc_bike`, unless the volume ignores vehicles) take
-the push through `mcc_core::lifts::Lifts`. The skateboard does not: the Skate 3 engine runs its
-own physics and takes no outside push. Swimming has no lifts.
+the push through `mcc_core::lifts::Lifts`. The skateboard takes it all at once (2026-11-10, #29):
+once in the air the Skate 3 engine follows the trajectory it predicted on take-off, so a push
+spread over the steps is lost after the first few. While the board touches a volume,
+`Lifts::kick` brings its speed along each volume's direction up to that volume's top speed in one
+go (a volume with no top speed gives 0.1 s of its acceleration; the axis and centre pulls are left
+out), added to the board, its hook and the skater's body through the vendored skate-host's
+`Session::push`, at most once every 0.3 s (`mcc_skate::lift_kick`). Valhalla's cannon reaches its
+11 wu/s in 0.18 s anyway, so the kick is close to the game's push. Swimming has no lifts.
+
+### 12.4 Halo 3
+
+Halo 3 keeps its lifts the same way (2026-11-10, #29; `blam_geometry::objects::lifts`, test
+`blam_geometry/tests/lifts.rs`): a placed scenery, crate, machine or control whose model (`hlmt`
+**+0x30**) names a `phmo` with phantom types. Offsets found on the bytes of Valhalla's
+`man_cannon_river` (a crate) and checked across every multiplayer map's lift objects:
+
+| `phmo` offset | element | meaning |
+|---|---|---|
+| +0x34 | 0x68 | **phantom types**, the same layout and flags as Halo 2's (marker +0x08, dead radius +0x1C, centre / axis / direction pairs +0x20 / +0x28 / +0x30) |
+| +0x70 | 0xA0 | spheres: radius +0x40, translation +0x90 |
+| +0x88 | 0x70 | pills: radius +0x40, ends +0x50 and +0x60 |
+| +0x94 | 0xE0 | boxes: half sizes +0x50, rotation rows +0xA0 / +0xB0 / +0xC0, translation +0xD0 |
+| +0xAC | 0xA0 | polyhedra: bounding box half sizes +0x50 about the centre +0x60 |
+
+Every shape has its name at +0x00 and its phantom type as an i8 at **+0x1E** (-1: none). The
+marker (render model marker groups, `weapons::markers`) aims the push along its +X.
+
+Valhalla's cannon has three phantom types on three boxes: one empty, one for players (flags
+`0x40000040`: bit 6, vehicles left alone; `fire` marker, direction 60 wu/s^2 to 11 wu/s) and one
+for vehicles (bit 3 set: players left alone; 20 to 8). The box sits 45 degrees up the ramp. The
+Forge `man_cannon_forge` (30 to 9), Narrows' cannon, Construct's lifts, Isolation's launch tubes
+and The Pit's `cyber_pad` (polyhedra), Guardian's cannons (boxes) and the equipment gravity lift
+(a pill, 16 to 4 with axis pull 0.8) read the same way. Equipment and vehicles (bubble shield,
+Phantom dropship) are not placed objects and carry no lift here. Walking and the bike take Halo
+3's lifts too, as Halo 2's.
+
 
 ## 13. Sound (`snd!`, `lsnd`, `ugh!`, `sounds_*.dat`)
 

@@ -33,6 +33,7 @@ use blam_geometry::{Collision, TriggerVolume, rails};
 
 use mcc_core::coords::{to_halo_dir, to_render};
 use mcc_core::flag::{Marker, SessionFlag};
+use mcc_core::lifts::Lifts;
 use mcc_core::fly_camera::FlyCamera;
 pub use mcc_core::skate::{Respawn, RiderPose, SkateMotion, Skating, assets_root, scale};
 use mcc_core::skate::{Bail, Dismount, Mount, Ride, SkateEnabled, bail_pressed, skating_on};
@@ -103,7 +104,9 @@ enum Job {
     /// Epoch, spawn, heading, aspect, and the velocity to start with
     /// (skate space; zero from rest).
     Activate(u64, [f32; 3], f32, f32, [f32; 3]),
-    Step(u64, f32, InputFrame, f32),
+    /// Epoch, seconds, input, aspect, and a velocity change from the
+    /// map's lifts (skate space) to add first.
+    Step(u64, f32, InputFrame, f32, [f32; 3]),
     Suspend,
     /// A session marker set on the bike: the engine's marker moves here
     /// (skate space) facing this heading, so the board goes back to it too.
@@ -151,6 +154,8 @@ struct Host {
     removed: u64,
     /// The shared session marker last taken up (`SessionFlag::set_since`).
     marker_seen: u64,
+    /// Seconds since a lift last kicked the board (`lift_kick`).
+    since_kick: f32,
 }
 
 impl Default for Host {
@@ -174,6 +179,7 @@ impl Default for Host {
             warmed: None,
             removed: 0,
             marker_seen: 0,
+            since_kick: LIFT_REST,
         }
     }
 }
@@ -439,9 +445,12 @@ fn start_worker(
                             // Not reported back: it came from the bike.
                             marker = session.session_marker();
                         }
-                        Job::Step(request, dt, input, aspect) => {
+                        Job::Step(request, dt, input, aspect, push) => {
                             if request != epoch {
                                 continue;
+                            }
+                            if push != [0.0; 3] {
+                                session.push(push);
                             }
                             session.set_aspect_ratio(aspect);
                             session.collect(input, dt);
@@ -578,6 +587,7 @@ fn update(
     mut cameras: Query<(Entity, &mut Transform, &mut FlyCamera, &mut Projection)>,
     loaded: Res<LoadedBsps>,
     mut flag: ResMut<SessionFlag>,
+    lifts: Option<Res<Lifts>>,
 ) {
     let host = &mut *host;
     let Some(receive) = host.receive.as_ref() else {
@@ -834,8 +844,35 @@ fn update(
         };
         let dt = time.delta_secs().min(0.1);
         rider.skated += dt;
-        let _ = send.send(Job::Step(host.epoch, dt, frame, aspect));
+        let push = lift_kick(lifts.as_deref(), host, dt);
+        let _ = send.send(Job::Step(host.epoch, dt, frame, aspect, push));
     }
+}
+
+/// How far round the skater's middle a lift reaches him, metres (the
+/// Spartan's radius, as on foot).
+const LIFT_MARGIN: f32 = 0.4;
+/// The skater's middle above his feet, metres.
+const LIFT_CENTRE: f32 = 0.9;
+/// Seconds after a lift's kick before the next: the pose the kick is
+/// worked out from comes back a frame late, and must show the kick first.
+const LIFT_REST: f32 = 0.3;
+
+/// What the map's gravity lifts and man cannons do to the board: the kick
+/// up to the lift's top speed along its direction (`Lifts::kick`), as a
+/// velocity change in skate space for `Session::push`, at most once every
+/// [`LIFT_REST`] seconds. A push spread over the frames is lost: once in
+/// the air the engine follows the trajectory it predicted on take-off.
+fn lift_kick(lifts: Option<&Lifts>, host: &mut Host, dt: f32) -> [f32; 3] {
+    host.since_kick += dt;
+    if host.since_kick < LIFT_REST {
+        return [0.0; 3];
+    }
+    let Some(k) = lifts.and_then(|l| l.kick(host.feet + Vec3::Y * LIFT_CENTRE, host.velocity, LIFT_MARGIN)) else {
+        return [0.0; 3];
+    };
+    host.since_kick = 0.0;
+    (k * host.scale).to_array()
 }
 
 /// The skater as lines between joints, the board in orange.
@@ -943,6 +980,66 @@ mod tests {
             session.tick(Default::default()).unwrap();
         }
         session.pose().velocity
+    }
+
+    /// A man cannon's push throws the board: pushed up and along while on
+    /// the pad, as `update` does each frame, it leaves the ground and
+    /// flies on.
+    #[test]
+    fn a_man_cannon_throws_the_board() {
+        let Some(root) = game_paths::skate_assets().filter(|r| game_paths::is_skate_assets(r)) else {
+            eprintln!("skipped: Skate 3 is not set up");
+            return;
+        };
+        let floor = vec![
+            [[-200.0, 0.0, -200.0], [-200.0, 0.0, 200.0], [200.0, 0.0, 200.0]],
+            [[-200.0, 0.0, -200.0], [200.0, 0.0, 200.0], [200.0, 0.0, -200.0]],
+        ];
+        let mut session = Session::new(&root, floor, vec![], [0.0; 3], 0.0).unwrap();
+        session.activate([0.0, 0.3, 0.0], 0.0).unwrap();
+        let dt = session.period();
+        for _ in 0..10 {
+            session.tick(Default::default()).unwrap();
+        }
+        let start = session.pose().root.w_axis.truncate();
+        // Valhalla's cannon: 60 wu/s^2 up to 11 wu/s, out and up at 45
+        // degrees, for a quarter of a second on the pad.
+        let lifts = Lifts(vec![blam_geometry::LiftVolume {
+            name: "cannon".into(),
+            shape: blam_geometry::LiftShape::Capsule {
+                a: Vec3::ZERO,
+                b: Vec3::ZERO,
+                radius: 1000.0,
+            },
+            origin: Vec3::ZERO,
+            direction: Vec3::new(1.0, 0.0, 1.0).normalize(),
+            push: blam_geometry::LiftPush {
+                direction: (60.0, 11.0),
+                ..Default::default()
+            },
+        }]);
+        let mut host = Host::default();
+        let mut kicks = 0;
+        for _ in 0..(0.25 / dt) as usize {
+            let p = session.pose();
+            host.feet = p.root.w_axis.truncate() / host.scale;
+            host.velocity = p.velocity / host.scale;
+            let kick = lift_kick(Some(&lifts), &mut host, dt);
+            if kick != [0.0; 3] {
+                kicks += 1;
+            }
+            session.push(kick);
+            session.tick(Default::default()).unwrap();
+        }
+        assert_eq!(kicks, 1);
+        let mut top = 0.0f32;
+        for _ in 0..(1.0 / dt) as usize {
+            session.tick(Default::default()).unwrap();
+            top = top.max(session.pose().root.w_axis.y - start.y);
+        }
+        let moved = session.pose().root.w_axis.truncate() - start;
+        assert!(top > 2.0, "rose {top} skate m");
+        assert!(moved.x.abs() > 5.0, "went {moved}");
     }
 
     /// A marker set from outside (on the bike) is the board's to go back to:

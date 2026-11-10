@@ -507,6 +507,11 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             let n = blam_geometry::objects::add_collision(cache, &mut scene);
             eprintln!("object collision: {n} triangles");
         }
+        // Man cannons and gravity lifts: the phantoms of placed objects.
+        scene.lifts = blam_geometry::objects::lifts(cache, &scene);
+        if !scene.lifts.is_empty() {
+            eprintln!("lifts: {} pushing volumes", scene.lifts.len());
+        }
         extras.scripts = scripts_for(args, cache, &mut scene);
         if let Some(s) = &extras.scripts {
             extras.effects = Some(mcc_effects::load::load(cache, &s.effect_roots));
