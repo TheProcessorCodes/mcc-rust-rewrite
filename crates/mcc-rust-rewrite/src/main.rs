@@ -691,8 +691,9 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         });
     }
     // Skating on or off (Settings; the menu changes it for the next map).
-    // A `--skate` shot needs the board, whatever the setting says.
-    let skate_shot = args.iter().any(|a| a == "--skate");
+    // A `--skate` shot needs the board, whatever the setting says, but
+    // nothing turns skating on without Skate 3.
+    let skate_shot = args.iter().any(|a| a == "--skate") && game_paths::skate_ready();
     app.insert_resource(mcc_core::skate::SkateEnabled(skate_shot || game_paths::skating_enabled()));
     let skating = shot.as_ref().is_none_or(|p| p.rides());
     // Off the menu every map gets every mode; a map named on the command
@@ -828,7 +829,7 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
     }
     // Skating as the player left it in Settings, read again for each map:
     // Skate 3 may have been set up since the game started.
-    let skate_shot = args.iter().any(|a| a == "--skate");
+    let skate_shot = args.iter().any(|a| a == "--skate") && game_paths::skate_ready();
     w.insert_resource(mcc_core::skate::SkateEnabled(skate_shot || mcc_core::skate::SkateEnabled::load().0));
     w.insert_resource(rider::PendingChief(chief));
     w.insert_resource(bike::BikeInput(std::sync::Arc::new(scene.collision.clone())));
