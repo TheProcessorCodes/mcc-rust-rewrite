@@ -15,6 +15,7 @@ merge history.
 - The bike's tuning menu opens from a controller with LB + X (#16).
 - A clutch for the bike's Reflex physics: hold RB or E (#17).
 - Settings has an Armour colour row for the Spartan on multiplayer maps (#18).
+- A soft shadow under you on foot, on the board and on the bike shrinks and fades as you rise (#30).
 
 ### Fixed
 - Pause menu: the Dirt bike tab no longer says A backs the bike up; the brake held at a
