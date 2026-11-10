@@ -309,7 +309,12 @@ How Halo turns size and intensity into a falloff is not decoded (9.5).
 Events play **one after another**: event n starts its delay after event n-1 ends, and lasts a
 duration picked in its bounds (the same rule as Halo CE's effects; Halo 3 keeps the
 fields). Skipped by their skip fraction. An effect ends when its last event has ended and
-nothing it made lives. Loops (`+0x18`) are not played: the scripts' effects are one-offs.
+nothing it made lives. The scripts' effects are one-offs; the map's own effects
+(`mcc_effects/src/ambient.rs`) loop: when the last event ends the effect goes back to its loop
+start event (`+0x18`) at once, and the emitters it already has go on emitting for the event's
+time again, so a loop of one event 1/60 s long (Valhalla's man cannons, Guardian's lift) emits
+without a break at its rate. Only a loop that takes no time at all waits 0.5 s (ours), and a
+loop's parts (sounds, lights) play at most that often.
 
 Parts at an event's start: `snd!` goes to the sound side as an impulse at the effect
 (`mcc_core::script_sound`), `ligh` becomes a light flash, `effe` a child effect at the same
@@ -375,8 +380,16 @@ the light's size. The 0.05 and the 4 are ours: Halo's falloff is not decoded.
 - `jpt!` (camera shake, shock waves), `sefc` (screen effects), `decs` (decals).
 - The part fields' locations: every effect plays at the object's origin; markers are not looked
   up (the plates have none named `base_effect` anyway).
-- Particle depth fade, frame blend, mesh particles, distortion; emission shapes beyond disc and
-  ring; the second emitter angle (`+0xC8`); output modifiers; looping effects.
+- Particle depth fade, frame blend, mesh particles; emission shapes beyond disc and
+  ring; the second emitter angle (`+0xC8`); output modifiers.
+- Distortion particles (`specialized_rendering` = `distortion`: the heat shimmer over a man
+  cannon): their systems are left out, since the bitmap is a map of offsets, not a picture.
+- Effect locations: every system plays in the frame the effect was started in. Halo looks each
+  system's location up by name: a marker of the object, or one of the names it supplies itself
+  (`up`, `gravity`, `normal`, ...). An effect a placed object carries plays at the attachment's
+  marker, or the object's origin; one by a lift is turned about the vertical to blow along the
+  lift's push (`ambient::aim_along_lift`), which is right for Valhalla's cannons (location
+  `up`, no marker) by our reading, not by a decoded rule.
 - The weapons' and AI's own impact and muzzle effects still use their stand-ins
   (`mcc_weapons/src/fire.rs`); switching them to `EffectQueue` needs their effect tags read at
   load, which is not done.
