@@ -313,3 +313,189 @@ pub fn bounds(triangles: &[CollisionTriangle]) -> Option<(Vec3, Vec3)> {
     let first = it.next()?;
     Some(it.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p))))
 }
+
+/// `phmo +0x34`: phantom types, 0x68 each, laid out as Halo 2's
+/// (`docs/format/halo2.md` 12; Halo 3's offsets in 12.4).
+const PHYSICS_PHANTOM_TYPES: usize = 0x34;
+const PHANTOM_TYPE_SIZE: usize = 0x68;
+/// Phantom type flags, as Halo 2's: gravity off inside, players left
+/// alone, vehicles left alone.
+const PHANTOM_NEGATES_GRAVITY: u32 = 1 << 2;
+const PHANTOM_IGNORES_PLAYERS: u32 = 1 << 3;
+const PHANTOM_IGNORES_VEHICLES: u32 = 1 << 6;
+/// The shape blocks lifts use, (offset, element size): spheres (radius
+/// +0x40, translation +0x90), pills (radius +0x40, ends +0x50 and +0x60),
+/// boxes (half sizes +0x50, rotation rows +0xA0 / +0xB0 / +0xC0,
+/// translation +0xD0) and polyhedra (bounding box half sizes +0x50 about
+/// the centre +0x60). Every shape starts with its name (+0x00) and has its
+/// phantom type as an i8 at +0x1E (-1: an ordinary collision shape).
+const PHYSICS_SPHERES: (usize, usize) = (0x70, 0xA0);
+const PHYSICS_PILLS: (usize, usize) = (0x88, 0x70);
+const PHYSICS_BOXES: (usize, usize) = (0x94, 0xE0);
+const PHYSICS_POLYHEDRA: (usize, usize) = (0xAC, 0xA0);
+
+/// Every pushing volume the placed objects carry (Valhalla's man cannons,
+/// Construct's lifts, the Forge man cannon): each shape of an object's
+/// physics model that uses a phantom type which does not ignore players,
+/// aimed by the render model marker the phantom type names (none: the
+/// object's origin and up). Objects that wait for a script are left out.
+/// `docs/format/halo2.md` 12.4.
+pub fn lifts(cache: &CacheFile, scene: &Scene) -> Vec<crate::LiftVolume> {
+    let mut out = Vec::new();
+    let mut models: HashMap<u32, Vec<LocalLift>> = HashMap::new();
+    for o in &scene.objects {
+        if matches!(o.kind, Kind::Sky | Kind::Cluster | Kind::Instance) || o.starts_absent() {
+            continue;
+        }
+        let local = models.entry(o.tag).or_insert_with(|| {
+            let Some(tag) = cache.tags.get(o.tag) else {
+                return Vec::new();
+            };
+            local_lifts(cache, tag).unwrap_or_else(|e| {
+                eprintln!("lifts of {}: {e}", tag.name());
+                Vec::new()
+            })
+        });
+        let (scale, rotation, _) = o.transform.to_scale_rotation_translation();
+        let short = o.tag_path.rsplit('\\').next().unwrap_or(&o.tag_path);
+        let point = |p: Vec3| o.transform.transform_point3(p);
+        for l in local.iter() {
+            let shape = match l.shape {
+                crate::LiftShape::Capsule { a, b, radius } => crate::LiftShape::Capsule {
+                    a: point(a),
+                    b: point(b),
+                    radius: radius * scale.x,
+                },
+                crate::LiftShape::Box { centre, axes, half } => crate::LiftShape::Box {
+                    centre: point(centre),
+                    axes: axes.map(|a| (rotation * a).normalize_or(Vec3::Z)),
+                    half: half * scale.x,
+                },
+            };
+            out.push(crate::LiftVolume {
+                name: format!("{short} {} {}", o.placement, l.name),
+                shape,
+                origin: point(l.origin),
+                direction: (rotation * l.direction).normalize_or(Vec3::Z),
+                push: l.push,
+            });
+        }
+    }
+    out
+}
+
+/// A lift volume in its object's own frame.
+#[derive(Clone, Debug)]
+struct LocalLift {
+    name: String,
+    shape: crate::LiftShape,
+    origin: Vec3,
+    direction: Vec3,
+    push: crate::LiftPush,
+}
+
+/// The lift volumes of an object tag, in its own frame. Shapes are in the
+/// physics model's node space; every lift seen has one node, at the
+/// object's origin.
+fn local_lifts(cache: &CacheFile, object: &TagEntry) -> Result<Vec<LocalLift>> {
+    let Some(hlmt) = model_of(cache, object)? else {
+        return Ok(Vec::new());
+    };
+    let hlmt_at = cache.tag_offset(hlmt)?;
+    let Some(phmo) = cache.reader_at(hlmt_at + MODEL_PHYSICS).tag_ref()?.index.and_then(|i| cache.tags.get(i)) else {
+        return Ok(Vec::new());
+    };
+    if cache.tags.class_of(phmo).code != "phmo" {
+        return Ok(Vec::new());
+    }
+    let base = cache.tag_offset(phmo)?;
+    let mut types = Vec::new();
+    for t in cache.reader_at(base + PHYSICS_PHANTOM_TYPES).block()?.elements(PHANTOM_TYPE_SIZE) {
+        let flags = cache.reader_at(t).u32()?;
+        let marker = cache.string(cache.reader_at(t + 0x08).string_id()?).unwrap_or("").to_string();
+        let f = |o: usize| cache.reader_at(t + o).f32();
+        let pair = |o: usize| -> Result<(f32, f32)> { Ok((f(o)?, f(o + 4)?)) };
+        let push = crate::LiftPush {
+            dead_radius: f(0x1C)?,
+            center: pair(0x20)?,
+            axis: pair(0x28)?,
+            direction: pair(0x30)?,
+            negates_gravity: flags & PHANTOM_NEGATES_GRAVITY != 0,
+            ignores_vehicles: flags & PHANTOM_IGNORES_VEHICLES != 0,
+        };
+        // A type that leaves players alone, or pushes nothing, is no lift.
+        let pushes = push.direction.0 != 0.0 || push.axis.0 != 0.0 || push.center.0 != 0.0;
+        types.push((flags & PHANTOM_IGNORES_PLAYERS == 0 && pushes, marker, push));
+    }
+    if !types.iter().any(|t| t.0) {
+        return Ok(Vec::new());
+    }
+    let v = |o: usize| -> Result<Vec3> { Ok(Vec3::from(cache.reader_at(o).f32x3()?)) };
+    let radius = |s: usize| cache.reader_at(s + 0x40).f32();
+    // (phantom type, the shape's offset, the shape)
+    let mut shapes: Vec<(usize, usize, crate::LiftShape)> = Vec::new();
+    let mut read = |(at, size): (usize, usize), shape: &dyn Fn(usize) -> Result<crate::LiftShape>| -> Result<()> {
+        for s in cache.reader_at(base + at).block()?.elements(size) {
+            let phantom = cache.reader_at(s + 0x1E).i8()?;
+            if let Ok(p) = usize::try_from(phantom)
+                && types.get(p).is_some_and(|t| t.0)
+            {
+                shapes.push((p, s, shape(s)?));
+            }
+        }
+        Ok(())
+    };
+    read(PHYSICS_SPHERES, &|s| {
+        let c = v(s + 0x90)?;
+        Ok(crate::LiftShape::Capsule { a: c, b: c, radius: radius(s)? })
+    })?;
+    read(PHYSICS_PILLS, &|s| {
+        Ok(crate::LiftShape::Capsule {
+            a: v(s + 0x50)?,
+            b: v(s + 0x60)?,
+            radius: radius(s)?,
+        })
+    })?;
+    read(PHYSICS_BOXES, &|s| {
+        let rows = [v(s + 0xA0)?, v(s + 0xB0)?, v(s + 0xC0)?];
+        Ok(crate::LiftShape::Box {
+            centre: v(s + 0xD0)?,
+            axes: [
+                Vec3::new(rows[0].x, rows[1].x, rows[2].x),
+                Vec3::new(rows[0].y, rows[1].y, rows[2].y),
+                Vec3::new(rows[0].z, rows[1].z, rows[2].z),
+            ]
+            .map(|a| a.normalize_or(Vec3::Z)),
+            half: v(s + 0x50)?,
+        })
+    })?;
+    read(PHYSICS_POLYHEDRA, &|s| {
+        Ok(crate::LiftShape::Box {
+            centre: v(s + 0x60)?,
+            axes: [Vec3::X, Vec3::Y, Vec3::Z],
+            half: v(s + 0x50)?,
+        })
+    })?;
+    let markers = match cache.reader_at(hlmt_at + MODEL_RENDER).tag_ref()?.index.and_then(|i| cache.tags.get(i)) {
+        Some(mode) => crate::weapons::markers(cache, mode).unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let mut out = Vec::new();
+    for (phantom, at, shape) in shapes {
+        let (_, marker, push) = &types[phantom];
+        let name = cache.string(cache.reader_at(at).string_id()?).unwrap_or("").to_string();
+        // The marker's +X is the way it pushes (as on Halo 2).
+        let (origin, direction) = match markers.iter().find(|m| !marker.is_empty() && m.name == *marker) {
+            Some(m) => (m.model.w_axis.truncate(), m.model.transform_vector3(Vec3::X)),
+            None => (Vec3::ZERO, Vec3::Z),
+        };
+        out.push(LocalLift {
+            name,
+            shape,
+            origin,
+            direction: direction.normalize_or(Vec3::Z),
+            push: *push,
+        });
+    }
+    Ok(out)
+}

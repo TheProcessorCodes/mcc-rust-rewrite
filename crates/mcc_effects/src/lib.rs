@@ -7,9 +7,13 @@
 //! through `mcc_audio`. `docs/format/effects.md` has the format and the
 //! rules, and what is not played yet.
 //!
+//! The map's own effects, its placed objects' and its weather, play from
+//! the start without anyone asking (`ambient.rs`).
+//!
 //! `main` reads the effects while the map loads ([`load::load`]) and puts
 //! them in as [`PendingEffects`].
 
+pub mod ambient;
 pub mod draw;
 pub mod load;
 pub mod sim;
@@ -87,10 +91,11 @@ impl Plugin for EffectsPlugin {
             .init_map_resource::<EffectQueue>()
             .remove_on_map_unload::<PendingEffects>()
             .remove_on_map_unload::<Effects>()
+            .remove_on_map_unload::<ambient::Ambient>()
             .add_systems(mcc_core::map::MapStartup, start)
             .add_systems(
                 PostUpdate,
-                (play.run_if(mcc_core::pause::running), draw)
+                (ambient::run.run_if(mcc_core::pause::running), play.run_if(mcc_core::pause::running), draw)
                     .chain()
                     .before(bevy::transform::TransformSystems::Propagate)
                     .run_if(mcc_core::map::ready),

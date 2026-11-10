@@ -70,6 +70,14 @@ What the game does now:
   - Sky: the real sky (`skya`) with scattering, haze per cluster through the BSP's atmosphere palette, night skies (Blackout).
   - Exposure: per map, plus auto exposure, from the camera fx.
   - Spawn markers and editor-only objects are hidden.
+  - A blob shadow under the player on foot, on the board and on the bike (2026-11-10, #30,
+    `mcc-rust-rewrite/src/shadow.rs`): a soft dark patch on the collision straight below, shrinking
+    and fading out by 7 m up. Nothing casts a real shadow (the world's are baked into the lightmaps).
+  - The map's own effects play from the start (2026-11-10, #26, `mcc_effects/src/ambient.rs`):
+    those placed objects carry (object attachments, Valhalla's waterfall mist), looping, within
+    150 m of the camera, and the weather of the camera's air (`skya` setting `+0x8C`: Snowbound's
+    and 120_halo's snow, 010_jungle's rain, 100_citadel's dust) round the camera. Blackout,
+    Avalanche, Valhalla and most multiplayer maps have no weather in their tags.
   - Docs: `docs/format/lightmaps.md`, `sky-and-atmosphere.md`, `shaders.md`.
 - **Water.** Animated waves from the shader's slope arrays, sky reflection, depth murk, shore fade, foam and waterfalls. Deep water sinks the skater, who respawns at the last dry spot (`docs/format/water.md`, `swim.rs`).
 - **Skating.**
@@ -77,6 +85,10 @@ What the game does now:
   - Skate collision is the real collision BSP; grind rails come from IW4L's lip detector.
   - Kill volumes and the bottom of the world respawn you (`falls.rs`).
   - J or both sticks toggles skating.
+  - Gravity lifts and man cannons throw the board (2026-11-10, #29): Halo 3's lifts are read
+    (`blam_geometry::objects::lifts`, `docs/format/halo2.md` 12.4) and the board takes their push
+    at once through the vendored skate-host's `Session::push`; walking and the bike take Halo 3's
+    lifts too now.
 - **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great". Without Skate 3 the skeleton is his own, 27 of those bones on his joints (see "Skate 3 optional" below).
 - **Dirt bike.** B rides it, with Master Chief on it (`mcc_bike`). It is drawn as Reflex's Dakumoto 450F in the user's Cortana graphics kit, read from their own MX vs ATV Reflex install (`reflex_assets`, `docs/format/reflex-bike.md`); without Reflex it is the old stick model. Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`), or, since 2026-11-06, Reflex's own simulation ("Reflex", `exact.rs`, see "Reflex's own simulation" below); 0 while riding opens the physics tuning menu (`tune.rs`), whose first slider picks Unleashed, Reflex v1 or Reflex (see "Dirt bike" below).
 - **On foot.** F walks the Spartan (`foot/`): the map's own movement numbers (`blam movement`,
@@ -99,6 +111,9 @@ What the game does now:
   - Music played by Halo 3's rules (intro, looping bars, alternate loop, outro, fades), started
     by the mission's scripts when they run, or by hand: M, or `--music` (the Warthog run on
     120_halo).
+  - Halo 3's campaign music on any map, by hand (2026-11-10, #27, `mcc_audio/src/campaign.rs`):
+    U on / off, Shift+U next, Ctrl+U random; the campaign maps are read beside the loaded one on
+    first use.
   - Board roll, grind and landing sounds.
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
 - **Switching modes.** Jumping off the bike or the board lands you on foot with the ride's speed;

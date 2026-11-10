@@ -41,6 +41,7 @@ middle.
 | Home | load every BSP at once |
 | M | music on / off (the map's showpiece: the Warthog run on 120_halo); Shift+M next track |
 | N | music: switch to the alternate loop and back (at the next loop boundary) |
+| U | Halo 3's campaign music on / off, on any map; Shift+U next piece, Ctrl+U a random one (the name shows at the top left) |
 | K | mute / unmute |
 | `-` / `=` | sound volume down / up (10 % steps) |
 | gamepad left stick | move |
@@ -704,6 +705,16 @@ this repo. `MCC_AUDIO=0` turns sound off; `--shot` never opens the sound device.
   start (`--music 120_music_15` or an index into the list the log prints). N moves to the
   alternate loop through its transition at the end of the current loop, and back. M again
   plays the outro (or fades out over the track's fade time).
+- **Campaign music on any map** (2026-11-10, #27, `mcc_audio/src/campaign.rs`): U plays Halo
+  3's campaign music on whatever map is loaded, Valhalla, a Halo CE or Reach map alike. The
+  first press reads the `lsnd`s under a `music` folder of every campaign map in the player's
+  `halo3\maps` (005_intro to 130_epilogue, read-only, on a thread, kept for the session; their
+  audio is in the same `sfx.fsb`), and starts the first piece. U again stops it by its rules
+  (outro or fade), Shift+U skips to the next piece, Ctrl+U to a random one; a piece that ends by
+  itself (its music time) is followed by the next. The piece's name (`120_music_15
+  (halo3_trench)`) shows at the top left for 4 s. Stingers ("not a loop") are left out. It has
+  its own player, so the map's own music (M) and the scripts' are left alone; both play on the
+  Music bus. No pad button: every free one is taken on some tab.
 - **Board sounds while skating**: Halo's own samples, picked from the bank by folder: the
   physics tire's hard-surface roll loop for rolling (`materials\havok\tire`, gain and pitch
   with speed, pitched up for small wheels), a vehicle scrape while grinding, and after more

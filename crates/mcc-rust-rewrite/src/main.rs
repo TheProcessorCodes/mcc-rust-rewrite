@@ -80,6 +80,7 @@ mod key_hint;
 mod menu;
 mod reach;
 mod pause;
+mod shadow;
 mod shot;
 mod speedo;
 
@@ -287,6 +288,9 @@ pub(crate) struct MapExtras {
     /// The effects the scripts and the objects they damage play, read
     /// with their bitmaps (`mcc_effects`).
     effects: Option<mcc_effects::EffectAssets>,
+    /// The effects the map plays by itself: its placed objects' and its
+    /// weather (`mcc_effects::ambient`).
+    ambient: Option<mcc_effects::ambient::Ambient>,
     /// Halo CE actors' animations (`halo1_anim.rs`).
     h1_moves: Option<halo1_anim::H1Moves>,
 }
@@ -506,10 +510,27 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             let n = blam_geometry::objects::add_collision(cache, &mut scene);
             eprintln!("object collision: {n} triangles");
         }
-        extras.scripts = scripts_for(args, cache, &mut scene);
-        if let Some(s) = &extras.scripts {
-            extras.effects = Some(mcc_effects::load::load(cache, &s.effect_roots));
+        // Man cannons and gravity lifts: the phantoms of placed objects.
+        scene.lifts = blam_geometry::objects::lifts(cache, &scene);
+        if !scene.lifts.is_empty() {
+            eprintln!("lifts: {} pushing volumes", scene.lifts.len());
         }
+        extras.scripts = scripts_for(args, cache, &mut scene);
+        // The waterfall mist and the snow play from the start; read with
+        // what the scripts name.
+        let ambient = mcc_effects::ambient::Ambient::read(cache, &scene);
+        let weather = ambient.weather.iter().flatten().count();
+        eprintln!("ambient effects: {} placed, {weather} weather", ambient.placed.len());
+        let mut roots = ambient.roots();
+        if let Some(s) = &extras.scripts {
+            roots.extend(&s.effect_roots);
+        }
+        roots.sort_unstable();
+        roots.dedup();
+        if !roots.is_empty() {
+            extras.effects = Some(mcc_effects::load::load(cache, &roots));
+        }
+        extras.ambient = Some(ambient);
     }
     eprintln!(
         "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
@@ -731,6 +752,8 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         if grounded {
             // The campaign's squads (only maps with AI bring any).
             app.add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin, ai::AiPlugin, halo1_anim::H1AnimPlugin));
+            // A blob shadow under the player, on the bike's collision.
+            app.add_plugins(shadow::ShadowPlugin);
         }
     }
     if args.iter().any(|a| a == "--anim-test") {
@@ -930,6 +953,9 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
     w.insert_resource(weapons::PendingArsenal(arsenal));
     let scripted = extras.scripts.is_some();
     w.insert_resource(mcc_effects::PendingEffects(extras.effects));
+    if let Some(a) = extras.ambient {
+        w.insert_resource(a);
+    }
     if let Some(ScriptStart { pending: s, devices, .. }) = extras.scripts {
         // The scripts' `ai_*` calls go to the enemies through the bridge
         // the AI plugin reads; the islands and pillars move by their own

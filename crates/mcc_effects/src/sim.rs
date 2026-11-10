@@ -17,6 +17,10 @@ pub const GRAVITY: f32 = blam_geometry::movement::GRAVITY;
 const MAX_PARTICLES: usize = 30_000;
 /// Most effects playing at once.
 const MAX_INSTANCES: usize = 600;
+/// Shortest time between two starts of a looping effect's loop, seconds:
+/// a loop of events that last no time would otherwise start every frame.
+/// Our own number.
+const MIN_LOOP: f32 = 0.5;
 
 /// What a particle system's functions read (`effects.md` 4.2).
 pub mod input {
@@ -169,13 +173,19 @@ pub struct Instance {
     /// The particle it rides on: (system id, particle id).
     pub follows: Option<(u64, u64)>,
     seed: u32,
+    /// Plays its events again from the effect's loop start (from the first
+    /// when it names none) until stopped ([`Sim::stop`]): the map's
+    /// placed effects and the weather (`ambient.rs`).
+    looping: bool,
+    /// When the loop last started over (its age).
+    looped_at: f32,
 }
 
 impl Instance {
-    /// Every event has started and the last has ended.
+    /// Every event has started and the last has ended (never, looping).
     pub fn events_done(&self, lib: &Library) -> bool {
         let n = lib.effect(self.effect).map_or(0, |e| e.events.len());
-        self.next_event >= n && self.age >= self.current_end
+        !self.looping && self.next_event >= n && self.age >= self.current_end
     }
 }
 
@@ -248,8 +258,44 @@ impl Sim {
             current_end: 0.0,
             follows: None,
             seed,
+            looping: false,
+            looped_at: 0.0,
         });
         Some(id)
+    }
+
+    /// Starts effect `tag` looping (see [`Instance`]) until [`Sim::stop`].
+    pub fn spawn_looping(&mut self, tag: u32, position: Vec3, frame: Mat3) -> Option<u64> {
+        let id = self.spawn(tag, position, frame, None)?;
+        if let Some(i) = self.instances.iter_mut().find(|i| i.id == id) {
+            i.looping = true;
+        }
+        Some(id)
+    }
+
+    /// Lets looping effect `id` end: it plays out what it has started.
+    pub fn stop(&mut self, id: u64) {
+        if let Some(i) = self.instances.iter_mut().find(|i| i.id == id) {
+            i.looping = false;
+        }
+    }
+
+    /// Whether effect `id` is still playing.
+    pub fn playing(&self, id: u64) -> bool {
+        self.instances.iter().any(|i| i.id == id)
+    }
+
+    /// Moves effect `id` and the emitters it has running to `position`
+    /// (Halo world units): what they emit from now on comes from there;
+    /// what they have emitted stays where it is (the weather round the
+    /// camera).
+    pub fn move_to(&mut self, id: u64, position: Vec3) {
+        if let Some(i) = self.instances.iter_mut().find(|i| i.id == id) {
+            i.position = position;
+        }
+        for s in self.systems.iter_mut().filter(|s| s.instance == id) {
+            s.origin = position;
+        }
     }
 
     /// Advances everything by `dt` seconds.
@@ -278,6 +324,16 @@ impl Sim {
                 let lib = self.lib.clone();
                 let inst = &self.instances[k];
                 let Some(effect) = lib.effect(inst.effect) else { break };
+                if inst.looping && inst.next_event >= effect.events.len() && inst.age >= inst.next_start {
+                    // Round again, no sooner than `MIN_LOOP` after the last time.
+                    let first = effect.loop_start.filter(|&l| l < effect.events.len()).unwrap_or(0);
+                    let inst = &mut self.instances[k];
+                    let again = inst.next_start.max(inst.looped_at + MIN_LOOP);
+                    inst.next_event = first;
+                    inst.looped_at = again;
+                    inst.next_start = again + effect.events.get(first).map_or(0.0, |n| bounds(n.delay, random(inst.seed, 1000 + first as u32)));
+                    continue;
+                }
                 if inst.next_event >= effect.events.len() || inst.age < inst.next_start {
                     break;
                 }

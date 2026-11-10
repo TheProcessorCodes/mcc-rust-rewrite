@@ -156,6 +156,27 @@ impl Session {
         self.skater.animated_skeleton.motion.velocity_world = [v.x, v.y, v.z, 0.];
         self.pose()
     }
+    /// Adds this velocity change to the board, its hook and the skater's
+    /// body, as `launch` sets theirs (mcc-rust-rewrite: Halo's man cannons
+    /// and gravity lifts pushing the board).
+    pub fn push(&mut self, change: [f32; 3]) {
+        let add = |v: &mut skate_core::math::Vector3| {
+            v.x += change[0];
+            v.y += change[1];
+            v.z += change[2];
+        };
+        for body in self.physics.board.bodies_mut() {
+            add(&mut body.rates.linear_velocity);
+        }
+        add(&mut self.physics.board.hook_mut().body.rates.linear_velocity);
+        for body in self.skater.skeleton.bodies_mut() {
+            add(&mut body.rates.linear_velocity);
+        }
+        let v = &mut self.skater.animated_skeleton.motion.velocity_world;
+        v[0] += change[0];
+        v[1] += change[1];
+        v[2] += change[2];
+    }
     pub fn collect(&mut self, frame: InputFrame, dt: f32) {
         self.input.collect(frame.samples);
         self.markers.collect_time(f64::from(dt));

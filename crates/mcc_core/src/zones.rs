@@ -24,6 +24,25 @@ pub struct BspMember {
     pub sky: Option<u32>,
 }
 
+/// The atmosphere setting of the cluster the camera is in
+/// (`mcc_world::zones` keeps it up to date); `None`: the map's default
+/// world setting. The sky and haze follow it, and the weather
+/// (`mcc_effects::ambient`).
+#[derive(Resource, Default)]
+pub struct CameraAir(pub Option<u32>);
+
+/// Whether the camera is in a cluster that sees the sky (outside), kept
+/// with [`CameraAir`]; the weather falls only there. True outside every
+/// cluster.
+#[derive(Resource)]
+pub struct CameraOutside(pub bool);
+
+impl Default for CameraOutside {
+    fn default() -> Self {
+        CameraOutside(true)
+    }
+}
+
 /// The map's zone sets, BSPs and clusters, kept for switching.
 #[derive(Resource, Default)]
 pub struct Zones {

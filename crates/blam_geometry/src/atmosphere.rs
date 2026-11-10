@@ -13,6 +13,8 @@ const SCNR_SKY_PARAMETERS: usize = 0x680;
 const SKYA_SETTINGS: usize = 0x34;
 /// One atmosphere setting.
 const SETTING_SIZE: usize = 0xA4;
+/// A setting's weather effect (tag reference).
+const SETTING_WEATHER: usize = 0x8C;
 
 /// One named atmosphere setting (an entry of the `skya` settings block).
 ///
@@ -49,6 +51,11 @@ pub struct AtmosphereSetting {
     pub beta_p: [f32; 3],
     pub beta_m_theta: [f32; 3],
     pub beta_p_theta: [f32; 3],
+    /// The weather this air brings (`+0x8C`, an `effe` tag index): the
+    /// snow on Snowbound and 120_halo, the rain on 010_jungle, the dust
+    /// on 100_citadel. Played round the camera while it is in a cluster
+    /// with this air (`mcc_effects::ambient`).
+    pub weather: Option<u32>,
 }
 
 impl AtmosphereSetting {
@@ -141,6 +148,11 @@ pub fn read(cache: &CacheFile) -> Result<Option<Atmosphere>> {
             beta_p: f32x3(&mut r)?,
             beta_m_theta: f32x3(&mut r)?,
             beta_p_theta: f32x3(&mut r)?,
+            weather: cache
+                .reader_at(o + SETTING_WEATHER)
+                .tag_ref()?
+                .index
+                .filter(|&i| cache.tags.get(i).is_some_and(|t| cache.tags.class_of(t).code == "effe")),
         });
     }
     Ok(Some(Atmosphere {
@@ -250,5 +262,19 @@ mod tests {
         let s = &a.settings[0];
         assert_eq!(s.name, "cyberdyne_sky_fog");
         assert!((s.mie_g - 0.6).abs() < 1e-6 && (s.distance_bias + 25.0).abs() < 1e-6);
+    }
+
+    /// Snowbound's air brings its snow; Valhalla's brings no weather.
+    #[test]
+    fn weather_effects() {
+        if let Some(cache) = open("snowbound") {
+            let a = read(&cache).unwrap().unwrap();
+            let w = a.settings[0].weather.and_then(|i| cache.tags.get(i)).map(|t| t.name().to_string());
+            assert_eq!(w.as_deref(), Some(r"fx\scenery_fx\weather\snow\snow_snowbound\snow_snowbound"));
+        }
+        if let Some(cache) = open("riverworld") {
+            let a = read(&cache).unwrap().unwrap();
+            assert!(a.settings.iter().all(|s| s.weather.is_none()));
+        }
     }
 }
