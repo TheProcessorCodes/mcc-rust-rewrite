@@ -15,6 +15,8 @@ merge history.
 
 ### Fixed
 - Warthog run: the glowing orange lumps at the foot of the trench cliffs are gone (#5).
+- Pause menu: the dirt bike's session marker row no longer mentions the board when there is no
+  skateboard (#6).
 
 ## 2026-11-06
 

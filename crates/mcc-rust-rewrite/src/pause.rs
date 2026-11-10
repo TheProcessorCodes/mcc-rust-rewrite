@@ -381,7 +381,7 @@ fn skate_off_notice(p: &mut ChildSpawnerCommands, off: SkateOff) {
             SkateOff::NoSkate3 => {
                 n.spawn(text("Skating needs Skate 3", 24.0, LIT));
                 n.spawn(text(
-                    "This game was set up without Skate 3, so maps load without the skateboard or grind rails.",
+                    "Skate 3 is not set up, so maps load without the skateboard or grind rails.",
                     18.0,
                     Color::WHITE,
                 ));
@@ -397,8 +397,12 @@ fn skate_off_notice(p: &mut ChildSpawnerCommands, off: SkateOff) {
     });
 }
 
+/// What the session marker's row adds while there is a board to share it with.
+const MARKER_SHARED: &str = " (set on the bike or the board)";
+
 /// A controls list with the skateboard's rows marked as off, saying why:
 /// J on free roam and on foot, "click both sticks (J)" on the dirt bike.
+/// The session marker's row no longer mentions the board.
 fn without_skating<const N: usize>(rows: &[[&'static str; N]], off: Option<SkateOff>) -> Vec<[&'static str; N]> {
     rows.iter()
         .map(|r| {
@@ -407,6 +411,11 @@ fn without_skating<const N: usize>(rows: &[[&'static str; N]], off: Option<Skate
                 && (r[0] == "J" || r[0].ends_with("(J)"))
             {
                 r[N - 1] = off.label();
+            }
+            if off.is_some()
+                && let Some(plain) = r[N - 1].strip_suffix(MARKER_SHARED)
+            {
+                r[N - 1] = plain;
             }
             r
         })
@@ -1094,5 +1103,18 @@ mod tests {
         assert_eq!(without_skating(FOOT, None), FOOT);
         assert_eq!(without_skating(BIKE, None), BIKE);
         assert_ne!(SkateOff::Settings.label(), SkateOff::NoSkate3.label());
+    }
+
+    /// The session marker's row mentions the board only while there is one.
+    #[test]
+    fn the_marker_row_drops_the_board_without_skating() {
+        let said = |rows: &[[&'static str; 2]]| rows.iter().any(|r| r[1].ends_with(MARKER_SHARED));
+        assert!(said(BIKE));
+        assert!(said(&without_skating(BIKE, None)));
+        for off in [SkateOff::Settings, SkateOff::NoSkate3] {
+            let rows = without_skating(BIKE, Some(off));
+            assert!(!said(&rows));
+            assert!(rows.iter().any(|r| r[1] == "back to the session marker"));
+        }
     }
 }
