@@ -650,6 +650,10 @@ fn sound_page(panel: &mut ChildSpawnerCommands, levels: Option<&SoundLevels>) {
                     "Saved next to the game, in sound-levels.json.",
                     "K mutes and - / = change the master at any time. Saved next to the game, in sound-levels.json.",
                 ),
+                (
+                    "Music on the keyboard: M the map's own, U Halo 3's campaign music on any map (Shift: next, Ctrl+U: random).",
+                    "M: the map's own music (Shift+M next). U: Halo 3's campaign music on any map (Shift+U next, Ctrl+U random).",
+                ),
                 ("LB / RB: the other tabs.", "A / D: the other tabs."),
             ] {
                 p.spawn(crate::key_hint::hint(pad, keys, 15.0, DIM));

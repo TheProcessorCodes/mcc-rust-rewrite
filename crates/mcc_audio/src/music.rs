@@ -611,138 +611,168 @@ pub(crate) fn update(
     let Some(sounds) = sounds else { return };
     let dt = time.delta_secs();
     gains.step(dt);
-    let mut i = 0;
-    while i < player.pieces.len() {
-        match player.pieces[i].state {
-            State::Waiting => {
-                player.begin(i, &sounds, &mixer);
-            }
-            State::Playing => {
-                player.pieces[i].age += dt;
-                let time_up = sounds
-                    .data
-                    .loops
-                    .get(&player.pieces[i].lsnd)
-                    .is_some_and(|l| l.music_time > 0.0 && player.pieces[i].age >= l.music_time);
-                if time_up {
-                    info!("music: {} reached its music time", player.pieces[i].name);
-                    player.end(i, &sounds, &mixer, false);
-                }
-            }
-            State::Ending => {}
-        }
-        i += 1;
-    }
-    let music_gain = gains.get("music");
-    let amb_gain = gains.get("amb");
-    let pieces = &mut player.pieces;
-    for p in pieces.iter_mut() {
-        let looping = sounds.data.loops.get(&p.lsnd);
-        let class = if p.music { music_gain } else { amb_gain };
-        let place = p.at.filter(|_| l.valid).map(|at| {
-            let d = at.distance(l.position);
-            let bounds = looping.map_or((2.0, 20.0), |l| l.distance);
-            (at, attenuation(d, bounds))
-        });
-        for (t, voices) in p.tracks.iter_mut().enumerate() {
-            let track_gain = looping
-                .and_then(|l| l.tracks.get(t))
-                .map(|tr| {
-                    let snd_db = tr.looped.or(tr.intro).and_then(|s| sounds.data.sounds.get(&s)).map_or(0.0, |s| s.gain_db);
-                    db(tr.gain_db + snd_db)
-                })
-                .unwrap_or(1.0);
-            voices.retain_mut(|f| {
-                f.step(dt);
-                if !mixer.is_playing(f.id) {
-                    return false;
-                }
-                if f.end_at_zero && f.level <= 0.0 {
-                    mixer.stop(f.id);
-                    return false;
-                }
-                let g = track_gain * f.level * p.scale * class;
-                let lr = match place {
-                    Some((at, a)) => l.pan(at, g * a),
-                    None => [g; 2],
-                };
-                mixer.set_gain(f.id, lr);
-                true
-            });
-        }
-    }
-    pieces.retain(|p| {
-        let done = p.state != State::Waiting && p.voices().next().is_none();
-        if done {
-            info!("music: {} ended", p.name);
-        }
-        !done
-    });
+    player.advance(dt, &sounds, &l, &mixer, &gains);
+}
 
-    // One-shots.
-    let mut pending = std::mem::take(&mut player.pending);
-    pending.retain_mut(|p| {
-        p.waited += dt;
-        let Some(info) = sounds.data.sounds.get(&p.tag) else { return false };
-        let pick = player.random() as usize % info.permutations.len().max(1);
-        let Some(clip) = info.permutations.get(pick).and_then(|id| sounds.clips.get(*id)) else {
-            // Decoding; give up after a few seconds.
-            return p.waited < 3.0;
-        };
-        let bus = bus_of_class(info.class as i32);
-        let dialogue = bus == super::mixer::Bus::Dialogue;
-        // A script's `amb` class gain is for ambience and effects, not for
-        // the lines.
-        let gain = db(info.gain_db) * p.scale * if dialogue { 1.0 } else { amb_gain };
-        if dialogue {
-            info!(
-                "dialogue: {} ({:.2} s, {:+.1} dB, {})",
-                p.name.rsplit('\\').next().unwrap_or(&p.name),
-                clip.seconds(),
-                info.gain_db,
-                if p.at.is_some() { "at its speaker" } else { "in the player's ear" }
-            );
+impl MusicPlayer {
+    /// [`update`]'s work for one player and the sounds it plays from (the
+    /// map's, or the campaign's: `campaign.rs`).
+    pub(crate) fn advance(&mut self, dt: f32, sounds: &Sounds, l: &Listener, mixer: &Mixer, gains: &ClassGains) {
+        let music_gain = gains.get("music");
+        let amb_gain = gains.get("amb");
+        let mut i = 0;
+        while i < self.pieces.len() {
+            match self.pieces[i].state {
+                State::Waiting => {
+                    self.begin(i, &sounds, &mixer);
+                }
+                State::Playing => {
+                    self.pieces[i].age += dt;
+                    let time_up = sounds
+                        .data
+                        .loops
+                        .get(&self.pieces[i].lsnd)
+                        .is_some_and(|l| l.music_time > 0.0 && self.pieces[i].age >= l.music_time);
+                    if time_up {
+                        info!("music: {} reached its music time", self.pieces[i].name);
+                        self.end(i, &sounds, &mixer, false);
+                    }
+                }
+                State::Ending => {}
+            }
+            i += 1;
         }
-        let id = mixer.play(Play {
-            bus,
-            queue: vec![clip],
-            looping: Vec::new(),
-            gain: [0.0; 2],
-            rate: 1.0,
-        });
-        player.impulses.push(Impulse {
-            id,
-            tag: p.tag,
-            at: p.at,
-            gain,
-            distances: info.distances,
-            dialogue,
-        });
-        false
-    });
-    player.pending = pending;
-    player.impulses.retain(|v| mixer.is_playing(v.id));
-    // While a line plays the other buses duck by their classes' dialogue
-    // ducking (music -3 dB, effects -6 dB on 120_halo), fading down and
-    // back up over the classes' times.
-    let talking = player.impulses.iter().any(|v| v.dialogue);
-    if player.ducks.is_empty() {
-        player.ducks = sounds.data.ducking.iter().map(|(bus, _, _)| (*bus, Fader::new(0, 1.0))).collect();
-    }
-    for ((bus, f), (_, duck_db, [down, up])) in player.ducks.iter_mut().zip(&sounds.data.ducking) {
-        let target = if talking { db(*duck_db) } else { 1.0 };
-        if f.target != target {
-            f.fade_to(target, if talking { *down } else { *up });
+        let pieces = &mut self.pieces;
+        for p in pieces.iter_mut() {
+            let looping = sounds.data.loops.get(&p.lsnd);
+            let class = if p.music { music_gain } else { amb_gain };
+            let place = p.at.filter(|_| l.valid).map(|at| {
+                let d = at.distance(l.position);
+                let bounds = looping.map_or((2.0, 20.0), |l| l.distance);
+                (at, attenuation(d, bounds))
+            });
+            for (t, voices) in p.tracks.iter_mut().enumerate() {
+                let track_gain = looping
+                    .and_then(|l| l.tracks.get(t))
+                    .map(|tr| {
+                        let snd_db = tr.looped.or(tr.intro).and_then(|s| sounds.data.sounds.get(&s)).map_or(0.0, |s| s.gain_db);
+                        db(tr.gain_db + snd_db)
+                    })
+                    .unwrap_or(1.0);
+                voices.retain_mut(|f| {
+                    f.step(dt);
+                    if !mixer.is_playing(f.id) {
+                        return false;
+                    }
+                    if f.end_at_zero && f.level <= 0.0 {
+                        mixer.stop(f.id);
+                        return false;
+                    }
+                    let g = track_gain * f.level * p.scale * class;
+                    let lr = match place {
+                        Some((at, a)) => l.pan(at, g * a),
+                        None => [g; 2],
+                    };
+                    mixer.set_gain(f.id, lr);
+                    true
+                });
+            }
         }
-        f.step(dt);
-        mixer.set_duck(*bus, f.level);
+        pieces.retain(|p| {
+            let done = p.state != State::Waiting && p.voices().next().is_none();
+            if done {
+                info!("music: {} ended", p.name);
+            }
+            !done
+        });
+
+        // One-shots.
+        let mut pending = std::mem::take(&mut self.pending);
+        pending.retain_mut(|p| {
+            p.waited += dt;
+            let Some(info) = sounds.data.sounds.get(&p.tag) else { return false };
+            let pick = self.random() as usize % info.permutations.len().max(1);
+            let Some(clip) = info.permutations.get(pick).and_then(|id| sounds.clips.get(*id)) else {
+                // Decoding; give up after a few seconds.
+                return p.waited < 3.0;
+            };
+            let bus = bus_of_class(info.class as i32);
+            let dialogue = bus == super::mixer::Bus::Dialogue;
+            // A script's `amb` class gain is for ambience and effects, not for
+            // the lines.
+            let gain = db(info.gain_db) * p.scale * if dialogue { 1.0 } else { amb_gain };
+            if dialogue {
+                info!(
+                    "dialogue: {} ({:.2} s, {:+.1} dB, {})",
+                    p.name.rsplit('\\').next().unwrap_or(&p.name),
+                    clip.seconds(),
+                    info.gain_db,
+                    if p.at.is_some() { "at its speaker" } else { "in the player's ear" }
+                );
+            }
+            let id = mixer.play(Play {
+                bus,
+                queue: vec![clip],
+                looping: Vec::new(),
+                gain: [0.0; 2],
+                rate: 1.0,
+            });
+            self.impulses.push(Impulse {
+                id,
+                tag: p.tag,
+                at: p.at,
+                gain,
+                distances: info.distances,
+                dialogue,
+            });
+            false
+        });
+        self.pending = pending;
+        self.impulses.retain(|v| mixer.is_playing(v.id));
+        // While a line plays the other buses duck by their classes' dialogue
+        // ducking (music -3 dB, effects -6 dB on 120_halo), fading down and
+        // back up over the classes' times.
+        let talking = self.impulses.iter().any(|v| v.dialogue);
+        if self.ducks.is_empty() {
+            self.ducks = sounds.data.ducking.iter().map(|(bus, _, _)| (*bus, Fader::new(0, 1.0))).collect();
+        }
+        for ((bus, f), (_, duck_db, [down, up])) in self.ducks.iter_mut().zip(&sounds.data.ducking) {
+            let target = if talking { db(*duck_db) } else { 1.0 };
+            if f.target != target {
+                f.fade_to(target, if talking { *down } else { *up });
+            }
+            f.step(dt);
+            mixer.set_duck(*bus, f.level);
+        }
+        for v in &self.impulses {
+            let lr = match v.at.filter(|_| l.valid) {
+                Some(at) => l.pan(at, v.gain * distance_gain(at.distance(l.position), v.distances)),
+                None => [v.gain; 2],
+            };
+            mixer.set_gain(v.id, lr);
+        }
     }
-    for v in &player.impulses {
-        let lr = match v.at.filter(|_| l.valid) {
-            Some(at) => l.pan(at, v.gain * distance_gain(at.distance(l.position), v.distances)),
-            None => [v.gain; 2],
-        };
-        mixer.set_gain(v.id, lr);
+
+    /// Whether a piece is playing or about to (not ending).
+    pub(crate) fn live(&self) -> bool {
+        self.pieces.iter().any(|p| p.state != State::Ending)
+    }
+
+    /// Whether anything still sounds or waits to (pieces ending included).
+    pub(crate) fn busy(&self) -> bool {
+        !self.pieces.is_empty()
+    }
+
+    /// Starts a piece by hand.
+    pub(crate) fn start_by_hand(&mut self, sounds: &Sounds, lsnd: u32) {
+        self.start(sounds, lsnd, Origin::Hand, None, 1.0);
+    }
+
+    /// Ends every piece: by its rules, or `immediately` (a short fade).
+    pub(crate) fn end_all(&mut self, sounds: &Sounds, mixer: &Mixer, immediately: bool) {
+        for i in (0..self.pieces.len()).rev() {
+            self.end(i, sounds, mixer, immediately);
+        }
     }
 }
 

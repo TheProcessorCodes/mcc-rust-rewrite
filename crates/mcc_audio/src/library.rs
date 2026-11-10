@@ -32,7 +32,7 @@ pub struct SoundInfo {
 }
 
 impl SoundInfo {
-    fn new(snd: &Sound, classes: &[SoundClass], library: &Library) -> SoundInfo {
+    pub(crate) fn new(snd: &Sound, classes: &[SoundClass], library: &Library) -> SoundInfo {
         let class = classes.get(snd.class as usize);
         SoundInfo {
             permutations: snd
@@ -176,7 +176,7 @@ pub(crate) fn clips_from(
 
 /// Turns decoded PCM into a clip: 48 kHz is all the bank holds; more than
 /// two channels are folded to stereo.
-fn to_clip(pcm: Pcm) -> Option<Clip> {
+pub(crate) fn to_clip(pcm: Pcm) -> Option<Clip> {
     if pcm.rate != RATE || pcm.samples.is_empty() {
         return None;
     }

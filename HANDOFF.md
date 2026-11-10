@@ -111,6 +111,9 @@ What the game does now:
   - Music played by Halo 3's rules (intro, looping bars, alternate loop, outro, fades), started
     by the mission's scripts when they run, or by hand: M, or `--music` (the Warthog run on
     120_halo).
+  - Halo 3's campaign music on any map, by hand (2026-11-10, #27, `mcc_audio/src/campaign.rs`):
+    U on / off, Shift+U next, Ctrl+U random; the campaign maps are read beside the loaded one on
+    first use.
   - Board roll, grind and landing sounds.
   - K mutes; `-` / `=` set the volume (`docs/format/sound.md`).
 - **Switching modes.** Jumping off the bike or the board lands you on foot with the ride's speed;
