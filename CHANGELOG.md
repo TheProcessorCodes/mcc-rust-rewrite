@@ -24,6 +24,8 @@ merge history.
 - On foot, G (LT) throws a grenade and X (LB) picks frag or plasma; you start with two frags,
   pick more up by walking over them, and the HUD shows how many you carry (#31).
 - Man cannons and gravity lifts launch the skateboard, and Halo 3's man cannons now throw you on foot and on the bike too (#29).
+- Valhalla's man cannons throw you as far as they do in Halo 3, on foot, on the bike and on the
+  board, and show their stream of blue light along the launch (#29).
 - Maps play their own effects from the start, such as Valhalla's waterfall mist and the snow on Snowbound (#26).
 - U plays Halo 3's campaign music on any map and U again fades it out; Shift+U skips to the next piece and Ctrl+U picks one at random (#27).
 - Settings has mouse sensitivity, stick sensitivity, invert look and field of view, used when
