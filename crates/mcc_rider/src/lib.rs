@@ -47,7 +47,7 @@ use blam_geometry::{Bone, Scene, WORLD_UNIT_METRES};
 use blam_texture::{Texture, rgba};
 
 use mcc_core::coords::to_halo;
-use mcc_core::skate::{HaloRig, RiderPose, SkateEnabled, assets_root, skating_on};
+use mcc_core::skate::{HaloRig, RiderPose, SkateEnabled, assets_root, skater_rig, skating_on};
 use mcc_textures::MaterialTextures;
 use mcc_world::lighting::{SceneLights, default_light, exposure};
 
@@ -436,12 +436,14 @@ fn spawn_rider(
                 })
                 .collect()
         }
-        None => match read_json(&root.join("rig.json")) {
-            Ok(r) => r,
-            Err(e) => {
+        None => match skater_rig().map(|file| read_json(&file)) {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
                 warn!("rider: {e}; no rider is drawn");
                 return;
             }
+            // Neither skeleton: `main` has said why.
+            None => return,
         },
     };
     let k = pose.scale;

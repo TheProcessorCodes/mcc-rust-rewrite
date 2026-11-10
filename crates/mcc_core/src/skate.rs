@@ -198,6 +198,14 @@ pub fn scale() -> f32 {
 /// converts into, which stays empty until the player gives Skate 3. Not
 /// read when Skate 3 was skipped: [`HaloRig`] stands in for its `rig.json`
 /// and skating is off.
+/// Skate 3's skater skeleton (`rig.json` in [`assets_root`]) when Skate 3
+/// is set up. None without it: the rider, the Spartan on foot and the bike's
+/// rider then have only Master Chief's own ([`HaloRig`]), and `main` has
+/// said why when that is missing too.
+pub fn skater_rig() -> Option<PathBuf> {
+    game_paths::skate_ready().then(|| assets_root().join("rig.json"))
+}
+
 pub fn assets_root() -> PathBuf {
     game_paths::skate_assets()
         .unwrap_or_else(|| game_paths::settings_dir().join("skate-data").join("assets"))
