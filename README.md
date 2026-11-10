@@ -169,7 +169,9 @@ Reflex), `MCC_SETUP_DIR`, `MCC_LANGUAGE` (dialogue language: `english`, `french`
 `german`, `italian`, `mexican` or `spanish`; else the Dialogue language chosen in Settings,
 `LANGUAGE=` in `setup.env`, else English),
 `MCC_SKATING` (`off` / `on`, over the saved Skating setting; `--skate` shots always skate, given Skate 3),
-`MCC_SHOT_PAUSE_TAB=N` (a `--shot` draws the pause menu open on tab N).
+`MCC_SHOT_PAUSE_TAB=N` (a `--shot` draws the pause menu open on tab N),
+`MCC_SHOT_TRICKS=1` (a `--skate` shot flicks the right stick for tricks, to see their call-outs),
+`MCC_SHOT_GRENADE=1` (a `--foot` shot throws a grenade a second in).
 
 ## Try it
 

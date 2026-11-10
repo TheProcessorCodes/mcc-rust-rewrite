@@ -550,6 +550,9 @@ camera; F again flies. `--foot` starts on foot at the start spawn. Code:
 | X or RB | R | reload |
 | X or RB by a weapon | E | swap the weapon in hand for it |
 | Y | Tab, wheel, 1 / 2 | switch weapons |
+| B | Q | melee; a foe a step or two ahead pulls him in (a lunge) |
+| LT | G | throw a grenade |
+| LB | X | frag or plasma grenades |
 
 **Movement** uses the map's own player numbers (`docs/format/movement.md`,
 `blam movement <map>`): run 2.25 wu/s forward, 2.0 back and sideways, 9.6
@@ -587,12 +590,27 @@ tracers, sparks, scorch marks, explosions for the brute shot and missile pod.
 Not from the tags: reload times (2.1 s; 2.6 sniper, 3 missile pod, 0.6 per
 shotgun shell), the shotgun's 15 pellets, the battery use, charge times,
 grenades falling under gravity. Nothing takes damage yet. The HUD shows the
-crosshair (red when empty), both weapons' ammo, and prompts.
+crosshair (red when empty), both weapons' ammo, the grenades, and prompts.
+
+**Melee and grenades** (`melee.rs`, `grenades.rs`). A blow takes 70 off the
+nearest actor (or the enemy Spartan) whose body is within 1.2 m of his eyes
+and in front of him; one within 3.2 m pulls him in at 9 m/s first. It keeps
+the gun from firing for 0.8 s and stops a reload. He starts with two frags
+and carries at most two of each, as in Halo 3; the scenario's grenade
+equipment lies where it is placed (its real models), is picked up by walking
+over it with room to carry it, and comes back after the placement's respawn
+time. A throw leaves at 17 m/s plus a lift from in front of his eyes; a frag
+bounces and goes off 1.3 s after it first lands, a plasma grenade sticks to
+the wall or actor it hits and goes off 2.5 s later, and either goes off after
+6 s. The blast is the explosives' (120 at the centre, nothing at 4.4 m) and
+hurts him too. These numbers are ours, not the tags'; the scenario's starting
+profiles are not read, and neither has a sound yet.
 
 Headless check: `mcc-rust-rewrite riverworld --shot DIR --foot --view spawn12` stands him
 at spawn 12 for `MCC_SKATE_FOR` seconds, then takes the rider pictures;
 `MCC_FOOT_WALK=x,y` holds the stick (X right, Y forward) and
-`MCC_FOOT_FIRE=1` holds the trigger (the log counts rounds and hits).
+`MCC_FOOT_FIRE=1` holds the trigger (the log counts rounds and hits);
+`MCC_SHOT_GRENADE=1` throws a grenade a second in.
 
 ## Dirt bike
 

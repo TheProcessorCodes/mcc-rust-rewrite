@@ -1,6 +1,7 @@
 //! The on-foot HUD: Halo's ring crosshair in the middle, the weapons and
-//! their ammo top left, prompts (pick up, reloading, charging) low in the
-//! middle. Shown only on foot.
+//! their ammo top left with the grenades under them (the type thrown next
+//! in brackets), prompts (pick up, reloading, charging) low in the middle.
+//! Shown only on foot.
 
 use bevy::prelude::*;
 
@@ -11,7 +12,8 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(mcc_core::map::MapStartup, spawn).add_systems(Update, update.after(super::place_held).run_if(mcc_core::map::ready));
+        app.add_systems(mcc_core::map::MapStartup, spawn)
+            .add_systems(Update, (onto_shot_camera, update.after(super::place_held)).run_if(mcc_core::map::ready));
     }
 }
 
@@ -29,6 +31,9 @@ struct OtherText;
 
 #[derive(Component)]
 struct PromptText;
+
+#[derive(Component)]
+struct GrenadeText;
 
 /// Halo's HUD blue.
 const BLUE: Color = Color::srgba(0.45, 0.80, 1.0, 0.9);
@@ -92,6 +97,7 @@ fn spawn(mut commands: Commands) {
             .with_children(|p| {
                 p.spawn((ActiveText, Text::new(""), TextFont::from_font_size(26.0), TextColor(BLUE)));
                 p.spawn((OtherText, Text::new(""), TextFont::from_font_size(16.0), TextColor(DIM)));
+                p.spawn((GrenadeText, Text::new(""), TextFont::from_font_size(16.0), TextColor(BLUE)));
             });
             // Prompts, low in the middle.
             root.spawn(Node {
@@ -115,6 +121,7 @@ fn update(
         Query<&mut Text, With<ActiveText>>,
         Query<&mut Text, With<OtherText>>,
         Query<&mut Text, With<PromptText>>,
+        Query<&mut Text, With<GrenadeText>>,
     )>,
     mut crosshair: Query<&mut BorderColor, With<Crosshair>>,
 ) {
@@ -160,6 +167,7 @@ fn update(
         _ => inv.prompt.clone().unwrap_or_default(),
     };
     set(&mut texts.p2(), &prompt);
+    set(&mut texts.p3(), &grenade_line(inv.grenades, inv.grenade));
     // The ring turns red when the weapon is empty.
     let empty = inv.current().is_some_and(|h| {
         let kind = &armory.kinds[h.kind];
@@ -173,10 +181,49 @@ fn update(
     }
 }
 
+/// "[Frag 2]   Plasma 0": the counts, the type thrown next in brackets.
+fn grenade_line(counts: [u8; 2], chosen: usize) -> String {
+    super::grenades::NAMES
+        .iter()
+        .zip(counts)
+        .enumerate()
+        .map(|(i, (name, n))| if i == chosen { format!("[{name} {n}]") } else { format!("{name} {n}") })
+        .collect::<Vec<_>>()
+        .join("   ")
+}
+
+/// A headless `--shot` draws into an image, not a window: the HUD goes on
+/// the 3D camera to be in the picture (as the shield meter does).
+fn onto_shot_camera(
+    mut commands: Commands,
+    windows: Query<(), With<bevy::window::PrimaryWindow>>,
+    huds: Query<Entity, (With<Hud>, Without<bevy::ui::UiTargetCamera>)>,
+    cameras: Query<Entity, With<Camera3d>>,
+) {
+    if !windows.is_empty() {
+        return;
+    }
+    let Some(camera) = cameras.iter().next() else {
+        return;
+    };
+    for h in &huds {
+        commands.entity(h).insert(bevy::ui::UiTargetCamera(camera));
+    }
+}
+
 fn set(q: &mut Query<&mut Text, impl bevy::ecs::query::QueryFilter>, s: &str) {
     for mut t in q.iter_mut() {
         if t.0 != s {
             t.0 = s.to_string();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_chosen_grenade_is_in_brackets() {
+        assert_eq!(super::grenade_line([2, 0], 0), "[Frag 2]   Plasma 0");
+        assert_eq!(super::grenade_line([1, 2], 1), "Frag 1   [Plasma 2]");
     }
 }
