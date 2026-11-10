@@ -40,6 +40,7 @@ pub mod physics;
 pub mod pose;
 pub mod reflex;
 pub mod stand_in;
+pub mod surface;
 pub mod tune;
 pub mod unleashed;
 
@@ -64,6 +65,7 @@ use mcc_core::skate::{
 use mcc_core::zones::LoadedBsps;
 
 use physics::{Bike, Controls, World};
+use surface::Surface;
 
 /// The map's collision (Halo units), handed over by `main`.
 #[derive(Resource)]
@@ -356,11 +358,14 @@ fn setup(
 pub fn build_world(collision: &Collision, mask: u32) -> World {
     let started = std::time::Instant::now();
     let loaded = collision.of_bsps(mask);
-    let world = World::with_owners(loaded.triangles.iter().map(|t| {
+    // What each collision material is made of, once per material.
+    let kinds: Vec<Surface> = collision.materials.iter().map(Surface::of).collect();
+    let world = World::with_surfaces(loaded.triangles.iter().map(|t| {
         (
             t.points.map(to_render),
             t.flags & surface_flags::TWO_SIDED != 0,
             t.source.object().unwrap_or(u32::MAX),
+            usize::try_from(t.material).ok().and_then(|m| kinds.get(m)).copied().unwrap_or_default(),
         )
     }));
     eprintln!(

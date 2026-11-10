@@ -458,6 +458,7 @@ fn decode_bsp(
             scene.collision.materials.push(CollisionMaterial {
                 shader: map.tag_name(shader).unwrap_or("").to_string(),
                 shader_class: "shad".into(),
+                global_materials: Vec::new(),
             });
         }
         let mut out = std::mem::take(&mut scene.collision.triangles);

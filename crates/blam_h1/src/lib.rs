@@ -430,6 +430,7 @@ fn decode_bsp(
             scene.collision.materials.push(CollisionMaterial {
                 shader: map.tag_name(shader).unwrap_or("").to_string(),
                 shader_class: map.class_of(shader).map_or(String::new(), |c| String::from_utf8_lossy(&c).into_owned()),
+                global_materials: Vec::new(),
             });
         }
         if let Some(bsp) = sbsp.block(0xB0, 0x60)?.into_iter().next() {

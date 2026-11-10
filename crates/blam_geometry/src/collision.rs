@@ -310,6 +310,38 @@ pub fn triangulate_large_geometry(
 /// collision BSP, for finding the leaf a point is in
 /// (`docs/format/sbsp-portals.md` 3). Its leaves are the structure BSP's
 /// leaves, whose clusters `sbsp::leaf_clusters` reads.
+/// `render_method +0x40`: the global material (`matg`) a shader's surface is
+/// made of, a string ID; a terrain shader (`rmtr`) has one per layer there,
+/// four in a row. Read from riverworld's shaders (`riverworld_ground_snow`:
+/// `tough_terrain_dirt`, `tough_terrain_grass`, `tough_terrain_dirt`,
+/// `soft_terrain_snow`; `riverworld_metal`: `hard_metal_thick_for`).
+const SHADER_GLOBAL_MATERIAL: usize = 0x40;
+
+/// The global materials a collision shader names; only names of the game's
+/// material families are kept, so a shader class laid out otherwise gives
+/// nothing rather than a wrong name.
+fn global_materials(cache: &CacheFile, shader: &TagEntry) -> Vec<String> {
+    const FAMILIES: [&str; 6] = ["soft_", "tough_", "hard_", "liquid_", "energy_", "special_"];
+    let class = cache.tags.class_of(shader).code.as_str().to_string();
+    if !class.starts_with("rm") {
+        return Vec::new();
+    }
+    let Ok(base) = cache.tag_offset(shader) else {
+        return Vec::new();
+    };
+    let count = if class == "rmtr" { 4 } else { 1 };
+    let mut out = Vec::new();
+    for i in 0..count {
+        let Ok(id) = cache.reader_at(base + SHADER_GLOBAL_MATERIAL + 4 * i).string_id() else {
+            continue;
+        };
+        if let Some(name) = cache.string(id).filter(|n| FAMILIES.iter().any(|f| n.starts_with(f))) {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
 pub fn tree(cache: &CacheFile, resources: &Resources<'_>, sbsp: &TagEntry) -> Result<(Vec<u64>, Vec<[f32; 4]>, usize)> {
     let base = cache.tag_offset(sbsp)?;
     let datum = ResourceId(cache.reader_at(base + 0x38C).u32()?);
@@ -373,6 +405,7 @@ pub fn decode(
             shader_class: tag
                 .map(|t| cache.tags.class_of(t).code.as_str().to_string())
                 .unwrap_or_default(),
+            global_materials: tag.map(|t| global_materials(cache, t)).unwrap_or_default(),
         });
     }
 
