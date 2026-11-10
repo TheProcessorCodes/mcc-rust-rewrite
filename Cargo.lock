@@ -3363,6 +3363,7 @@ name = "mcc_foot"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "blam_cache",
  "blam_geometry",
  "blam_h2",
  "game_paths",

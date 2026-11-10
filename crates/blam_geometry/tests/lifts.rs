@@ -20,15 +20,21 @@ fn scene(name: &str) -> Option<(blam_cache::CacheFile, blam_geometry::Scene)> {
 
 /// Valhalla's man cannons: a box each on the pad, throwing a player 60
 /// wu/s^2 up to 11 wu/s along the `fire` marker, out over the map and
-/// upwards; the vehicle-only phantom is left out.
+/// upwards; the vehicle-only phantom is left out. The box is too short to
+/// reach that speed, which makes them launch pads.
 #[test]
 fn valhalla_man_cannons() {
     let Some((cache, scene)) = scene("riverworld") else { return };
     let lifts = objects::lifts(&cache, &scene);
     let cannons: Vec<_> = lifts.iter().filter(|l| l.name.starts_with("man_cannon_river ")).collect();
     assert!(cannons.len() >= 2, "{lifts:#?}");
+    // The two short side cannons are pads too: 30 wu/s^2 up to 9 wu/s.
+    let short: Vec<_> = lifts.iter().filter(|l| l.name.starts_with("man_cannon_river_short ")).collect();
+    assert!(short.len() == 2 && short.iter().all(|c| c.launch_speed() == Some(9.0)), "{lifts:#?}");
     for c in &cannons {
         assert_eq!(c.push.direction, (60.0, 11.0), "{c:?}");
+        // Too short to reach that speed by its own push: a launch pad.
+        assert!(c.length() < 1.0 && c.launch_speed() == Some(11.0), "{c:?}");
         assert!(c.push.ignores_vehicles);
         assert!(matches!(c.shape, LiftShape::Box { .. }));
         // Out and up.
@@ -50,6 +56,8 @@ fn multiplayer_lifts_read() {
         let lifts = objects::lifts(&cache, &scene);
         assert!(!lifts.is_empty(), "{name}: no lifts");
         for l in &lifts {
+            // Long volumes that carry a body: none is a launch pad.
+            assert_eq!(l.launch_speed(), None, "{name}: {l:?}");
             assert!(l.direction.is_finite() && (l.direction.length() - 1.0).abs() < 1e-3, "{name}: {l:?}");
         }
     }

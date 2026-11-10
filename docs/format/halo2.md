@@ -575,6 +575,17 @@ and The Pit's `cyber_pad` (polyhedra), Guardian's cannons (boxes) and the equipm
 Phantom dropship) are not placed objects and carry no lift here. Walking and the bike take Halo
 3's lifts too, as Halo 2's.
 
+**Launch pads.** Valhalla's player phantom (also flag bit 30, not decoded) sits on a box 1.15 x
+0.71 x 0.28 wu, 0.67 wu long along the push; 60 wu/s^2 needs 0.18 s and 1 wu to reach 11 wu/s.
+Pushed step by step while its middle is in the box, a body leaves at 7 to 10 wu/s and flies a
+third to four fifths as far as in Halo, where the phantom acts on the whole body for as long as
+any of it overlaps. So a volume shorter along its push than `top^2 / (2 a)`, with no axis or
+centre pull and gravity left on, is a launch pad (`LiftVolume::launch_speed`): it gives its top
+speed at once (`mcc_core::lifts`). Only Valhalla's four are (the short side cannons: 30 to 9);
+Avalanche's, Narrows' and Cold Storage's cannons are 3 to 11 wu long with an axis pull and carry
+the body as lifts do. Halo's flight from a pad has no air drag and falls at 4.1712 wu/s^2: 28.6
+wu over level ground from a base cannon, 19.1 from a side one.
+
 
 ## 13. Sound (`snd!`, `lsnd`, `ugh!`, `sounds_*.dat`)
 

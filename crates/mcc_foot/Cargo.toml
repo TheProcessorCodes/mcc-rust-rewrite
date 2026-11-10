@@ -16,3 +16,4 @@ mcc_swim = { workspace = true }
 [dev-dependencies]
 game_paths = { workspace = true }
 blam_h2 = { workspace = true }
+blam_cache = { workspace = true }

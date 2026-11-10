@@ -332,8 +332,9 @@ pub fn walk(
         controls.wish = held;
     }
     controls.heading = foot.yaw + std::f32::consts::PI;
+    let gravity = spartan.tuning.gravity;
     match lifts.as_deref() {
-        Some(l) => spartan.step_in(world, controls, dt, &|p, v, h, r| l.push(p, v, h, r, false)),
+        Some(l) => spartan.step_in(world, controls, dt, &|p, v, h, r| l.walk(p, v, h, r, gravity)),
         None => spartan.step(world, controls, dt),
     }
 
