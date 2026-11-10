@@ -57,7 +57,8 @@ use mcc_core::coords::{to_halo, to_render, to_render_dir};
 use mcc_core::flag::SessionFlag;
 use mcc_core::fly_camera::FlyCamera;
 use mcc_core::skate::{
-    Bail, Dismount, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, bail_pressed, board_pressed, skating_on,
+    Bail, Dismount, HaloRig, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, bail_pressed, board_pressed,
+    skating_on,
 };
 use mcc_core::zones::LoadedBsps;
 
@@ -319,6 +320,7 @@ fn setup(
     mut pool: ResMut<StickPool>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    halo: Option<Res<HaloRig>>,
 ) {
     // Reflex's 450F physics values, read before the first ride needs them.
     std::thread::spawn(|| {
@@ -335,7 +337,12 @@ fn setup(
             })
         })
         .collect();
-    match pose::Rig::load(&assets_root().join("rig.json")) {
+    // Skate 3's skater, or without Skate 3 the Spartan's own skeleton.
+    let rig = match halo.as_deref() {
+        Some(h) => pose::Rig::from_binds(h.names.clone(), h.binds.clone(), "Master Chief's skeleton"),
+        None => pose::Rig::load(&assets_root().join("rig.json")),
+    };
+    match rig {
         Ok(r) => riding.rig = Some(r),
         Err(e) => warn!("bike: {e}; the rider is left off"),
     }
@@ -520,7 +527,7 @@ fn ride(
             }
             return;
         }
-        if rider.active {
+        if rider.active || rider.foot {
             // On foot or on the board, B is theirs to hand over (`Mount`).
             return;
         }
@@ -676,7 +683,7 @@ fn ride(
         };
         let place = Mat4::from_translation(bike.position * k) * Mat4::from_quat(bike.rotation);
         rider.bones = rig.pose(k, &stance).into_iter().map(|m| place * m).collect();
-        if rider.names.len() != rig.names.len() {
+        if rider.names != rig.names {
             rider.names = rig.names.clone();
         }
         rider.active = true;

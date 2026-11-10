@@ -10,7 +10,7 @@ files, own renderer on bevy and wgpu.
 
 On those maps you can:
 
-- **skate** with Skate 3's own physics (the Skate 3 engine in
+- **skate**, when the player has Skate 3, with Skate 3's own physics (the Skate 3 engine in
   `third_party/skate-engine`, fed from the player's own copy of Skate 3). The skating
   comes from chasm's [2010 Rust Rewrite Mashup](https://github.com/chasmlol/2010-rust-rewrite-mashup)
   (MW2 Skate 3), which built it on the
@@ -68,7 +68,7 @@ the format descriptions the code is written from.
 | `crates/blam_reach` | MCC Halo: Reach maps: BSPs from the lightmap BSP data, instances from their resource, collision, objects, sky, spawns and lightmap texcoords into the same `Scene`; the cache file, shaders and bitmaps go through `blam_cache` / `blam_texture`, which tell Reach by its header (`docs/format/reach.md`) |
 | `crates/fsb_celt` | decodes FMOD's FSB5 CELT samples (MCC Halo CE's sound banks) with the vendored CELT 0.11.0 decoder |
 | `crates/game_paths` | where the player's games are: the saved setup and dev overrides (`HALO3_MAPS`, ...); nothing is searched for. No dependencies; the readers' tests use it |
-| `crates/mcc_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`) and convert it once, take Reflex if the player has it, save the answers |
+| `crates/mcc_setup` | first-run setup: find MCC, take Skate 3 (`.iso` or `default.xex`, converted once) and Reflex if the player has them, save the answers (a skipped game too) |
 | `crates/mcc-rust-rewrite` | the `mcc-rust-rewrite` binary: the map menu (`menu.rs`), wires the crates below into an app, `--shot` screenshots, the pause menu, Halo 2 maps into the viewer's looks (`docs/viewer.md`) |
 | `crates/mcc_core` | what the runtime crates share: the map phase (`map.rs`: a map loaded, started and unloaded inside the running app), coordinate frames, the pause flag, the flying camera, zone-set state, the rider's pose, kill zones, weapon messages. Every `mcc_*` crate depends on it, so keep it small |
 | `crates/mcc_textures` | resolves a scene's materials to decoded textures and lightmaps (no bevy) |
@@ -79,7 +79,7 @@ the format descriptions the code is written from.
 | `third_party/skate-engine` | the Skate 3 engine crates, vendored (GPL-3.0; its README says where from and what we changed) |
 | `third_party/celt-0.11.0` | Xiph's CELT 0.11.0 decoder in C (BSD-3-Clause), built by `fsb_celt` |
 | `third_party/reflex-physics` | MX vs ATV Reflex's bike simulation (`reflex_core`, `reflex_bevy`), vendored from the user's `reflex-physics` workspace (its README says what we changed) |
-| `crates/mcc_rider` | the Spartan on the board |
+| `crates/mcc_rider` | the Spartan on the board, and the skeleton he is posed on: Skate 3's skater, or without Skate 3 Master Chief's own (`halo_rig.rs`, `docs/rider.md`) |
 | `crates/mcc_bike` | the dirt bike (Reflex's own simulation from `third_party/reflex-physics`, or MX vs ATV Unleashed's model with Reflex's numbers), drawn as Reflex's Dakumoto 450F in the Cortana kit |
 | `crates/reflex_assets` | reads the user's MX vs ATV Reflex install (database/package pairs, LZX, meshes, skeletons, textures) for the bike model, and imports what the bike needs once at setup (no bevy) |
 | `crates/mcc_foot` | the Spartan on foot |
@@ -97,14 +97,16 @@ Nothing from any of the three games ships with this project. The first time `mcc
 window it opens on its setup screen (`crates/mcc-rust-rewrite/src/menu/setup.rs`, in the map menu's own
 look) and asks for the player's own copies, once, one step per game: each row's Select opens a
 Windows folder picker, and problems are shown on the screen. Nothing is searched for; the
-game uses only the folders the player chooses. MCC and Skate 3 are required: the game stays on
-the setup screen until both are set up (B / Escape on the first step closes it). Reflex is
-optional (Skip). A map named on the command line before setup is done waits for the next
-launch.
+game uses only the folders the player chooses. Only MCC is required: the game stays on the
+setup screen until MCC is set up and Skate 3 and Reflex are each set up or skipped (B /
+Escape on the first step closes it). Skate 3 and Reflex are optional (Skip), and either can
+be added later in Settings. A map named on the command line before setup is done waits for
+the next launch.
 
 1. **Halo: The Master Chief Collection.** The MCC folder (or its `halo3` / `halo3\maps`
    folder); the Halo 3 build is checked.
-2. **Skate 3 for Xbox 360.** The folder of the extracted game (`default.xex` with its `data`
+2. **Skate 3 for Xbox 360** (optional; the skateboard and grind rails). The folder of the
+   extracted game (`default.xex` with its `data`
    folder, directly inside or one folder down) or the folder holding its disc image (`.iso`,
    the only one there). From an image only
    what the converter reads is copied out (`default.xex`, four `.big` files and `data\anim`,
@@ -114,7 +116,11 @@ launch.
    https://github.com/chasmlol/2010-rust-rewrite-mashup) and setup asks for its
    folder ("Choose your MW2 Skate 3 folder") just before Skate 3's, then runs its
    `skate\iw4l-skate-convert.exe`. The conversion runs on the setup screen, which shows the
-   converter's progress.
+   converter's progress. Or Without Skate 3 (Skip), which skips the MW2 Skate 3 folder too:
+   there is then no skateboard, and the Spartan is posed on Master Chief's own skeleton from
+   MCC (see below). The answer is saved like a folder (`SKATE_ASSETS=skip`), and any
+   converted Skate 3 data is deleted. Settings' Skate 3 row (SET UP) opens this step again
+   to add it later.
 3. **MX vs ATV Reflex** (PC, optional; the dirt bike's model and engine sound). The folder
    with its `Database` folder, or Skip. Without it the
    bike is our own stand-in model (`crates/mcc_bike/src/stand_in.rs`) with no engine
@@ -131,12 +137,21 @@ The answers, the converted Skate 3 data and the imported Reflex pieces go in
 map menu changes one game at a time. Headless `--shot` and `--menu-shot` runs never ask or
 write the setup (except `--menu-shot --menu-setup [--menu-step N]`, which draws the setup
 screen from whatever is saved; point `MCC_SETUP_DIR` at an empty folder for a fresh one):
-they use only what
-is saved (or the dev overrides) and stop with a message if anything is missing. So do tests:
-they skip when setup has not run.
+they use only what is saved (or the dev overrides). They need MCC only and stop with a
+message if it is missing; without Skate 3 they run on Master Chief's skeleton with no
+skating, and `--skate` stops at once with an error, as it needs Skate 3. Tests also use only
+what is saved, and skip quietly when a game they need is not set up.
 
-Skate 3 stays required at setup (the rider's skeleton and the on-foot Spartan's rig come
-from it), but skating itself can be turned off on the menu's Settings screen (Skating,
+Without Skate 3 there is no skateboard: maps load without grind rails, the skate session or
+the board, J does nothing, and the pause menu's Skate tab says skating needs Skate 3 and how
+to add it. Walking and shooting, flying and the dirt bike are the same. The Spartan, posed on
+Skate 3's skater skeleton (`rig.json`) for players who have it, is then posed on Master
+Chief's own skeleton instead, made from the map's Master Chief in MCC as each map loads, in
+memory only (`docs/rider.md` "Without Skate 3"). On the menu's Settings screen the Skate 3
+row reads "Not used (optional)" and Skating "Not available: needs Skate 3"; SET UP on either
+opens setup's Skate 3 step, and Skate 3 counts from the next map loaded.
+
+With Skate 3 set up, skating itself can be turned off on the menu's Settings screen (Skating,
 saved as `SKATING=off`). Maps then load without grind rails, the skate session or the board
 (a map is ready several seconds sooner), J does nothing, and the pause menu's Skate tab says
 skating is off and where to turn it on. The choice applies from the next map loaded.
@@ -147,10 +162,11 @@ The pause menu's dirt bike tab has the same switch. It is saved in `bike-tuning.
 the tuning sliders; without Reflex the bike rides Arcade.
 
 Dev overrides: `MCC_ROOT`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `MCC_SKATE_ASSETS` (or
-`IW4L_SKATE_ASSETS`), `MCC_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
+`IW4L_SKATE_ASSETS`; `skip` to play as if Skate 3 were skipped, and a folder there wins over a
+saved skip), `MCC_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
 Reflex), `MCC_SETUP_DIR`, `MCC_LANGUAGE` (dialogue language: `english`, `french`,
 `german`, `italian`, `mexican` or `spanish`; else `LANGUAGE=` in `setup.env`, else English),
-`MCC_SKATING` (`off` / `on`, over the saved Skating setting; `--skate` shots always skate),
+`MCC_SKATING` (`off` / `on`, over the saved Skating setting; `--skate` shots always skate, given Skate 3),
 `MCC_SHOT_PAUSE_TAB=N` (a `--shot` draws the pause menu open on tab N).
 
 ## Try it
@@ -192,10 +208,13 @@ in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
 left stick move, Q / E, Tab / Shift+Tab, Page Up / Page Down or LB / RB change tab (the hints by the tabs show Q / E, or LB / RB when a controller was used last), Enter / A start, Escape / B exit;
 the mouse picks a tile and a double click starts it. Naming a map on the
 command line skips the menu, and Q then quits. `mcc-rust-rewrite.exe --menu-shot FILE
-[--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-setup | --menu-start
-[--menu-back TAB,PICK]]` draws the menu, the loading screen, the picked map's
-not-installed notice or the loaded map without a window (point e.g.
-`HALOREACH_MAPS` at an empty folder to see a game grayed out).
+[--menu-tab N] [--menu-pick N] [--menu-row N] [--menu-loading | --menu-missing | --menu-settings
+[--menu-step 1] | --menu-setup [--menu-step N] | --menu-start [--menu-back TAB,PICK]]` draws
+the menu, the loading screen, the picked map's not-installed notice, the Settings screen
+(with `--menu-step 1`, the Skate 3 step as Settings' SET UP opens it), the setup screen or
+the loaded map without a window; `--menu-row N` puts the focus on row N of the Settings
+screen or the setup step (point e.g. `HALOREACH_MAPS` at an empty folder to see a game
+grayed out, or `MCC_SKATE_ASSETS` at `skip` for Settings without Skate 3).
 
 A bare map name is looked up in the MCC install setup saved (`%HALO3_MAPS%`
 overrides; the `blam` tool also finds MCC through Steam). `riverworld` is Valhalla, `cyberdyne` The Pit,

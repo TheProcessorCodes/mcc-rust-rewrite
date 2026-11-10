@@ -18,3 +18,10 @@ mcc_world = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 half = "2"
+
+[dev-dependencies]
+# tests/halo_rig.rs: the Spartan's own skeleton from the player's MCC, and
+# the bike's and the Spartan-on-foot's rig taking it (mcc_bike depends on
+# this crate; a test-only cycle, which cargo allows).
+game_paths = { workspace = true }
+mcc_bike = { workspace = true }

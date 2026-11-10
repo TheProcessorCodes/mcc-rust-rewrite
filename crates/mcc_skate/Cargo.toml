@@ -9,8 +9,6 @@ publish.workspace = true
 [dependencies]
 bevy = { workspace = true }
 blam_geometry = { workspace = true }
+game_paths = { workspace = true }
 mcc_core = { workspace = true }
 skate-host = { path = "../../third_party/skate-engine/crates/skate-host" }
-
-[dev-dependencies]
-game_paths = { workspace = true }

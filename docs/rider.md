@@ -100,3 +100,57 @@ Proposed retarget onto the 35 skate bones (same shape as `rig.rs::mapping`):
 Fingers (30 bones) are unmapped and inherit the hand. Halo has only two spine bones to the
 skater's four, so `spine1` takes SPINE1 and SPINE3 is skipped; `neck`/`head` can copy their
 parent as IW4L does if the neck twists badly.
+
+## Without Skate 3 (2026-11-09, #1)
+
+The 35 skate bones and their bind poses come from Skate 3's `rig.json`, which setup makes from
+the player's Skate 3. A player who skipped Skate 3 has none, so the game makes the rig from
+Master Chief himself as each map loads: `mcc_rider::chief_rig` (`crates/mcc_rider/src/halo_rig.rs`)
+builds the `mcc_core::skate::HaloRig` resource from the model the map load already decodes, in
+memory, with no Skate 3 numbers. The rider, the Spartan on foot and the bike rider pose it in
+place of `rig.json`. Skating is off without Skate 3, so the board never poses it.
+
+27 bones, under Skate 3's names, in skate metres at scale `k`:
+
+| bones | bind |
+|---|---|
+| the 21 in `MAPPING` (`mcc_rider/src/lib.rs`; there `spine` takes SPINE and `spine1` SPINE2, not as the table above proposed) | `T(F·H·w)`: a place on his own joint, no turn |
+| SPINE1, SPINE3, NECK1 | places halfway along `spine`-`spine1`, `spine1`-`neck`, `neck`-`head` |
+| SKATEBOARD_ROOT, TRUCK_FRONT, TRUCK_BACK | identity; foot and bike put them under him every frame |
+
+`w` is the Halo node's joint in model space (units, Z up, facing +X), `H` is `halo_to_skate(k)`
+(to skate metres, Y up), and `F` is the quarter turn about Y that the retarget falls back to for
+his facing, so he faces +Z with his left at +X, as the skater does. The model's origin is
+between his feet, so his soles are at y = 0.
+
+Why the retarget is then exact (matrices applied right to left):
+
+- A skinned Halo bone is drawn with `P · B⁻¹ · fit · H` on top of his own bind: `P` is the skate
+  bone's pose this frame, `B` its bind, and `B⁻¹ · fit · H` the offset `follow` works out once.
+- Off the board, foot and bike write `P = X · B`, or `[turn · R_B | p]`, which is the same with
+  `X = T(p) · turn · T(-b)`. So the bone is drawn with `X · fit · H` and `B`'s turn never shows:
+  a bind with no turn loses nothing, and only the joints' places `b = F·H·w` matter. Other
+  crates read bone positions only, never their axes.
+- `follow`'s facing compares his heel-to-toe line, flattened, `H·(toe - foot)`, with the rig's,
+  `F·H·(toe - foot)`. A turn about Y keeps a flat line flat, so the facing comes out as `F`.
+- For each mapped bone the segment to its child, turned by the facing, is `F·H·(child - w)`,
+  and the rig's is `F·H·child - F·H·w`, the same line, so the extra turn is none and the bone's
+  turn is `F`. Its place is `F·H·w - F·(H·w) = 0`, so `fit = F`. The flat-feet case drops y
+  before the same sum and gives `F` too (the toes move with their foot); the head and hands
+  take their parent's segment and give `F` the same way.
+- So in the bind pose (`X = I`) every bone is drawn with `F · H`, one rigid move for the whole
+  body: he looks exactly as his model has him, in his own proportions. A pose moves each bone
+  by its `X` about his own joint. `the_retarget_leaves_him_as_he_is` checks this on a made-up
+  biped.
+
+With `rig.json` the binds sit on the skater's joints and carry Skate 3's turns, so `fit` moves
+each of his bones onto the skater's instead. Skate 3 owners keep that rig on foot and on the bike.
+On the board the Halo rig would not do: the skate engine poses whole bone frames against Skate
+3's own binds. It is never asked to, as skating needs Skate 3 and the Halo rig is made only
+without it.
+
+`halo_rig` refuses, naming the bone, a joint that is missing or not finite, a mapped segment
+under 1 mm and a limb segment under 0.01; the map then has no rider drawn, but walking and riding
+still work. `crates/mcc_rider/tests/halo_rig.rs` builds the rig from riverworld's and
+120_halo's Master Chief and checks it with ranges only (hips, head, toes, leg length, left and
+facing), skipping when MCC is not set up.

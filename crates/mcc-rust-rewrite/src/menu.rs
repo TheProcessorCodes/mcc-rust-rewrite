@@ -24,14 +24,18 @@
 //!
 //! Until the player's games are set up (`mcc_setup`) the menu opens on
 //! its setup screen instead (`setup.rs`): Halo MCC, then Skate 3, then MX vs
-//! ATV Reflex.
+//! ATV Reflex; only MCC is required. While Skate 3 is not set up (skipped,
+//! or its data gone), the settings screen's Skate 3 and Skating rows say so
+//! and open that screen's Skate 3 step, to add it later.
 //!
 //! `mcc-rust-rewrite --menu-shot FILE [--menu-tab N] [--menu-pick N] [--size WxH]`
 //! draws the menu without a window into a PNG; `--menu-loading` draws the
 //! loading screen instead, `--menu-missing` the picked map's not-installed
-//! notice, `--menu-settings` the settings, `--menu-setup [--menu-step N]` the
-//! setup screen, and `--menu-start` loads the picked map the way Start Game
-//! does and saves the first view of it.
+//! notice, `--menu-settings` the settings (with `--menu-step 1`, the Skate 3
+//! step as Settings opens it), `--menu-setup [--menu-step N]` the setup
+//! screen, and `--menu-start` loads the picked map the way Start Game does
+//! and saves the first view of it. `--menu-row N` puts the focus on row N of
+//! the settings or the setup step.
 
 mod setup;
 
@@ -336,8 +340,9 @@ struct Menu {
     click: Option<(usize, f64)>,
     /// Why the last map did not load.
     error: Option<String>,
-    /// The notice opened this frame: the press that opened it does not
-    /// close it ([`dismiss`]).
+    /// The notice, or the setup screen from Settings, opened this frame: the
+    /// press that opened it does not act on it too ([`dismiss`],
+    /// `setup::input`).
     fresh: bool,
     /// The settings row with the focus.
     setting: usize,
@@ -353,6 +358,9 @@ struct Menu {
     note_is_error: bool,
     /// Every game is set up: the setup screen gives way to the maps.
     setup_finished: bool,
+    /// The setup screen's Skate 3 step opened from Settings
+    /// (`setup::open_from_settings`): the settings row to go back to.
+    setup_return: Option<usize>,
 }
 
 /// A folder picker (and, for Skate 3, its conversion), on its thread.
@@ -452,6 +460,8 @@ struct SettingsBack;
 /// The settings, in row order: three games' folders, the username, the speed
 /// unit, skating on or off, the bike's physics.
 const SETTING_GAMES: [&str; 7] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username", "Speedometer", "Skating", "Bike physics"];
+/// The row holding Skate 3's folder.
+const SKATE_ROW: usize = 2;
 /// The row holding the username.
 const USERNAME_ROW: usize = 3;
 /// The row holding the speedometer's unit.
@@ -472,9 +482,12 @@ fn setting_rows() -> usize {
     if physics_offered() { SETTING_GAMES.len() } else { PHYSICS_ROW }
 }
 
-/// A row's button: games pick a folder, the username is typed, the unit changes.
-fn button_label(row: usize) -> &'static str {
+/// A row's button: games pick a folder, the username is typed, the unit
+/// changes. While Skate 3 is not set up (`skate_ready`), Skate 3 and Skating
+/// both set it up first (the setup screen's Skate 3 step).
+fn button_label(row: usize, skate_ready: bool) -> &'static str {
     match row {
+        SKATE_ROW | SKATING_ROW if !skate_ready => "SET UP",
         USERNAME_ROW => "EDIT",
         UNITS_ROW | SKATING_ROW | PHYSICS_ROW => "CHANGE",
         _ => "SELECT",
@@ -482,7 +495,9 @@ fn button_label(row: usize) -> &'static str {
 }
 
 /// What each row shows now: the saved folder, or why there is none.
-fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool) -> [String; 7] {
+/// `skate_ready`: Skate 3 is set up (`game_paths::skate_ready`); without it
+/// skating is not there to turn on.
+fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool, skate_ready: bool) -> [String; 7] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
     let settings = game_paths::settings();
     let reflex = match game_paths::reflex_chosen() {
@@ -491,12 +506,18 @@ fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool) ->
             if game_paths::reflex_skipped() { "Not used (optional)" } else { "Not set (optional)" }.to_string()
         }),
     };
-    let skate_folder = settings
-        .get(game_paths::key::SKATE_SOURCE)
-        .map(str::to_owned)
-        .or_else(|| game_paths::skate_assets().map(|_| "Set up (folder not recorded, select to choose it)".to_string()))
-        .unwrap_or_else(|| "Not set".to_string());
-    let skating = if skate.0 {
+    let skate_folder = if skate_ready {
+        settings
+            .get(game_paths::key::SKATE_SOURCE)
+            .map_or_else(|| "Set up (folder not recorded, select to choose it)".to_string(), str::to_owned)
+    } else if game_paths::skate_skipped() {
+        "Not used (optional): adds the skateboard".to_string()
+    } else {
+        "Not set (optional): adds the skateboard".to_string()
+    };
+    let skating = if !skate_ready {
+        "Not available: needs Skate 3 (SET UP adds it)"
+    } else if skate.0 {
         "On (skateboard and grind rails on every map)"
     } else {
         "Off (maps load without the skateboard or grind rails)"
@@ -643,7 +664,8 @@ impl Plugin for MenuPlugin {
         });
         let mut tab = value(args, "--menu-tab").and_then(|s| s.parse().ok()).unwrap_or(0usize).min(TABS.len() - 1);
         let pick = value(args, "--menu-pick").and_then(|s| s.parse().ok()).unwrap_or(0usize);
-        let with_value = ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--menu-step", "--size"];
+        let with_value =
+            ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--menu-step", "--menu-row", "--size"];
         let alone = ["--menu-loading", "--menu-start", "--menu-missing", "--menu-settings", "--menu-setup"];
         let mut pass = Vec::new();
         let mut skip = false;
@@ -724,9 +746,21 @@ impl Plugin for MenuPlugin {
             step: 0,
             note_is_error: false,
             setup_finished: false,
+            setup_return: None,
         };
+        let step = value(args, "--menu-step");
         if first_run {
-            setup::open(&mut menu, value(args, "--menu-step").and_then(|s| s.parse().ok()));
+            setup::open(&mut menu, step.and_then(|s| s.parse().ok()));
+        } else if menu.phase == Phase::Settings && step.is_some() {
+            // `--menu-settings --menu-step 1`: the Skate 3 step, the one
+            // Settings opens.
+            setup::open_from_settings(&mut menu, SKATE_ROW, "");
+        }
+        // `--menu-row N`: the focus on that row, or the last one the screen
+        // has (a row past it would be chosen as a game's folder).
+        if let Some(row) = value(args, "--menu-row").and_then(|s| s.parse::<usize>().ok()) {
+            let rows = if menu.phase == Phase::Setup { setup::row_count(&menu) } else { setting_rows() };
+            menu.setting = row.min(rows - 1);
         }
         app.insert_resource(menu)
         .add_systems(Startup, spawn)
@@ -888,6 +922,7 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
             BorderColor::all(LINE),
         ))
         .with_child(text("SETTINGS", 22.0, LIT));
+    let skate_ready = game_paths::skate_ready();
     for (i, name) in SETTING_GAMES.iter().enumerate() {
         if i == 0 || i == USERNAME_ROW || i == UNITS_ROW {
             screen.spawn((
@@ -934,7 +969,7 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
                     },
                     BorderColor::all(LINE),
                 ))
-                .with_child((SettingSelectLabel(i), text(button_label(i), 18.0, DIM)));
+                .with_child((SettingSelectLabel(i), text(button_label(i, skate_ready), 18.0, DIM)));
             });
     }
     screen.spawn((
@@ -1420,6 +1455,8 @@ fn type_username<'a>(menu: &mut Menu, events: impl Iterator<Item = &'a KeyboardI
 
 /// Opens the folder picker for a game on its own thread; the choice is
 /// checked and saved there, and [`settings_poll`] picks up the outcome.
+/// While Skate 3 is not set up, Skate 3 and Skating open the setup screen's
+/// Skate 3 step instead (`setup::open_from_settings`).
 fn select(
     menu: &mut Menu,
     unit: &mut SpeedUnit,
@@ -1443,6 +1480,14 @@ fn select(
         } else {
             "The bike rides on its own arcade physics. The pause menu's Dirt bike tab switches it too.".to_string()
         };
+        return;
+    }
+    if (row == SKATE_ROW || row == SKATING_ROW) && !game_paths::skate_ready() {
+        // Nothing to turn on or convert again yet: the setup screen's Skate 3
+        // step, with its converter row and progress. The saved Skating choice
+        // stays as it was, for when Skate 3 is added.
+        let note = if row == SKATING_ROW { "Skating needs Skate 3." } else { "" };
+        setup::open_from_settings(menu, row, note);
         return;
     }
     if row == SKATING_ROW {
@@ -1476,14 +1521,17 @@ fn select(
         });
     });
     menu.note = match row {
-        2 => "Choose your Skate 3 folder. It is converted once you have chosen, which takes a few minutes.".to_string(),
+        SKATE_ROW => {
+            "Choose your Skate 3 folder. It is converted once you have chosen, which takes a few minutes.".to_string()
+        }
         _ => format!("Choose your {} folder in the window that opened.", SETTING_GAMES[row]),
     };
     menu.picking = Some(Picking { what: Pick::Setting(row), result: Mutex::new(receive) });
 }
 
 /// A picker has finished: say how it went. A new MCC folder changes which
-/// maps are installed and their pictures, so the map lists are built again.
+/// maps are installed and their pictures, so the map lists are built again;
+/// after a new Skate 3, whether skating is on is read again.
 fn settings_poll(world: &mut World) {
     let menu = world.resource::<Menu>();
     let Some(picking) = &menu.picking else {
@@ -1518,6 +1566,10 @@ fn settings_poll(world: &mut World) {
     };
     if changed && row == 0 {
         refresh_maps(world);
+    }
+    if changed && row == SKATE_ROW {
+        // Skating follows Skate 3 (`game_paths::skating_enabled`).
+        world.insert_resource(SkateEnabled::load());
     }
 }
 
@@ -1577,7 +1629,8 @@ fn show_settings(
         *border = BorderColor::all(if on { LINE } else { Color::NONE });
     }
     let reflex_physics = tuning.map_or_else(|| mcc_bike::tune::load().model, |t| t.0.model) >= 1.5;
-    let now = setting_values(*unit, *skate, reflex_physics);
+    let skate_ready = game_paths::skate_ready();
+    let now = setting_values(*unit, *skate, reflex_physics, skate_ready);
     for (value, mut text, mut colour) in &mut values {
         text.0.clone_from(&now[value.0]);
         if value.0 == USERNAME_ROW {
@@ -1592,7 +1645,14 @@ fn show_settings(
     }
     for (label, mut text, mut colour) in &mut labels {
         let editing = label.0 == USERNAME_ROW && menu.editing.is_some();
-        text.0 = if busy(label.0) { "WORKING..." } else if editing { "ENTER" } else { button_label(label.0) }.to_string();
+        text.0 = if busy(label.0) {
+            "WORKING..."
+        } else if editing {
+            "ENTER"
+        } else {
+            button_label(label.0, skate_ready)
+        }
+        .to_string();
         colour.0 = if label.0 == menu.setting { LIT } else { DIM };
     }
     for mut text in &mut note {
@@ -2045,6 +2105,23 @@ mod tests {
                 let game = if *arg == "h1:warthog_run" { Game::Halo1 } else { game };
                 assert_eq!(crate::codename(map_of(arg)).0, Some(game), "{arg}");
             }
+        }
+    }
+
+    /// Without Skate 3, its row and Skating set it up first; with it, they
+    /// choose a folder and switch skating as before.
+    #[test]
+    fn skate_rows_set_up_skate_3_first() {
+        assert_eq!(SETTING_GAMES[SKATE_ROW], "Skate 3");
+        assert_eq!(SETTING_GAMES[SKATING_ROW], "Skating");
+        assert_eq!(button_label(SKATE_ROW, false), "SET UP");
+        assert_eq!(button_label(SKATING_ROW, false), "SET UP");
+        assert_eq!(button_label(SKATE_ROW, true), "SELECT");
+        assert_eq!(button_label(SKATING_ROW, true), "CHANGE");
+        for ready in [false, true] {
+            assert_eq!(button_label(0, ready), "SELECT");
+            assert_eq!(button_label(USERNAME_ROW, ready), "EDIT");
+            assert_eq!(button_label(PHYSICS_ROW, ready), "CHANGE");
         }
     }
 

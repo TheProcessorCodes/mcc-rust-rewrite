@@ -14,16 +14,20 @@
 //!
 //! No bevy and no other dependencies: the `blam_*` readers' tests use it too.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 /// The setup keys `setup.env` holds.
 pub mod key {
     /// The MCC install folder (the one holding `halo3\maps`).
     pub const MCC: &str = "MCC";
-    /// The converted Skate 3 data (holding `private\game.json`).
+    /// The converted Skate 3 data (holding `private\game.json`), or
+    /// [`SKATE_SKIPPED`](super::SKATE_SKIPPED) when the player chose to go
+    /// without Skate 3.
     pub const SKATE_ASSETS: &str = "SKATE_ASSETS";
     /// The folder the player chose for Skate 3 (the extracted game or the
-    /// one holding the `.iso`), kept to show in the settings.
+    /// one holding the `.iso`), kept to show in the settings. Not there
+    /// when Skate 3 was skipped.
     pub const SKATE_SOURCE: &str = "SKATE_SOURCE";
     /// The player's name, shown in the kill feed.
     pub const USERNAME: &str = "USERNAME";
@@ -44,6 +48,9 @@ pub mod key {
 
 /// What `REFLEX` holds when the player chose to go without Reflex.
 pub const REFLEX_SKIPPED: &str = "skip";
+
+/// What `SKATE_ASSETS` holds when the player chose to go without Skate 3.
+pub const SKATE_SKIPPED: &str = "skip";
 
 /// Whether the player chose in setup to play without Reflex (the bike is
 /// then our own model, with no engine sound). `REFLEX_GAME=skip` does the same
@@ -264,26 +271,68 @@ pub fn is_skate_assets(assets: &Path) -> bool {
     SKATE_FILES.iter().all(|f| assets.join(f).is_file())
 }
 
-/// The converted Skate 3 data: `%MCC_SKATE_ASSETS%` or
-/// `%IW4L_SKATE_ASSETS%`, else the saved setup. None before setup has run.
-pub fn skate_assets() -> Option<PathBuf> {
-    ["MCC_SKATE_ASSETS", "IW4L_SKATE_ASSETS"]
-        .iter()
-        .find_map(std::env::var_os)
-        .map(PathBuf::from)
-        .or_else(|| settings().get(key::SKATE_ASSETS).map(PathBuf::from))
+/// The dev override for the Skate 3 data, `%MCC_SKATE_ASSETS%` or
+/// `%IW4L_SKATE_ASSETS%`: a folder, or [`SKATE_SKIPPED`].
+fn skate_override() -> Option<OsString> {
+    ["MCC_SKATE_ASSETS", "IW4L_SKATE_ASSETS"].iter().find_map(std::env::var_os)
 }
 
-/// Whether skating is on (the default). Off, maps load no grind rails, no
-/// skate session and no board, and J does nothing; setup still asks for
-/// Skate 3, as the rider's skeleton comes from it. `MCC_SKATING=off` (or
-/// `on`) overrides the saved choice for a dev run.
+/// Whether a Skate 3 choice is "without Skate 3": the override when one is
+/// set (`env`), else the saved `SKATE_ASSETS` (`saved`).
+fn skipped(env: Option<&OsStr>, saved: Option<&str>) -> bool {
+    match env {
+        Some(v) => v == SKATE_SKIPPED,
+        None => saved == Some(SKATE_SKIPPED),
+    }
+}
+
+/// The Skate 3 data a choice names: the override when one is set, else the
+/// saved folder; never the skip.
+fn chosen_skate(env: Option<&OsStr>, saved: Option<&str>) -> Option<PathBuf> {
+    if skipped(env, saved) {
+        return None;
+    }
+    env.map(PathBuf::from).or_else(|| saved.map(PathBuf::from))
+}
+
+/// Whether the player chose in setup to play without Skate 3 (no skateboard
+/// or grind rails, and the Spartan's skeleton comes from MCC's Master Chief).
+/// `MCC_SKATE_ASSETS=skip` does the same for a dev run, and an override
+/// naming a folder wins over a saved skip.
+pub fn skate_skipped() -> bool {
+    skipped(skate_override().as_deref(), settings().get(key::SKATE_ASSETS))
+}
+
+/// The converted Skate 3 data: `%MCC_SKATE_ASSETS%` or
+/// `%IW4L_SKATE_ASSETS%`, else the saved setup. None before setup has run
+/// and when Skate 3 was skipped. See [`skate_ready`] for whether it is usable.
+pub fn skate_assets() -> Option<PathBuf> {
+    chosen_skate(skate_override().as_deref(), settings().get(key::SKATE_ASSETS))
+}
+
+/// Whether Skate 3 is set up: not skipped, its converted data there
+/// ([`is_skate_assets`]), and the `rig.json` and `board.json` setup derives
+/// from it beside that. The board, skating and the skater's skeleton all
+/// need it; without it the Spartan's skeleton comes from MCC's Master Chief
+/// and skating is off.
+pub fn skate_ready() -> bool {
+    skate_assets().is_some_and(|a| {
+        is_skate_assets(&a) && a.join("rig.json").is_file() && a.join("board.json").is_file()
+    })
+}
+
+/// Whether skating is on: Skate 3 is set up ([`skate_ready`]) and the player
+/// has not turned it off (on is the default). Off, maps load no grind rails,
+/// no skate session and no board, and J does nothing. `MCC_SKATING=off` (or
+/// `on`) overrides the saved choice for a dev run; nothing turns it on
+/// without Skate 3.
 pub fn skating_enabled() -> bool {
     let off = |v: &str| v.trim().eq_ignore_ascii_case("off");
-    match std::env::var("MCC_SKATING") {
+    let chosen = match std::env::var("MCC_SKATING") {
         Ok(v) => !off(&v),
         Err(_) => !settings().get(key::SKATING).is_some_and(off),
-    }
+    };
+    chosen && skate_ready()
 }
 
 /// Saves whether skating is on.
@@ -397,6 +446,34 @@ mod tests {
         assert_eq!(s.lines.len(), 3);
         s.remove(key::REFLEX);
         assert_eq!(s.get(key::REFLEX), None);
+    }
+
+    #[test]
+    fn skate_skip_comes_from_the_override_else_the_saved_choice() {
+        let os = |s: &'static str| Some(OsStr::new(s));
+        let folder = r"E:\Games\skate-data\assets";
+        // The override wins, whatever is saved.
+        assert!(skipped(os("skip"), None));
+        assert!(skipped(os("skip"), Some(folder)));
+        assert!(!skipped(os(folder), None));
+        assert!(!skipped(os(folder), Some(SKATE_SKIPPED)));
+        // Without one, the saved choice.
+        assert!(skipped(None, Some(SKATE_SKIPPED)));
+        assert!(!skipped(None, Some(folder)));
+        // Nothing set is not a skip: setup has not asked yet.
+        assert!(!skipped(None, None));
+    }
+
+    #[test]
+    fn skate_assets_are_never_the_skip() {
+        let os = |s: &'static str| Some(OsStr::new(s));
+        let (mine, saved) = (r"D:\dev\assets", r"E:\Games\skate-data\assets");
+        assert_eq!(chosen_skate(os("skip"), Some(saved)), None);
+        assert_eq!(chosen_skate(None, Some(SKATE_SKIPPED)), None);
+        assert_eq!(chosen_skate(os(mine), Some(SKATE_SKIPPED)), Some(PathBuf::from(mine)));
+        assert_eq!(chosen_skate(os(mine), Some(saved)), Some(PathBuf::from(mine)));
+        assert_eq!(chosen_skate(None, Some(saved)), Some(PathBuf::from(saved)));
+        assert_eq!(chosen_skate(None, None), None);
     }
 
     #[test]
