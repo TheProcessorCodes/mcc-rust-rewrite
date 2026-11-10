@@ -363,8 +363,10 @@ skateboard. Players with Skate 3 see no change.
   pause menu's Skate tab says "Skating needs Skate 3" and the J rows are marked.
 - **Tests.** Unit tests on a made-up biped (our own numbers), and `mcc_rider/tests/halo_rig.rs`
   on riverworld and 120_halo with ranges only, skipping without MCC; no tag values are written
-  down. Not playtested yet. Follow-up: #6 (the bike tab's session marker row still mentions
-  the board).
+  down. Playtested by the user on 2026-11-09: worked well. Follow-ups: #6 (the bike tab's
+  session marker row still mentions the board), #7 (no Spartan on Halo CE, Halo 2 and Reach
+  maps without `riverworld.map`), #8 (switching back to no Skate 3 from Settings), #9 (the
+  missing-skeleton warning names `rig.json` after a skip).
 
 ## Reflex's own simulation (2026-11-06, branch `reflex-core-physics`)
 
