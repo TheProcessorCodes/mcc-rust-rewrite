@@ -95,7 +95,7 @@ use mcc_textures as textures;
 use mcc_weapons as weapons;
 use mcc_world as world;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PresentMode, WindowMode};
@@ -142,6 +142,34 @@ fn resolve_map(arg: &str) -> PathBuf {
             if !h3.exists() && h2.exists() { h2 } else { h3 }
         }
     }
+}
+
+/// The Halo 3 maps to look for the Spartan in, for a map that has none of
+/// its own: Valhalla first, then every other `.map` in the folder by name.
+fn chief_sources(maps: &Path) -> Vec<PathBuf> {
+    let first = maps.join("riverworld.map");
+    let mut rest: Vec<PathBuf> = std::fs::read_dir(maps)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("map")) && *p != first)
+        .collect();
+    rest.sort();
+    std::iter::once(first).chain(rest).collect()
+}
+
+/// Halo 3's Spartan for a Halo CE, Halo 2 or Reach map, whose own are not
+/// decoded: Valhalla's, else the first other installed Halo 3 map's that
+/// has one. None without Halo 3.
+pub(crate) fn borrowed_chief() -> Option<rider::ChiefModel> {
+    chief_sources(&maps_dir(Game::Halo3)).iter().enumerate().find_map(|(i, path)| {
+        let chief = blam_cache::CacheFile::open(path).ok().and_then(|c| rider::load_chief(&c))?;
+        if i > 0 {
+            eprintln!("rider: no Spartan in riverworld.map; borrowed from {}", path.display());
+        }
+        Some(chief)
+    })
 }
 
 /// A map argument to (game, file name without `.map`): `h1:` / `h2:` /
@@ -394,11 +422,8 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             eprintln!("halo ce lightmap: mean irradiance {mean:.3}");
             world::lighting::set_scene_mean(mean);
         }
-        // The rider is Halo 3's Spartan, borrowed from Valhalla as for
-        // Halo 2.
-        let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
-            .ok()
-            .and_then(|c| rider::load_chief(&c));
+        // The rider is Halo 3's Spartan, borrowed as for Halo 2.
+        let chief = borrowed_chief();
         return Ok(LoadedMap {
             scene: h1.scene,
             textures: h1.textures,
@@ -424,11 +449,10 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             eprintln!("halo 2 lightmap: mean irradiance {mean:.3}");
             world::lighting::set_scene_mean(mean);
         }
-        // The rider is Halo 3's Spartan, borrowed from Valhalla when
-        // Halo 3 is installed (Halo 2's Master Chief is not decoded).
-        let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
-            .ok()
-            .and_then(|c| rider::load_chief(&c));
+        // The rider is Halo 3's Spartan, borrowed from Valhalla (or
+        // another Halo 3 map) when Halo 3 is installed (Halo 2's Master
+        // Chief is not decoded).
+        let chief = borrowed_chief();
         return Ok(LoadedMap {
             scene,
             textures,
@@ -1099,4 +1123,29 @@ fn shot_plan(args: &[String], scene: &blam_geometry::Scene) -> anyhow::Result<Op
         foot: args.iter().any(|a| a == "--foot"),
         bench: value("--bench").map(|n| n.parse()).transpose()?.unwrap_or(0),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Valhalla is tried first whether or not it is there, then the other
+    /// maps by name; files that are not maps are left out.
+    #[test]
+    fn the_spartan_is_looked_for_in_valhalla_first() {
+        let dir = std::env::temp_dir().join(format!("mcc-chief-sources-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["zanzibar.map", "120_halo.map", "shared.map", "notes.txt"] {
+            std::fs::write(dir.join(f), b"").unwrap();
+        }
+        let names = |dir: &Path| -> Vec<String> {
+            chief_sources(dir).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect()
+        };
+        assert_eq!(names(&dir), ["riverworld.map", "120_halo.map", "shared.map", "zanzibar.map"]);
+        std::fs::write(dir.join("riverworld.map"), b"").unwrap();
+        assert_eq!(names(&dir), ["riverworld.map", "120_halo.map", "shared.map", "zanzibar.map"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+        // A folder that is not there: only Valhalla is tried, and not found.
+        assert_eq!(names(&dir), ["riverworld.map"]);
+    }
 }

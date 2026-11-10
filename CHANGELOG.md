@@ -15,6 +15,8 @@ merge history.
 
 ### Fixed
 - Warthog run: the glowing orange lumps at the foot of the trench cliffs are gone (#5).
+- Halo CE, Halo 2 and Reach maps still have Master Chief when Valhalla is not installed: he is
+  borrowed from another Halo 3 map (#7).
 
 ## 2026-11-06
 
