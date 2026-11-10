@@ -77,6 +77,7 @@ mod halo1_ai;
 mod halo1_anim;
 mod halo2;
 mod key_hint;
+mod logfile;
 mod menu;
 mod reach;
 mod pause;
@@ -190,7 +191,23 @@ fn codename(arg: &str) -> (Option<Game>, &str) {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> std::process::ExitCode {
+    // Everything printed from here on also goes to this run's log file, and
+    // a panic leaves a crash file (`logfile.rs`).
+    let log = logfile::start();
+    let code = match run_main() {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("Error: {e:?}");
+            std::process::ExitCode::FAILURE
+        }
+    };
+    // The last lines reach the console and the file before the exit.
+    drop(log);
+    code
+}
+
+fn run_main() -> anyhow::Result<std::process::ExitCode> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let help = matches!(args.first().map(String::as_str), Some("--help" | "-h"));
     // First-run setup: MCC (required), Skate 3 and Reflex (each optional,
@@ -236,17 +253,18 @@ fn main() -> anyhow::Result<()> {
   mcc-rust-rewrite <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
   mcc-rust-rewrite --setup [<map>]                                      choose MCC, Skate 3 and Reflex again (on the setup screen)
   mcc-rust-rewrite --test-scene");
-            std::process::exit(2);
+            return Ok(std::process::ExitCode::from(2));
         }
         // No map (only options, or nothing): the map menu, which loads the
         // chosen map into the same window (`menu.rs`).
-        None => run(&args, None),
-        Some(a) if a.starts_with("--") && a != "--test-scene" => run(&args, None),
+        None => run(&args, None)?,
+        Some(a) if a.starts_with("--") && a != "--test-scene" => run(&args, None)?,
         Some(map) => {
             let map = load(map, &args)?;
-            run(&args, Some(map))
+            run(&args, Some(map))?
         }
     }
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 /// A map decoded and ready to go into the app. Made up front for
