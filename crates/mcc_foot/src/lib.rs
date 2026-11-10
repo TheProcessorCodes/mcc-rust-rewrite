@@ -85,7 +85,8 @@ pub const STARTING_WEAPONS: [&str; 3] = [
     r"objects\weapons\pistol\magnum\magnum",
 ];
 
-/// Field of view (vertical) in the eyes and over the shoulder.
+/// Field of view (vertical) in the eyes and over the shoulder, before the
+/// settings widen or narrow it (`mcc_core::view::LookSettings`).
 const FIRST_FOV: f32 = 55.0;
 const THIRD_FOV: f32 = 60.0;
 
@@ -175,7 +176,7 @@ pub fn walk(
     (mut auto, mut dismount, mut mount): (ResMut<AutoStart>, ResMut<Dismount>, ResMut<Mount>),
     (input, mut shared): (Option<Res<mcc_bike::BikeInput>>, ResMut<mcc_bike::SharedWorld>),
     // Paired: a system takes at most 16 parameters.
-    (tuning, skate_on): (Res<FootTuning>, Option<Res<SkateEnabled>>),
+    (tuning, skate_on, look): (Res<FootTuning>, Option<Res<SkateEnabled>>, Option<Res<mcc_core::view::LookSettings>>),
     (kill, lifts): (Option<Res<mcc_core::falls::KillZones>>, Option<Res<mcc_core::lifts::Lifts>>),
     water: Option<Res<mcc_swim::WaterWorld>>,
     fallback: Option<Res<mcc_core::falls::FallbackSpot>>,
@@ -192,6 +193,7 @@ pub fn walk(
         return;
     };
     let foot = &mut *foot;
+    let look = look.as_deref().copied().unwrap_or_default();
     let pad = gamepads.iter().next();
     let toggle = keys.just_pressed(KeyCode::KeyF) || pad.is_some_and(dpad_up_alone);
     // The bike's and the board's own buttons get back on from walking.
@@ -275,7 +277,7 @@ pub fn walk(
             fly.pitch = foot.pitch;
             transform.rotation = fly.rotation();
             if let Projection::Perspective(lens) = &mut *projection {
-                lens.fov = 75f32.to_radians();
+                lens.fov = look.fov_radians(mcc_core::view::FLY_FOV);
             }
             return;
         }
@@ -301,13 +303,13 @@ pub fn walk(
     let dt = time.delta_secs().min(0.1);
     let mut turn = Vec2::ZERO;
     if cursor_grabbed(&windows) {
-        turn -= motion.delta * fly.mouse_sensitivity / foot.zoom.unwrap_or(1.0).max(1.0);
+        turn -= motion.delta * fly.mouse_sensitivity * look.mouse_scale() / foot.zoom.unwrap_or(1.0).max(1.0);
     }
     let mut controls = Controls::default();
     if let Some(pad) = pad {
         let r = dead(pad.right_stick(), 0.15);
         // Halo's stick: gentle near the middle, fast at the edge.
-        turn += Vec2::new(-r.x, r.y) * r.length() * 3.2 * dt / foot.zoom.unwrap_or(1.0).max(1.0);
+        turn += Vec2::new(-r.x, r.y) * r.length() * 3.2 * look.stick_scale() * dt / foot.zoom.unwrap_or(1.0).max(1.0);
         controls.wish = dead(pad.left_stick(), 0.15);
         controls.jump = pad.just_pressed(B::South);
         controls.crouch = pad.pressed(B::LeftThumb);
@@ -315,6 +317,7 @@ pub fn walk(
             foot.first_person = !foot.first_person;
         }
     }
+    let turn = look.turn(turn);
     foot.yaw += turn.x;
     foot.pitch = (foot.pitch + turn.y).clamp(-1.45, 1.45);
     let key = |k: KeyCode| keys.pressed(k) as i32 as f32;
@@ -425,11 +428,12 @@ pub fn walk(
     foot.eye_lift = Some(smooth);
     let eye = Vec3::new(spartan.position.x, smooth, spartan.position.z);
     let rotation = foot.aim_rotation();
+    let first_fov = look.fov_radians(FIRST_FOV);
     let (view, fov) = if let Some(zoom) = foot.zoom {
-        let narrow = 2.0 * ((FIRST_FOV.to_radians() * 0.5).tan() / zoom.max(1.0)).atan();
-        (Transform::from_translation(eye).with_rotation(rotation), narrow.to_degrees())
+        let narrow = 2.0 * ((first_fov * 0.5).tan() / zoom.max(1.0)).atan();
+        (Transform::from_translation(eye).with_rotation(rotation), narrow)
     } else if foot.first_person {
-        (Transform::from_translation(eye).with_rotation(rotation), FIRST_FOV)
+        (Transform::from_translation(eye).with_rotation(rotation), first_fov)
     } else {
         // Out to the right shoulder, then back from there, stopping short
         // of walls both ways.
@@ -450,15 +454,15 @@ pub fn walk(
         } else {
             foot.boom + (boom - foot.boom) * (1.0 - (-4.0 * dt).exp())
         };
-        (Transform::from_translation(shoulder + dir * foot.boom).with_rotation(rotation), THIRD_FOV)
+        (Transform::from_translation(shoulder + dir * foot.boom).with_rotation(rotation), look.fov_radians(THIRD_FOV))
     };
     // A camera pressed into his helmet sees from his eyes instead.
     rider.first_person = foot.first_person || foot.zoom.is_some() || view.translation.distance(eye) < 0.8;
-    rider.camera = Some((view, fov.to_radians()));
+    rider.camera = Some((view, fov));
     if rider.drive_camera {
         *transform = view;
         if let Projection::Perspective(lens) = &mut *projection {
-            lens.fov = fov.to_radians();
+            lens.fov = fov;
         }
     }
 }

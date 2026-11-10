@@ -577,9 +577,12 @@ fn update(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut cameras: Query<(Entity, &mut Transform, &mut FlyCamera, &mut Projection)>,
     loaded: Res<LoadedBsps>,
-    mut flag: ResMut<SessionFlag>,
+    (mut flag, look): (ResMut<SessionFlag>, Option<Res<mcc_core::view::LookSettings>>),
 ) {
     let host = &mut *host;
+    // Skate 3's camera keeps its own place and aim; only its width follows
+    // the field of view setting (the right stick is the flick-it, not a look).
+    let look = look.as_deref().copied().unwrap_or_default();
     let Some(receive) = host.receive.as_ref() else {
         // No skate session (it failed): a hand-over to the board lands him
         // on foot instead.
@@ -678,7 +681,7 @@ fn update(
         rider.camera = p.camera.map(|(position, basis, fov)| {
             let view = Transform::from_translation(position / k)
                 .looking_to(basis.z_axis.normalize(), basis.y_axis.normalize());
-            (view, fov.to_radians())
+            (view, look.scale_fov(fov.to_radians()))
         });
         if rider.drive_camera
             && let Some((view, fov)) = rider.camera
@@ -810,7 +813,7 @@ fn update(
             fly.pitch = f.y.clamp(-1.0, 1.0).asin();
             transform.rotation = fly.rotation();
             if let Projection::Perspective(lens) = &mut *projection {
-                lens.fov = 75f32.to_radians();
+                lens.fov = look.fov_radians(mcc_core::view::FLY_FOV);
             }
         } else {
             // Drop the skater under the camera, facing the way it looks; the

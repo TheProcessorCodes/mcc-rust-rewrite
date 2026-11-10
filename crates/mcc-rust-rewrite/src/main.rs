@@ -99,7 +99,6 @@ use mcc_world as world;
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use bevy::window::{MonitorSelection, PresentMode, WindowMode};
 
 /// Which game a map belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -706,16 +705,11 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         )),
         None if menu::headless(args) => menu::add_headless_plugins(&mut app),
         None => {
-            let plugins = DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title,
-                    present_mode: PresentMode::AutoVsync,
-                    // Borderless fullscreen on the monitor the window opens on.
-                    mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-                    ..default()
-                }),
-                ..default()
-            });
+            // Borderless fullscreen on the monitor the window opens on, or
+            // a window, with or without vsync: as chosen in Settings.
+            let mut window = Window { title, ..default() };
+            mcc_core::view::Display::load().configure(&mut window);
+            let plugins = DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() });
             if sound {
                 app.add_plugins(plugins)
             } else {

@@ -52,6 +52,23 @@ pub mod key {
     pub const DIFFICULTY: &str = "DIFFICULTY";
     /// The Spartan's armour colour, one of `mcc_rider`'s colour names.
     pub const ARMOUR: &str = "ARMOUR";
+    /// How fast the mouse turns the camera, in percent of the stock speed
+    /// (`mcc_core::view`).
+    pub const MOUSE_SENSITIVITY: &str = "MOUSE_SENSITIVITY";
+    /// How fast the right stick turns the camera, in percent.
+    pub const STICK_SENSITIVITY: &str = "STICK_SENSITIVITY";
+    /// `on` turns looking up and down round (mouse and stick).
+    pub const INVERT_LOOK: &str = "INVERT_LOOK";
+    /// Every camera's field of view, in percent of its own.
+    pub const FIELD_OF_VIEW: &str = "FIELD_OF_VIEW";
+    /// `windowed`, or borderless fullscreen (the default).
+    pub const DISPLAY_MODE: &str = "DISPLAY_MODE";
+    /// `off` turns vsync off; on is the default.
+    pub const VSYNC: &str = "VSYNC";
+
+    /// The keys that name the player's games and their converted data:
+    /// what resetting the settings keeps ([`reset_settings`](super::reset_settings)).
+    pub const GAMES: [&str; 5] = [MCC, SKATE_ASSETS, SKATE_SOURCE, SKATE_CONVERTER, REFLEX];
 }
 
 /// What `REFLEX` holds when the player chose to go without Reflex.
@@ -262,6 +279,17 @@ pub fn save_setting(key: &str, value: &str) -> Result<(), String> {
     s.write(&path)
 }
 
+/// Puts every setting back to its default by forgetting it, keeping the
+/// game folders and their converted data ([`key::GAMES`]) and any comment
+/// lines. Files kept beside the exe (the bike's tuning, the sound levels)
+/// are not touched.
+pub fn reset_settings() -> Result<(), String> {
+    let path = settings_path();
+    let mut s = Settings::read(&path);
+    s.keep_only(&key::GAMES);
+    s.write(&path)
+}
+
 /// Saves the dialogue language (one of [`LANGUAGES`]) for the next map load.
 pub fn set_language(language: &str) -> Result<(), String> {
     let path = settings_path();
@@ -433,6 +461,12 @@ impl Settings {
         self.lines.retain(|line| line.split_once('=').is_none_or(|(name, _)| name.trim() != key));
     }
 
+    /// Drops every `KEY=value` line whose key is not in `keys`; other lines
+    /// (comments, blanks) stay.
+    pub fn keep_only(&mut self, keys: &[&str]) {
+        self.lines.retain(|line| line.split_once('=').is_none_or(|(name, _)| keys.contains(&name.trim())));
+    }
+
     /// Writes the file, creating its folder.
     pub fn write(&self, path: &Path) -> Result<(), String> {
         if let Some(dir) = path.parent() {
@@ -471,6 +505,28 @@ mod tests {
         assert_eq!(s.lines.len(), 3);
         s.remove(key::REFLEX);
         assert_eq!(s.get(key::REFLEX), None);
+    }
+
+    #[test]
+    fn resetting_keeps_the_games_and_comments() {
+        let mut s = Settings {
+            lines: vec![
+                "# mine".into(),
+                "MCC=\"E:\\Games\\MCC\"".into(),
+                "USERNAME=\"Player One\"".into(),
+                "SKATE_ASSETS=\"skip\"".into(),
+                "FIELD_OF_VIEW=\"110\"".into(),
+                "REFLEX=\"E:\\Games\\Reflex\"".into(),
+            ],
+        };
+        s.keep_only(&key::GAMES);
+        assert_eq!(s.lines.len(), 4);
+        assert_eq!(s.lines[0], "# mine");
+        assert_eq!(s.get(key::MCC), Some(r"E:\Games\MCC"));
+        assert_eq!(s.get(key::SKATE_ASSETS), Some(SKATE_SKIPPED));
+        assert_eq!(s.get(key::REFLEX), Some(r"E:\Games\Reflex"));
+        assert_eq!(s.get(key::USERNAME), None);
+        assert_eq!(s.get(key::FIELD_OF_VIEW), None);
     }
 
     #[test]

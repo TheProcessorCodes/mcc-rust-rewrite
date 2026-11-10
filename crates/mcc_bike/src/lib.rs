@@ -443,7 +443,7 @@ fn ride(
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
     (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
-    (mut flag, skate_on): (ResMut<SessionFlag>, Option<Res<SkateEnabled>>),
+    (mut flag, skate_on, look): (ResMut<SessionFlag>, Option<Res<SkateEnabled>>, Option<Res<mcc_core::view::LookSettings>>),
     input: Option<Res<BikeInput>>,
     mut shared: ResMut<SharedWorld>,
     kill: Option<Res<mcc_core::falls::KillZones>>,
@@ -460,6 +460,7 @@ fn ride(
         return;
     };
     let riding = &mut *riding;
+    let look = look.as_deref().copied().unwrap_or_default();
     let pad = gamepads.iter().next();
     let toggle = keys.just_pressed(KeyCode::KeyB) || pad.is_some_and(|p| p.just_pressed(B::Select));
     let Ok((camera, mut transform, mut fly, mut projection)) = cameras.single_mut() else {
@@ -530,7 +531,7 @@ fn ride(
             fly.pitch = f.y.clamp(-1.0, 1.0).asin();
             transform.rotation = fly.rotation();
             if let Projection::Perspective(lens) = &mut *projection {
-                lens.fov = 75f32.to_radians();
+                lens.fov = look.fov_radians(mcc_core::view::FLY_FOV);
             }
             return;
         }
@@ -718,7 +719,7 @@ fn ride(
     };
     riding.eye = Some(eye);
     let view = Transform::from_translation(eye).looking_at(target, Vec3::Y);
-    let fov = 70f32.to_radians();
+    let fov = look.fov_radians(70.0);
     rider.camera = Some((view, fov));
     if rider.drive_camera {
         *transform = view;

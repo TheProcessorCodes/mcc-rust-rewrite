@@ -135,7 +135,22 @@ What the game does now:
   volume slider) and skate controls, and a Sound tab with the Master / Music / Effects / Ambience /
   Dialogue sliders. Q goes back to the map menu (unloading the map in place), or quits when the game
   was started on a map.
-- **Window.** Opens borderless fullscreen.
+- **Window.** Opens borderless fullscreen with vsync, or as chosen on Settings' Display page
+  (since 2026-11-10, #21: `DISPLAY_MODE`, `VSYNC` in `setup.env`, `mcc_core::view::Display`,
+  applied to the open window at once).
+- **Settings pages and view settings (2026-11-10, #20, #22).** The Settings screen is five pages
+  (Games, Player, Controls, Display, Support; `menu.rs` `SETTING_PAGES`, rows still numbered
+  0-18 across them). `mcc_core::view::LookSettings` (a resource, put in by `FlyCameraPlugin`)
+  scales each mode's own mouse / stick turning speed and field of view rather than replacing
+  them, so the stock feel stays the 100 % default; the board's camera comes from the Skate 3
+  engine and only its width is scaled on our side (no engine change). Support's Reset keeps the
+  `key::GAMES` keys (`game_paths::reset_settings`); Delete converted data is `skip_skate` /
+  `skip_reflex` for whichever has data in the data folder.
+- **Log and crash files (2026-11-10, #23).** `logfile.rs`: stdout and stderr are teed through
+  pipes (Windows `SetStdHandle`), not a tracing layer, because most messages are `eprintln!`;
+  `logs\mcc-<UTC time>.log` and, from a panic hook, `logs\crash-<time>.txt` in the data folder,
+  five of each kept. `main` returns an exit code instead of calling `process::exit`, so the tee
+  drains before the process ends.
 - **Headless screenshots.** `mcc-rust-rewrite.exe <map> --shot <dir> [--view x,y,z,yaw,pitch|spawn|overview] [--size WxH] [--skate|--bike] [--bench N] [--zone N]` renders without a window and exits (MCC must be set up; `--skate` needs Skate 3 too). Claude may run this on its own to check visuals; it never opens a window.
 
 Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has numbers):
