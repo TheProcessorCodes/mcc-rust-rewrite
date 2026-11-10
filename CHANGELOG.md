@@ -15,6 +15,13 @@ merge history.
 - The bike's tuning menu opens from a controller with LB + X (#16).
 - A clutch for the bike's Reflex physics: hold RB or E (#17).
 - Settings has an Armour colour row for the Spartan on multiplayer maps (#18).
+- Skating shows each trick's name and points as you land it, with the combo and the line's
+  score, which fade out once the line ends (#24).
+- The dirt bike grips by what it rides on: it slides more on snow, ice and metal, grips better
+  on rock and concrete, and sand and mud hold it back (#25).
+- On foot, Q (B on a controller) melees, lunging at a foe a step or two away (#31).
+- On foot, G (LT) throws a grenade and X (LB) picks frag or plasma; you start with two frags,
+  pick more up by walking over them, and the HUD shows how many you carry (#31).
 
 ### Fixed
 - Pause menu: the Dirt bike tab no longer says A backs the bike up; the brake held at a

@@ -38,11 +38,11 @@ pub struct FirePlugin;
 pub struct FireSet;
 
 /// The player's hit capsule (ends and radius), when he plays.
-type Capsule = Option<(Vec3, Vec3, f32)>;
+pub(crate) type Capsule = Option<(Vec3, Vec3, f32)>;
 
 /// The collision rounds fly on: the Spartan's on foot, else the shared one
 /// of the loaded BSPs once built.
-fn world_of(foot: &OnFoot, shared: &SharedWorld, loaded: &LoadedBsps) -> Option<std::sync::Arc<World>> {
+pub(crate) fn world_of(foot: &OnFoot, shared: &SharedWorld, loaded: &LoadedBsps) -> Option<std::sync::Arc<World>> {
     let mask = if loaded.mask == 0 { u32::MAX } else { loaded.mask };
     foot.shared_world().or_else(|| shared.ready(mask))
 }
@@ -307,12 +307,12 @@ impl Shots {
 }
 
 #[derive(Resource)]
-struct Looks {
+pub(crate) struct Looks {
     stick: Handle<Mesh>,
-    ball: Handle<Mesh>,
+    pub(crate) ball: Handle<Mesh>,
     disc: Handle<Mesh>,
     mark: Handle<StandardMaterial>,
-    spark: Handle<StandardMaterial>,
+    pub(crate) spark: Handle<StandardMaterial>,
 }
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
@@ -337,7 +337,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     });
 }
 
-fn glow(materials: &mut Assets<StandardMaterial>, colour: LinearRgba) -> Handle<StandardMaterial> {
+pub(crate) fn glow(materials: &mut Assets<StandardMaterial>, colour: LinearRgba) -> Handle<StandardMaterial> {
     materials.add(StandardMaterial {
         base_color: colour.into(),
         unlit: true,
@@ -367,14 +367,14 @@ fn aim_point(world: &World, enemy: &Enemy, view: &Transform, eye: Vec3) -> Vec3 
 
 /// A round of `damage` from `path` (`weapon` its tag) hitting him; tells
 /// the kill feed if it killed him.
-fn hurt(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32, path: &str, damage: f32, head: bool) {
+pub(crate) fn hurt(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32, path: &str, damage: f32, head: bool) {
     if enemy.damage(damage, head, path) {
         kills.write(EnemyKilled { weapon, headshot: head });
     }
 }
 
 /// An explosion's share of its damage on him.
-fn blast(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32, path: &str, damage: f32, at: Vec3, radius: f32) {
+pub(crate) fn blast(enemy: &mut Enemy, kills: &mut MessageWriter<EnemyKilled>, weapon: u32, path: &str, damage: f32, at: Vec3, radius: f32) {
     let share = enemy.splash(at, radius);
     if share > 0.0 {
         hurt(enemy, kills, weapon, path, damage * share, false);
@@ -409,10 +409,10 @@ fn body_hit(
 /// (rockets, brute shot grenades), falling off to nothing at twice the
 /// round's explosion radius. Our own number: the area damage is in the
 /// detonation effect, which is not read.
-const EXPLOSION_DAMAGE: f32 = 120.0;
+pub(crate) const EXPLOSION_DAMAGE: f32 = 120.0;
 
 /// Area damage round `at` (renderer frame) out to twice `radius`.
-fn explode(
+pub(crate) fn explode(
     damage: &mut MessageWriter<Damage>,
     targets: Option<&Targets>,
     player: Capsule,
@@ -569,7 +569,7 @@ fn launch(
 
 /// Sparks, a scorch mark and, for explosives, a fireball.
 #[allow(clippy::too_many_arguments)]
-fn impact(
+pub(crate) fn impact(
     commands: &mut Commands,
     looks: &Looks,
     shots: &mut Shots,
@@ -630,7 +630,7 @@ fn impact(
 }
 
 /// Gravity on grenades, metres per second squared.
-const GRAVITY: f32 = blam_geometry::movement::GRAVITY * WU;
+pub(crate) const GRAVITY: f32 = blam_geometry::movement::GRAVITY * WU;
 
 #[allow(clippy::too_many_arguments)]
 fn fly(
@@ -695,7 +695,7 @@ fn fly(
         let hit = match body {
             Some(b) => {
                 hurt(&mut enemy, &mut kills, r.weapon, &r.path, r.spartan_damage, b.head);
-                Some(mcc_bike::physics::Hit { distance: b.distance, point: b.point, normal: b.normal })
+                Some(mcc_bike::physics::Hit { distance: b.distance, point: b.point, normal: b.normal, surface: Default::default() })
             }
             None => hit,
         };

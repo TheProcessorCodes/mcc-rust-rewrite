@@ -35,6 +35,13 @@ setup.
   the board moving (off the bike or from a run) (2026-11-03).
 - Comments in `skate-host/src/physics/bridge.rs` and `skate-host/src/session_marker/mod.rs`
   name the host project by its new name, mcc-rust-rewrite (was halo3) (2026-11-06).
+- `skate-host/src/physics/bridge.rs`: `Session::score()` and `Pose::score`, a `Score` with
+  the ScoreModule's publication (the trick last called out, its stance and points, the
+  sequence in progress, the combo multiplier, the line and the lines banked), and
+  `skate-host/src/scoring_runtime.rs`: `Runtime` counts the tricks it calls out (with the
+  called trick's reward, also on a conversion) and the sequences it publishes (whether the
+  last was a bail), and reads out its trick name, stance and sequence. mcc-rust-rewrite shows
+  the trick names and the score on screen (2026-11-10).
 - `license` fields in the four `Cargo.toml`s, and this folder's `Cargo.toml` (the mashup's
   `skate/Cargo.toml` with a new header).
 

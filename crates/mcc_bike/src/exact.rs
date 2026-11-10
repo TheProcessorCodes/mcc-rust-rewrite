@@ -29,6 +29,7 @@ use reflex_bevy::reflex_core::{self, Vehicle};
 use reflex_bevy::{ReflexBike, ReflexBikeState, ReflexInput};
 
 use super::physics::{Bike, Controls, FRAME_LIFT, Hit, World, front_leg, rear_leg};
+use super::surface::Surface;
 
 /// The bike class read from Reflex: the Dakumoto 450F the model draws.
 const CLASS: &str = reflex_assets::imported::CLASS;
@@ -192,6 +193,9 @@ pub struct Exact {
     placed: bool,
     /// The `Bike`'s position, rotation and velocity as last written.
     written: (Vec3, Quat, Vec3),
+    /// What the ground under each wheel (front, rear) was made of last
+    /// step, where it touched.
+    ground: [Option<Surface>; 2],
 }
 
 impl std::fmt::Debug for Exact {
@@ -240,6 +244,7 @@ impl Exact {
             state: ReflexBikeState::default(),
             placed: false,
             written: (bike.position, bike.rotation, bike.velocity),
+            ground: [None; 2],
         })
     }
 
@@ -325,15 +330,37 @@ impl Exact {
             clutch: controls.clutch,
             ..Default::default()
         };
+        self.set_surface();
         let ground = Ground {
             world,
             scratch: RefCell::new((Vec::new(), Vec::new())),
         };
         self.bike.step(dt, &input, &ground, &mut self.state);
+        self.ground = [0, 1].map(|i| {
+            let w = &self.state.wheels[i];
+            w.contact.then(|| world.surface_at(w.point))
+        });
         // The rider's weight follows the stick as the old model's did.
         let k = 1.0 - (-8.0 * dt).exp();
         bike.lean += (controls.lean - bike.lean) * k;
         self.write(bike);
+    }
+
+    /// Reflex's surface indices on both tyres: the mean of what the wheels
+    /// touched last step, as Reflex averages its two samples (`surface.rs`).
+    /// In the air they keep what they had.
+    fn set_surface(&mut self) {
+        let touched: Vec<Surface> = self.ground.iter().flatten().copied().collect();
+        if touched.is_empty() {
+            return;
+        }
+        let n = touched.len() as f64;
+        let grip = touched.iter().map(|s| s.grip_index()).sum::<f64>() / n;
+        let drag = touched.iter().map(|s| s.drag_index()).sum::<f64>() / n;
+        for tyre in self.bike.sim_mut().tyres.iter_mut() {
+            tyre.grip_index = grip;
+            tyre.drag_index = drag;
+        }
     }
 
     /// The simulation's state, as the rest of the game reads a `Bike`.
@@ -370,6 +397,7 @@ impl Exact {
                 distance: 0.0,
                 point: w.point,
                 normal: w.normal,
+                surface: self.ground[theirs].unwrap_or_default(),
             });
         }
         self.written = (bike.position, bike.rotation, bike.velocity);
@@ -416,6 +444,51 @@ mod tests {
         for _ in 0..(seconds * 60.0) as usize {
             bike.step(world, c, 1.0 / 60.0);
         }
+    }
+
+    /// A flat floor made all of `surface`.
+    fn floor_of(surface: Surface) -> World {
+        let s = 400.0;
+        World::with_surfaces([
+            ([Vec3::new(-s, 0.0, -s), Vec3::new(-s, 0.0, s), Vec3::new(s, 0.0, s)], false, u32::MAX, surface),
+            ([Vec3::new(-s, 0.0, -s), Vec3::new(s, 0.0, s), Vec3::new(s, 0.0, -s)], false, u32::MAX, surface),
+        ])
+    }
+
+    /// Full gas for 4 s from rest on a floor of each kind: Reflex's tyres
+    /// get that ground's grip and drag indices, and mud holds the bike back.
+    /// Also the arcade model: mud slows it, ice lets it spin up less.
+    #[test]
+    fn the_ground_under_the_wheels_sets_grip_and_drag() {
+        let gas = Controls { throttle: 1.0, ..Default::default() };
+        let reflex = |surface: Surface| {
+            let world = floor_of(surface);
+            let mut bike = exact_bike(&world)?;
+            ride(&world, &mut bike, Controls::default(), 1.0);
+            ride(&world, &mut bike, gas, 4.0);
+            let tyre = &bike.exact().unwrap().bike.sim().tyres[1];
+            assert_eq!((tyre.grip_index, tyre.drag_index), (surface.grip_index(), surface.drag_index()), "{surface:?}");
+            Some(bike.speed())
+        };
+        let arcade = |surface: Surface| {
+            let world = floor_of(surface);
+            let mut bike = Bike::dropped(&world, Vec3::new(0.0, 2.0, -350.0), 0.0).with_exact(false);
+            ride(&world, &mut bike, Controls::default(), 1.0);
+            ride(&world, &mut bike, gas, 4.0);
+            bike.speed()
+        };
+        let (dirt, mud, ice) = (arcade(Surface::Dirt), arcade(Surface::Mud), arcade(Surface::Ice));
+        eprintln!("arcade after 4 s: dirt {dirt:.1} m/s, mud {mud:.1}, ice {ice:.1}");
+        assert!(mud < dirt * 0.97, "arcade: mud {mud} dirt {dirt}");
+        assert!(ice <= dirt, "arcade: ice {ice} dirt {dirt}");
+        let Some(dirt) = reflex(Surface::Dirt) else {
+            eprintln!("skipped the Reflex part: Reflex is not set up");
+            return;
+        };
+        let (mud, stone) = (reflex(Surface::Mud).unwrap(), reflex(Surface::Stone).unwrap());
+        eprintln!("Reflex after 4 s: dirt {dirt:.1} m/s, mud {mud:.1}, stone {stone:.1}");
+        assert!(mud < dirt * 0.97, "Reflex: mud {mud} dirt {dirt}");
+        assert!(stone >= dirt * 0.97, "Reflex: stone {stone} dirt {dirt}");
     }
 
     /// Full gas from a standstill on a long floor: 0-60 and 40-70 mph times, top speed (mph).

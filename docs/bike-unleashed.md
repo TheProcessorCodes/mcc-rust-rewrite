@@ -122,8 +122,9 @@ Under the sliders are five setup slots, kept in `bike-setups.json` next to the e
 
 ## Not done yet
 
-- Surfaces: only friction zone 1. Halo's collision materials could map to the 16 zones (pavement
-  is zone 2, with far more side grip).
+- Surfaces: done 2026-11-10 (#25) with Reflex's grip and drag classes rather than Unleashed's
+  zones: the ground's kind (`surface.rs`, from the Halo material) scales the tyres' grip and
+  adds terrain drag, on this model and the Reflex one (HANDOFF.md, "Reflex's own simulation").
 - Wheelies come slowly: from a standing start, full gas with the stick back lifts the front
   after about 1.5 s, at about 33 mph (the hold fades with speed). The game moves the rider's weight
   another 1.4 ft back for a moment when the clutch is dumped (`ClutchCofGTravelBack`), which is

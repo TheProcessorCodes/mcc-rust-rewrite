@@ -17,7 +17,10 @@
 //! overrides it.
 //!
 //! The rider is the map's Spartan on the Skate 3 board (`rider.rs`); a
-//! stick figure stands in when either is missing.
+//! stick figure stands in when either is missing. The engine's trick
+//! scoring is shown as Skate 3 does (`tricks.rs`).
+
+mod tricks;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,7 +30,7 @@ use bevy::input::gamepad::GamepadButton as B;
 use bevy::prelude::*;
 use mcc_core::map::{MapAppExt, Warmup};
 use bevy::window::PrimaryWindow;
-use skate_host::bridge::{InputFrame, Pose, PreparedCollision, Session};
+use skate_host::bridge::{InputFrame, Pose, PreparedCollision, Score, Session};
 
 use blam_geometry::{Collision, TriggerVolume, rails};
 
@@ -57,10 +60,34 @@ impl Plugin for SkatePlugin {
             .init_map_resource::<SessionFlag>()
             .add_systems(mcc_core::map::MapStartup, start_worker)
             .init_map_resource::<SkateMotion>()
+            .init_map_resource::<tricks::Tricks>()
+            // Per map: unloading the map despawns the call-outs.
+            .add_systems(mcc_core::map::MapStartup, tricks::spawn)
             .add_systems(
                 Update,
-                (warmed, update.run_if(mcc_core::pause::running), publish_motion, draw_rider, show_status).chain().run_if(mcc_core::map::ready),
+                (
+                    warmed,
+                    update.run_if(mcc_core::pause::running),
+                    feed_tricks.run_if(mcc_core::pause::running),
+                    tricks::onto_shot_camera,
+                    tricks::show,
+                    publish_motion,
+                    draw_rider,
+                    show_status,
+                )
+                    .chain()
+                    .run_if(mcc_core::map::ready),
             );
+    }
+}
+
+/// The engine's latest score to the call-outs while riding; off the board
+/// they go.
+fn feed_tricks(host: Res<Host>, time: Res<Time>, mut tricks: ResMut<tricks::Tricks>) {
+    if host.active && !host.score_stale {
+        tricks.take(&host.score, time.delta_secs().min(0.1));
+    } else {
+        tricks.clear();
     }
 }
 
@@ -139,6 +166,12 @@ struct Host {
     feet: Vec3,
     velocity: Vec3,
     state: String,
+    /// The trick scoring with the latest pose (`tricks.rs`), stale from
+    /// getting on until the first pose of the ride.
+    score: Score,
+    score_stale: bool,
+    /// `MCC_SHOT_TRICKS`: a `--skate` shot flicks the right stick for tricks.
+    shot_tricks: bool,
     status: String,
     /// The BSPs the skate world was last asked to hold.
     world: Option<u32>,
@@ -168,6 +201,9 @@ impl Default for Host {
             feet: Vec3::ZERO,
             velocity: Vec3::ZERO,
             state: String::new(),
+            score: Score::default(),
+            score_stale: true,
+            shot_tricks: std::env::var_os("MCC_SHOT_TRICKS").is_some_and(|v| v != "0"),
             status: String::new(),
             world: None,
             swapping: false,
@@ -669,6 +705,8 @@ fn update(
         host.feet = p.root.w_axis.truncate() / k;
         host.velocity = p.velocity / k;
         host.state = p.state;
+        host.score = p.score;
+        host.score_stale = false;
         rider.active = true;
         rider.scale = k;
         rider.names = p.names;
@@ -713,6 +751,7 @@ fn update(
         host.status = "skate: loading the new zone set".into();
         if host.active {
             host.epoch = host.epoch.wrapping_add(1);
+            host.score_stale = true;
             host.active = false;
             rider.active = false;
             rider.bones.clear();
@@ -726,6 +765,7 @@ fn update(
         && let Some((spawn, heading)) = auto.0.take()
     {
         host.epoch = host.epoch.wrapping_add(1);
+        host.score_stale = true;
         host.active = true;
         host.neutral = true;
         rider.skated = 0.0;
@@ -739,6 +779,7 @@ fn update(
     {
         // A new epoch drops poses still in flight from the old spot.
         host.epoch = host.epoch.wrapping_add(1);
+        host.score_stale = true;
         let AutoStart(Some((spawn, heading))) = AutoStart::at(position, yaw) else {
             return;
         };
@@ -761,6 +802,7 @@ fn update(
         let heading = heading_along(if flat.length() > 1.0 { flat } else { look });
         let spawn = ((bail.position + Vec3::Y * 0.3) * k).to_array();
         host.epoch = host.epoch.wrapping_add(1);
+        host.score_stale = true;
         host.active = true;
         host.neutral = false;
         rider.skated = 0.0;
@@ -775,6 +817,7 @@ fn update(
     let to_bike = keys.just_pressed(KeyCode::KeyB) || pad.is_some_and(|p| p.just_pressed(B::Select));
     if host.active && !host.neutral && to_bike {
         host.epoch = host.epoch.wrapping_add(1);
+        host.score_stale = true;
         host.active = false;
         rider.active = false;
         rider.bones.clear();
@@ -787,6 +830,7 @@ fn update(
     // Jumping off onto foot, keeping the board's momentum.
     if host.active && !host.neutral && bail_pressed(&keys, pad) {
         host.epoch = host.epoch.wrapping_add(1);
+        host.score_stale = true;
         host.active = false;
         rider.active = false;
         rider.bones.clear();
@@ -798,6 +842,7 @@ fn update(
     }
     if toggle && host.ready && !rider.bike && !rider.foot {
         host.epoch = host.epoch.wrapping_add(1);
+        host.score_stale = true;
         if host.active {
             host.active = false;
             rider.active = false;
@@ -828,13 +873,33 @@ fn update(
     if host.active {
         host.packet = host.packet.wrapping_add(1);
         let frame = match pad {
-            _ if host.neutral => InputFrame::from_pad(0, [0, 0], [0, 0], [0, 0], host.packet),
+            _ if host.neutral => InputFrame::from_pad(0, [0, 0], [0, 0], shot_flick(host.shot_tricks, rider.skated), host.packet),
             Some(p) => pad_frame(p, host.packet),
             None => keyboard_frame(&keys, host.packet),
         };
         let dt = time.delta_secs().min(0.1);
         rider.skated += dt;
         let _ = send.send(Job::Step(host.epoch, dt, frame, aspect));
+    }
+}
+
+/// The right stick in a `--skate` shot with `MCC_SHOT_TRICKS`: every 1.6 s
+/// of the ride, pulled back then flicked up (an ollie), up and to the left
+/// (a kickflip) or up and to the right, in turn; at rest otherwise.
+fn shot_flick(on: bool, skated: f32) -> [i16; 2] {
+    const EVERY: f32 = 1.6;
+    if !on {
+        return [0, 0];
+    }
+    let n = (skated / EVERY) as u32;
+    match skated % EVERY {
+        t if (0.4..0.55).contains(&t) => [0, -32767],
+        t if (0.55..0.65).contains(&t) => match n % 3 {
+            0 => [0, 32767],
+            1 => [-23000, 23000],
+            _ => [23000, 23000],
+        },
+        _ => [0, 0],
     }
 }
 
@@ -987,6 +1052,54 @@ mod tests {
             "the skater is at {feet}, the marker at {target:?}"
         );
         assert_eq!(session.session_marker().map(|(p, _)| p), Some(at), "the marker stays");
+    }
+
+    /// Rolling on flat ground, the right stick pulled back and flicked up
+    /// (an ollie) then pulled back and flicked up and to the left (a
+    /// kickflip, regular stance): both are called out with points, and the
+    /// sequence is published once he lands.
+    #[test]
+    fn flicked_tricks_are_called_out_and_scored() {
+        let Some(root) = game_paths::skate_assets().filter(|r| game_paths::is_skate_assets(r)) else {
+            eprintln!("skipped: Skate 3 is not set up");
+            return;
+        };
+        let floor = vec![
+            [[-400.0, 0.0, -400.0], [-400.0, 0.0, 400.0], [400.0, 0.0, 400.0]],
+            [[-400.0, 0.0, -400.0], [400.0, 0.0, 400.0], [400.0, 0.0, -400.0]],
+        ];
+        let mut session = Session::new(&root, floor, vec![], [0.0; 3], 0.0).unwrap();
+        session.activate([0.0, 0.3, 0.0], heading_along(Vec3::Z)).unwrap();
+        session.launch([0.0, 0.0, 6.0]);
+        let dt = session.period();
+        let mut packet = 0;
+        let mut names = Vec::new();
+        let mut seen = session.score().tricks;
+        let mut frames = |session: &mut Session, right: [i16; 2], n: usize| {
+            for _ in 0..n {
+                packet += 1;
+                session.collect(InputFrame::from_pad(0, [0, 0], [0, 0], right, packet), dt);
+                session.advance().unwrap();
+                let score = session.score();
+                if score.tricks != seen {
+                    seen = score.tricks;
+                    names.push((score.trick.clone(), score.points));
+                }
+            }
+        };
+        frames(&mut session, [0, 0], 30);
+        frames(&mut session, [0, -32767], 8);
+        frames(&mut session, [0, 32767], 6);
+        frames(&mut session, [0, 0], 150);
+        frames(&mut session, [0, -32767], 8);
+        frames(&mut session, [-23000, 23000], 6);
+        frames(&mut session, [0, 0], 150);
+        let score = session.score();
+        eprintln!("called {names:?}; {score:?}");
+        assert!(!names.is_empty(), "no trick was called: {score:?}");
+        assert!(names.iter().all(|(n, p)| !n.is_empty() && *p >= 0.0), "{names:?}");
+        assert!(score.sequences > 0 && !score.sequence_active, "{score:?}");
+        assert!(score.last_sequence > 0.0 || score.line + score.banked > 0.0, "{score:?}");
     }
 
     #[test]

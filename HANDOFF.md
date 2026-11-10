@@ -419,9 +419,18 @@ the bike on it:
   no crash). Both skip without Reflex / MCC. Not playtested yet.
 - The clutch (`ReflexInput::clutch`) is RB or E held (`Controls::clutch`), as `reflex_bevy`'s
   own test app has it; the arcade models ignore it.
-- Not done: surfaces (every Halo surface
-  rides as Reflex's default grip), the engine sound picking takes by Reflex's rpm (it reads
-  `bike.engine` as before).
+- Surfaces (2026-11-10, #25, `crates/mcc_bike/src/surface.rs`): each Halo 3 collision shader
+  names the global material it is made of at `render_method +0x40` (a terrain shader its four
+  layers there), read into `CollisionMaterial::global_materials`; `Surface::of` sorts those
+  names (else words in the shader path, for the other Halos) into dirt, grass, gravel, sand,
+  snow, mud, ice, water, stone, metal, wood, glass, flesh, rubber and floor, each with Reflex's
+  grip class (index 0.1 .. 0.9) and drag class (0 .. 1) from its friction map. The Reflex model
+  puts the mean of what both wheels touched last step on both tyres (`grip_index`,
+  `drag_index`), as Reflex averages its two samples; dirt stays Reflex's 0.48 / 0.25. The
+  arcade models scale tyre grip by Reflex's static grip at that index over dirt's and add a
+  drag beyond dirt's. Placed objects' collision (no shader) rides as dirt. The mapping is ours;
+  not playtested.
+- Not done: the engine sound picking takes by Reflex's rpm (it reads `bike.engine` as before).
 
 ## Dirt bike (2026-10-28)
 
