@@ -705,27 +705,28 @@ not read. Same decompression rule as the sbsp doc section 6, but `BoundingBoxes[
 
 ### G3.4 The Spartan rig: `objects\characters\masterchief\mp_masterchief\mp_masterchief`
 
-riverworld tag **8096**, meta file offset `0x86CD400`, 51 nodes at file `0x86BDC4C`. Units wu,
-+Z up, origin between the feet: pelvis at z 0.3944 wu (1.20 m), head node at z 0.609 wu
-(1.86 m), model bounds Z `[-0.0052, 0.8028]` wu (helmets). Bone convention: a child sits on its
-parent's **+X axis** (`l_calf` at (0.1803, 0, 0) from `l_thigh`), i.e. +X runs along the bone;
-the pelvis quaternion (0.5, 0.5, 0.5, -0.5) maps local +X to model +Z (up), local +Y to model +X
-(forward) and local +Z to model +Y (left), so `l_thigh` at local (0, 0, +0.0422) is on the
-Spartan's left. Local positions below are exact map values (4 decimals).
+51 nodes (the tag's index and offsets differ per map; find it by name). Units wu, +Z up,
+origin between the feet: the pelvis is about 1.2 m up and the head node about 1.9 m. Bone
+convention: a child sits on its parent's **+X axis**, i.e. +X runs along the bone (the calf is
+straight down the thigh's +X); the pelvis is turned so that its local +X is model +Z (up), local
++Y is model +X (forward) and local +Z is model +Y (left), so `l_thigh`, at +Z from the pelvis, is
+on the Spartan's left. The positions themselves are not written down here: they are the map's
+data, and the game reads them from the player's own map at run time (`mcc_rider::load_chief`,
+`halo_rig.rs`).
 
-| idx | name | parent | local position (x, y, z) wu | idx | name | parent | local position |
-|---|---|---|---|---|---|---|---|
-| 0 | pelvis | -1 | (0, 0, 0.3944) | 11 | r_clavicle | 6 | (0.0635, 0, -0.0598) |
-| 1 | l_thigh | 0 | (0, 0, 0.0422) | 12 | l_toe | 7 | (0.0682, 0.0576, 0) |
-| 2 | r_thigh | 0 | (0, 0, -0.0422) | 13 | r_toe | 8 | (0.0682, 0.0576, 0) |
-| 3 | spine | 0 | (0.0374, -0.0001, 0) | 14 | l_upperarm | 9 | (0.0304, 0, 0) |
-| 4 | l_calf | 1 | (0.1803, 0, 0) | 15 | head | 10 | (0.0172, 0, 0) |
-| 5 | r_calf | 2 | (0.1803, 0, 0) | 16 | r_upperarm | 11 | (0.0304, 0, 0) |
-| 6 | spine1 | 3 | (0.0740, -0.0001, 0) | 17 | l_forearm | 14 | (0.1086, 0, 0) |
-| 7 | l_foot | 4 | (0.1563, 0, 0) | 18 | r_forearm | 16 | (0.1086, 0, 0) |
-| 8 | r_foot | 5 | (0.1563, 0, 0) | 19 | l_hand | 17 | (0.1150, -0.0003, 0) |
-| 9 | l_clavicle | 6 | (0.0635, 0, 0.0598) | 20 | r_hand | 18 | (0.1150, -0.0003, 0) |
-| 10 | neck | 6 | (0.0861, 0, 0) | | | | |
+| idx | name | parent | idx | name | parent |
+|---|---|---|---|---|---|
+| 0 | pelvis | -1 | 11 | r_clavicle | 6 |
+| 1 | l_thigh | 0 | 12 | l_toe | 7 |
+| 2 | r_thigh | 0 | 13 | r_toe | 8 |
+| 3 | spine | 0 | 14 | l_upperarm | 9 |
+| 4 | l_calf | 1 | 15 | head | 10 |
+| 5 | r_calf | 2 | 16 | r_upperarm | 11 |
+| 6 | spine1 | 3 | 17 | l_forearm | 14 |
+| 7 | l_foot | 4 | 18 | r_forearm | 16 |
+| 8 | r_foot | 5 | 19 | l_hand | 17 |
+| 9 | l_clavicle | 6 | 20 | r_hand | 18 |
+| 10 | neck | 6 | | | |
 
 Nodes 21-50 are the fingers, in a fixed pattern: 21-25 `l_{index,middle,pinky,ring,thumb}_low`
 (parent 19), 26-30 the same for `r_` (parent 20), 31-35 `l_*_mid` (parents 21-25), 36-40
