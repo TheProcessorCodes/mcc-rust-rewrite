@@ -17,6 +17,8 @@ merge history.
 - Warthog run: the glowing orange lumps at the foot of the trench cliffs are gone (#5).
 - Pause menu: the dirt bike's session marker row no longer mentions the board when there is no
   skateboard (#6).
+- Halo CE, Halo 2 and Reach maps still have Master Chief when Valhalla is not installed: he is
+  borrowed from another Halo 3 map (#7).
 
 ## 2026-11-06
 

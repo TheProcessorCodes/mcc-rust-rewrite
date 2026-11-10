@@ -334,7 +334,8 @@ skateboard. Players with Skate 3 see no change.
 - **The skeleton, `mcc_core::skate::HaloRig`.** On foot and on the bike `rig.json` was the only
   thing taken from Skate 3. Without it `install` (`main.rs`) builds a rig from the `ChiefModel`
   the map load already decodes (the map's own Master Chief, or riverworld's for Halo CE, Halo 2
-  and Reach, as the rider borrows it) with `mcc_rider::chief_rig` (`halo_rig.rs`): 27 bones
+  and Reach, as the rider borrows it; without riverworld, another Halo 3 map's,
+  `borrowed_chief`, #7) with `mcc_rider::chief_rig` (`halo_rig.rs`): 27 bones
   under Skate 3's names. The 21 `MAPPING` bones sit on their Halo joints, seen through
   `halo_to_skate(k)` and the quarter turn about Y the rider falls back to for his facing, as
   places only (no turn); SPINE1, SPINE3 and NECK1 sit halfway between their neighbours; the

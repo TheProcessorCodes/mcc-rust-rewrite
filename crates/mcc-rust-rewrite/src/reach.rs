@@ -11,8 +11,8 @@
 //! atmosphere, its sound, its weapons and movement numbers (the rider is
 //! Halo 3's Spartan borrowed from Valhalla, on Valhalla's movement).
 
-use crate::{LoadedMap, resolve_map};
-use crate::{rider, textures, world};
+use crate::{LoadedMap, borrowed_chief};
+use crate::{textures, world};
 
 /// Decodes the map's BSPs, collision and objects into `scene`.
 pub fn decode(cache: &blam_cache::CacheFile, scene: &mut blam_geometry::Scene) -> anyhow::Result<()> {
@@ -58,11 +58,9 @@ pub fn finish(
     scene: blam_geometry::Scene,
     textures: textures::MaterialTextures,
 ) -> LoadedMap {
-    // The rider is Halo 3's Spartan, borrowed from Valhalla when Halo 3 is
-    // installed (Reach's Spartans are not decoded).
-    let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
-        .ok()
-        .and_then(|c| rider::load_chief(&c));
+    // The rider is Halo 3's Spartan, borrowed from Valhalla (or another
+    // Halo 3 map) when Halo 3 is installed (Reach's Spartans are not decoded).
+    let chief = borrowed_chief();
     let sky = world::sky::load(cache, &scene);
     let water = world::water::load(cache, &scene);
     LoadedMap {
