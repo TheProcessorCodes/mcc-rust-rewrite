@@ -97,16 +97,21 @@ fn install_panic_hook() {
         let place = info.location().map_or_else(|| "unknown".to_string(), |l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
         let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
         let report = crash_report(&message, &place, &thread, &std::backtrace::Backtrace::force_capture().to_string());
-        let dir = dir();
-        if std::fs::create_dir_all(&dir).is_ok() {
-            prune(&dir, "crash-", ".txt", KEEP - 1);
-            let path = dir.join(format!("crash-{}.txt", stamp()));
-            if std::fs::write(&path, report).is_ok() {
-                eprintln!("crash report: {}", path.display());
-            }
+        if let Some(path) = write_crash(&dir(), &report) {
+            eprintln!("crash report: {}", path.display());
         }
         previous(info);
     }));
+}
+
+/// Writes a crash file in `dir` (made if need be), keeping the last
+/// [`KEEP`]; where it went, if it could be written.
+fn write_crash(dir: &Path, report: &str) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    prune(dir, "crash-", ".txt", KEEP - 1);
+    let path = dir.join(format!("crash-{}.txt", stamp()));
+    std::fs::write(&path, report).ok()?;
+    Some(path)
 }
 
 /// What a crash file says.
@@ -347,6 +352,18 @@ mod tests {
     fn colour_codes_are_taken_out() {
         assert_eq!(plain("\u{1b}[2m2026\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m bevy: hi\n"), "2026  INFO bevy: hi\n");
         assert_eq!(plain("plain"), "plain");
+    }
+
+    #[test]
+    fn a_crash_file_has_the_panic_and_its_place() {
+        let dir = std::env::temp_dir().join(format!("mcc-crash-{}", std::process::id()));
+        let report = crash_report("index out of bounds", "src/main.rs:1:2", "main", "0: main");
+        let path = write_crash(&dir, &report).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(path.file_name().unwrap().to_str().unwrap().starts_with("crash-"));
+        assert!(text.contains("Panic: index out of bounds\nAt: src/main.rs:1:2\nThread: main"));
+        assert!(text.contains("Backtrace:\n0: main"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
