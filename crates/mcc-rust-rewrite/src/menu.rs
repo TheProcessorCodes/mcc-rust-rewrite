@@ -462,8 +462,9 @@ struct SettingsNote;
 struct SettingsBack;
 
 /// The settings, in row order: three games' folders, the username, the speed
-/// unit, skating on or off, the bike's physics.
-const SETTING_GAMES: [&str; 7] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username", "Speedometer", "Skating", "Bike physics"];
+/// unit, skating on or off, the dialogue language, the bike's physics.
+const SETTING_GAMES: [&str; 8] =
+    ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username", "Speedometer", "Skating", "Dialogue language", "Bike physics"];
 /// The row holding Skate 3's folder.
 const SKATE_ROW: usize = 2;
 /// The row holding the username.
@@ -474,7 +475,28 @@ const UNITS_ROW: usize = 4;
 const SKATING_ROW: usize = 5;
 /// The row switching the bike between Arcade and Reflex physics, the last
 /// one; only shown with Reflex set up (it is optional).
-const PHYSICS_ROW: usize = 6;
+const PHYSICS_ROW: usize = 7;
+/// The row choosing the language Halo's dialogue plays in.
+const LANGUAGE_ROW: usize = 6;
+
+/// A dialogue language (`game_paths::LANGUAGES`) as the row shows it.
+fn language_label(language: &str) -> &'static str {
+    match language {
+        "french" => "French",
+        "german" => "German",
+        "italian" => "Italian",
+        "mexican" => "Spanish (Mexico)",
+        "spanish" => "Spanish (Spain)",
+        _ => "English",
+    }
+}
+
+/// The language after `language` in `game_paths::LANGUAGES`, going round.
+fn next_language(language: &str) -> &'static str {
+    let all = game_paths::LANGUAGES;
+    let at = all.iter().position(|l| *l == language).unwrap_or(all.len() - 1);
+    all[(at + 1) % all.len()]
+}
 
 /// Whether the physics row is there: Reflex is set up.
 fn physics_offered() -> bool {
@@ -494,7 +516,7 @@ fn button_label(row: usize, skate_ready: bool) -> &'static str {
     match row {
         SKATE_ROW | SKATING_ROW if !skate_ready => "SET UP",
         USERNAME_ROW => "EDIT",
-        SKATE_ROW | UNITS_ROW | SKATING_ROW | PHYSICS_ROW => "CHANGE",
+        SKATE_ROW | UNITS_ROW | SKATING_ROW | LANGUAGE_ROW | PHYSICS_ROW => "CHANGE",
         _ => "SELECT",
     }
 }
@@ -502,7 +524,7 @@ fn button_label(row: usize, skate_ready: bool) -> &'static str {
 /// What each row shows now: the saved folder, or why there is none.
 /// `skate_ready`: Skate 3 is set up (`game_paths::skate_ready`); without it
 /// skating is not there to turn on.
-fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool, skate_ready: bool) -> [String; 7] {
+fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool, skate_ready: bool) -> [String; 8] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
     let settings = game_paths::settings();
     let reflex = match game_paths::reflex_chosen() {
@@ -534,6 +556,7 @@ fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool, sk
         game_paths::username(),
         format!("{} (miles per hour or kilometres per hour)", unit.label()),
         skating.to_string(),
+        format!("{} (the voices in Halo 3 and Halo: Combat Evolved)", language_label(game_paths::language())),
         if reflex_physics {
             "Reflex (MX vs ATV Reflex's own bike simulation)"
         } else {
@@ -1502,6 +1525,21 @@ fn select(
         menu.note = match game_paths::set_skating_enabled(skate.0) {
             Ok(()) if skate.0 => "Skating is on. J (or both sticks clicked) gets on the board.".to_string(),
             Ok(()) => "Skating is off. Maps load without the skateboard or grind rails.".to_string(),
+            Err(e) => e,
+        };
+        return;
+    }
+    if row == LANGUAGE_ROW {
+        let language = next_language(game_paths::language());
+        menu.note = match game_paths::set_language(language) {
+            // `%MCC_LANGUAGE%` (dev) is read before the saved choice.
+            Ok(()) if game_paths::language() != language => {
+                "Saved, but the MCC_LANGUAGE environment variable is set and comes first.".to_string()
+            }
+            Ok(()) => format!(
+                "Dialogue plays in {} on the next map you load, where your MCC has that language installed.",
+                language_label(language)
+            ),
             Err(e) => e,
         };
         return;
