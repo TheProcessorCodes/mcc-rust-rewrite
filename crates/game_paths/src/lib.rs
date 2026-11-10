@@ -44,6 +44,9 @@ pub mod key {
     /// Whether skating is on: `off` turns it off; anything else, or no
     /// line, leaves it on. See [`skating_enabled`](super::skating_enabled).
     pub const SKATING: &str = "SKATING";
+    /// `on` shows the skate tricks' names and score; off is the default.
+    /// See [`trick_display`](super::trick_display).
+    pub const TRICK_DISPLAY: &str = "TRICK_DISPLAY";
     /// The last map started from the map menu (its menu name, `warthog_run`,
     /// `h2:ascension`, ...), which the menu opens on next time.
     pub const LAST_MAP: &str = "LAST_MAP";
@@ -394,6 +397,12 @@ pub fn set_skating_enabled(on: bool) -> Result<(), String> {
     let mut s = Settings::read(&path);
     s.set(key::SKATING, if on { "on" } else { "off" });
     s.write(&path)
+}
+
+/// Whether skating shows each trick's name and score: off until the player
+/// turns it on in Settings.
+pub fn trick_display() -> bool {
+    settings().get(key::TRICK_DISPLAY).is_some_and(|v| v.trim().eq_ignore_ascii_case("on"))
 }
 
 /// The name a player has until they choose one.

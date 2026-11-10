@@ -768,6 +768,19 @@ impl MusicPlayer {
         self.start(sounds, lsnd, Origin::Hand, None, 1.0);
     }
 
+    /// Fades every piece out over `seconds` and ends it there, whatever its
+    /// own rules say (a loop may otherwise play on for minutes to its end).
+    pub(crate) fn fade_all(&mut self, seconds: f32) {
+        self.pieces.retain(|p| p.state != State::Waiting);
+        for p in &mut self.pieces {
+            for f in p.tracks.iter_mut().flatten() {
+                f.fade_to(0.0, seconds);
+                f.end_at_zero = true;
+            }
+            p.state = State::Ending;
+        }
+    }
+
     /// Ends every piece: by its rules, or `immediately` (a short fade).
     pub(crate) fn end_all(&mut self, sounds: &Sounds, mixer: &Mixer, immediately: bool) {
         for i in (0..self.pieces.len()).rev() {

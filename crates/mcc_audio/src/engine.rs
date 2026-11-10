@@ -51,7 +51,8 @@ pub struct Input {
     pub gear: usize,
     /// m/s.
     pub speed: f32,
-    /// In the air for more than a moment.
+    /// The rear wheel free: in the air for more than a moment, or the
+    /// clutch held in.
     pub airborne: bool,
     pub crashed: bool,
     /// Counts up once per landing and per crash; `land_force` 0 to 1.
@@ -644,7 +645,9 @@ pub fn bike_engine(
     let smoothed = e.rpm + (target - e.rpm) * (dt / 0.1).min(1.0);
     e.rpm += (smoothed - e.rpm).clamp(-30_000.0 * dt, 30_000.0 * dt);
     {
-        let (rpm, landings, wrecks, air) = (e.rpm, e.landings, e.wrecks, e.air > 0.25);
+        // The clutch held in frees the engine as the air does: on the gas
+        // it runs to the limiter instead of pulling through a gear.
+        let (rpm, landings, wrecks, air) = (e.rpm, e.landings, e.wrecks, e.air > 0.25 || m.clutch_in);
         let mut s = e.shared.lock().unwrap();
         s.rpm = rpm;
         s.min_rpm = m.min_rpm;

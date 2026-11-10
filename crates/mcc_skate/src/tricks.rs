@@ -227,7 +227,12 @@ pub(crate) struct ScoreText;
 pub(crate) struct LineText;
 
 /// The call-outs in the lower middle of the screen, hidden until a trick.
+/// Only when the player turned them on (Settings, Trick display); a
+/// `MCC_SHOT_TRICKS` shot has them too.
 pub(crate) fn spawn(mut commands: Commands) {
+    if !game_paths::trick_display() && !std::env::var_os("MCC_SHOT_TRICKS").is_some_and(|v| v != "0") {
+        return;
+    }
     commands
         .spawn((
             TrickHud,

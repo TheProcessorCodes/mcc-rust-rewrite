@@ -9,23 +9,23 @@ merge history.
 
 ### Added
 - The map menu opens on the last map you started (#13).
-- The Campaign tab has a difficulty choice (Y or F2), kept for next time (#14).
+- The Campaign tab has a difficulty choice (Y or F2), kept for next time (#17).
 - Campaign runs show a clock in the top right, and the completion screen keeps your best time
-  for each level and difficulty (#15).
-- The bike's tuning menu opens from a controller with LB + X (#16).
-- A clutch for the bike's Reflex physics: hold RB or E (#17).
-- Settings has an Armour colour row for the Spartan on multiplayer maps (#18).
-- Skating shows each trick's name and points as you land it, with the combo and the line's
-  score, which fade out once the line ends (#24).
+  for each level and difficulty (#18).
+- The bike's tuning menu opens from a controller with LB + X (#14).
+- A clutch for the bike's Reflex physics: hold RB or E; on the gas with the clutch in, the engine
+  revs to the limiter (#15).
+- Settings has an Armour colour row for the Spartan on multiplayer maps (#16).
+- Skating can show each trick's name and points as you land it, with the combo and the line's
+  score, which fade out once the line ends; turn it on with Trick display in Settings (#24, #38).
 - The dirt bike grips by what it rides on: it slides more on snow, ice and metal, grips better
   on rock and concrete, and sand and mud hold it back (#25).
 - On foot, Q (B on a controller) melees, lunging at a foe a step or two away (#31).
 - On foot, G (LT) throws a grenade and X (LB) picks frag or plasma; you start with two frags,
   pick more up by walking over them, and the HUD shows how many you carry (#31).
-- A soft shadow under you on foot, on the board and on the bike shrinks and fades as you rise (#30).
 - Man cannons and gravity lifts launch the skateboard, and Halo 3's man cannons now throw you on foot and on the bike too (#29).
 - Maps play their own effects from the start, such as Valhalla's waterfall mist and the snow on Snowbound (#26).
-- U plays Halo 3's campaign music on any map; Shift+U skips to the next piece and Ctrl+U picks one at random (#27).
+- U plays Halo 3's campaign music on any map and U again fades it out; Shift+U skips to the next piece and Ctrl+U picks one at random (#27).
 - Settings has mouse sensitivity, stick sensitivity, invert look and field of view, used when
   flying, on foot, on the bike and on the board (#20).
 - Settings can switch between borderless fullscreen and a window, and turn vsync off (#21).

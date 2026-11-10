@@ -271,6 +271,7 @@ fn publish_motion(riding: Res<Riding>, mut motion: ResMut<mcc_core::bike::BikeMo
                 grounded: b.grounded(),
                 crashed: b.crashed.is_some(),
                 clutch_slipping: !b.engine.locked,
+                clutch_in: b.exact().is_some_and(|e| e.clutch_in()),
                 rear_sliding: b.wheels[0].sliding && b.wheels[0].contact.is_some(),
                 position: b.position,
                 velocity: b.velocity,

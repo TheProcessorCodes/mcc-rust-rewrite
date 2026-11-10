@@ -23,6 +23,8 @@ pub struct BikeMotion {
     pub crashed: bool,
     /// The clutch slipping (pulling away, creeping).
     pub clutch_slipping: bool,
+    /// The clutch held in: the engine turns free of the rear wheel.
+    pub clutch_in: bool,
     /// The rear tyre spinning or locked.
     pub rear_sliding: bool,
     /// The bike frame's origin (renderer frame, m), its velocity (m/s) and

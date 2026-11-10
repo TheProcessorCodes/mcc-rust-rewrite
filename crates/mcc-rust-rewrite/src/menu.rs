@@ -537,7 +537,7 @@ struct SettingsStepHint;
 /// off, the dialogue language, the bike's physics; the mouse's and the
 /// stick's speed and invert look; the display mode, vsync and the field of
 /// view; the data folder, diagnostics, reset and the converted data.
-const SETTING_NAMES: [&str; 19] = [
+const SETTING_NAMES: [&str; 20] = [
     "Halo MCC",
     "MX vs ATV Reflex",
     "Skate 3",
@@ -545,6 +545,7 @@ const SETTING_NAMES: [&str; 19] = [
     "Armour colour",
     "Speedometer",
     "Skating",
+    "Trick display",
     "Dialogue language",
     "Bike physics",
     "Mouse sensitivity",
@@ -561,10 +562,10 @@ const SETTING_NAMES: [&str; 19] = [
 /// The settings' pages: their names in the tab bar and their rows.
 const SETTING_PAGES: [(&str, std::ops::Range<usize>); 5] = [
     ("GAMES", 0..3),
-    ("PLAYER", 3..9),
-    ("CONTROLS", 9..12),
-    ("DISPLAY", 12..15),
-    ("SUPPORT", 15..19),
+    ("PLAYER", 3..10),
+    ("CONTROLS", 10..13),
+    ("DISPLAY", 13..16),
+    ("SUPPORT", 16..20),
 ];
 /// The row holding Skate 3's folder.
 const SKATE_ROW: usize = 2;
@@ -576,30 +577,32 @@ const ARMOUR_ROW: usize = 4;
 const UNITS_ROW: usize = 5;
 /// The row turning skating on and off.
 const SKATING_ROW: usize = 6;
+/// The row turning the skate tricks' names and score on (off by default).
+const TRICKS_ROW: usize = 7;
 /// The row choosing the language Halo's dialogue plays in.
-const LANGUAGE_ROW: usize = 7;
+const LANGUAGE_ROW: usize = 8;
 /// The row switching the bike between Arcade and Reflex physics, the last
 /// on the Player page; only shown with Reflex set up (it is optional).
-const PHYSICS_ROW: usize = 8;
+const PHYSICS_ROW: usize = 9;
 /// The mouse's turning speed (`mcc_core::view::LookSettings`).
-const MOUSE_ROW: usize = 9;
+const MOUSE_ROW: usize = 10;
 /// The right stick's turning speed.
-const STICK_ROW: usize = 10;
+const STICK_ROW: usize = 11;
 /// Looking up and down turned round.
-const INVERT_ROW: usize = 11;
+const INVERT_ROW: usize = 12;
 /// Borderless fullscreen or a window (`mcc_core::view::Display`).
-const DISPLAY_ROW: usize = 12;
-const VSYNC_ROW: usize = 13;
+const DISPLAY_ROW: usize = 13;
+const VSYNC_ROW: usize = 14;
 /// Every camera's field of view.
-const FOV_ROW: usize = 14;
+const FOV_ROW: usize = 15;
 /// Opens the data folder.
-const FOLDER_ROW: usize = 15;
+const FOLDER_ROW: usize = 16;
 /// Copies the diagnostics summary.
-const DIAGNOSTICS_ROW: usize = 16;
+const DIAGNOSTICS_ROW: usize = 17;
 /// Puts the settings back to their defaults (asks first).
-const RESET_ROW: usize = 17;
+const RESET_ROW: usize = 18;
 /// Deletes the converted Skate 3 and Reflex data (asks first).
-const DELETE_ROW: usize = 18;
+const DELETE_ROW: usize = 19;
 
 /// A dialogue language (`game_paths::LANGUAGES`) as the row shows it.
 fn language_label(language: &str) -> &'static str {
@@ -649,7 +652,7 @@ fn button_label(row: usize, skate_ready: bool) -> &'static str {
     match row {
         SKATE_ROW | SKATING_ROW if !skate_ready => "SET UP",
         USERNAME_ROW => "EDIT",
-        SKATE_ROW | ARMOUR_ROW | UNITS_ROW | SKATING_ROW | LANGUAGE_ROW | PHYSICS_ROW => "CHANGE",
+        SKATE_ROW | ARMOUR_ROW | UNITS_ROW | SKATING_ROW | TRICKS_ROW | LANGUAGE_ROW | PHYSICS_ROW => "CHANGE",
         MOUSE_ROW | STICK_ROW | INVERT_ROW | DISPLAY_ROW | VSYNC_ROW | FOV_ROW => "CHANGE",
         FOLDER_ROW => "OPEN",
         DIAGNOSTICS_ROW => "COPY",
@@ -704,6 +707,12 @@ fn setting_values(
         format!("{} (the Spartan on multiplayer maps, from the next map you load)", mcc_rider::ARMOUR_COLOURS[mcc_rider::armour()].0),
         format!("{} (miles per hour or kilometres per hour)", unit.label()),
         skating.to_string(),
+        if game_paths::trick_display() {
+            "On (each trick's name and points on screen while skating)"
+        } else {
+            "Off (no trick names or score on screen)"
+        }
+        .to_string(),
         format!("{} (the voices in Halo 3 and Halo: Combat Evolved)", language_label(game_paths::language())),
         if reflex_physics {
             "Reflex (MX vs ATV Reflex's own bike simulation)"
@@ -1822,6 +1831,15 @@ fn select(menu: &mut Menu, live: &mut Live, row: usize) {
         menu.note = match game_paths::set_skating_enabled(on) {
             Ok(()) if on => "Skating is on. J (or both sticks clicked) gets on the board.".to_string(),
             Ok(()) => "Skating is off. Maps load without the skateboard or grind rails.".to_string(),
+            Err(e) => e,
+        };
+        return;
+    }
+    if row == TRICKS_ROW {
+        let on = !game_paths::trick_display();
+        menu.note = match game_paths::save_setting(game_paths::key::TRICK_DISPLAY, if on { "on" } else { "off" }) {
+            Ok(()) if on => "Skating shows each trick's name and points from the next map you load.".to_string(),
+            Ok(()) => "Skating shows no trick names or score from the next map you load.".to_string(),
             Err(e) => e,
         };
         return;

@@ -81,7 +81,6 @@ mod logfile;
 mod menu;
 mod reach;
 mod pause;
-mod shadow;
 mod shot;
 mod speedo;
 
@@ -764,8 +763,6 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         if grounded {
             // The campaign's squads (only maps with AI bring any).
             app.add_plugins((bike::BikePlugin, foot::FootPlugin, weapons::WeaponsPlugin, ai::AiPlugin, halo1_anim::H1AnimPlugin));
-            // A blob shadow under the player, on the bike's collision.
-            app.add_plugins(shadow::ShadowPlugin);
         }
     }
     if args.iter().any(|a| a == "--anim-test") {

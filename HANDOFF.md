@@ -70,9 +70,6 @@ What the game does now:
   - Sky: the real sky (`skya`) with scattering, haze per cluster through the BSP's atmosphere palette, night skies (Blackout).
   - Exposure: per map, plus auto exposure, from the camera fx.
   - Spawn markers and editor-only objects are hidden.
-  - A blob shadow under the player on foot, on the board and on the bike (2026-11-10, #30,
-    `mcc-rust-rewrite/src/shadow.rs`): a soft dark patch on the collision straight below, shrinking
-    and fading out by 7 m up. Nothing casts a real shadow (the world's are baked into the lightmaps).
   - The map's own effects play from the start (2026-11-10, #26, `mcc_effects/src/ambient.rs`):
     those placed objects carry (object attachments, Valhalla's waterfall mist), looping, within
     150 m of the camera, and the weather of the camera's air (`skya` setting `+0x8C`: Snowbound's

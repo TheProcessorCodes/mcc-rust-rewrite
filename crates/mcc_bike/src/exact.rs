@@ -415,6 +415,11 @@ impl Exact {
         (rpm(p.engine_min_speed), rpm(p.engine_max_speed))
     }
 
+    /// The clutch is held in: the engine is free of the rear wheel.
+    pub fn clutch_in(&self) -> bool {
+        self.bike.sim().ctl.clutch_mode == 2
+    }
+
     /// The forward speed Reflex reports, m/s.
     pub fn forward_speed(&self) -> f32 {
         self.state.forward_speed
