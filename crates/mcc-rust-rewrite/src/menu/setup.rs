@@ -120,6 +120,10 @@ const INTRO: &str = "This game is played with your own copies of these games. On
 /// What the screen says at the top when Settings opened it.
 const FROM_SETTINGS: &str = "Skate 3 is optional: it adds the skateboard. Set it up here, or go back to Settings.";
 
+/// The same once Skate 3 is set up.
+const FROM_SETTINGS_READY: &str =
+    "Skate 3 is set up. Convert it again or go without it here, or go back to Settings.";
+
 /// The Skate 3 step's last words, left off when Settings opened the step:
 /// the player is in Settings already.
 const LATER_IN_SETTINGS: &str = " You can add Skate 3 later in Settings.";
@@ -203,9 +207,12 @@ fn go(menu: &mut Menu, step: usize) {
     menu.setting = first_row(menu.step);
 }
 
+/// Sets the note. Whatever is said next, a "Without Skate 3" waiting to be
+/// confirmed is no longer on screen, so it is not waiting any more.
 fn say(menu: &mut Menu, note: impl Into<String>, error: bool) {
     menu.note = note.into();
     menu.note_is_error = error;
+    menu.confirm_skip = false;
 }
 
 /// Opens the screen on `step`, or the first one not done.
@@ -225,7 +232,7 @@ pub(super) fn open(menu: &mut Menu, step: Option<usize>) {
 }
 
 /// Opens the Skate 3 step from the settings screen, to add Skate 3 later,
-/// saying `note`: B goes back to Settings on `back_row`, and so does a
+/// convert it again or go without it, saying `note`: B goes back to Settings on `back_row`, and so does a
 /// finished choice ([`finish`]).
 pub(super) fn open_from_settings(menu: &mut Menu, back_row: usize, note: &str) {
     menu.phase = Phase::Setup;
@@ -264,6 +271,9 @@ fn row_value(row: SetupRow, from_settings: bool) -> (String, bool) {
         SetupRow::Skate => not_set(),
         SetupRow::NoSkate if game_paths::skate_skipped() => {
             ("Chosen: no skateboard (walk, fly and ride the bike)".to_string(), true)
+        }
+        SetupRow::NoSkate if mcc_setup::skate_ready() => {
+            ("Remove Skate 3: no skateboard, and its converted data is deleted".to_string(), false)
         }
         SetupRow::NoSkate if from_settings => ("Keep playing without the skateboard".to_string(), false),
         SetupRow::NoSkate => ("Play without the skateboard; add Skate 3 later in Settings".to_string(), false),
@@ -477,9 +487,11 @@ pub(super) fn input(
     }
     if key(&[KeyCode::ArrowUp, KeyCode::KeyW]) || pad(GamepadButton::DPadUp) || pushed[0] {
         menu.setting = menu.setting.saturating_sub(1);
+        menu.confirm_skip = false;
     }
     if key(&[KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) || pushed[1] {
         menu.setting = (menu.setting + 1).min(rows - 1);
+        menu.confirm_skip = false;
     }
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let tab_key = keys.just_pressed(KeyCode::Tab);
@@ -551,9 +563,19 @@ fn back(menu: &mut Menu, exit: &mut MessageWriter<AppExit>) {
 }
 
 /// A row chosen: open its folder picker on a thread ([`picked`] takes the
-/// outcome), or decline Skate 3 or Reflex at once.
+/// outcome), or decline Skate 3 or Reflex at once. Declining Skate 3 once
+/// it is set up deletes its conversion, so that is asked twice.
 fn choose(menu: &mut Menu, row: SetupRow) {
     match row {
+        SetupRow::NoSkate if mcc_setup::skate_ready() && !menu.confirm_skip => {
+            say(
+                menu,
+                "This deletes your converted Skate 3 data; adding Skate 3 back means converting it again. \
+                 Choose Without Skate 3 again to go ahead.",
+                true,
+            );
+            menu.confirm_skip = true;
+        }
         SetupRow::NoSkate => match mcc_setup::skip_skate() {
             Ok(()) => {
                 eprintln!("setup: playing without Skate 3");
@@ -750,7 +772,12 @@ pub(super) fn show(
         if heading.is_some() {
             text.0 = if one_step { "SETTINGS" } else { "WELCOME" }.to_string();
         } else if intro.is_some() {
-            text.0 = if one_step { FROM_SETTINGS } else { INTRO }.to_string();
+            text.0 = match one_step {
+                true if mcc_setup::skate_ready() => FROM_SETTINGS_READY,
+                true => FROM_SETTINGS,
+                false => INTRO,
+            }
+            .to_string();
         } else if let Some(about) = about {
             let line = STEPS[about.0].about[about.1];
             text.0 = if one_step { line.strip_suffix(LATER_IN_SETTINGS).unwrap_or(line) } else { line }.to_string();

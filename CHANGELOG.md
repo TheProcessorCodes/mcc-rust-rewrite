@@ -12,6 +12,8 @@ merge history.
   dirt bike as Master Chief, and you can add it later in Settings for the skateboard (#1).
 - The dirt bike and the board share one session marker: set it on either and both go back to it.
 - The project keeps this changelog (#4).
+- Settings' Skate 3 row opens the Skate 3 page once it is set up too, to convert it again or to
+  go back to playing without it (#8).
 
 ### Fixed
 - Warthog run: the glowing orange lumps at the foot of the trench cliffs are gone (#5).
