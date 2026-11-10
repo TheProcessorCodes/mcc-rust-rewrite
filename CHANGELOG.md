@@ -7,7 +7,13 @@ merge history.
 
 ## 2026-11-09
 
+### Added
+- Pause menu: the Dirt bike and Skate tabs list the keyboard keys next to the controller buttons (#10).
+- Settings has a Dialogue language row: English, French, German, Italian or either Spanish (#12).
+
 ### Changed
+- Pause menu: quitting to the map menu and restarting a level ask first; press the same button
+  again to do it (#11).
 - Skate 3 is optional at first-run setup: without it you still walk, shoot, fly and ride the
   dirt bike as Master Chief, and you can add it later in Settings for the skateboard (#1).
 - The dirt bike and the board share one session marker: set it on either and both go back to it.

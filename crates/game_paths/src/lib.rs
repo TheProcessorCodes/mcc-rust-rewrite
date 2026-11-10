@@ -232,9 +232,9 @@ pub fn reach_maps() -> Option<PathBuf> {
 pub const LANGUAGES: [&str; 6] = ["english", "french", "german", "italian", "mexican", "spanish"];
 
 /// The language Halo 3's dialogue plays in: `%MCC_LANGUAGE%` (a dev
-/// override), else `LANGUAGE` in the saved setup (`key::LANGUAGE`; setup
-/// does not ask, so it is only there when written by hand), else
-/// `english`. Anything not in [`LANGUAGES`] falls back to `english`.
+/// override), else `LANGUAGE` in the saved setup (`key::LANGUAGE`, chosen
+/// in the menu's Settings: [`set_language`]), else `english`. Anything not
+/// in [`LANGUAGES`] falls back to `english`.
 pub fn language() -> &'static str {
     let wanted = std::env::var("MCC_LANGUAGE")
         .ok()
@@ -243,6 +243,14 @@ pub fn language() -> &'static str {
     wanted
         .and_then(|w| LANGUAGES.iter().copied().find(|l| *l == w))
         .unwrap_or("english")
+}
+
+/// Saves the dialogue language (one of [`LANGUAGES`]) for the next map load.
+pub fn set_language(language: &str) -> Result<(), String> {
+    let path = settings_path();
+    let mut s = Settings::read(&path);
+    s.set(key::LANGUAGE, language);
+    s.write(&path)
 }
 
 /// A Halo 3 map by bare name (`riverworld`), when it is installed. For tests.

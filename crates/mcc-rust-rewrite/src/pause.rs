@@ -1,12 +1,13 @@
 //! The pause menu: Escape, or Start on a pad, stops the game and lists the
-//! controls on four tabs: free roam and on foot (keyboard and controller), the dirt bike
-//! and skating (controller only), with the bike's engine volume slider on
+//! controls on four tabs: free roam, on foot, the dirt bike and skating
+//! (keyboard and controller), with the bike's engine volume slider on
 //! the dirt bike tab; a fifth, Sound, has the volume sliders (`sound_tab`).
 //! Click a tab, or change tab with LB / RB, the d-pad, A / D or the arrow
 //! keys (on the Sound tab the arrows and the d-pad move the sliders; LB / RB
 //! and A / D still change tab). The same button carries on; Q, or View
 //! (Back) on a pad, goes back to the map menu (or quits the game when it
 //! was started on a map). On a campaign level R, or Y, restarts the level.
+//! Both ask first: the second press of the same button does it (`Asking`).
 //!
 //! Pausing stops virtual time, and the systems that read input or move
 //! things run only `while running`, so nothing reacts to keys behind the
@@ -48,12 +49,13 @@ impl Plugin for PausePlugin {
         app.init_map_resource::<Paused>()
             .init_map_resource::<crate::finish::RunFinished>()
             .init_map_resource::<ShownTab>()
+            .init_map_resource::<Asking>()
             .init_map_resource::<SliderInput>()
             .insert_resource(EngineVolume::load())
             .add_systems(mcc_core::map::MapStartup, spawn_menu)
             .add_systems(
                 PreUpdate,
-                (toggle, quit, restart_level, switch_tab, sound_tab, engine_slider, physics_switch)
+                (toggle, forget_ask, quit, restart_level, show_ask, switch_tab, sound_tab, engine_slider, physics_switch)
                     .chain()
                     .after(InputSystems)
                     .after(mcc_core::pause::OverlayInput)
@@ -152,44 +154,49 @@ const FOOT: &[[&str; 3]] = &[
     ["Esc", "Start", "pause"],
 ];
 
-/// Dirt bike controls (`bike/mod.rs`): controller, what it does.
-const BIKE: &[[&str; 2]] = &[
-    ["left stick (left / right)", "steer"],
-    ["right stick", "lean the rider forward, back, left, right"],
-    ["right trigger", "throttle"],
-    ["left trigger", "brake"],
-    ["A (hold)", "back up"],
-    ["Y", "stand the bike back up"],
-    ["d-pad up (G)", "jump off on foot, keeping the bike's speed"],
-    ["click both sticks (J)", "onto the skateboard, keeping the bike's speed"],
-    ["LB + d-pad down", "set the session marker"],
-    ["LB + d-pad up (hold)", "back to the session marker (set on the bike or the board)"],
-    ["View / Back", "get off the bike"],
-    ["click left stick (H)", "engine sound on / off"],
-    ["0 (keyboard)", "physics tuning menu"],
-    ["Start", "pause"],
+/// Dirt bike controls (`bike/mod.rs`): keyboard (`mcc_bike` `read_controls`),
+/// controller, what it does. The session marker is on the pad only.
+const BIKE: &[[&str; 3]] = &[
+    ["A / D", "left stick", "steer"],
+    ["arrow keys", "right stick", "lean the rider forward, back, left, right"],
+    ["W", "right trigger", "throttle"],
+    ["S", "left trigger", "brake"],
+    ["", "A (hold)", "back up"],
+    ["R", "Y", "stand the bike back up"],
+    ["G", "d-pad up", "jump off on foot, keeping the bike's speed"],
+    ["J", "click both sticks", "onto the skateboard, keeping the bike's speed"],
+    ["", "LB + d-pad down", "set the session marker"],
+    ["", "LB + d-pad up (hold)", "back to the session marker (set on the bike or the board)"],
+    ["B", "View / Back", "get off the bike"],
+    ["H", "click left stick", "engine sound on / off"],
+    ["0", "", "physics tuning menu"],
+    ["Esc", "Start", "pause"],
 ];
 
-/// Skate controls: controller, what it does.
-const SKATE: &[[&str; 2]] = &[
-    ["left stick", "steer and lean; spin in the air"],
-    ["right stick", "flick-it tricks: pull back, flick forward to ollie"],
-    ["A", "push"],
-    ["X", "push with the other foot (mongo)"],
-    ["B", "brake; in the air, take a foot off"],
-    ["LT / RT", "crouch; in the air, grab left / right hand"],
-    ["RB (hold)", "grab a ledge or coping (hand plants)"],
-    ["Y", "step off the board / back on"],
-    ["A or X", "get up after a bail"],
-    ["LB + d-pad down", "set the session marker"],
-    ["LB + d-pad up (hold)", "back to the session marker (set on the bike or the board)"],
-    ["off the board: X", "jump"],
-    ["off the board: LT / RT", "drop / throw the board"],
-    ["d-pad up (G)", "jump off on foot, keeping the board's speed"],
-    ["View / Back (B)", "onto the dirt bike, keeping the board's speed"],
-    ["click both sticks", "back to flying"],
-    ["Start", "pause"],
+/// Skate controls: keyboard (`mcc_skate` `keyboard_frame`, the keyboard as
+/// a pad), controller, what it does. The session marker is on the pad only.
+const SKATE: &[[&str; 3]] = &[
+    ["W A S D", "left stick", "steer and lean; spin in the air"],
+    ["arrow keys", "right stick", "flick-it tricks: pull back, flick forward to ollie"],
+    ["Space", "A", "push"],
+    ["R", "X", "push with the other foot (mongo)"],
+    ["F", "B", "brake; in the air, take a foot off"],
+    ["Z / X", "LT / RT", "crouch; in the air, grab left / right hand"],
+    ["E (hold)", "RB (hold)", "grab a ledge or coping (hand plants)"],
+    ["T", "Y", "step off the board / back on"],
+    ["Space or R", "A or X", "get up after a bail"],
+    ["", "LB + d-pad down", "set the session marker"],
+    ["", "LB + d-pad up (hold)", "back to the session marker (set on the bike or the board)"],
+    ["R", "X", "off the board: jump"],
+    ["Z / X", "LT / RT", "off the board: drop / throw the board"],
+    ["G", "d-pad up", "jump off on foot, keeping the board's speed"],
+    ["B", "View / Back", "onto the dirt bike, keeping the board's speed"],
+    ["J", "click both sticks", "back to flying"],
+    ["Esc", "Start", "pause"],
 ];
+
+/// Column widths of the dirt bike and skate tabs: keyboard, controller, what.
+const RIDE_WIDTHS: [f32; 3] = [130.0, 230.0, 550.0];
 
 fn text(s: &str, size: f32, colour: Color) -> impl Bundle {
     (Text::new(s), TextFont::from_font_size(size), TextColor(colour))
@@ -400,8 +407,7 @@ fn skate_off_notice(p: &mut ChildSpawnerCommands, off: SkateOff) {
 /// What the session marker's row adds while there is a board to share it with.
 const MARKER_SHARED: &str = " (set on the bike or the board)";
 
-/// A controls list with the skateboard's rows marked as off, saying why:
-/// J on free roam and on foot, "click both sticks (J)" on the dirt bike.
+/// A controls list with the skateboard's rows (J) marked as off, saying why.
 /// The session marker's row no longer mentions the board.
 fn without_skating<const N: usize>(rows: &[[&'static str; N]], off: Option<SkateOff>) -> Vec<[&'static str; N]> {
     rows.iter()
@@ -469,13 +475,15 @@ fn spawn_menu(
             .with_children(|panel| {
                 panel.spawn(text("PAUSED", 36.0, Color::WHITE));
                 panel.spawn(crate::key_hint::hint("Start to resume", "Esc to resume", 16.0, DIM));
-                panel.spawn(crate::key_hint::hint(leave.0, leave.1, 16.0, DIM));
+                panel.spawn((
+                    AskHint { what: Asking::Quit, pad: leave.0, keys: leave.1 },
+                    crate::key_hint::hint(leave.0, leave.1, 16.0, DIM),
+                ));
                 if campaign {
-                    panel.spawn(crate::key_hint::hint(
-                        "Y to restart the level from the beginning",
-                        "R to restart the level from the beginning",
-                        16.0,
-                        DIM,
+                    let restart = ("Y to restart the level from the beginning", "R to restart the level from the beginning");
+                    panel.spawn((
+                        AskHint { what: Asking::Restart, pad: restart.0, keys: restart.1 },
+                        crate::key_hint::hint(restart.0, restart.1, 16.0, DIM),
                     ));
                 }
                 panel
@@ -521,13 +529,13 @@ fn spawn_menu(
                     panel,
                     BIKE_TAB,
                     shown,
-                    ["Controller", ""],
-                    [260.0, 520.0],
+                    ["Keyboard", "Controller", ""],
+                    RIDE_WIDTHS,
                     &without_skating(BIKE, off),
                     volume_slider,
                 );
                 match off {
-                    None => page(panel, SKATE_TAB, shown, ["Controller", ""], [260.0, 520.0], SKATE, |_| {}),
+                    None => page(panel, SKATE_TAB, shown, ["Keyboard", "Controller", ""], RIDE_WIDTHS, SKATE, |_| {}),
                     Some(off) => page(panel, SKATE_TAB, shown, [], [], &[], |p| skate_off_notice(p, off)),
                 }
                 sound_page(panel, levels.as_deref());
@@ -842,20 +850,100 @@ fn toggle(
     }
 }
 
-/// Q, or View (Back) on a pad, goes back to the map menu (`menu.rs`), or
-/// closes the game when it was started on a map.
+/// What the menu is asking about: leaving and restarting both throw the run
+/// away, and Q is a skate key and the fly camera's down, so the first press
+/// only asks and a second press of the same button does it.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+enum Asking {
+    #[default]
+    Nothing,
+    Quit,
+    Restart,
+}
+
+impl Asking {
+    /// The key and the pad button that ask, and then confirm.
+    fn buttons(self) -> Option<(KeyCode, GamepadButton)> {
+        match self {
+            Asking::Nothing => None,
+            Asking::Quit => Some((KeyCode::KeyQ, GamepadButton::Select)),
+            Asking::Restart => Some((KeyCode::KeyR, GamepadButton::North)),
+        }
+    }
+
+    /// The line shown in place of the hint while asking: controller, keyboard.
+    fn question(self) -> (&'static str, &'static str) {
+        match self {
+            Asking::Nothing => ("", ""),
+            Asking::Quit => ("Leave this map? View (Back) again to leave", "Leave this map? Q again to leave"),
+            Asking::Restart => ("Restart the level? Y again to restart", "Restart the level? R again to restart"),
+        }
+    }
+
+    /// A press of `self`'s button: `true` when it was already asked, so do
+    /// it; else it is asked now.
+    fn pressed(self, asking: &mut Asking) -> bool {
+        let confirmed = *asking == self;
+        *asking = if confirmed { Asking::Nothing } else { self };
+        confirmed
+    }
+}
+
+/// The quit or restart hint line, with its usual wordings.
+#[derive(Component)]
+struct AskHint {
+    what: Asking,
+    pad: &'static str,
+    keys: &'static str,
+}
+
+/// Any other key or button, or carrying on, takes the question back.
+fn forget_ask(
+    paused: Res<Paused>,
+    keys: Res<ButtonInput<KeyCode>>,
+    gamepads: Query<&Gamepad>,
+    mut asking: ResMut<Asking>,
+) {
+    let Some((key, button)) = asking.buttons() else {
+        return;
+    };
+    let other = keys.get_just_pressed().any(|k| *k != key)
+        || gamepads.iter().any(|p| p.get_just_pressed().any(|b| *b != button));
+    if !paused.0 || other {
+        *asking = Asking::Nothing;
+    }
+}
+
+/// The hint line being asked about turns into the question, lit.
+fn show_ask(asking: Res<Asking>, mut hints: Query<(&AskHint, &mut crate::key_hint::KeyHint, &mut TextColor)>) {
+    if !asking.is_changed() {
+        return;
+    }
+    for (hint, mut shown, mut colour) in &mut hints {
+        let asked = hint.what == *asking;
+        let (pad, keys) = if asked { asking.question() } else { (hint.pad, hint.keys) };
+        (shown.pad, shown.keys) = (pad, keys);
+        colour.0 = if asked { LIT } else { DIM };
+    }
+}
+
+/// Q, or View (Back) on a pad, twice (`Asking`), goes back to the map menu
+/// (`menu.rs`), or closes the game when it was started on a map.
 fn quit(
     mut commands: Commands,
     paused: Res<Paused>,
     map_menu: Option<Res<mcc_core::map::MapMenu>>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
+    mut asking: ResMut<Asking>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if !paused.0 {
         return;
     }
-    if keys.just_pressed(KeyCode::KeyQ) || gamepads.iter().any(|p| p.just_pressed(GamepadButton::Select)) {
+    if (keys.just_pressed(KeyCode::KeyQ) || gamepads.iter().any(|p| p.just_pressed(GamepadButton::Select)))
+        && Asking::Quit.pressed(&mut asking)
+    {
         if map_menu.is_some() {
             commands.insert_resource(mcc_core::map::BackToMenu);
         } else {
@@ -864,20 +952,23 @@ fn quit(
     }
 }
 
-/// R, or Y on a pad, on a campaign level: the level is loaded again from its
-/// start (`finish.rs` `RestartMap`), so objects, scripts, AI, music and the
-/// run's clock all begin afresh.
+/// R, or Y on a pad, twice (`Asking`), on a campaign level: the level is
+/// loaded again from its start (`finish.rs` `RestartMap`), so objects,
+/// scripts, AI, music and the run's clock all begin afresh.
 fn restart_level(
     mut commands: Commands,
     paused: Res<Paused>,
     zones: Option<Res<mcc_world::zones::Zones>>,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
+    mut asking: ResMut<Asking>,
 ) {
     if !paused.0 || !zones.is_some_and(|z| !z.layout.zone_sets.is_empty()) {
         return;
     }
-    if keys.just_pressed(KeyCode::KeyR) || gamepads.iter().any(|p| p.just_pressed(GamepadButton::North)) {
+    if (keys.just_pressed(KeyCode::KeyR) || gamepads.iter().any(|p| p.just_pressed(GamepadButton::North)))
+        && Asking::Restart.pressed(&mut asking)
+    {
         commands.insert_resource(crate::finish::RestartMap);
     }
 }
@@ -1097,7 +1188,7 @@ mod tests {
         for off in [SkateOff::Settings, SkateOff::NoSkate3] {
             assert_eq!(marked(FREE_ROAM, off), ["J"]);
             assert_eq!(marked(FOOT, off), ["J"]);
-            assert_eq!(marked(BIKE, off), ["click both sticks (J)"]);
+            assert_eq!(marked(BIKE, off), ["J"]);
         }
         assert_eq!(without_skating(FREE_ROAM, None), FREE_ROAM);
         assert_eq!(without_skating(FOOT, None), FOOT);
@@ -1105,16 +1196,29 @@ mod tests {
         assert_ne!(SkateOff::Settings.label(), SkateOff::NoSkate3.label());
     }
 
+    /// The first press asks, the second of the same button does it, and a
+    /// press of the other one asks about that instead.
+    #[test]
+    fn quit_and_restart_take_two_presses() {
+        let mut asking = Asking::Nothing;
+        assert!(!Asking::Quit.pressed(&mut asking));
+        assert_eq!(asking, Asking::Quit);
+        assert!(!Asking::Restart.pressed(&mut asking));
+        assert_eq!(asking, Asking::Restart);
+        assert!(Asking::Restart.pressed(&mut asking));
+        assert_eq!(asking, Asking::Nothing);
+    }
+
     /// The session marker's row mentions the board only while there is one.
     #[test]
     fn the_marker_row_drops_the_board_without_skating() {
-        let said = |rows: &[[&'static str; 2]]| rows.iter().any(|r| r[1].ends_with(MARKER_SHARED));
+        let said = |rows: &[[&'static str; 3]]| rows.iter().any(|r| r[2].ends_with(MARKER_SHARED));
         assert!(said(BIKE));
         assert!(said(&without_skating(BIKE, None)));
         for off in [SkateOff::Settings, SkateOff::NoSkate3] {
             let rows = without_skating(BIKE, Some(off));
             assert!(!said(&rows));
-            assert!(rows.iter().any(|r| r[1] == "back to the session marker"));
+            assert!(rows.iter().any(|r| r[2] == "back to the session marker"));
         }
     }
 }

@@ -166,7 +166,8 @@ Dev overrides: `MCC_ROOT`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_
 `IW4L_SKATE_ASSETS`; `skip` to play as if Skate 3 were skipped, and a folder there wins over a
 saved skip), `MCC_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
 Reflex), `MCC_SETUP_DIR`, `MCC_LANGUAGE` (dialogue language: `english`, `french`,
-`german`, `italian`, `mexican` or `spanish`; else `LANGUAGE=` in `setup.env`, else English),
+`german`, `italian`, `mexican` or `spanish`; else the Dialogue language chosen in Settings,
+`LANGUAGE=` in `setup.env`, else English),
 `MCC_SKATING` (`off` / `on`, over the saved Skating setting; `--skate` shots always skate, given Skate 3),
 `MCC_SHOT_PAUSE_TAB=N` (a `--shot` draws the pause menu open on tab N).
 
