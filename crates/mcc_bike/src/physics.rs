@@ -166,6 +166,8 @@ pub struct Controls {
     pub throttle: f32,
     /// Held from a standstill with both wheels down, backs the bike up instead.
     pub brake: f32,
+    /// The clutch held in (Reflex physics only; the arcade models have none).
+    pub clutch: bool,
 }
 
 /// A ray or probe hit on the world.

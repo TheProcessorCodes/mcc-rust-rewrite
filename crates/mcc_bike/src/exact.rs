@@ -322,6 +322,7 @@ impl Exact {
             // Reflex backs up on its own button; ours is the brake held at
             // a standstill, as on the other models.
             reverse: controls.brake > 0.3 && self.state.forward_speed < 0.5,
+            clutch: controls.clutch,
             ..Default::default()
         };
         let ground = Ground {

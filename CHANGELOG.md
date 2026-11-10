@@ -5,6 +5,21 @@ GitHub issue where there is one. There are no numbered releases yet, so entries 
 by the day they reached master. Entries before 2026-11-09 were written afterwards from the
 merge history.
 
+## 2026-11-10
+
+### Added
+- The map menu opens on the last map you started (#13).
+- The Campaign tab has a difficulty choice (Y or F2), kept for next time (#14).
+- Campaign runs show a clock in the top right, and the completion screen keeps your best time
+  for each level and difficulty (#15).
+- The bike's tuning menu opens from a controller with LB + X (#16).
+- A clutch for the bike's Reflex physics: hold RB or E (#17).
+- Settings has an Armour colour row for the Spartan on multiplayer maps (#18).
+
+### Fixed
+- Pause menu: the Dirt bike tab no longer says A backs the bike up; the brake held at a
+  standstill does (#19).
+
 ## 2026-11-09
 
 ### Added

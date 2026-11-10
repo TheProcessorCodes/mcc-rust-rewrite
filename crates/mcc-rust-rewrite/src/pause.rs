@@ -160,8 +160,8 @@ const BIKE: &[[&str; 3]] = &[
     ["A / D", "left stick", "steer"],
     ["arrow keys", "right stick", "lean the rider forward, back, left, right"],
     ["W", "right trigger", "throttle"],
-    ["S", "left trigger", "brake"],
-    ["", "A (hold)", "back up"],
+    ["S", "left trigger", "brake; held at a standstill, back up"],
+    ["E (hold)", "RB (hold)", "clutch (Reflex physics)"],
     ["R", "Y", "stand the bike back up"],
     ["G", "d-pad up", "jump off on foot, keeping the bike's speed"],
     ["J", "click both sticks", "onto the skateboard, keeping the bike's speed"],
@@ -169,7 +169,7 @@ const BIKE: &[[&str; 3]] = &[
     ["", "LB + d-pad up (hold)", "back to the session marker (set on the bike or the board)"],
     ["B", "View / Back", "get off the bike"],
     ["H", "click left stick", "engine sound on / off"],
-    ["0", "", "physics tuning menu"],
+    ["0", "LB + X", "physics tuning menu"],
     ["Esc", "Start", "pause"],
 ];
 

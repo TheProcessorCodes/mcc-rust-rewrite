@@ -108,17 +108,48 @@ pub struct ChiefModel {
 const PRIMARY: [f32; 3] = [0.34, 0.40, 0.21];
 const SECONDARY: [f32; 3] = [0.27, 0.31, 0.17];
 
+/// The armour colours Settings offers (`game_paths::key::ARMOUR`): name,
+/// primary and secondary (sRGB), our own picks in the spirit of Halo 3's
+/// list. The first is Master Chief's olive drab; red is left out, as it is
+/// the enemy Spartan's.
+pub const ARMOUR_COLOURS: [(&str, [f32; 3], [f32; 3]); 11] = [
+    ("Olive", PRIMARY, SECONDARY),
+    ("Steel", [0.42, 0.45, 0.48], [0.30, 0.32, 0.35]),
+    ("White", [0.85, 0.85, 0.83], [0.62, 0.62, 0.60]),
+    ("Orange", [0.80, 0.36, 0.08], [0.55, 0.24, 0.05]),
+    ("Gold", [0.78, 0.60, 0.18], [0.55, 0.42, 0.12]),
+    ("Green", [0.20, 0.50, 0.16], [0.14, 0.35, 0.11]),
+    ("Teal", [0.10, 0.45, 0.45], [0.07, 0.31, 0.31]),
+    ("Blue", [0.12, 0.25, 0.65], [0.08, 0.17, 0.45]),
+    ("Violet", [0.40, 0.20, 0.60], [0.28, 0.14, 0.42]),
+    ("Pink", [0.85, 0.45, 0.60], [0.60, 0.31, 0.42]),
+    ("Brown", [0.40, 0.27, 0.16], [0.28, 0.19, 0.11]),
+];
+
+/// The armour colour chosen in Settings, an index into [`ARMOUR_COLOURS`]
+/// (olive when none is saved or the name is unknown).
+pub fn armour() -> usize {
+    let saved = game_paths::settings().get(game_paths::key::ARMOUR).map(|s| s.trim().to_ascii_lowercase());
+    saved
+        .and_then(|s| ARMOUR_COLOURS.iter().position(|c| c.0.eq_ignore_ascii_case(&s)))
+        .unwrap_or(0)
+}
+
 /// The red team's primary and secondary colours (sRGB): the enemy Spartan.
 const RED: [[f32; 3]; 2] = [[0.62, 0.07, 0.06], [0.36, 0.05, 0.04]];
 
-fn primary_colour() -> [f32; 3] {
-    std::env::var("MCC_RIDER_COLOUR")
+/// The player's primary and secondary colours: the chosen [`armour`], with
+/// `MCC_RIDER_COLOUR` (dev) over the primary.
+fn armour_colours() -> [[f32; 3]; 2] {
+    let (_, primary, secondary) = ARMOUR_COLOURS[armour()];
+    let primary = std::env::var("MCC_RIDER_COLOUR")
         .ok()
         .and_then(|s| {
             let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
             <[f32; 3]>::try_from(v).ok()
         })
-        .unwrap_or(PRIMARY)
+        .unwrap_or(primary);
+    [primary, secondary]
 }
 
 /// Bakes a `two_change_color` shader's tint into its colour map:
@@ -216,7 +247,7 @@ pub fn load_chief(cache: &CacheFile) -> Option<ChiefModel> {
             let shader = scene.materials.get(i as usize).and_then(|m| m.shader_tag);
             if let (Some(base), Some(shader)) = (base, shader)
                 && let Some(t) = textures.bitmaps.get(&base)
-                && let Some(baked) = bake_change_colour(cache, &resources, shader, t, [primary_colour(), SECONDARY])
+                && let Some(baked) = bake_change_colour(cache, &resources, shader, t, armour_colours())
             {
                 tinted.insert(i, baked);
                 if let Some(red) = bake_change_colour(cache, &resources, shader, t, RED) {

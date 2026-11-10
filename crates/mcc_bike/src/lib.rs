@@ -14,13 +14,14 @@
 //! | right stick | arrow keys | rider: forward, back, left, right |
 //! | RT | W | throttle |
 //! | LT | S | brake; held at a standstill, back up to 10 mph |
+//! | RB (hold) | E (hold) | clutch, in Reflex physics (`exact.rs`) |
 //! | Y | R | stand the bike back up |
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`mcc_foot`) |
 //! | both sticks clicked | J | onto the skateboard, keeping the bike's speed (`mcc_skate`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`), shared with the board |
 //! | LB + d-pad up (hold) | | back to the session marker, set on the bike or the board |
 //! | left stick click | H | engine sound on / off (`mcc_audio::engine`) |
-//! | | 0 | physics tuning menu (`tune.rs`) |
+//! | LB + X | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! A crash shows CRASHED in orange in the lower left until the bike is
 //! put back.
@@ -420,6 +421,8 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         ),
         throttle: key(KeyCode::KeyW),
         brake: key(KeyCode::KeyS),
+        // E / RB, as `reflex_bevy`'s own test app has it.
+        clutch: keys.pressed(KeyCode::KeyE),
     };
     if let Some(pad) = pad {
         let l = dead(pad.left_stick(), 0.12);
@@ -429,6 +432,7 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         let rt = trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]);
         c.throttle = c.throttle.max(rt.powf(THROTTLE_CURVE));
         c.brake = c.brake.max(trigger(pad, B::LeftTrigger2, GamepadAxis::LeftZ, &mut rested[0]));
+        c.clutch |= pad.pressed(B::RightTrigger);
     }
     c
 }
