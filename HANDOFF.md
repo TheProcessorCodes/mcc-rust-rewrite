@@ -73,6 +73,11 @@ What the game does now:
   - A blob shadow under the player on foot, on the board and on the bike (2026-11-10, #30,
     `mcc-rust-rewrite/src/shadow.rs`): a soft dark patch on the collision straight below, shrinking
     and fading out by 7 m up. Nothing casts a real shadow (the world's are baked into the lightmaps).
+  - The map's own effects play from the start (2026-11-10, #26, `mcc_effects/src/ambient.rs`):
+    those placed objects carry (object attachments, Valhalla's waterfall mist), looping, within
+    150 m of the camera, and the weather of the camera's air (`skya` setting `+0x8C`: Snowbound's
+    and 120_halo's snow, 010_jungle's rain, 100_citadel's dust) round the camera. Blackout,
+    Avalanche, Valhalla and most multiplayer maps have no weather in their tags.
   - Docs: `docs/format/lightmaps.md`, `sky-and-atmosphere.md`, `shaders.md`.
 - **Water.** Animated waves from the shader's slope arrays, sky reflection, depth murk, shore fade, foam and waterfalls. Deep water sinks the skater, who respawns at the last dry spot (`docs/format/water.md`, `swim.rs`).
 - **Skating.**

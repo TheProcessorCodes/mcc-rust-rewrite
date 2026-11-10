@@ -80,7 +80,7 @@ The 0x14-0x2C floats are probably the patchy-fog sheet settings (repeat rates, d
 | `0x5C` | 3 x f32 | beta_m theta prefix | 1.79e-5 3.05e-5 6.43e-5 | 5.01e-5 8.54e-5 1.80e-4 | | | 3.27e-5 4.79e-5 8.84e-5 |
 | `0x68` | 3 x f32 | beta_p theta prefix | 3.33e-4 4.34e-4 6.24e-4 | 4.00e-4 5.20e-4 7.49e-4 | | | 7.19e-4 8.79e-4 1.18e-3 |
 | `0x74` | 6 x f32 | | 0 | 0 | 0 | 0 | 0 |
-| `0x8C` | tag ref (16) | (a weather effect?) | null | null | null | null | null |
+| `0x8C` | tag ref (16) | weather effect (`effe`), played round the camera | null | null | null | null | null |
 | `0x9C` | 8 bytes | | 0 | 0 | 0 | 0 | 0 |
 
 ### 3.1 How the meanings were pinned (all checked on the bytes; `atmosphere.rs` tests)

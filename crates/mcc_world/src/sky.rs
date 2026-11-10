@@ -143,10 +143,7 @@ pub struct PlainFogSetting {
 #[derive(Component, Clone, Copy)]
 pub struct SkyBatch(pub u32);
 
-/// The atmosphere setting of the cluster the camera is in (`zones.rs`
-/// keeps it up to date); `None`: the map's default world setting.
-#[derive(Resource, Default)]
-pub struct CameraAir(pub Option<u32>);
+pub use mcc_core::zones::CameraAir;
 
 /// The world's haze for the camera (`None`: no atmosphere tag).
 #[derive(Resource, Default)]

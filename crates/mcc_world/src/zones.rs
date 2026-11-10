@@ -6,7 +6,6 @@ use mcc_core::map::MapAppExt;
 
 pub use mcc_core::zones::*;
 
-use super::sky::CameraAir;
 use mcc_core::fly_camera::FlyCamera;
 
 pub struct ZonesPlugin;
@@ -14,6 +13,7 @@ pub struct ZonesPlugin;
 impl Plugin for ZonesPlugin {
     fn build(&self, app: &mut App) {
         app.init_map_resource::<Zones>()
+            .init_map_resource::<CameraOutside>()
             .init_map_resource::<LoadedBsps>()
             .init_map_resource::<ShowCollision>()
             .add_systems(
@@ -50,6 +50,7 @@ fn follow_cluster(
     zones: Res<Zones>,
     mut loaded: ResMut<LoadedBsps>,
     mut air: ResMut<CameraAir>,
+    mut outside: ResMut<CameraOutside>,
     cameras: Query<&GlobalTransform, With<FlyCamera>>,
     mut main_air: Local<Option<(u32, Option<u32>)>>,
 ) {
@@ -69,6 +70,10 @@ fn follow_cluster(
     let want = cluster.and_then(|c| c.atmosphere).or(main);
     if air.0 != want {
         air.0 = want;
+    }
+    let sky = cluster.is_none_or(|c| c.sky.is_some());
+    if outside.0 != sky {
+        outside.0 = sky;
     }
     let Some(cluster) = cluster else {
         return;
