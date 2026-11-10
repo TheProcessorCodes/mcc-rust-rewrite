@@ -359,7 +359,9 @@ skateboard. Players with Skate 3 see no change.
   and the rifle. `mcc_bike::pose::Rig::from_binds` checks either rig (both sides' limb names,
   finite binds, limb length), and `limb` no longer panics.
 - **Menus.** Settings' Skate 3 and Skating rows say Skate 3 is not used or needed and offer
-  SET UP, which opens setup's Skate 3 step from Settings (`setup::open_from_settings`); the
+  SET UP, which opens setup's Skate 3 step from Settings (`setup::open_from_settings`); set
+  up, the Skate 3 row (CHANGE) opens the same step, where "Without Skate 3" removes it after
+  asking twice (`Menu::confirm_skip`, #8); the
   pause menu's Skate tab says "Skating needs Skate 3" and the J rows are marked.
 - **Tests.** Unit tests on a made-up biped (our own numbers), and `mcc_rider/tests/halo_rig.rs`
   on riverworld and 120_halo with ranges only, skipping without MCC; no tag values are written

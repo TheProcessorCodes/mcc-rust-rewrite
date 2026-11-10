@@ -119,8 +119,9 @@ the next launch.
    converter's progress. Or Without Skate 3 (Skip), which skips the MW2 Skate 3 folder too:
    there is then no skateboard, and the Spartan is posed on Master Chief's own skeleton from
    MCC (see below). The answer is saved like a folder (`SKATE_ASSETS=skip`), and any
-   converted Skate 3 data is deleted. Settings' Skate 3 row (SET UP) opens this step again
-   to add it later.
+   converted Skate 3 data is deleted. Settings' Skate 3 row opens this step again: SET UP to
+   add it later, or CHANGE once it is set up, to convert it again or to go without it (which
+   deletes the converted data, so it asks twice).
 3. **MX vs ATV Reflex** (PC, optional; the dirt bike's model and engine sound). The folder
    with its `Database` folder, or Skip. Without it the
    bike is our own stand-in model (`crates/mcc_bike/src/stand_in.rs`) with no engine
