@@ -44,6 +44,14 @@ pub mod key {
     /// Whether skating is on: `off` turns it off; anything else, or no
     /// line, leaves it on. See [`skating_enabled`](super::skating_enabled).
     pub const SKATING: &str = "SKATING";
+    /// The last map started from the map menu (its menu name, `warthog_run`,
+    /// `h2:ascension`, ...), which the menu opens on next time.
+    pub const LAST_MAP: &str = "LAST_MAP";
+    /// The campaign difficulty the map menu starts levels on: `easy`,
+    /// `normal` (the default), `heroic` or `legendary`.
+    pub const DIFFICULTY: &str = "DIFFICULTY";
+    /// The Spartan's armour colour, one of `mcc_rider`'s colour names.
+    pub const ARMOUR: &str = "ARMOUR";
 }
 
 /// What `REFLEX` holds when the player chose to go without Reflex.
@@ -243,6 +251,15 @@ pub fn language() -> &'static str {
     wanted
         .and_then(|w| LANGUAGES.iter().copied().find(|l| *l == w))
         .unwrap_or("english")
+}
+
+/// Saves one setting (`key`, a [`key`] constant) in the saved setup,
+/// keeping the others.
+pub fn save_setting(key: &str, value: &str) -> Result<(), String> {
+    let path = settings_path();
+    let mut s = Settings::read(&path);
+    s.set(key, value);
+    s.write(&path)
 }
 
 /// Saves the dialogue language (one of [`LANGUAGES`]) for the next map load.

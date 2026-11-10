@@ -8,7 +8,12 @@
 //! The clock starts the first time the player is in control after play
 //! has begun (the loading screen gone, `mcc_core::map::Playing`) (riding, on foot or skating; an insertion puts him on
 //! the bike at once) and counts game time only: the pause menu stops it,
-//! and dying, falling and respawning do not touch it.
+//! and dying, falling and respawning do not touch it. It shows in the top
+//! right while the run is on (`show_clock`).
+//!
+//! The best time of each level at each difficulty is kept in
+//! `best-times.env` beside the saved setup (`BestTimes`); the completion
+//! screen shows it under the time, or says the run was a new best.
 //!
 //! Restart unloads the map and loads it again in the same window
 //! (`mcc_core::map`), so the scripts, the floor plates, the AI and the
@@ -37,8 +42,11 @@ impl Plugin for FinishPlugin {
             .init_map_resource::<RunFinished>()
             .init_map_resource::<Picked>()
             .remove_on_map_unload::<CurrentMap>()
-            .add_systems(mcc_core::map::MapStartup, spawn_screen)
-            .add_systems(Update, (clock.run_if(mcc_core::pause::running), finish).chain().run_if(mcc_core::map::ready))
+            .add_systems(mcc_core::map::MapStartup, (spawn_screen, spawn_clock))
+            .add_systems(
+                Update,
+                (clock.run_if(mcc_core::pause::running), finish, show_clock, clock_onto_shot_camera).chain().run_if(mcc_core::map::ready),
+            )
             .add_systems(PreUpdate, choose.after(InputSystems).run_if(mcc_core::map::ready))
             .add_systems(Last, (restart, reload_done).chain());
     }
@@ -97,6 +105,62 @@ struct FinishScreen;
 
 #[derive(Component)]
 struct TimeText;
+
+/// Under the time: the level's best time, or that this run is a new best.
+#[derive(Component)]
+struct BestText;
+
+/// The run clock in the top right while the run is on.
+#[derive(Component)]
+struct ClockText;
+
+/// The best time of each level at each difficulty, `best-times.env` beside
+/// the saved setup (`game_paths::settings_dir`): `warthog_run@heroic="183.42"`.
+struct BestTimes;
+
+impl BestTimes {
+    fn path() -> std::path::PathBuf {
+        game_paths::settings_dir().join("best-times.env")
+    }
+
+    /// The key of a level (`CurrentMap::arg`) at the difficulty its command
+    /// line asks for (normal when it does not say).
+    fn key(current: &CurrentMap) -> String {
+        let difficulty = current
+            .args
+            .iter()
+            .position(|a| a == "--difficulty")
+            .and_then(|i| current.args.get(i + 1))
+            .map_or("normal", String::as_str);
+        format!("{}@{difficulty}", current.arg)
+    }
+
+    /// A finished run's time: the best before it, and whether it beat it
+    /// (then it is saved as the new best).
+    fn record(key: &str, time: f64) -> (Option<f64>, bool) {
+        let path = Self::path();
+        let mut saved = game_paths::Settings::read(&path);
+        let before = saved.get(key).and_then(|v| v.parse::<f64>().ok());
+        let beaten = before.is_none_or(|b| time < b);
+        if beaten {
+            saved.set(key, &format!("{time:.2}"));
+            if let Err(e) = saved.write(&path) {
+                warn!("best time not saved: {e}");
+            }
+        }
+        (before, beaten)
+    }
+
+    /// The line under the time.
+    fn line(before: Option<f64>, beaten: bool) -> String {
+        match (before, beaten) {
+            (Some(b), true) => format!("NEW BEST (was {})", format_time(b)),
+            (None, true) => "NEW BEST".to_string(),
+            (Some(b), false) => format!("BEST {}", format_time(b)),
+            (None, false) => String::new(),
+        }
+    }
+}
 
 #[derive(Component)]
 struct Title;
@@ -173,6 +237,7 @@ fn spawn_screen(mut commands: Commands) {
                 });
                 panel.spawn(text("TIME", 16.0, DIM));
                 panel.spawn((TimeText, text("--:--.--", 56.0, LIT)));
+                panel.spawn((BestText, text("", 18.0, DIM)));
                 panel
                     .spawn(Node {
                         column_gap: Val::Px(18.0),
@@ -206,6 +271,61 @@ fn spawn_screen(mut commands: Commands) {
         });
 }
 
+fn spawn_clock(mut commands: Commands) {
+    commands.spawn((
+        ClockText,
+        Text::new(""),
+        TextFont::from_font_size(28.0),
+        TextColor(Color::srgb(0.95, 0.97, 1.0)),
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(28.0),
+            top: Val::Px(20.0),
+            ..default()
+        },
+        Visibility::Hidden,
+    ));
+}
+
+/// A headless `--shot` draws into an image, not a window: the clock goes on
+/// the 3D camera to be in the picture (as the shield meter does).
+fn clock_onto_shot_camera(
+    mut commands: Commands,
+    windows: Query<(), With<PrimaryWindow>>,
+    clocks: Query<Entity, (With<ClockText>, Without<bevy::ui::UiTargetCamera>)>,
+    cameras: Query<Entity, With<Camera3d>>,
+) {
+    if !windows.is_empty() {
+        return;
+    }
+    let Some(camera) = cameras.iter().next() else { return };
+    for c in &clocks {
+        commands.entity(c).insert(bevy::ui::UiTargetCamera(camera));
+    }
+}
+
+/// The run clock while the run is on: from its start, in game time (it
+/// stands still behind the pause menu); gone once the run is over.
+fn show_clock(
+    time: Res<Time<Virtual>>,
+    clock: Res<RunClock>,
+    finished: Res<RunFinished>,
+    mut shown: Query<(&mut Text, &mut Visibility), With<ClockText>>,
+) {
+    let running = clock.started.filter(|_| !finished.0);
+    for (mut text, mut visibility) in &mut shown {
+        let Some(started) = running else {
+            visibility.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        visibility.set_if_neq(Visibility::Inherited);
+        let s = format_time(time.elapsed_secs_f64() - started);
+        if text.0 != s {
+            text.0 = s;
+        }
+    }
+}
+
 /// Starts the clock the first time the player is in control: skating, on
 /// foot or on the bike (with or without a body drawn).
 fn clock(time: Res<Time<Virtual>>, rider: Option<Res<RiderPose>>, scripts: Option<Res<Scripts>>, mut clock: ResMut<RunClock>) {
@@ -230,6 +350,7 @@ fn finish(
     mut times: Query<&mut Text, (With<TimeText>, Without<Subtitle>, Without<Title>)>,
     mut subtitles: Query<&mut Text, (With<Subtitle>, Without<TimeText>, Without<Title>)>,
     mut titles: Query<&mut Text, (With<Title>, Without<TimeText>, Without<Subtitle>)>,
+    mut bests: Query<&mut Text, (With<BestText>, Without<TimeText>, Without<Subtitle>, Without<Title>)>,
     mut windows: Query<&mut CursorOptions, With<PrimaryWindow>>,
     current: Option<Res<CurrentMap>>,
 ) {
@@ -284,6 +405,17 @@ fn finish(
     }
     for mut t in &mut times {
         t.0 = shown.clone();
+    }
+    // A won run with a time is held up against the best one.
+    let best = match (clock.time(), current.as_deref()) {
+        (Some(t), Some(current)) if !failed => {
+            let (before, beaten) = BestTimes::record(&BestTimes::key(current), t);
+            BestTimes::line(before, beaten)
+        }
+        _ => String::new(),
+    };
+    for mut t in &mut bests {
+        t.0 = best.clone();
     }
     if let Ok(mut cursor) = windows.single_mut() {
         cursor.grab_mode = CursorGrabMode::None;
@@ -455,6 +587,20 @@ fn reload_done(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A level's best is kept per difficulty, normal when none is given.
+    #[test]
+    fn best_times_are_per_level_and_difficulty() {
+        let current = |args: &[&str]| CurrentMap {
+            arg: "warthog_run".into(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+        };
+        assert_eq!(BestTimes::key(&current(&[])), "warthog_run@normal");
+        assert_eq!(BestTimes::key(&current(&["--foot", "--difficulty", "legendary"])), "warthog_run@legendary");
+        assert_eq!(BestTimes::line(None, true), "NEW BEST");
+        assert_eq!(BestTimes::line(Some(200.0), true), "NEW BEST (was 3:20.00)");
+        assert_eq!(BestTimes::line(Some(200.0), false), "BEST 3:20.00");
+    }
 
     #[test]
     fn times_read_as_minutes_seconds_hundredths() {

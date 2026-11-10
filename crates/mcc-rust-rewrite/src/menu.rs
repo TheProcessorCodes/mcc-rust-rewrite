@@ -62,6 +62,25 @@ use crate::Game;
 use crate::key_hint::{self, KeyHint};
 
 const TABS: [&str; 5] = ["HALO 3", "HALO 2", "HALO CE", "REACH", "CAMPAIGN"];
+/// The Campaign tab's index in `TABS`.
+const CAMPAIGN_TAB: usize = TABS.len() - 1;
+
+/// The campaign difficulties, as `--difficulty` takes them.
+const DIFFICULTIES: [&str; 4] = ["easy", "normal", "heroic", "legendary"];
+
+/// The saved campaign difficulty (`game_paths::key::DIFFICULTY`), an index
+/// into [`DIFFICULTIES`]; normal when there is none.
+fn saved_difficulty() -> usize {
+    let saved = game_paths::settings().get(game_paths::key::DIFFICULTY).map(|s| s.trim().to_ascii_lowercase());
+    saved.and_then(|s| DIFFICULTIES.iter().position(|d| *d == s)).unwrap_or(1)
+}
+
+/// Where a map name sits in the menu: its tab and tile.
+fn find_entry(arg: &str) -> Option<(usize, usize)> {
+    SECTIONS.iter().enumerate().find_map(|(t, sections)| {
+        sections.iter().flat_map(|(_, entries)| entries.iter()).position(|e| e.0 == arg).map(|i| (t, i))
+    })
+}
 const COLUMNS: usize = 6;
 
 /// (map argument, shown name, MCC preview texture without `_LARGE` /
@@ -365,6 +384,12 @@ struct Menu {
     /// "Without Skate 3" was chosen once with Skate 3 set up and said what
     /// it deletes: choosing it again does it (`setup::choose`).
     confirm_skip: bool,
+    /// The campaign difficulty, an index into [`DIFFICULTIES`]: the Campaign
+    /// tab's levels start on it (Y or F2 changes it, and it is saved).
+    difficulty: usize,
+    /// Starting a map saves it as the last one, to open on next time; not in
+    /// a headless shot, which never writes the setup.
+    remember: bool,
 }
 
 /// A folder picker (and, for Skate 3, its conversion), on its thread.
@@ -385,6 +410,26 @@ enum Pick {
 impl Menu {
     fn selected(&self) -> Option<&Map> {
         self.tabs[self.tab].get(self.pick[self.tab])
+    }
+
+    /// The command line the picked map loads with: a campaign level gets
+    /// the chosen difficulty, unless `--difficulty` was given.
+    fn map_args(&self) -> Vec<String> {
+        let mut args = self.args.clone();
+        if self.tab == CAMPAIGN_TAB && !args.iter().any(|a| a == "--difficulty") {
+            args.extend(["--difficulty".to_string(), DIFFICULTIES[self.difficulty].to_string()]);
+        }
+        args
+    }
+
+    /// The next difficulty, saved.
+    fn next_difficulty(&mut self) {
+        self.difficulty = (self.difficulty + 1) % DIFFICULTIES.len();
+        if self.remember
+            && let Err(e) = game_paths::save_setting(game_paths::key::DIFFICULTY, DIFFICULTIES[self.difficulty])
+        {
+            eprintln!("menu: the difficulty was not saved: {e}");
+        }
     }
 }
 
@@ -438,15 +483,19 @@ struct Notice;
 struct NoticeGame;
 #[derive(Component, Clone, Copy, PartialEq)]
 enum MenuButton {
+    /// The campaign difficulty, only on the Campaign tab.
+    Difficulty,
     Settings,
     Start,
     Exit,
 }
+/// The difficulty button's text.
+#[derive(Component)]
+struct DifficultyLabel;
 /// The settings screen.
 #[derive(Component)]
 struct SettingsScreen;
-/// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3, 3 username, 4 speed units,
-/// 5 skating on / off, 6 bike physics (only with Reflex set up).
+/// One row of the settings screen, an index into `SETTING_GAMES`.
 #[derive(Component)]
 struct SettingRow(usize);
 #[derive(Component)]
@@ -461,23 +510,35 @@ struct SettingsNote;
 #[derive(Component)]
 struct SettingsBack;
 
-/// The settings, in row order: three games' folders, the username, the speed
-/// unit, skating on or off, the dialogue language, the bike's physics.
-const SETTING_GAMES: [&str; 8] =
-    ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username", "Speedometer", "Skating", "Dialogue language", "Bike physics"];
+/// The settings, in row order: three games' folders, the username, the
+/// armour colour, the speed unit, skating on or off, the dialogue language,
+/// the bike's physics.
+const SETTING_GAMES: [&str; 9] = [
+    "Halo MCC",
+    "MX vs ATV Reflex",
+    "Skate 3",
+    "Username",
+    "Armour colour",
+    "Speedometer",
+    "Skating",
+    "Dialogue language",
+    "Bike physics",
+];
 /// The row holding Skate 3's folder.
 const SKATE_ROW: usize = 2;
 /// The row holding the username.
 const USERNAME_ROW: usize = 3;
+/// The row choosing the Spartan's armour colour.
+const ARMOUR_ROW: usize = 4;
 /// The row holding the speedometer's unit.
-const UNITS_ROW: usize = 4;
+const UNITS_ROW: usize = 5;
 /// The row turning skating on and off.
-const SKATING_ROW: usize = 5;
+const SKATING_ROW: usize = 6;
+/// The row choosing the language Halo's dialogue plays in.
+const LANGUAGE_ROW: usize = 7;
 /// The row switching the bike between Arcade and Reflex physics, the last
 /// one; only shown with Reflex set up (it is optional).
-const PHYSICS_ROW: usize = 7;
-/// The row choosing the language Halo's dialogue plays in.
-const LANGUAGE_ROW: usize = 6;
+const PHYSICS_ROW: usize = 8;
 
 /// A dialogue language (`game_paths::LANGUAGES`) as the row shows it.
 fn language_label(language: &str) -> &'static str {
@@ -516,7 +577,7 @@ fn button_label(row: usize, skate_ready: bool) -> &'static str {
     match row {
         SKATE_ROW | SKATING_ROW if !skate_ready => "SET UP",
         USERNAME_ROW => "EDIT",
-        SKATE_ROW | UNITS_ROW | SKATING_ROW | LANGUAGE_ROW | PHYSICS_ROW => "CHANGE",
+        SKATE_ROW | ARMOUR_ROW | UNITS_ROW | SKATING_ROW | LANGUAGE_ROW | PHYSICS_ROW => "CHANGE",
         _ => "SELECT",
     }
 }
@@ -524,7 +585,7 @@ fn button_label(row: usize, skate_ready: bool) -> &'static str {
 /// What each row shows now: the saved folder, or why there is none.
 /// `skate_ready`: Skate 3 is set up (`game_paths::skate_ready`); without it
 /// skating is not there to turn on.
-fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool, skate_ready: bool) -> [String; 8] {
+fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool, skate_ready: bool) -> [String; 9] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
     let settings = game_paths::settings();
     let reflex = match game_paths::reflex_chosen() {
@@ -554,6 +615,7 @@ fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool, sk
         reflex,
         skate_folder,
         game_paths::username(),
+        format!("{} (the Spartan on multiplayer maps, from the next map you load)", mcc_rider::ARMOUR_COLOURS[mcc_rider::armour()].0),
         format!("{} (miles per hour or kilometres per hour)", unit.label()),
         skating.to_string(),
         format!("{} (the voices in Halo 3 and Halo: Combat Evolved)", language_label(game_paths::language())),
@@ -690,8 +752,20 @@ impl Plugin for MenuPlugin {
             saved: false,
             target: None,
         });
-        let mut tab = value(args, "--menu-tab").and_then(|s| s.parse().ok()).unwrap_or(0usize).min(TABS.len() - 1);
-        let pick = value(args, "--menu-pick").and_then(|s| s.parse().ok()).unwrap_or(0usize);
+        // The last map started, unless the command line picks one (shots).
+        let last = game_paths::settings()
+            .get(game_paths::key::LAST_MAP)
+            .and_then(find_entry)
+            .filter(|_| !headless(args));
+        let mut tab = value(args, "--menu-tab")
+            .and_then(|s| s.parse().ok())
+            .or(last.map(|l| l.0))
+            .unwrap_or(0usize)
+            .min(TABS.len() - 1);
+        let pick = value(args, "--menu-pick")
+            .and_then(|s| s.parse().ok())
+            .or(last.filter(|l| l.0 == tab).map(|l| l.1))
+            .unwrap_or(0usize);
         let with_value =
             ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--menu-step", "--menu-row", "--size"];
         let alone = ["--menu-loading", "--menu-start", "--menu-missing", "--menu-settings", "--menu-setup"];
@@ -776,6 +850,8 @@ impl Plugin for MenuPlugin {
             setup_finished: false,
             setup_return: None,
             confirm_skip: false,
+            difficulty: saved_difficulty(),
+            remember: !headless(args),
         };
         let step = value(args, "--menu-step");
         if first_run {
@@ -1178,6 +1254,7 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
                 name.spawn((Chosen(1), text("", 18.0, DIM)));
             });
         for (button, letter, colour, label, key) in [
+            (MenuButton::Difficulty, "Y", Color::srgb(0.93, 0.76, 0.20), "", "F2"),
             (MenuButton::Settings, "X", Color::srgb(0.30, 0.55, 0.90), "SETTINGS", "F1"),
             (MenuButton::Start, "A", Color::srgb(0.37, 0.75, 0.29), "START GAME", "Enter"),
             (MenuButton::Exit, "B", Color::srgb(0.85, 0.33, 0.31), "EXIT", "Esc"),
@@ -1193,7 +1270,9 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
             ))
             .with_children(|b| {
                 key_hint::badge(b, letter, key, colour);
-                if button == MenuButton::Start {
+                if button == MenuButton::Difficulty {
+                    b.spawn((DifficultyLabel, text(&difficulty_label(menu.difficulty), 20.0, DIM)));
+                } else if button == MenuButton::Start {
                     b.spawn((StartLabel, text(label, 20.0, LIT)));
                 } else {
                     b.spawn(text(label, 20.0, DIM));
@@ -1311,6 +1390,9 @@ fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu
         open_settings(&mut menu);
         return;
     }
+    if menu.tab == CAMPAIGN_TAB && (key(&[KeyCode::F2]) || pad(GamepadButton::North)) {
+        menu.next_difficulty();
+    }
     let tabs = TABS.len();
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let tab_key = keys.just_pressed(KeyCode::Tab);
@@ -1382,6 +1464,7 @@ fn mouse(
         return;
     }
     match bar.iter().find(|(_, n, t)| n.contains_point(**t, at)).map(|(b, ..)| *b) {
+        Some(MenuButton::Difficulty) => menu.next_difficulty(),
         Some(MenuButton::Settings) => open_settings(&mut menu),
         Some(MenuButton::Start) => start(&mut commands, &mut menu),
         Some(MenuButton::Exit) => {
@@ -1389,6 +1472,11 @@ fn mouse(
         }
         None => {}
     }
+}
+
+/// The difficulty button's text.
+fn difficulty_label(difficulty: usize) -> String {
+    format!("DIFFICULTY: {}", DIFFICULTIES[difficulty].to_uppercase())
 }
 
 fn open_settings(menu: &mut Menu) {
@@ -1525,6 +1613,14 @@ fn select(
         menu.note = match game_paths::set_skating_enabled(skate.0) {
             Ok(()) if skate.0 => "Skating is on. J (or both sticks clicked) gets on the board.".to_string(),
             Ok(()) => "Skating is off. Maps load without the skateboard or grind rails.".to_string(),
+            Err(e) => e,
+        };
+        return;
+    }
+    if row == ARMOUR_ROW {
+        let next = mcc_rider::ARMOUR_COLOURS[(mcc_rider::armour() + 1) % mcc_rider::ARMOUR_COLOURS.len()].0;
+        menu.note = match game_paths::save_setting(game_paths::key::ARMOUR, &next.to_ascii_lowercase()) {
+            Ok(()) => format!("The Spartan wears {next} on the next map you load."),
             Err(e) => e,
         };
         return;
@@ -1742,8 +1838,13 @@ fn begin(menu: &mut Menu) -> Option<Loading> {
     let map = menu.selected()?;
     let arg = map.arg;
     eprintln!("menu: loading {} ({arg})", map.name);
+    if menu.remember
+        && let Err(e) = game_paths::save_setting(game_paths::key::LAST_MAP, arg)
+    {
+        eprintln!("menu: the last map was not saved: {e}");
+    }
     let (send, receive) = std::sync::mpsc::channel();
-    let args = menu.args.clone();
+    let args = menu.map_args();
     std::thread::spawn(move || {
         let _ = send.send(crate::load(arg, &args));
     });
@@ -1831,7 +1932,7 @@ fn finish_loading(world: &mut World) {
         Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(anyhow::anyhow!("the map crashed while loading")),
     };
     world.remove_resource::<Loading>();
-    let args = world.resource::<Menu>().args.clone();
+    let args = world.resource::<Menu>().map_args();
     let failed = match result {
         Ok(map) => {
             let title = format!("MCC Rust Rewrite - {}", map.scene_name());
@@ -1897,10 +1998,16 @@ fn show(
     mut tiles: Query<(&Tile, &mut BorderColor), Without<TabLabel>>,
     mut names: Query<(&TileLabel, &mut TextColor), (Without<TabLabel>, Without<StartLabel>)>,
     mut start_label: Query<&mut TextColor, (With<StartLabel>, Without<TabLabel>, Without<TileLabel>)>,
-    mut texts: Query<(Option<&Chosen>, Option<&LoadingName>, &mut Text)>,
+    mut texts: Query<(Option<&Chosen>, Option<&LoadingName>, Option<&DifficultyLabel>, &mut Text)>,
+    mut bar: Query<(&MenuButton, &mut Node), (Without<Chooser>, Without<LoadingScreen>, Without<TabPage>)>,
 ) {
     if !menu.is_changed() {
         return;
+    }
+    for (button, mut node) in &mut bar {
+        if *button == MenuButton::Difficulty {
+            node.display = if menu.tab == CAMPAIGN_TAB { Display::Flex } else { Display::None };
+        }
     }
     let loading_now = menu.phase == Phase::Loading;
     let over = matches!(menu.phase, Phase::Settings | Phase::Setup);
@@ -1940,7 +2047,11 @@ fn show(
     for mut colour in &mut start_label {
         colour.0 = if selected.is_some_and(|m| m.installed) { LIT } else { FAINT };
     }
-    for (part, name, mut text) in &mut texts {
+    for (part, name, difficulty, mut text) in &mut texts {
+        if difficulty.is_some() {
+            text.0 = difficulty_label(menu.difficulty);
+            continue;
+        }
         if name.is_some() {
             text.0 = selected.map_or(String::new(), |m| m.name.to_uppercase());
             continue;

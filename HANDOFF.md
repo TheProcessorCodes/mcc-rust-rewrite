@@ -417,7 +417,9 @@ the bike on it:
   61 m and 27 m/s in 5th, steers the right way, a launch speed carries over) and
   `--test reflex_on_halo` (Valhalla's collision: settles on both wheels, 23 m in 2.5 s, no sinking,
   no crash). Both skip without Reflex / MCC. Not playtested yet.
-- Not done: a pad button for Reflex's clutch (`ReflexInput::clutch`), surfaces (every Halo surface
+- The clutch (`ReflexInput::clutch`) is RB or E held (`Controls::clutch`), as `reflex_bevy`'s
+  own test app has it; the arcade models ignore it.
+- Not done: surfaces (every Halo surface
   rides as Reflex's default grip), the engine sound picking takes by Reflex's rpm (it reads
   `bike.engine` as before).
 

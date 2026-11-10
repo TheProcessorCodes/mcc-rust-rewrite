@@ -1,6 +1,6 @@
-//! The physics tuning menu: 0 on the dirt bike opens a column of sliders
-//! over the ride (`reflex::Tuning`); 0 or Esc (B on a pad) closes it. The
-//! bike stands still while it is open.
+//! The physics tuning menu: 0 on the dirt bike (LB + X on a pad) opens a
+//! column of sliders over the ride (`reflex::Tuning`); 0 or Esc (B, or
+//! LB + X again, on a pad) closes it. The bike stands still while it is open.
 //!
 //! The first slider picks the model the others start from: Unleashed's
 //! Pro 250 as it is, Reflex v1 (`reflex.rs`), or Reflex itself (`exact.rs`,
@@ -862,7 +862,14 @@ fn spawn_menu(mut commands: Commands) {
         });
 }
 
-/// 0 opens and closes the menu while riding; Esc or B on a pad close it.
+/// LB + X on a pad: X pressed with LB held (LB alone is the session
+/// marker's chord, with the d-pad).
+fn pad_chord(gamepads: &Query<&Gamepad>) -> bool {
+    gamepads.iter().any(|p| p.pressed(GamepadButton::LeftTrigger) && p.just_pressed(GamepadButton::West))
+}
+
+/// 0, or LB + X on a pad, opens and closes the menu while riding; Esc or B
+/// on a pad close it.
 #[allow(clippy::too_many_arguments)]
 fn toggle(
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -874,7 +881,7 @@ fn toggle(
     mut overlay: ResMut<Overlay>,
     mut menus: Query<&mut Visibility, With<Menu>>,
 ) {
-    let zero = keys.just_pressed(KeyCode::Digit0) || keys.just_pressed(KeyCode::Numpad0);
+    let zero = keys.just_pressed(KeyCode::Digit0) || keys.just_pressed(KeyCode::Numpad0) || pad_chord(&gamepads);
     let open = if menu.open {
         let escape = keys.just_pressed(KeyCode::Escape);
         if escape {
@@ -1005,7 +1012,9 @@ fn adjust(
             let v = ((k.get)(&tuning.0) + nudge * k.step).clamp(k.range.0, k.range.1);
             put(&mut tuning, k, v);
         }
-        if keys.just_pressed(KeyCode::Backspace) || pad(GamepadButton::West) {
+        // X, not the LB + X that opens and closes the menu.
+        let lb = gamepads.iter().any(|p| p.pressed(GamepadButton::LeftTrigger));
+        if keys.just_pressed(KeyCode::Backspace) || (pad(GamepadButton::West) && !lb) {
             put(&mut tuning, k, (k.get)(&stock));
         }
     } else {
