@@ -12,7 +12,7 @@
 //! Halo 3's Spartan borrowed from Valhalla, on Valhalla's movement).
 
 use crate::{LoadedMap, borrowed_chief};
-use crate::{rider, textures, world};
+use crate::{textures, world};
 
 /// Decodes the map's BSPs, collision and objects into `scene`.
 pub fn decode(cache: &blam_cache::CacheFile, scene: &mut blam_geometry::Scene) -> anyhow::Result<()> {
