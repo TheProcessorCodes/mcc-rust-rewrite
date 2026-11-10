@@ -40,8 +40,8 @@ use mcc_bike::pose::Rig;
 use mcc_core::coords::{to_halo, to_render, to_render_dir};
 use mcc_core::fly_camera::FlyCamera;
 use mcc_core::skate::{
-    Bail, Dismount, HaloRig, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, board_pressed, dpad_up_alone,
-    skating_on,
+    Bail, Dismount, HaloRig, Mount, Ride, RiderPose, SkateEnabled, Skating, board_pressed, dpad_up_alone,
+    skater_rig, skating_on,
 };
 use mcc_core::zones::LoadedBsps;
 
@@ -138,7 +138,10 @@ fn setup(mut foot: ResMut<OnFoot>, halo: Option<Res<HaloRig>>) {
     // Skate 3's skater, or without Skate 3 the Spartan's own skeleton.
     let rig = match halo.as_deref() {
         Some(h) => Rig::from_binds(h.names.clone(), h.binds.clone(), "Master Chief's skeleton"),
-        None => Rig::load(&assets_root().join("rig.json")),
+        None => match skater_rig() {
+            Some(file) => Rig::load(&file),
+            None => return,
+        },
     };
     match rig {
         Ok(r) => foot.rig = Some(r),
