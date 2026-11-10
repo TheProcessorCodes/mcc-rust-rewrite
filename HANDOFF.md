@@ -70,9 +70,6 @@ What the game does now:
   - Sky: the real sky (`skya`) with scattering, haze per cluster through the BSP's atmosphere palette, night skies (Blackout).
   - Exposure: per map, plus auto exposure, from the camera fx.
   - Spawn markers and editor-only objects are hidden.
-  - A blob shadow under the player on foot, on the board and on the bike (2026-11-10, #30,
-    `mcc-rust-rewrite/src/shadow.rs`): a soft dark patch on the collision straight below, shrinking
-    and fading out by 7 m up. Nothing casts a real shadow (the world's are baked into the lightmaps).
   - The map's own effects play from the start (2026-11-10, #26, `mcc_effects/src/ambient.rs`):
     those placed objects carry (object attachments, Valhalla's waterfall mist), looping, within
     150 m of the camera, and the weather of the camera's air (`skya` setting `+0x8C`: Snowbound's
@@ -89,6 +86,21 @@ What the game does now:
     (`blam_geometry::objects::lifts`, `docs/format/halo2.md` 12.4) and the board takes their push
     at once through the vendored skate-host's `Session::push`; walking and the bike take Halo 3's
     lifts too now.
+  - Launch pads (2026-11-10, #29 playtest: "Valhalla's cannons are very weak"): Valhalla's
+    cannons are a box 0.67 wu long that pushes 60 wu/s^2 up to 11 wu/s, which a point crossing it
+    never reaches (on foot it left at 7 to 10 wu/s and flew 9 to 25 wu; the bike was not thrown at
+    all, the player's volume ignores vehicles). A volume too short to reach its own top speed is
+    a launch pad (`LiftVolume::launch_speed`) and throws at that speed at once
+    (`mcc_core::lifts`: `Lifts::launch`, `walk`, `kick`, `Flight`), scaled by the root of the
+    mode's gravity over Halo's 4.1712 wu/s^2 so every mode lands where Halo's flight does (28.6 wu
+    from a base cannon over level ground, at the foot of the middle hill); the bike is thrown as
+    a player and flies without its air drag. Tests: `mcc_foot/tests/valhalla_cannon.rs`,
+    `mcc_skate` `a_launch_pad_throws_the_board_as_far_as_halo`.
+  - The cannons' stream of light (`mcc_effects`): the map's own effect on a null object by each
+    cannon. Its loop is one event 1/60 s long; loops now come round without a break (they waited
+    0.5 s, which left one particle in thirty), and the stream is turned to blow along the cannon's
+    push (`ambient::aim_along_lift`, our reading: the effect's `up` location is not decoded).
+    Test `mcc_effects/tests/man_cannon_air.rs`.
 - **Rider.** Master Chief (Mark VI helmet) is retargeted onto the 35 skate bones, with his head attached and feet flat, and is lit from the lightmap under him (`rider.rs`, `docs/rider.md`). Playtested: "looks great". Without Skate 3 the skeleton is his own, 27 of those bones on his joints (see "Skate 3 optional" below).
 - **Dirt bike.** B rides it, with Master Chief on it (`mcc_bike`). It is drawn as Reflex's Dakumoto 450F in the user's Cortana graphics kit, read from their own MX vs ATV Reflex install (`reflex_assets`, `docs/format/reflex-bike.md`); without Reflex it is the old stick model. Its physics are MX vs ATV Unleashed's model pulled towards stock Reflex ("Reflex v1", `reflex.rs`), or, since 2026-11-06, Reflex's own simulation ("Reflex", `exact.rs`, see "Reflex's own simulation" below); 0 while riding opens the physics tuning menu (`tune.rs`), whose first slider picks Unleashed, Reflex v1 or Reflex (see "Dirt bike" below).
 - **On foot.** F walks the Spartan (`foot/`): the map's own movement numbers (`blam movement`,

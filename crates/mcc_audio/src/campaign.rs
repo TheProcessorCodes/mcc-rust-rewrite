@@ -1,5 +1,5 @@
 //! Halo 3's campaign music on any map, by hand: U starts it (or stops
-//! it), Shift+U skips to the next piece, Ctrl+U to a random one. When a
+//! it, fading out over a second), Shift+U skips to the next piece, Ctrl+U to a random one. When a
 //! piece ends by itself (its music time) the next one starts. The piece's
 //! name shows at the top of the screen for a few seconds.
 //!
@@ -40,6 +40,9 @@ pub const MISSIONS: [&str; 11] = [
     "120_halo",
     "130_epilogue",
 ];
+
+/// Seconds the music takes to fade out when U stops it.
+const STOP_FADE: f32 = 1.0;
 
 /// Seconds a piece's name stays on screen.
 const LABEL_SECONDS: f32 = 4.0;
@@ -295,9 +298,13 @@ pub(crate) fn keys(keys: Res<ButtonInput<KeyCode>>, mixer: Res<Mixer>, mut music
         }
         State::Ready(side) => {
             let side = side.clone();
-            if pick == Pick::Same && music.player.live() {
+            if pick == Pick::Same && music.on {
+                // Off: a fade, not the piece's own ending, which lets a
+                // loop play on to its end (minutes) and sounds like U did
+                // nothing.
                 music.on = false;
-                music.player.end_all(&side.sounds, &mixer, false);
+                music.pending = None;
+                music.player.fade_all(STOP_FADE);
                 info!("campaign music: off");
                 return;
             }

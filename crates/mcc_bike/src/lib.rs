@@ -271,6 +271,7 @@ fn publish_motion(riding: Res<Riding>, mut motion: ResMut<mcc_core::bike::BikeMo
                 grounded: b.grounded(),
                 crashed: b.crashed.is_some(),
                 clutch_slipping: !b.engine.locked,
+                clutch_in: b.exact().is_some_and(|e| e.clutch_in()),
                 rear_sliding: b.wheels[0].sliding && b.wheels[0].contact.is_some(),
                 position: b.position,
                 velocity: b.velocity,
@@ -452,7 +453,7 @@ fn ride(
     input: Option<Res<BikeInput>>,
     mut shared: ResMut<SharedWorld>,
     kill: Option<Res<mcc_core::falls::KillZones>>,
-    lifts: Option<Res<mcc_core::lifts::Lifts>>,
+    (lifts, mut flight): (Option<Res<mcc_core::lifts::Lifts>>, Local<mcc_core::lifts::Flight>),
     fallback: Option<Res<mcc_core::falls::FallbackSpot>>,
     (mut rider, mut player): (ResMut<RiderPose>, ResMut<mcc_core::ai::PlayerRespawn>),
     loaded: Res<LoadedBsps>,
@@ -652,15 +653,13 @@ fn ride(
     }
 
     bike.step(world, controls, dt);
-    // A gravity lift takes the bike too (unless it ignores vehicles): its
-    // push on top of the bike's own physics, and the bike's gravity given
-    // back while the lift switches gravity off.
-    if let Some(p) = lifts.as_deref().and_then(|l| l.push(bike.position, bike.velocity, dt, 0.5, true)) {
-        let mut a = p.acceleration;
-        if p.negates_gravity {
-            a.y += physics::GRAVITY;
-        }
-        bike.velocity += a * dt;
+    // A gravity lift takes the bike too (unless it ignores vehicles), and
+    // a launch pad throws it as it throws a player (`Lifts::ride`), on top
+    // of the bike's own physics.
+    // The throw flies without air drag, as Halo's (`Flight`).
+    let airborne = bike.grounded() == 0;
+    if let Some(dv) = lifts.as_deref().and_then(|l| flight.ride(l, bike.position, bike.velocity, airborne, dt, 0.5, physics::GRAVITY)) {
+        bike.velocity += dv;
     }
     if let Some(kill) = kill.as_deref()
         && let Some(volume) = kill.deadly(to_halo(bike.position))

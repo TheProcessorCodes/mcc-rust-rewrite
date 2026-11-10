@@ -8,7 +8,9 @@
 //!   `+0x10`) name an `effe` plays it at that marker of its render model
 //!   (none: its origin), looping, from the map's start. Only those within
 //!   [`RANGE`] of the camera play; one that drifts out of range is let
-//!   finish and starts again when the camera comes back.
+//!   finish and starts again when the camera comes back. An effect at a
+//!   man cannon or lift that blows some way is turned about the vertical
+//!   to blow the way the lift pushes ([`aim_along_lift`]).
 //! * **Weather.** An atmosphere setting can name a weather effect
 //!   (`skya` setting `+0x8C`, `docs/format/sky-and-atmosphere.md` 3). The
 //!   setting of the cluster the camera is in (`mcc_core::zones::CameraAir`)
@@ -22,7 +24,7 @@
 use bevy::prelude::*;
 
 use blam_cache::CacheFile;
-use blam_geometry::{Kind, Scene};
+use blam_geometry::{Kind, LiftVolume, Scene};
 use mcc_core::coords::to_halo;
 use mcc_core::zones::{CameraAir, CameraOutside};
 
@@ -103,9 +105,67 @@ impl Ambient {
     }
 }
 
+/// How near a lift's marker or volume (wu) a placed effect must be to be
+/// that lift's effect. Valhalla's sit 0.6 to 0.9 wu from their cannon's
+/// marker, and 4 wu from the next cannon's.
+const LIFT_NEAR: f32 = 1.5;
+
+/// The frame of a lift's effect, turned about the vertical so the stream
+/// its emitters blow (`direction`, the first emitter direction that is not
+/// zero, in the effect's frame) goes the way the lift pushes. `None` when
+/// the effect is no lift's, blows straight up, or already blows that way.
+///
+/// Valhalla's man cannon effect is carried by a null object beside the
+/// cannon, with no marker; its emitters blow 50 degrees up along the
+/// effect's x, the cannon's own angle, but in the object's frame that
+/// points across the pad. The effect names the location `up`, which is no
+/// marker of the object but a frame Halo makes itself; how Halo turns that
+/// frame about the vertical is not decoded. Along the cannon's push is
+/// our reading: it is the only way the stream follows the player's flight
+/// on all four cannons (two tags, four headings).
+pub fn aim_along_lift(at: Vec3, frame: Mat3, direction: Vec3, lifts: &[LiftVolume]) -> Option<Mat3> {
+    let flat = |v: Vec3| Vec3::new(v.x, v.y, 0.0);
+    let blows = flat(frame * direction);
+    let lift = lifts
+        .iter()
+        .filter(|l| l.push.direction.0 != 0.0)
+        .map(|l| (l, l.origin.distance(at).min(l.shape.distance(at))))
+        .filter(|(_, d)| *d < LIFT_NEAR)
+        .min_by(|a, b| a.1.total_cmp(&b.1))?
+        .0;
+    let pushes = flat(lift.direction * lift.push.direction.0.signum());
+    if blows.length() < 0.1 || pushes.length() < 0.1 {
+        return None;
+    }
+    let turn = blows.truncate().angle_to(pushes.truncate());
+    (turn.abs() > 5f32.to_radians()).then(|| Mat3::from_rotation_z(turn) * frame)
+}
+
+/// The first emitter direction of `effect` that is not zero, in the
+/// effect's frame.
+fn stream(cache: &CacheFile, effect: u32) -> Option<Vec3> {
+    let e = blam_effect::read_effect(cache, effect).ok()?;
+    e.events
+        .iter()
+        .flat_map(|ev| &ev.systems)
+        .flat_map(|s| &s.emitters)
+        .map(|em| Vec3::from(em.direction.a))
+        .find(|d| d.length_squared() > 1e-6)
+}
+
 /// Every effect the scene's placed objects carry, where they carry it.
 pub fn placed(cache: &CacheFile, scene: &Scene) -> Vec<Placed> {
     let mut out = Vec::new();
+    // The lifts: `main` has read them into the scene by now; a test's
+    // scene may not have them.
+    let read;
+    let lifts: &[LiftVolume] = if scene.lifts.is_empty() {
+        read = blam_geometry::objects::lifts(cache, scene);
+        &read
+    } else {
+        &scene.lifts
+    };
+    let mut streams: std::collections::HashMap<u32, Option<Vec3>> = std::collections::HashMap::new();
     // Per object tag: (effect, the attachment's frame in the object's).
     let mut tags: std::collections::HashMap<u32, Vec<(u32, Mat4)>> = std::collections::HashMap::new();
     for o in &scene.objects {
@@ -122,14 +182,24 @@ pub fn placed(cache: &CacheFile, scene: &Scene) -> Vec<Placed> {
         for (effect, local) in carried.iter() {
             let m = o.transform * *local;
             let frame = Mat3::from_mat4(m);
+            let frame = Mat3::from_cols(
+                frame.x_axis.normalize_or(Vec3::X),
+                frame.y_axis.normalize_or(Vec3::Y),
+                frame.z_axis.normalize_or(Vec3::Z),
+            );
+            let at = m.w_axis.truncate();
+            let aimed = if lifts.is_empty() {
+                None
+            } else {
+                streams
+                    .entry(*effect)
+                    .or_insert_with(|| stream(cache, *effect))
+                    .and_then(|d| aim_along_lift(at, frame, d, lifts))
+            };
             out.push(Placed {
                 effect: *effect,
-                at: m.w_axis.truncate(),
-                frame: Mat3::from_cols(
-                    frame.x_axis.normalize_or(Vec3::X),
-                    frame.y_axis.normalize_or(Vec3::Y),
-                    frame.z_axis.normalize_or(Vec3::Z),
-                ),
+                at,
+                frame: aimed.unwrap_or(frame),
                 object: o.tag_path.clone(),
             });
         }
@@ -220,5 +290,47 @@ pub(crate) fn run(
                 info!("ambient: weather {}", sim.lib.effect(w).map_or("?", |e| e.name.as_str()));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blam_geometry::{LiftPush, LiftShape};
+
+    fn lift(origin: Vec3, direction: Vec3) -> LiftVolume {
+        LiftVolume {
+            name: "cannon".into(),
+            shape: LiftShape::Box {
+                centre: origin,
+                axes: [Vec3::X, Vec3::Y, Vec3::Z],
+                half: Vec3::splat(0.3),
+            },
+            origin,
+            direction: direction.normalize(),
+            push: LiftPush {
+                direction: (60.0, 11.0),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Valhalla's layout: the effect blows 50 degrees up along its x, the
+    /// cannon beside it throws along +y.
+    #[test]
+    fn a_cannons_effect_is_turned_to_blow_along_its_push() {
+        let blows = Vec3::new(0.6427876, 0.0, 0.7660445);
+        let pushes = Vec3::new(0.0, 0.6427876, 0.7660445);
+        let lifts = [lift(Vec3::new(0.0, 0.6, 0.6), pushes), lift(Vec3::new(4.0, 0.0, 0.0), Vec3::new(-1.0, 0.0, 1.0))];
+        let frame = aim_along_lift(Vec3::ZERO, Mat3::IDENTITY, blows, &lifts).expect("turned");
+        assert!((frame * blows - pushes).length() < 1e-4, "{}", frame * blows);
+        // Still upright.
+        assert!((frame.z_axis - Vec3::Z).length() < 1e-5);
+        // Already along it: left alone.
+        assert!(aim_along_lift(Vec3::ZERO, frame, blows, &lifts).is_none());
+        // No lift near, a stream straight up, or a lift straight up: left alone.
+        assert!(aim_along_lift(Vec3::new(0.0, 20.0, 0.0), Mat3::IDENTITY, blows, &lifts).is_none());
+        assert!(aim_along_lift(Vec3::ZERO, Mat3::IDENTITY, Vec3::Z, &lifts).is_none());
+        assert!(aim_along_lift(Vec3::ZERO, Mat3::IDENTITY, blows, &[lift(Vec3::ZERO, Vec3::Z)]).is_none());
     }
 }

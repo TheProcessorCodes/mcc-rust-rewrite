@@ -926,6 +926,11 @@ const LIFT_CENTRE: f32 = 0.9;
 /// worked out from comes back a frame late, and must show the kick first.
 const LIFT_REST: f32 = 0.3;
 
+/// The Skate 3 engine's gravity, skate m/s^2 (its world is the map shrunk
+/// by `Host::scale`, so in the map's metres the board falls at this over
+/// the scale). A launch pad's throw is scaled for it (`Lifts::kick`).
+const SKATE_GRAVITY: f32 = 9.81;
+
 /// What the map's gravity lifts and man cannons do to the board: the kick
 /// up to the lift's top speed along its direction (`Lifts::kick`), as a
 /// velocity change in skate space for `Session::push`, at most once every
@@ -936,7 +941,7 @@ fn lift_kick(lifts: Option<&Lifts>, host: &mut Host, dt: f32) -> [f32; 3] {
     if host.since_kick < LIFT_REST {
         return [0.0; 3];
     }
-    let Some(k) = lifts.and_then(|l| l.kick(host.feet + Vec3::Y * LIFT_CENTRE, host.velocity, LIFT_MARGIN)) else {
+    let Some(k) = lifts.and_then(|l| l.kick(host.feet + Vec3::Y * LIFT_CENTRE, host.velocity, LIFT_MARGIN, SKATE_GRAVITY / host.scale)) else {
         return [0.0; 3];
     };
     host.since_kick = 0.0;
@@ -1048,6 +1053,65 @@ mod tests {
             session.tick(Default::default()).unwrap();
         }
         session.pose().velocity
+    }
+
+    /// Valhalla's launch pad (60 wu/s^2 up to 11 wu/s in a box too short
+    /// for it, 50 degrees up) throws the board as far as Halo throws a
+    /// player: 28.6 wu over level ground.
+    #[test]
+    fn a_launch_pad_throws_the_board_as_far_as_halo() {
+        let Some(root) = game_paths::skate_assets().filter(|r| game_paths::is_skate_assets(r)) else {
+            eprintln!("skipped: Skate 3 is not set up");
+            return;
+        };
+        let floor = vec![
+            [[-400.0, 0.0, -400.0], [-400.0, 0.0, 400.0], [400.0, 0.0, 400.0]],
+            [[-400.0, 0.0, -400.0], [400.0, 0.0, 400.0], [400.0, 0.0, -400.0]],
+        ];
+        let mut session = Session::new(&root, floor, vec![], [0.0; 3], 0.0).unwrap();
+        session.activate([0.0, 0.3, 0.0], 0.0).unwrap();
+        let dt = session.period();
+        for _ in 0..10 {
+            session.tick(Default::default()).unwrap();
+        }
+        let start = session.pose().root.w_axis.truncate();
+        let lifts = Lifts(vec![blam_geometry::LiftVolume {
+            name: "pad".into(),
+            shape: blam_geometry::LiftShape::Box {
+                centre: Vec3::new(0.0, 0.0, 0.15),
+                axes: [Vec3::X, Vec3::Y, Vec3::Z],
+                half: Vec3::new(0.57, 0.35, 0.14),
+            },
+            origin: Vec3::ZERO,
+            direction: Vec3::new(0.0, 0.6427876, 0.7660445),
+            push: blam_geometry::LiftPush {
+                direction: (60.0, 11.0),
+                ..Default::default()
+            },
+        }]);
+        assert!(lifts.0[0].launch_speed().is_some());
+        let mut host = Host::default();
+        let (mut top, mut flown, mut left) = (0.0f32, 0.0, 0.0f32);
+        let along = |p: Vec3| Vec3::new(p.x - start.x, 0.0, p.z - start.z).length();
+        for k in 0..(12.0 / dt) as usize {
+            let p = session.pose();
+            host.feet = p.root.w_axis.truncate() / host.scale;
+            host.velocity = p.velocity / host.scale;
+            session.push(lift_kick(Some(&lifts), &mut host, dt));
+            session.tick(Default::default()).unwrap();
+            let p = session.pose();
+            let at = p.root.w_axis.truncate();
+            top = top.max(at.y - start.y);
+            left = left.max(p.velocity.length());
+            flown = k as f32 * dt;
+            if flown > 1.0 && at.y - start.y < 0.3 {
+                break;
+            }
+        }
+        let wu = host.scale * blam_geometry::WORLD_UNIT_METRES;
+        let far = along(session.pose().root.w_axis.truncate()) / wu;
+        eprintln!("the board: {far:.1} wu in {flown:.1} s, peak {:.1} wu, left at {:.1} wu/s", top / wu, left / wu);
+        assert!((far - 28.57).abs() < 28.57 * 0.15, "the board flew {far:.1} wu");
     }
 
     /// A man cannon's push throws the board: pushed up and along while on
