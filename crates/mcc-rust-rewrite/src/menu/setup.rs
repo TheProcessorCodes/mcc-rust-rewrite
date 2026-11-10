@@ -670,6 +670,8 @@ pub(super) fn finish(world: &mut World) {
             Some(row) => {
                 menu.phase = Phase::Settings;
                 menu.setting = row;
+                // A conversion or a skip changed what converted data there is.
+                menu.converted = super::support::converted();
                 let note = if !mcc_setup::skate_ready() {
                     "Playing without Skate 3. SET UP on the Skate 3 row adds it any time."
                 } else if skating.0 {

@@ -34,8 +34,21 @@ body:
       label: Version
       description: Release name or commit you built.
   - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >-
+        On the map menu open Settings (X or F1), go to the Support page and press COPY on
+        Diagnostics, then paste it here. It has the version, your Windows version and which games
+        are set up, without your username.
+      render: text
+  - type: textarea
     id: log
     attributes:
-      label: Log or error
-      description: Console output or panic message, if there was one.
+      label: Log or crash report
+      description: >-
+        Settings > Support > Data folder > OPEN opens %LOCALAPPDATA%\MccRustRewrite. Its logs
+        folder has a log for each of the last five runs (mcc-<time>.log, newest last) and, if the
+        game crashed, crash-<time>.txt. Drag the file for the run that went wrong into this box,
+        or paste the end of it. Times in the names are UTC.
       render: text

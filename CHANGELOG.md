@@ -26,6 +26,16 @@ merge history.
 - Man cannons and gravity lifts launch the skateboard, and Halo 3's man cannons now throw you on foot and on the bike too (#29).
 - Maps play their own effects from the start, such as Valhalla's waterfall mist and the snow on Snowbound (#26).
 - U plays Halo 3's campaign music on any map; Shift+U skips to the next piece and Ctrl+U picks one at random (#27).
+- Settings has mouse sensitivity, stick sensitivity, invert look and field of view, used when
+  flying, on foot, on the bike and on the board (#20).
+- Settings can switch between borderless fullscreen and a window, and turn vsync off (#21).
+- Settings' Support page opens the data folder, copies a diagnostics summary for bug reports,
+  resets the settings and deletes the converted Skate 3 and Reflex data (#22).
+- Each run writes a log file, and a crash writes a crash report, in the data folder's logs
+  folder (#23).
+
+### Changed
+- The Settings screen is split into pages: Games, Player, Controls, Display and Support (#20).
 
 ### Fixed
 - Pause menu: the Dirt bike tab no longer says A backs the bike up; the brake held at a

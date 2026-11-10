@@ -162,6 +162,33 @@ With Reflex set up, Settings also has Bike physics: Arcade (the bike's own model
 The pause menu's dirt bike tab has the same switch. It is saved in `bike-tuning.json` with
 the tuning sliders; without Reflex the bike rides Arcade.
 
+The Settings screen (X or F1 on the map menu) has five pages, changed like the map tabs (Q /
+E, Tab, Page Up / Page Down, LB / RB or a click on a page's name): **Games** (the three
+folders), **Player** (username, armour colour, speedometer, skating, dialogue language, bike
+physics), **Controls** (mouse and stick sensitivity, 25-300 % of the stock turning speed, and
+invert look), **Display** (borderless fullscreen or windowed, vsync on or off, and the field
+of view, 80-130 % of each camera's own) and **Support**. Enter / A or a click on a row's
+button changes it; left / right step the percentages. All of them are saved in `setup.env`
+and used at once: the window changes mode and vsync there and then and opens that way next
+time. Sensitivity and invert look apply wherever the camera is aimed (flying, on foot); the
+field of view widens or narrows every camera, flying, on foot, the bike's chase camera and
+Skate 3's board camera (only its width: where Skate 3 puts its camera stays its own, and the
+right stick on the board is the flick-it, so invert does not touch it). Support opens the data
+folder in Explorer, copies a diagnostics summary for a bug report to the clipboard (the
+version, Windows version, which games are set up and whether Halo 3 reads, the main settings
+and where the log is; paths under the player's own folders are written `%LOCALAPPDATA%` /
+`%USERPROFILE%`, and the username is left out), resets the settings to their defaults
+(keeping the game folders and converted data; the bike's tuning and the sound levels, kept
+beside the exe, stay) and deletes the converted Skate 3 and Reflex data (each game deleted is
+then played without, as if skipped, until set up again). Reset and delete each ask for a
+second press.
+
+Every run writes what it prints to `logs\mcc-<time>.log` in the data folder (UTC times; the
+last five runs are kept), and a panic writes `logs\crash-<time>.txt` beside it with the
+message, where it happened and a backtrace (the last five kept). The console still shows the
+same lines. Headless `--shot` / `--menu-shot` runs write logs too (into `MCC_SETUP_DIR` when
+it is set).
+
 Dev overrides: `MCC_ROOT`, `HALO3_MAPS`, `HALO2_MAPS`, `HALO1_MAPS`, `HALOREACH_MAPS`, `MCC_SKATE_ASSETS` (or
 `IW4L_SKATE_ASSETS`; `skip` to play as if Skate 3 were skipped, and a folder there wins over a
 saved skip), `MCC_SKATE_CONVERTER`, `REFLEX_GAME` (`skip` to ride without
@@ -217,7 +244,7 @@ command line skips the menu, and Q then quits. `mcc-rust-rewrite.exe --menu-shot
 the menu, the loading screen, the picked map's not-installed notice, the Settings screen
 (with `--menu-step 1`, the Skate 3 step as Settings' SET UP opens it), the setup screen or
 the loaded map without a window; `--menu-row N` puts the focus on row N of the Settings
-screen or the setup step (point e.g. `HALOREACH_MAPS` at an empty folder to see a game
+screen (0-18 over the five pages, and shows that row's page) or the setup step (point e.g. `HALOREACH_MAPS` at an empty folder to see a game
 grayed out, or `MCC_SKATE_ASSETS` at `skip` for Settings without Skate 3).
 
 A bare map name is looked up in the MCC install setup saved (`%HALO3_MAPS%`

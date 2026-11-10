@@ -6,6 +6,9 @@
 //! takes it again. P prints the camera's place in Halo units. Gamepad: left
 //! stick moves, right stick looks, right and left triggers go up and down,
 //! the A button is fast.
+//!
+//! The mouse's and stick's speed, invert look and the field of view come
+//! from the settings (`view::LookSettings`, put in here).
 
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
@@ -14,12 +17,15 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use crate::pause::running;
 use crate::coords::{to_halo, to_halo_dir};
 use crate::skate::Skating;
+use crate::view::{FLY_FOV, LookSettings};
 
 pub struct FlyCameraPlugin;
 
 impl Plugin for FlyCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (look, grab_cursor, fly, report).chain().run_if(running).run_if(crate::map::ready));
+        app.insert_resource(LookSettings::load())
+            .add_systems(Update, (look, grab_cursor, fly, report).chain().run_if(running).run_if(crate::map::ready))
+            .add_systems(Update, fly_fov.run_if(crate::map::ready));
     }
 }
 
@@ -110,26 +116,42 @@ fn look(
     time: Res<Time>,
     gamepads: Query<&Gamepad>,
     windows: Query<&CursorOptions, With<PrimaryWindow>>,
+    settings: Res<LookSettings>,
     mut cameras: Query<(&mut FlyCamera, &mut Transform), Without<Skating>>,
 ) {
     let grabbed = windows.single().is_ok_and(cursor_grabbed);
     for (mut cam, mut transform) in &mut cameras {
         let mut turn = Vec2::ZERO;
         if grabbed {
-            turn -= motion.delta * cam.mouse_sensitivity;
+            turn -= motion.delta * cam.mouse_sensitivity * settings.mouse_scale();
         }
         for pad in &gamepads {
             let x = pad.get(GamepadAxis::RightStickX).unwrap_or(0.0);
             let y = pad.get(GamepadAxis::RightStickY).unwrap_or(0.0);
             let stick = Vec2::new(x, y);
             if stick.length() > 0.15 {
-                turn += Vec2::new(-stick.x, stick.y) * cam.stick_sensitivity * time.delta_secs();
+                turn += Vec2::new(-stick.x, stick.y) * cam.stick_sensitivity * settings.stick_scale() * time.delta_secs();
             }
         }
+        let turn = settings.turn(turn);
         if turn != Vec2::ZERO {
             cam.yaw += turn.x;
             cam.pitch = (cam.pitch + turn.y).clamp(-1.55, 1.55);
             transform.rotation = cam.rotation();
+        }
+    }
+}
+
+/// The flying camera's field of view, as the settings widen it. The rides
+/// set their own while they have the camera (`Skating`).
+fn fly_fov(settings: Res<LookSettings>, mut cameras: Query<&mut Projection, (With<FlyCamera>, Without<Skating>)>) {
+    let wanted = settings.fov_radians(FLY_FOV);
+    for mut projection in &mut cameras {
+        if let Projection::Perspective(lens) = &*projection
+            && lens.fov != wanted
+            && let Projection::Perspective(lens) = &mut *projection
+        {
+            lens.fov = wanted;
         }
     }
 }
