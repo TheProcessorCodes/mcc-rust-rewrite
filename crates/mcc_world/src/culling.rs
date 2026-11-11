@@ -211,6 +211,11 @@ fn portal_flood(
     let mut at = Vec::new();
     if portals_on() {
         for bsp in source.input.scene.bsps.iter().filter(|b| loaded.shown & (1 << b.index) != 0) {
+            // Clusters with no portals read between them (Reach): nothing
+            // to cull by, so the whole BSP stays in view.
+            if bsp.portals.is_empty() && bsp.clusters.len() > 1 {
+                continue;
+            }
             let Some(c) = bsp.locator.as_ref().and_then(|l| l.cluster(eye)) else {
                 continue;
             };

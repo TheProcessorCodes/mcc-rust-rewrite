@@ -831,8 +831,7 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         );
     }
     match (map_file, plain_sound) {
-        // Reach's sound tags are not read (`reach.rs`).
-        (Some(cache), _) if cache.engine() != blam_cache::Engine::Halo3 => {}
+        // Halo 3 and Reach (its ambience and sound scenery, `sound.md` 12).
         (Some(cache), _) => audio::install(w, audio::MapSound::Halo3(cache)),
         (None, Some(sound)) => audio::install(w, sound),
         (None, None) => {}

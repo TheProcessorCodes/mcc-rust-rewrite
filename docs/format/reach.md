@@ -50,6 +50,7 @@ section of its file; `shared.map` and `campaign.map` sit next to the map.
 | 0x15C / 0x168 | 0xD0 / 0x10 | weapons, palette |
 | 0x180 / 0x18C | 0xE4 / 0x10 | machines, palette |
 | 0x1B0 / 0x1BC | 0xDC / 0x10 | controls, palette |
+| 0x1C8 / 0x1D4 | 0x8C / 0x10 | sound scenery, palette (`sound.md` 12.4) |
 | 0x274 | 0x1C | player starting locations: position +0, facing (yaw, pitch) +0xC |
 | 0x280 | 0x7C | trigger volumes: name +0, forward +0x10, up +0x1C, corner +0x28, extents +0x34 |
 | 0x4C8 | 4 | kill triggers: i16 trigger volume index |
@@ -74,7 +75,9 @@ the distant scenery around the play space.
 |---|---|---|
 | 0x58 | 0x18 | collision materials: shader reference at +0 |
 | 0xF0 | | world bounds: x, y, z ranges |
-| 0x138 | 0x8C | clusters: bounds +0, sky index i8 +0x18, **mesh index i16 +0x40** |
+| 0x64 | 1 | the cluster of each collision BSP leaf, i8 (`sound.md` 12.5) |
+| 0x138 | 0x8C | clusters: bounds +0, sky index i8 +0x18, acoustics index i16 +0x1C, **mesh index i16 +0x40** |
+| 0x18C | 0x78 | acoustics palette (`sound.md` 12.5) |
 | 0x144 | 0x2C | materials: shader reference at +0 (the meshes' part shader indices) |
 | 0x258 | 4 | instance names (string id); the instances themselves are in a resource (5) |
 | 0x450 / 0x45C / 0x4E0 | | the BSP's own render geometry: meshes, compression, resource |
@@ -207,7 +210,8 @@ probe colour (`Lbsp + 0x6C`, 0x24 bytes); neither is read yet.
 
 ## 11. Not read yet
 
-Per-vertex and probe lighting, the lobe directions, cluster portals and the point-to-cluster
-lookup, atmosphere / fog (`skya`, `atgf` at scnr +0x6D8 / +0x6E8), camera fx (`cfxs` at
-+0x6A8), sound, weapons and the player's movement numbers, machines' and crates' collision
-models, Forge World's Forge-variant objects.
+Per-vertex and probe lighting, the lobe directions, cluster portals, atmosphere / fog
+(`skya`, `atgf` at scnr +0x6D8 / +0x6E8), camera fx (`cfxs` at +0x6A8), weapons and the
+player's movement numbers, machines' and crates' collision models, Forge World's
+Forge-variant objects. Sound: ambience and sound scenery are read (`sound.md` 12); weapons'
+sounds, music and dialogue are not.

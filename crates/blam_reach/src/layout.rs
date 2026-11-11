@@ -47,6 +47,10 @@ pub mod placement {
 /// `sbsp`.
 pub mod sbsp {
     pub const COLLISION_MATERIALS: usize = 0x58;
+    /// One signed byte per collision BSP leaf: the cluster it is in.
+    pub const LEAF_CLUSTERS: usize = 0x64;
+    /// Cluster: i16 index into the BSP's acoustics palette (`+0x18C`).
+    pub const CLUSTER_ACOUSTICS: usize = 0x1C;
     pub const WORLD_BOUNDS: usize = 0xF0;
     pub const CLUSTERS: usize = 0x138;
     pub const CLUSTER_SIZE: usize = 0x8C;
