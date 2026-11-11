@@ -50,6 +50,7 @@ memmap2 = "0.9"
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 thiserror = "2"
 anyhow = "1"
+winresource = "0.1"
 glam = "0.33"
 bytemuck = { version = "1", features = ["derive"] }
 blam_anim = { path = "crates/blam_anim" }

@@ -36,3 +36,7 @@ mcc_swim = { workspace = true }
 mcc_textures = { workspace = true }
 mcc_weapons = { workspace = true }
 mcc_world = { workspace = true }
+
+# Windows version info (ProductName/FileDescription) baked into the exe; see build.rs.
+[target.'cfg(windows)'.build-dependencies]
+winresource = { workspace = true }
