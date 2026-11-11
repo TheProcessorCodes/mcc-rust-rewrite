@@ -5,8 +5,8 @@ GitHub issue where there is one. Entries are grouped by the day they reached mas
 release holds everything up to its day. Entries before 2026-11-09 were written afterwards
 from the merge history.
 
-Releases: **beta-0.0.3** holds everything up to and including 2026-11-10; beta-0.0.1 was
-2026-11-06.
+Releases: **beta-0.0.4** holds everything up to and including 2026-11-11; beta-0.0.3 was
+2026-11-10 and beta-0.0.1 was 2026-11-06.
 
 ## 2026-11-11
 
