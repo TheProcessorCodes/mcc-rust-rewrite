@@ -32,6 +32,8 @@ recordings of the game. Make changes there first where possible, then copy them 
 - `reflex_bevy/src/ground.rs`: `ReflexGround::as_ground()` (was the crate-private `get()`) and
   `reflex_triangle` public (2026-11-06).
 
+- `Cargo.toml`, `crates/*/Cargo.toml`: `license = "GPL-3.0-only"` (2026-11-10).
+
 ## Licence
 
 `reflex-physics` is GPL-3.0-only (its author's choice, 2026-11-10), the same as the rest of this
