@@ -162,6 +162,7 @@ pub fn decode_into(
                 nodes,
                 planes,
                 leaf_clusters,
+                large_nodes: Vec::new(),
             })
         });
         match (locator, scene.bsps.iter_mut().find(|b| b.index == bsp.index)) {

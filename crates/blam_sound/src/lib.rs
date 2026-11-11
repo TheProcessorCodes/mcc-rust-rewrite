@@ -51,6 +51,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// `halo3\fmod\pc\<language>.fsb` (`sound.md` 0).
 pub const LANGUAGES: [&str; 6] = ["english", "french", "german", "italian", "mexican", "spanish"];
 
+/// The DLL of each game whose sound this crate reads, in its folder beside
+/// `maps` and `fmod`.
+pub const GAME_DLLS: [&str; 2] = ["halo3.dll", "haloreach.dll"];
+
 /// The sound effects bank, the dialogue bank of one language when asked
 /// for, and the decoder tables, ready to decode by FMOD id.
 pub struct Library {
@@ -74,7 +78,14 @@ impl Library {
             .as_ref()
             .parent()
             .ok_or_else(|| Error::Invalid("the maps folder has no parent".into()))?;
-        let mut lib = Library::open(halo3.join(r"fmod\pc\sfx.fsb"), halo3.join("halo3.dll"))?;
+        // The game's own DLL holds FMOD's decoder tables: `halo3.dll`, or
+        // `haloreach.dll` beside Reach's maps.
+        let dll = GAME_DLLS
+            .iter()
+            .map(|d| halo3.join(d))
+            .find(|d| d.is_file())
+            .unwrap_or_else(|| halo3.join(GAME_DLLS[0]));
+        let mut lib = Library::open(halo3.join(r"fmod\pc\sfx.fsb"), dll)?;
         if let Some(lang) = language {
             lib.add_dialog(language_bank(halo3, lang)?)?;
         }

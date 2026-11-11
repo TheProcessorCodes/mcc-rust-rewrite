@@ -12,7 +12,7 @@ use blam_cache::{Block, CacheAddress, CacheFile, ResourceId, Resources, TagEntry
 use blam_geometry::collision::{self, CollisionStats};
 use blam_geometry::materials::MaterialTable;
 use blam_geometry::render_model::matrix_from_rows;
-use blam_geometry::scene::{BspInfo, ClusterInfo, Kind, Mesh, Part, Placement, Scene};
+use blam_geometry::scene::{BspInfo, ClusterInfo, ClusterLocator, Kind, Mesh, Part, Placement, Scene};
 use blam_geometry::{CollisionMaterial, CollisionSource, CollisionTriangle, Error, Lighting, Lightmap, Result};
 
 use crate::geometry::{self, GeometryResource};
@@ -311,7 +311,7 @@ pub fn decode(
             bounds: (x[0] <= x[1] && x[1] < 1e30).then(|| (Vec3::new(x[0], y[0], z[0]), Vec3::new(x[1], y[1], z[1]))),
             sky: u32::try_from(sky).ok(),
             atmosphere: None,
-            acoustics: None,
+            acoustics: u32::try_from(r.at(o + off::CLUSTER_ACOUSTICS).i16()?).ok(),
         });
         let m = cache.reader_at(o + off::CLUSTER_MESH).i16()?;
         let Ok(m) = usize::try_from(m) else { continue };
@@ -487,7 +487,84 @@ pub fn decode_collision(
         stats.instances_placed += 1;
     }
     scene.collision.triangles.append(&mut triangles);
+    // Point-to-cluster lookup (what a cluster sounds like, its sky): the
+    // collision tree and the BSP's leaf clusters.
+    match locator(cache, &l, base) {
+        Ok(found) => {
+            if let Some(info) = scene.bsps.iter_mut().find(|b| b.index == bsp_index) {
+                info.locator = Some(found);
+            }
+        }
+        Err(e) => eprintln!("reach: bsp {bsp_index}: no cluster lookup ({e})"),
+    }
     Ok(stats)
+}
+
+/// The bytes of a block of a collision resource, in its definition or its
+/// data.
+fn block_bytes<'a>(l: &'a Loaded, at: usize, stride: usize) -> Result<&'a [u8]> {
+    let (Some(count), Some(address)) = (u32_at(&l.def, at), u32_at(&l.def, at + 4)) else {
+        return Err(Error::Invalid(format!("definition block at {at:#x} runs past the end")));
+    };
+    if count == 0 {
+        return Ok(&[]);
+    }
+    let a = CacheAddress(address);
+    let buffer = match a.kind() {
+        CacheAddress::DEFINITION => &l.def,
+        CacheAddress::DATA => &l.data,
+        k => return Err(Error::Unsupported(format!("collision block in address space {k}"))),
+    };
+    buffer
+        .get(a.offset()..a.offset() + count as usize * stride)
+        .ok_or_else(|| Error::Invalid(format!("collision block at {at:#x} runs past its buffer")))
+}
+
+/// The tree of the BSP's first collision BSP (the normal one, else the
+/// large one) with the cluster of each of its leaves (sbsp `+0x64`), which
+/// must agree in count (`docs/format/reach.md` 6).
+fn locator(cache: &CacheFile, l: &Loaded, sbsp: usize) -> Result<ClusterLocator> {
+    let leaf_clusters: Vec<i8> = cache
+        .reader_at(sbsp + off::LEAF_CLUSTERS)
+        .block()?
+        .elements(1)
+        .map(|o| Ok(cache.reader_at(o).i8()?))
+        .collect::<Result<_>>()?;
+    let (normal, normal_at) = def_block(l, l.root)?;
+    let (large, large_at) = def_block(l, l.root + 0xC)?;
+    let (at, is_large) = match (normal, large) {
+        (0, 0) => return Err(Error::Invalid("no collision bsp".into())),
+        (0, _) => (large_at, true),
+        _ => (normal_at, false),
+    };
+    let leaves = u32_at(&l.def, at + 0x24).unwrap_or(0) as usize;
+    if leaves != leaf_clusters.len() {
+        return Err(Error::Invalid(format!("{leaves} collision leaves but {} leaf clusters", leaf_clusters.len())));
+    }
+    let f32_at = |b: &[u8], o: usize| f32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+    let planes = block_bytes(l, at + 0x18, 16)?
+        .as_chunks::<16>()
+        .0
+        .iter()
+        .map(|b| [f32_at(b, 0), f32_at(b, 4), f32_at(b, 8), f32_at(b, 12)])
+        .collect();
+    let mut out = ClusterLocator {
+        planes,
+        leaf_clusters,
+        ..Default::default()
+    };
+    if is_large {
+        let i32_at = |b: &[u8], o: usize| i32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+        out.large_nodes = block_bytes(l, at, 12)?
+            .as_chunks::<12>()
+            .0
+            .iter()
+            .map(|b| [i32_at(b, 0), i32_at(b, 4), i32_at(b, 8)])
+            .collect();
+    } else {
+        out.nodes = block_bytes(l, at, 8)?.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect();
+    }
+    Ok(out)
 }
 
 /// Reach's collision geometry struct, and how far its surfaces block is

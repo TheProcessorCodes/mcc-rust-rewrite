@@ -460,3 +460,109 @@ The scenario does not seem to reference the `mdlg` in its first 4 KiB; it is rea
 * Not done: the effects (`cortana_mission`, the radio filters, `radio_3d`); AI combat dialogue
   (`udlg`, `ai_dialogue_enable`: the AI has no vocalisation system yet); `ai_play_line` lines
   are not placed at the actor.
+
+## 12. Halo: Reach
+
+Probed 2026-11-11 on the 20 multiplayer maps of MCC's `haloreach\maps` (#28). The sound system
+is Halo 3's with wider structures: the same tags, an FMOD bank beside the maps, and permutations
+that name bank samples. Probe: `python -I docs/format/scripts/probe_reach_sound.py [map]
+[--tracks]` (`HALOREACH_MAPS`). Found by walking block headers and matching contents against
+sounds whose meaning is plain (slot names `in` / `loop` / `out`, lengths, distances); no plugin
+XML or GPL code was used. `blam_sound::tags::Layout` holds both games' offsets; tests
+`crates/blam_sound/tests/reach.rs`.
+
+### 12.1 The bank
+
+`haloreach\fmod\pc\sfx.fsb` (712 MB) with `sfx.fsb.info` (280-byte records, 16,162 samples) and
+the six language banks, laid out as Halo 3's (sections 1 to 3). The Vorbis setups are rebuilt
+from `haloreach.dll` the way they are from `halo3.dll` (3.2): the same scan finds FMOD's table
+there (`Library::open_beside` takes whichever DLL lies beside `maps`).
+
+### 12.2 `snd!` and the gestalt
+
+`snd!`: flags `+0x00`, class `+0x02`, encoding `+0x04`, first pitch range `+0x06` as Halo 3;
+**playback parameters i16 `+0x0E`**, **longest permutation ms `+0x18`**.
+
+`ugh!` (element sizes from the gaps between the blocks):
+
+| offset | element | what |
+|---|---|---|
+| `0x10` | 84 | playback parameters |
+| `0x28` | 4 | import names |
+| `0x4C` | 12 | pitch ranges, as Halo 3's (first permutation `+0x08`, count in bits 4-9 of `+0x0A`) |
+| `0x58` | 24 | permutations: import name u16 `+0x00`, **FMOD id `+0x14`** (7,655 of Sword Base's 8,651 are in `sfx.fsb`, the rest in the language bank but for a handful MCC's banks lack: five `battle_rifle_drop` takes on every map, Timberland's `wind_trees` layer) |
+
+**Playback parameters, 84 bytes**: `+0x00` u32 1 on every one; a run of distances `+0x04` to
+`+0x24` of which the sounds use `+0x08` and `+0x0C` (small values on a few: taken as the
+don't-play and attack distances), **`+0x18` minimum** (full volume within) and **`+0x24`
+maximum** (silent beyond): footsteps 1 / 9, a Warthog horn 5 / 20, wind gusts 150 / 160;
+`+0x1C` / `+0x20` are set with `+0x28` = -64 on a few (a sustain range and its level, not
+read). **`+0x2C` gain dB**, `+0x34` two i16 (pitch bounds, cents), `+0x38` cone angles. No flag
+marks a distance unused: zero means the class's.
+
+### 12.3 Looping sounds
+
+Header: flags `+0x00`, music time `+0x04` (120 to 360 on campaign music), distance `+0x0C` /
+`+0x10`, **class i16 `+0x18`**, **tracks `+0x20`** (0xB0 bytes), **details `+0x2C`** (0x48).
+
+Track: name `+0x00`, flags `+0x04` (bit 0 fade in, bit 1 fade out, as Halo 3), gain dB `+0x08`,
+then seven tag references 16 bytes apart: **in `+0x0C`, loop `+0x1C`, out `+0x2C`, alt loop
+`+0x3C`, alt out `+0x4C`, alt trans in `+0x5C`, alt trans out `+0x6C`** (pinned by the names of
+the sounds in each slot over every track of four maps: 410 `loop`, 84 `out`, 73 `alt_loop`, 42
+`in`), **fade in s `+0x7C`, fade out s `+0x84`** (0.1 / 0.1 on ambience; 0 / 10 to 20 on music,
+which has only the fade-out flag). The alternate cross-fade time was not found.
+
+Detail: name `+0x00`, `snd!` `+0x04`, period s `+0x18`, gain dB `+0x20`, flags `+0x2C`, yaw
+bounds `+0x30`, pitch bounds `+0x38`, distance bounds `+0x40`.
+
+### 12.4 Sound scenery
+
+`ssce`: object attachments at **`+0x104`**, the `lsnd` first. Scenario: **placements
+`scnr + 0x1C8`, 0x8C bytes; palette `+0x1D4`**. Placement: the object head (`reach.md` 2; origin
+BSP `+0x40`, -1 on every one seen), volume type `+0x54`, height `+0x58`, then the placement's
+own distances laid out as the playback parameters' run: **minimum `+0x78`, maximum `+0x84`**
+(0 = the sound's own; Sword Base's rapids 3 / 10). Sword Base has 363, the campaign level's
+(`m20`), of which a handful are inside the multiplayer space.
+
+### 12.5 Acoustics and the cluster lookup
+
+**`sbsp + 0x18C`**, 0x78 bytes: name `+0x00`, `snde` `+0x04`, **background `lsnd` `+0x20`**,
+**inside `lsnd` `+0x30`**. **Cluster `+0x1C`**: i16 index into it. Sword Base: 16 clusters
+`interior` (`sword_base_int_small`), 2 `interior_tight`, 1 `interior_large`; Forge World 6 of 11
+`ext` (`halo_ext`).
+
+Reach's cluster bounds are not boxes round the clusters, so the cluster of a point comes from
+the collision tree, as in Halo 3 (`sbsp-portals.md` 3): **`sbsp + 0x64`** has one signed byte
+per collision leaf, the leaf's cluster (its count equals the collision BSP's leaf count on
+every BSP checked). The tree is the collision BSP's 3D nodes and planes (`reach.md` 6): 8-byte
+nodes as Halo 3's, or for a large collision BSP 12-byte nodes of three i32 (plane, back child,
+front child; -1 none, bit 31 a leaf). `blam_reach` builds a `ClusterLocator` from either.
+
+The lookup has gaps: Reach's BSPs are not sealed, and the tree ends in "no leaf" for much of
+the open space (at head height over Sword Base's 203 spawn points only 47 land in a leaf, all
+in `interior` clusters; Powerhouse 185 of 327; Timberland, a large tree, all 335), and some
+clusters name no acoustics (Reflection). How the game itself places a point was not found. So
+the viewer looks loosely (`mcc_audio` `loose_place`): the point, then points up to 12 wu above
+and 2 wu around it, for a cluster with acoustics; with none, the last background stays, and
+at the start the acoustics most clusters of the loaded BSPs have. Powerhouse's interiors come
+out as `exterior` this way; not checked against the game.
+
+### 12.6 Sound classes
+
+`sncl`: 71 classes of **0xD4** bytes: limits `+0x00` / `+0x02` as Halo 3, the distance run at
+`+0x34` (**minimum `+0x48`, maximum `+0x54`**), **gain range `+0x5C` / `+0x60`**, duckings from
+`+0x70`; the one read as "under dialogue" is `+0x80` with fades `+0x84` / `+0x8C`. Ambient loops
+(class 33) are -6 dB, music (32) 0.
+
+### 12.7 Not read
+
+Weapons' sounds, the scripts' sound references and mission dialogue (the loader skips them on
+Reach), the alternate cross-fade time, the sustain distances, reverb.
+
+### 12.8 Levels
+
+Reach's ambience is authored much lower than Halo 3's: Sword Base's room tone is four-channel
+samples at -31 dBFS RMS played at -28 dB (track -19, sound -3, class -6), which mixed near
+-55 dBFS in a headless trace (`MCC_AUDIO_TRACE=1`) where Valhalla's wind sits near -25. What
+the game makes that up with was not found, so `mcc_audio` adds 18 dB to every Reach sound it
+plays (`REACH_AMBIENCE_DB`, our own choice; not compared with the game).

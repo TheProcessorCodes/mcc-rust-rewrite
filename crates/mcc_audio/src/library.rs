@@ -34,6 +34,7 @@ pub struct SoundInfo {
 impl SoundInfo {
     pub(crate) fn new(snd: &Sound, classes: &[SoundClass], library: &Library) -> SoundInfo {
         let class = classes.get(snd.class as usize);
+        let distances = snd.playback.distances_with(class);
         SoundInfo {
             permutations: snd
                 .permutations
@@ -41,10 +42,15 @@ impl SoundInfo {
                 .map(|p| p.fmod_id)
                 .filter(|id| library.find(*id).is_some())
                 .collect(),
-            bounds: snd.playback.bounds(),
+            // A sound with no far distance of its own (Reach marks that
+            // with a zero, `sound.md` 12.2) carries as far as its class.
+            bounds: match snd.playback.bounds() {
+                (_, far) if far <= 0.0 => (distances[2].min(distances[3]), distances[3]),
+                own => own,
+            },
             gain_db: snd.playback.gain_db + class.map_or(0.0, SoundClass::gain_db),
             class: snd.class,
-            distances: snd.playback.distances_with(class),
+            distances,
             per_object: class.map_or(1, |c| c.max_per_object.max(1) as usize),
         }
     }
@@ -79,6 +85,9 @@ pub struct SoundData {
     /// Halo CE: each BSP's clusters and their background sounds
     /// (`halo1.rs`), for maps whose scene has no cluster locator.
     pub h1_bsps: Vec<blam_h1::sound::BspSound>,
+    /// Reach: the BSPs are not sealed, so the cluster lookup has gaps and
+    /// the background is found loosely (`loose_place`).
+    pub unsealed: bool,
 }
 
 impl SoundData {
@@ -221,12 +230,14 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
     // The dialogue: the language bank of the player's language (English
     // unless the setup says otherwise). Without it everything else plays.
     let language = game_paths::language();
-    match maps
-        .parent()
-        .ok_or_else(|| blam_sound::Error::Invalid("no halo3 folder".into()))
-        .and_then(|h| blam_sound::language_bank(h, language))
-        .and_then(|bank| library.add_dialog(bank))
-    {
+    let reach = cache.engine() == blam_cache::Engine::Reach;
+    // Reach: no dialogue is played (its mission dialogue is not read).
+    let dialogue_bank = || {
+        let halo3 = maps.parent().ok_or_else(|| blam_sound::Error::Invalid("no halo3 folder".into()))?;
+        blam_sound::language_bank(halo3, language)
+    };
+    match if reach { Ok(()) } else { dialogue_bank().and_then(|bank| library.add_dialog(bank)) } {
+        Ok(()) if reach => {}
         Ok(()) => bevy::log::info!(
             "sound: {language} dialogue bank, {} lines",
             library.dialog.as_ref().map_or(0, |d| d.samples.len())
@@ -244,10 +255,15 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         .into_iter()
         .filter_map(|(bus, class)| classes.get(class).map(|c| (bus, c.dialogue_duck_db.min(0.0), c.dialogue_duck_fade)))
         .collect();
-    let weapons = WeaponSoundReader::new(cache).all().unwrap_or_else(|e| {
-        bevy::log::warn!("sound: weapons not read ({e})");
+    // Reach's weapon tags are not read (`sound.md` 12).
+    let weapons = if reach {
         HashMap::new()
-    });
+    } else {
+        WeaponSoundReader::new(cache).all().unwrap_or_else(|e| {
+            bevy::log::warn!("sound: weapons not read ({e})");
+            HashMap::new()
+        })
+    };
 
     let mut loops = HashMap::new();
     let mut wanted: Vec<u32> = map.scenery.iter().filter_map(|s| s.looping).collect();
@@ -336,12 +352,32 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
         roll: under(
             r"data\sound\materials\havok\tire\tire_looping_hard_surface\tire_looping_hard_surface\loop\",
         ),
-        grind: under(r"data\sound\vehicles\damage_effects\vehicle_scrape_low\"),
+        // Halo 3's low scrape; Reach has one scrape loop.
+        grind: [
+            r"data\sound\vehicles\damage_effects\vehicle_scrape_low\",
+            r"data\sound\vehicles\damage_effects\vehicle_scrape\",
+        ]
+        .into_iter()
+        .map(under)
+        .find(|ids| !ids.is_empty())
+        .unwrap_or_default(),
         land: under(r"data\sound\materials\havok\wooden_palette_hits\"),
         land_wheels: under(r"data\sound\materials\havok\tire\tire_hits\"),
     };
 
-    let clips = clips_from("halo-sound-decode", move |id| library.decode(id).ok().and_then(to_clip))?;
+    if reach {
+        // Reach's ambience is authored far lower than Halo 3's: Sword
+        // Base's room tone is -31 dBFS samples at -28 dB (track -19, sound
+        // -3, class -6), which mixes near -55 dBFS where Valhalla's wind
+        // sits near -25. What the game makes that up with is not read
+        // (`sound.md` 12.7), so everything played here, all of it
+        // ambience, gets this much on top. Our own choice.
+        const REACH_AMBIENCE_DB: f32 = 18.0;
+        for s in sounds.values_mut() {
+            s.gain_db += REACH_AMBIENCE_DB;
+        }
+    }
+    let clips = clips_from("halo-sound-decode",move |id| library.decode(id).ok().and_then(to_clip))?;
     bevy::log::info!(
         "sound: {} sound scenery, {} looping sounds, {} sounds, {} music tracks, {} weapons; bank and tags read in {:.2} s",
         map.scenery.len(),
@@ -360,6 +396,7 @@ fn load_now(cache: &'static CacheFile) -> anyhow::Result<Loaded> {
             weapons,
             ducking,
             h1_bsps: Vec::new(),
+            unsealed: reach,
         }),
         clips,
     })

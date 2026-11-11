@@ -200,6 +200,7 @@ pub(crate) fn sound_data(map: &Map, banks: &Banks) -> (SoundData, Vec<String>) {
         // its engine).
         ducking: vec![(Bus::Music, -3.0, [0.5, 0.5]), (Bus::Ambience, 0.0, [0.5, 0.5]), (Bus::Effects, -6.0, [0.5, 0.5])],
         h1_bsps,
+        unsealed: false,
     };
     (data, missing)
 }

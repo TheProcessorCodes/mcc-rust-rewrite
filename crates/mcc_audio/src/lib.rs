@@ -403,6 +403,53 @@ fn place_of(zones: &Zones, mask: u32, p: Vec3) -> Option<(u32, u32, Option<u32>)
         })
 }
 
+/// [`place_of`] for Reach, whose BSPs are not sealed: the collision tree
+/// has no leaf for much of the open space (`sound.md` 12.5), and some
+/// clusters name no acoustics. Tries the point, then points above and
+/// around it, for a cluster with acoustics; failing that, and only when
+/// nothing is playing yet (`fresh`), the acoustics most clusters have.
+fn loose_place(zones: &Zones, mask: u32, p: Vec3, fresh: bool) -> Option<(u32, u32, Option<u32>)> {
+    const NEAR: [Vec3; 18] = [
+        Vec3::ZERO,
+        Vec3::new(0.0, 0.0, 0.5),
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(0.0, 0.0, 2.0),
+        Vec3::new(0.0, 0.0, 3.0),
+        Vec3::new(0.0, 0.0, 5.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(-1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::new(2.0, 0.0, 0.0),
+        Vec3::new(-2.0, 0.0, 0.0),
+        Vec3::new(0.0, 2.0, 0.0),
+        Vec3::new(0.0, -2.0, 0.0),
+        Vec3::new(0.0, 0.0, -1.0),
+        Vec3::new(0.0, 0.0, -2.0),
+        Vec3::new(0.0, 0.0, 8.0),
+        Vec3::new(0.0, 0.0, 12.0),
+    ];
+    let loaded = || zones.layout.bsps.iter().filter(|b| b.index < 32 && mask & (1 << b.index) != 0);
+    let near = NEAR.iter().find_map(|o| {
+        loaded().find_map(|b| {
+            let c = b.locator.as_ref()?.cluster(p + *o)?;
+            let acoustics = b.clusters.get(c as usize)?.acoustics?;
+            Some((b.index, c, Some(acoustics)))
+        })
+    });
+    if near.is_some() || !fresh {
+        return near;
+    }
+    let mut votes: HashMap<(u32, u32), usize> = HashMap::new();
+    for b in loaded() {
+        for a in b.clusters.iter().filter_map(|c| c.acoustics) {
+            *votes.entry((b.index, a)).or_default() += 1;
+        }
+    }
+    let ((bsp, acoustics), _) = votes.into_iter().max_by_key(|((b, a), n)| (*n, std::cmp::Reverse((*b, *a))))?;
+    Some((bsp, u32::MAX, Some(acoustics)))
+}
+
 /// The track's loop clips and gain, once decoded.
 fn track_loop(sounds: &Sounds, track: &blam_sound::tags::Track) -> Option<(Vec<Arc<Clip>>, f32)> {
     let snd = sounds.data.sounds.get(&track.looped?)?;
@@ -433,7 +480,11 @@ fn background(
     };
     // A script's `sound_class_set_gain amb` (1 otherwise).
     let class_gain = gains.get("amb");
-    let place = place_of(&zones, mask, l.position).or_else(|| halo1::place(&sounds.data, mask, l.position));
+    let place = if sounds.data.unsealed {
+        loose_place(&zones, mask, l.position, amb.place.is_none())
+    } else {
+        place_of(&zones, mask, l.position).or_else(|| halo1::place(&sounds.data, mask, l.position))
+    };
     // Indoors-outdoors changes only when the camera is in some cluster;
     // outside every cluster the last background stays.
     if place.is_some() {

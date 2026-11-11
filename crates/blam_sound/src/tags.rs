@@ -3,9 +3,10 @@
 //! and each BSP's acoustics palette (background sound per cluster).
 //! `docs/format/sound.md` sections 4 to 7. Offsets are from MCC Halo 3 U13
 //! and were found by walking the bytes; nothing here comes from other
-//! projects' code.
+//! projects' code. Reach's maps hold the same tags at other offsets
+//! ([`Layout`], `sound.md` 12).
 
-use blam_cache::{Block, CacheFile, StringId, TagEntry};
+use blam_cache::{Block, CacheFile, Engine, StringId, TagEntry};
 
 use crate::{Error, Result};
 
@@ -223,9 +224,162 @@ pub struct MapSounds {
     pub script_sounds: Vec<u32>,
 }
 
+/// Where a game keeps what this module reads: Halo 3's offsets
+/// (`sound.md` 4 to 7) and Reach's (`sound.md` 12).
+#[derive(Clone, Copy, Debug)]
+struct Layout {
+    reach: bool,
+    /// `ugh!`: playback parameters, pitch ranges, permutations.
+    playbacks: usize,
+    playback_size: usize,
+    pitch_ranges: usize,
+    permutations: usize,
+    permutation_size: usize,
+    /// Permutation: the FMOD id.
+    permutation_id: usize,
+    /// `snd!`: playback parameter index, longest permutation.
+    sound_playback: usize,
+    sound_max_play: usize,
+    /// `lsnd`: sound class, tracks, details.
+    loop_class: usize,
+    tracks: usize,
+    track_size: usize,
+    /// Track: fade in and out times, the seven sound slots (in, loop,
+    /// out, alt loop, alt out, alt transition in and out), the alternate
+    /// cross-fade times (`None`: not found in this game).
+    track_fades: [usize; 2],
+    track_slots: [usize; 7],
+    track_alt_fades: Option<[usize; 2]>,
+    details: usize,
+    detail_size: usize,
+    /// Detail: period, gain, flags, yaw, pitch, distance.
+    detail_fields: [usize; 6],
+    /// Objects: the attachments block.
+    attachments: usize,
+    attachment_size: usize,
+    /// `scnr`: sound scenery placements and palette, structure BSPs.
+    scenery: usize,
+    scenery_size: usize,
+    scenery_palette: usize,
+    /// Placement: origin BSP, volume type, height, distance bounds.
+    scenery_bsp: usize,
+    scenery_volume: usize,
+    scenery_height: usize,
+    scenery_distance: [usize; 2],
+    bsps: usize,
+    bsp_size: usize,
+    /// `sbsp`: the acoustics palette; entry: background and inside loops,
+    /// fade time (`None`: not found in this game).
+    acoustics: usize,
+    acoustics_size: usize,
+    acoustics_loops: [usize; 2],
+    acoustics_fade: Option<usize>,
+    /// `scnr`: the scripts' tag references (`None`: not read).
+    script_references: Option<usize>,
+    /// `sncl` class: size, the four distances, gain bounds, dialogue
+    /// ducking (dB, fade down, fade up).
+    class_size: usize,
+    class_distances: [usize; 4],
+    class_gain: usize,
+    class_duck: [usize; 3],
+}
+
+impl Layout {
+    const HALO3: Layout = Layout {
+        reach: false,
+        playbacks: 0x10,
+        playback_size: 68,
+        pitch_ranges: 0x40,
+        permutations: 0x4C,
+        permutation_size: 20,
+        permutation_id: 0x10,
+        sound_playback: 0x0C,
+        sound_max_play: 0x14,
+        loop_class: 0x24,
+        tracks: 0x28,
+        track_size: 144,
+        track_fades: [0x0C, 0x10],
+        track_slots: [0x14, 0x24, 0x34, 0x44, 0x54, 0x68, 0x78],
+        track_alt_fades: Some([0x88, 0x8C]),
+        details: 0x34,
+        detail_size: 60,
+        detail_fields: [0x14, 0x1C, 0x20, 0x24, 0x2C, 0x34],
+        attachments: 0xBC,
+        attachment_size: ATTACHMENT_SIZE,
+        scenery: 0x180,
+        scenery_size: 112,
+        scenery_palette: 0x18C,
+        scenery_bsp: 0x3C,
+        scenery_volume: 0x50,
+        scenery_height: 0x54,
+        scenery_distance: [0x5C, 0x60],
+        bsps: 0x18,
+        bsp_size: 108,
+        acoustics: 0x118,
+        acoustics_size: 84,
+        acoustics_loops: [0x1C, 0x2C],
+        acoustics_fade: Some(0x50),
+        script_references: Some(SCRIPT_REFERENCES),
+        class_size: 0x98,
+        class_distances: [0x34, 0x38, 0x3C, 0x40],
+        class_gain: 0x44,
+        class_duck: [0x5C, 0x60, 0x68],
+    };
+
+    /// MCC Reach (`sound.md` 12).
+    const REACH: Layout = Layout {
+        reach: true,
+        playbacks: 0x10,
+        playback_size: 84,
+        pitch_ranges: 0x4C,
+        permutations: 0x58,
+        permutation_size: 24,
+        permutation_id: 0x14,
+        sound_playback: 0x0E,
+        sound_max_play: 0x18,
+        loop_class: 0x18,
+        tracks: 0x20,
+        track_size: 0xB0,
+        track_fades: [0x7C, 0x84],
+        track_slots: [0x0C, 0x1C, 0x2C, 0x3C, 0x4C, 0x5C, 0x6C],
+        track_alt_fades: None,
+        details: 0x2C,
+        detail_size: 0x48,
+        detail_fields: [0x18, 0x20, 0x2C, 0x30, 0x38, 0x40],
+        attachments: 0x104,
+        attachment_size: ATTACHMENT_SIZE,
+        scenery: 0x1C8,
+        scenery_size: 0x8C,
+        scenery_palette: 0x1D4,
+        scenery_bsp: 0x40,
+        scenery_volume: 0x54,
+        scenery_height: 0x58,
+        scenery_distance: [0x78, 0x84],
+        bsps: 0x50,
+        bsp_size: 0xAC,
+        acoustics: 0x18C,
+        acoustics_size: 0x78,
+        acoustics_loops: [0x20, 0x30],
+        acoustics_fade: None,
+        script_references: None,
+        class_size: 0xD4,
+        class_distances: [0x38, 0x3C, 0x48, 0x54],
+        class_gain: 0x5C,
+        class_duck: [0x80, 0x84, 0x8C],
+    };
+
+    fn of(cache: &CacheFile) -> Layout {
+        match cache.engine() {
+            Engine::Halo3 => Layout::HALO3,
+            Engine::Reach => Layout::REACH,
+        }
+    }
+}
+
 /// Reads sound tags. Holds the gestalt's block headers.
 pub struct SoundTags<'a> {
     cache: &'a CacheFile,
+    layout: Layout,
     playbacks: Block,
     names: Block,
     pitch_ranges: Block,
@@ -249,12 +403,14 @@ impl<'a> SoundTags<'a> {
             .ok_or_else(|| Error::Invalid("no sound gestalt (ugh!)".into()))?;
         let base = cache.tag_offset(ugh)?;
         let blk = |off: usize| cache.reader_at(base + off).block();
+        let layout = Layout::of(cache);
         Ok(SoundTags {
             cache,
-            playbacks: blk(0x10)?,
+            layout,
+            playbacks: blk(layout.playbacks)?,
             names: blk(0x28)?,
-            pitch_ranges: blk(0x40)?,
-            permutations: blk(0x4C)?,
+            pitch_ranges: blk(layout.pitch_ranges)?,
+            permutations: blk(layout.permutations)?,
         })
     }
 
@@ -280,27 +436,44 @@ impl<'a> SoundTags<'a> {
         Ok((t, self.cache.tag_offset(t)?))
     }
 
+    /// Whether the map is Reach's: its weapons, scripts and mission
+    /// dialogue are not read (`sound.md` 12).
+    pub fn is_reach(&self) -> bool {
+        self.layout.reach
+    }
+
     /// A `snd!` tag (36 bytes of tag data, `sound.md` 4.1).
     pub fn sound(&self, index: u32) -> Result<Sound> {
         let (t, o) = self.tag(index, "snd!")?;
         let c = self.cache;
+        let y = &self.layout;
         let mut r = c.reader_at(o);
         let flags = r.u16()?;
         let class = r.u8()?;
         let _rate = r.u8()?;
         let encoding = r.u8()?;
         let pitch_range = c.reader_at(o + 0x06).i16()?;
-        let playback_index = c.reader_at(o + 0x0C).i16()?;
-        let max_play_ms = c.reader_at(o + 0x14).i32()?;
+        let playback_index = c.reader_at(o + y.sound_playback).i16()?;
+        let max_play_ms = c.reader_at(o + y.sound_max_play).i32()?;
         let mut playback = Playback::default();
         if let Some(p) = u32::try_from(playback_index)
             .ok()
-            .and_then(|i| self.playbacks.element(i, 68))
+            .and_then(|i| self.playbacks.element(i, y.playback_size))
         {
-            let mut r = c.reader_at(p);
-            playback.flags = r.u32()?;
-            playback.distances = r.f32x4()?;
-            playback.gain_db = c.reader_at(p + 0x1C).f32()?;
+            if y.reach {
+                // Reach's distances (`sound.md` 12.2): the don't-play and
+                // attack distances, the minimum and the maximum. No flags
+                // say which are unused: zero means the class's.
+                let f = |at: usize| c.reader_at(p + at).f32();
+                playback.distances = [f(0x08)?, f(0x0C)?, f(0x18)?, f(0x24)?];
+                playback.flags = (0..4).filter(|n| playback.distances[*n] <= 0.0).fold(0, |m, n| m | 1 << n);
+                playback.gain_db = f(0x2C)?;
+            } else {
+                let mut r = c.reader_at(p);
+                playback.flags = r.u32()?;
+                playback.distances = r.f32x4()?;
+                playback.gain_db = c.reader_at(p + 0x1C).f32()?;
+            }
         }
         let mut permutations = Vec::new();
         if let Some(pr) = u32::try_from(pitch_range)
@@ -310,12 +483,12 @@ impl<'a> SoundTags<'a> {
             let first = c.reader_at(pr + 8).u16()? as u32;
             let count = ((c.reader_at(pr + 10).u16()? >> 4) & 0x3F) as u32;
             for p in first..first + count {
-                let Some(q) = self.permutations.element(p, 20) else {
+                let Some(q) = self.permutations.element(p, y.permutation_size) else {
                     break;
                 };
                 permutations.push(Permutation {
                     name: self.import_name(c.reader_at(q).u16()? as u32)?,
-                    fmod_id: c.reader_at(q + 16).u32()?,
+                    fmod_id: c.reader_at(q + y.permutation_id).u32()?,
                 });
             }
         }
@@ -340,38 +513,46 @@ impl<'a> SoundTags<'a> {
             Ok(c.string(id).unwrap_or("").to_string())
         };
         let snd = |at: usize| tag_index(c, at, "snd!");
+        let y = &self.layout;
         let mut tracks = Vec::new();
-        for e in c.reader_at(o + 0x28).block()?.elements(144) {
+        for e in c.reader_at(o + y.tracks).block()?.elements(y.track_size) {
             let mut r = c.reader_at(e + 4);
+            let f = |at: usize| c.reader_at(e + at).f32();
+            let [alt_fade, alt_fade_out] = match y.track_alt_fades {
+                Some([a, b]) => [f(a)?, f(b)?],
+                None => [0.0; 2],
+            };
+            let s = y.track_slots;
             tracks.push(Track {
                 name: sid(e)?,
                 flags: r.u32()?,
                 gain_db: r.f32()?,
-                fade_in: r.f32()?,
-                fade_out: r.f32()?,
-                intro: snd(e + 0x14)?,
-                looped: snd(e + 0x24)?,
-                outro: snd(e + 0x34)?,
-                alt_loop: snd(e + 0x44)?,
-                alt_out: snd(e + 0x54)?,
-                alt_trans_in: snd(e + 0x68)?,
-                alt_trans_out: snd(e + 0x78)?,
-                alt_fade: c.reader_at(e + 0x88).f32()?,
-                alt_fade_out: c.reader_at(e + 0x8C).f32()?,
+                fade_in: f(y.track_fades[0])?,
+                fade_out: f(y.track_fades[1])?,
+                intro: snd(e + s[0])?,
+                looped: snd(e + s[1])?,
+                outro: snd(e + s[2])?,
+                alt_loop: snd(e + s[3])?,
+                alt_out: snd(e + s[4])?,
+                alt_trans_in: snd(e + s[5])?,
+                alt_trans_out: snd(e + s[6])?,
+                alt_fade,
+                alt_fade_out,
             });
         }
         let mut details = Vec::new();
-        for e in c.reader_at(o + 0x34).block()?.elements(60) {
+        for e in c.reader_at(o + y.details).block()?.elements(y.detail_size) {
             let f = |at: usize| c.reader_at(e + at).f32x2().map(|[a, b]| (a, b));
+            let d = y.detail_fields;
             details.push(Detail {
                 name: sid(e)?,
                 sound: snd(e + 4)?,
-                period: f(0x14)?,
-                gain_db: c.reader_at(e + 0x1C).f32()?,
-                flags: c.reader_at(e + 0x20).u32()?,
-                yaw: f(0x24)?,
-                pitch: f(0x2C)?,
-                distance: f(0x34)?,
+                period: f(d[0])?,
+                gain_db: c.reader_at(e + d[1]).f32()?,
+                flags: c.reader_at(e + d[2]).u32()?,
+                yaw: f(d[3])?,
+                pitch: f(d[4])?,
+                distance: f(d[5])?,
             });
         }
         Ok(Looping {
@@ -380,7 +561,7 @@ impl<'a> SoundTags<'a> {
             flags: c.reader_at(o).u32()?,
             music_time: c.reader_at(o + 0x04).f32()?,
             distance: (c.reader_at(o + 0x0C).f32()?, c.reader_at(o + 0x10).f32()?),
-            class: c.reader_at(o + 0x24).i16()?,
+            class: c.reader_at(o + y.loop_class).i16()?,
             tracks,
             details,
         })
@@ -390,9 +571,9 @@ impl<'a> SoundTags<'a> {
     /// attachment (`ssce + 0xBC`, the object attachments block).
     pub fn scenery_looping(&self, ssce: u32) -> Result<Option<u32>> {
         let (_, o) = self.tag(ssce, "ssce")?;
-        let attachments = self.cache.reader_at(o + 0xBC).block()?;
+        let attachments = self.cache.reader_at(o + self.layout.attachments).block()?;
         for i in 0..attachments.count {
-            let Some(e) = attachments.element(i, ATTACHMENT_SIZE) else {
+            let Some(e) = attachments.element(i, self.layout.attachment_size) else {
                 break;
             };
             if let Some(l) = tag_index(self.cache, e, "lsnd")? {
@@ -409,15 +590,16 @@ impl<'a> SoundTags<'a> {
             .scenario()
             .ok_or_else(|| Error::Invalid("no scenario".into()))?;
         let s = c.tag_offset(scnr)?;
+        let y = &self.layout;
         let mut out = MapSounds::default();
 
         let palette: Vec<Option<u32>> = c
-            .reader_at(s + 0x18C)
+            .reader_at(s + y.scenery_palette)
             .block()?
             .elements(16)
             .map(|e| tag_index(c, e, "ssce"))
             .collect::<Result<_>>()?;
-        for e in c.reader_at(s + 0x180).block()?.elements(112) {
+        for e in c.reader_at(s + y.scenery).block()?.elements(y.scenery_size) {
             let pal = c.reader_at(e).i16()?;
             let Some(ssce) = usize::try_from(pal)
                 .ok()
@@ -425,8 +607,8 @@ impl<'a> SoundTags<'a> {
             else {
                 continue;
             };
-            let near = c.reader_at(e + 0x5C).f32()?;
-            let far = c.reader_at(e + 0x60).f32()?;
+            let near = c.reader_at(e + y.scenery_distance[0]).f32()?;
+            let far = c.reader_at(e + y.scenery_distance[1]).f32()?;
             out.scenery.push(SoundScenery {
                 object: c
                     .tags
@@ -435,27 +617,30 @@ impl<'a> SoundTags<'a> {
                     .unwrap_or_default(),
                 looping: self.scenery_looping(ssce)?,
                 position: c.reader_at(e + 0x08).f32x3()?,
-                origin_bsp: u32::try_from(c.reader_at(e + 0x3C).i16()?).ok(),
-                volume_type: c.reader_at(e + 0x50).i32()?,
-                height: c.reader_at(e + 0x54).f32()?,
+                origin_bsp: u32::try_from(c.reader_at(e + y.scenery_bsp).i16()?).ok(),
+                volume_type: c.reader_at(e + y.scenery_volume).i32()?,
+                height: c.reader_at(e + y.scenery_height).f32()?,
                 distance: (far > 0.0).then_some((near, far)),
             });
         }
 
-        for (i, e) in c.reader_at(s + 0x18).block()?.elements(108).enumerate() {
+        for (i, e) in c.reader_at(s + y.bsps).block()?.elements(y.bsp_size).enumerate() {
             let Some(sbsp) = tag_index(c, e, "sbsp")? else {
                 continue;
             };
             let b = c.tag_offset(c.tags.get(sbsp).unwrap())?;
             let mut palette = Vec::new();
-            for a in c.reader_at(b + 0x118).block()?.elements(84) {
+            for a in c.reader_at(b + y.acoustics).block()?.elements(y.acoustics_size) {
                 let id = c.reader_at(a).string_id()?;
                 palette.push(Acoustics {
                     name: c.string(id).unwrap_or("").to_string(),
                     environment: tag_index(c, a + 0x04, "snde")?,
-                    background: tag_index(c, a + 0x1C, "lsnd")?,
-                    inside: tag_index(c, a + 0x2C, "lsnd")?,
-                    fade: c.reader_at(a + 0x50).f32()?,
+                    background: tag_index(c, a + y.acoustics_loops[0], "lsnd")?,
+                    inside: tag_index(c, a + y.acoustics_loops[1], "lsnd")?,
+                    fade: match y.acoustics_fade {
+                        Some(at) => c.reader_at(a + at).f32()?,
+                        None => 0.5,
+                    },
                 });
             }
             out.bsps.push(BspAcoustics {
@@ -473,7 +658,11 @@ impl<'a> SoundTags<'a> {
         out.music.sort_by(|a, b| a.1.cmp(&b.1));
 
         // The scripts' tag references: plain 16-byte references.
-        for e in c.reader_at(s + SCRIPT_REFERENCES).block()?.elements(16) {
+        let script_references = match y.script_references {
+            Some(at) => Some(c.reader_at(s + at).block()?),
+            None => None,
+        };
+        for e in script_references.iter().flat_map(|b| b.elements(16)) {
             let r = c.reader_at(e).tag_ref()?;
             if let Some(i) = r.index
                 && c.tags.get(i).is_some_and(|t| matches!(c.tags.class_of(t).code.as_str(), "snd!" | "lsnd"))
@@ -491,6 +680,9 @@ impl<'a> SoundTags<'a> {
     pub fn mission_dialogue(&self) -> Result<Vec<DialogueLine>> {
         let c = self.cache;
         let mut out = Vec::new();
+        if self.layout.reach {
+            return Ok(out);
+        }
         for t in c.tags.of_class("mdlg") {
             let o = c.tag_offset(t)?;
             for l in c.reader_at(o).block()?.elements(DIALOGUE_LINE_SIZE) {
@@ -639,9 +831,6 @@ pub fn distance_gain(distance: f32, [quiet, fade_in, full, far]: [f32; 4]) -> f3
     }
 }
 
-/// Size of a sound class element.
-const CLASS_SIZE: usize = 0x98;
-
 impl SoundTags<'_> {
     /// The map's sound classes, by index (empty without an `sncl` tag).
     pub fn classes(&self) -> Result<Vec<SoundClass>> {
@@ -650,19 +839,21 @@ impl SoundTags<'_> {
             return Ok(Vec::new());
         };
         let o = c.tag_offset(t)?;
+        let y = &self.layout;
         let mut out = Vec::new();
-        for e in c.reader_at(o).block()?.elements(CLASS_SIZE) {
+        for e in c.reader_at(o).block()?.elements(y.class_size) {
             let mut r = c.reader_at(e);
             let max_per_tag = r.i16()?;
             let max_per_object = r.i16()?;
-            let mut g = c.reader_at(e + 0x44);
+            let f = |at: usize| c.reader_at(e + at).f32();
+            let d = y.class_distances;
             out.push(SoundClass {
                 max_per_tag,
                 max_per_object,
-                distances: c.reader_at(e + 0x34).f32x4()?,
-                gain_bounds_db: [g.f32()?, g.f32()?],
-                dialogue_duck_db: c.reader_at(e + 0x5C).f32()?,
-                dialogue_duck_fade: [c.reader_at(e + 0x60).f32()?, c.reader_at(e + 0x68).f32()?],
+                distances: [f(d[0])?, f(d[1])?, f(d[2])?, f(d[3])?],
+                gain_bounds_db: [f(y.class_gain)?, f(y.class_gain + 4)?],
+                dialogue_duck_db: f(y.class_duck[0])?,
+                dialogue_duck_fade: [f(y.class_duck[1])?, f(y.class_duck[2])?],
             });
         }
         Ok(out)

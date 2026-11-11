@@ -39,7 +39,7 @@ fn library(cache: &CacheFile) -> Result<Library> {
         })
         .context("opening the FMOD bank beside the maps")?;
     eprintln!(
-        "bank {}: {} samples (dialogue: {}); {} Vorbis setups from halo3.dll, {} rebuilt to their CRC ({:.2} s)",
+        "bank {}: {} samples (dialogue: {}); {} Vorbis setups from the game DLL, {} rebuilt to their CRC ({:.2} s)",
         lib.sfx.path().display(),
         lib.sfx.samples.len(),
         lib.dialog

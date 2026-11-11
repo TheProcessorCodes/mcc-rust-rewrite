@@ -465,12 +465,19 @@ pub struct ClusterLocator {
     pub planes: Vec<[f32; 4]>,
     /// The cluster of each collision leaf, -1 for none.
     pub leaf_clusters: Vec<i8>,
+    /// The tree of a large collision BSP instead of `nodes` (Reach,
+    /// `docs/format/reach.md` 6): plane, back child, front child as 32-bit
+    /// numbers; a child is -1 for none and has bit 31 set for a leaf.
+    pub large_nodes: Vec<[i32; 3]>,
 }
 
 impl ClusterLocator {
     /// The cluster holding `p`, or `None` when `p` is in solid space
     /// (inside a wall, outside the level) or the tree is malformed.
     pub fn cluster(&self, p: Vec3) -> Option<u32> {
+        if !self.large_nodes.is_empty() {
+            return self.large_cluster(p);
+        }
         if self.nodes.is_empty() {
             return None;
         }
@@ -490,6 +497,25 @@ impl ClusterLocator {
                 return u32::try_from(*self.leaf_clusters.get(index as usize)?).ok();
             }
             node = index as usize;
+        }
+        None
+    }
+
+    fn large_cluster(&self, p: Vec3) -> Option<u32> {
+        let mut node = 0usize;
+        for _ in 0..self.large_nodes.len().min(4096) {
+            let [plane, back, front] = *self.large_nodes.get(node)?;
+            let plane = self.planes.get(usize::try_from(plane).ok()?)?;
+            let d = plane[0] * p.x + plane[1] * p.y + plane[2] * p.z - plane[3];
+            let child = if d >= 0.0 { front } else { back };
+            if child == -1 {
+                return None;
+            }
+            if child < 0 {
+                let leaf = (child & i32::MAX) as usize;
+                return u32::try_from(*self.leaf_clusters.get(leaf)?).ok();
+            }
+            node = child as usize;
         }
         None
     }
