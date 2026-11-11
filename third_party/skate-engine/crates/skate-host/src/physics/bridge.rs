@@ -28,6 +28,38 @@ pub struct Pose {
     pub velocity: Vec3,
     pub tick: u64,
     pub state: String,
+    /// The trick scoring (mcc-rust-rewrite: the trick names and points on screen).
+    pub score: Score,
+}
+/// The ScoreModule's publication as the host shows it (mcc-rust-rewrite): the
+/// trick last called out, the sequence in progress and the line.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Score {
+    /// Tricks called out since the session was made; it goes up by one per
+    /// trick, so a change means new tricks since the last pose.
+    pub tricks: u32,
+    /// The last trick's name as the game calls it ("Kickflip", "50-50 Grind").
+    pub trick: String,
+    /// Switch, fakie and nollie when it was called.
+    pub stance: [bool; 3],
+    /// What it was worth when called (a grind or manual earns more as it goes on).
+    pub points: f32,
+    /// A sequence of tricks is running (it closes a few ticks after landing).
+    pub sequence_active: bool,
+    /// The running sequence's score, with the combo multiplier.
+    pub sequence: f32,
+    /// Sequences published so far, the last one's score, and whether it was
+    /// a bail (scoring nothing).
+    pub sequences: u32,
+    pub last_sequence: f32,
+    pub bailed: bool,
+    /// The combo multiplier, 1 to 3.
+    pub multiplier: f32,
+    /// The line: points banked while its timer runs, and the seconds left on it.
+    pub line: f32,
+    pub line_seconds: f32,
+    /// Every line banked this session.
+    pub banked: f32,
 }
 impl Session {
     pub fn new(
@@ -124,6 +156,27 @@ impl Session {
         self.skater.animated_skeleton.motion.velocity_world = [v.x, v.y, v.z, 0.];
         self.pose()
     }
+    /// Adds this velocity change to the board, its hook and the skater's
+    /// body, as `launch` sets theirs (mcc-rust-rewrite: Halo's man cannons
+    /// and gravity lifts pushing the board).
+    pub fn push(&mut self, change: [f32; 3]) {
+        let add = |v: &mut skate_core::math::Vector3| {
+            v.x += change[0];
+            v.y += change[1];
+            v.z += change[2];
+        };
+        for body in self.physics.board.bodies_mut() {
+            add(&mut body.rates.linear_velocity);
+        }
+        add(&mut self.physics.board.hook_mut().body.rates.linear_velocity);
+        for body in self.skater.skeleton.bodies_mut() {
+            add(&mut body.rates.linear_velocity);
+        }
+        let v = &mut self.skater.animated_skeleton.motion.velocity_world;
+        v[0] += change[0];
+        v[1] += change[1];
+        v[2] += change[2];
+    }
     pub fn collect(&mut self, frame: InputFrame, dt: f32) {
         self.input.collect(frame.samples);
         self.markers.collect_time(f64::from(dt));
@@ -211,6 +264,31 @@ impl Session {
             velocity: Vec3::new(v.x, v.y, v.z),
             tick: self.physics.ticks,
             state: format!("{:?}", self.skater.player_state.current()),
+            score: self.score(),
+        }
+    }
+    /// The trick scoring (mcc-rust-rewrite), also part of `pose`.
+    pub fn score(&self) -> Score {
+        let s = &self.skater.scoring;
+        let snapshot = &s.session.holder.snapshot;
+        Score {
+            tricks: s.called,
+            trick: s.trick_name().to_owned(),
+            stance: s.stance(),
+            points: s.called_points,
+            sequence_active: s.sequence_active(),
+            sequence: s.sequence_score(),
+            sequences: s.published,
+            last_sequence: snapshot.last_reward,
+            bailed: s.bailed,
+            multiplier: s.session.combo.multiplier,
+            line: snapshot.line,
+            line_seconds: if s.data.line_drain > 0. {
+                s.session.line.seconds(s.data.line_drain)
+            } else {
+                0.
+            },
+            banked: snapshot.completed_lines,
         }
     }
 }

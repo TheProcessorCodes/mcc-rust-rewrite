@@ -17,6 +17,13 @@ pub const GRAVITY: f32 = blam_geometry::movement::GRAVITY;
 const MAX_PARTICLES: usize = 30_000;
 /// Most effects playing at once.
 const MAX_INSTANCES: usize = 600;
+/// Time between two starts of a looping effect's loop when its events
+/// last no time, seconds: such a loop would otherwise start every frame.
+/// Also the shortest time between two plays of a loop's parts (its sounds
+/// and lights). Our own number.
+const MIN_LOOP: f32 = 0.5;
+/// A loop shorter than this (seconds) lasts no time.
+const NO_TIME: f32 = 1e-3;
 
 /// What a particle system's functions read (`effects.md` 4.2).
 pub mod input {
@@ -84,6 +91,9 @@ pub struct System {
     pub emitted: u32,
     pub started: bool,
     accumulator: f32,
+    /// Starting counts still to make: one each time a looping effect
+    /// comes round to this emitter's event again.
+    bursts: u32,
     pub particles: Vec<Particle>,
     pub game_time: f32,
 }
@@ -169,13 +179,21 @@ pub struct Instance {
     /// The particle it rides on: (system id, particle id).
     pub follows: Option<(u64, u64)>,
     seed: u32,
+    /// Plays its events again from the effect's loop start (from the first
+    /// when it names none) until stopped ([`Sim::stop`]): the map's
+    /// placed effects and the weather (`ambient.rs`).
+    looping: bool,
+    /// When the loop last started over (its age).
+    looped_at: f32,
+    /// When its parts last played (its age).
+    parts_at: f32,
 }
 
 impl Instance {
-    /// Every event has started and the last has ended.
+    /// Every event has started and the last has ended (never, looping).
     pub fn events_done(&self, lib: &Library) -> bool {
         let n = lib.effect(self.effect).map_or(0, |e| e.events.len());
-        self.next_event >= n && self.age >= self.current_end
+        !self.looping && self.next_event >= n && self.age >= self.current_end
     }
 }
 
@@ -248,8 +266,45 @@ impl Sim {
             current_end: 0.0,
             follows: None,
             seed,
+            looping: false,
+            looped_at: 0.0,
+            parts_at: f32::NEG_INFINITY,
         });
         Some(id)
+    }
+
+    /// Starts effect `tag` looping (see [`Instance`]) until [`Sim::stop`].
+    pub fn spawn_looping(&mut self, tag: u32, position: Vec3, frame: Mat3) -> Option<u64> {
+        let id = self.spawn(tag, position, frame, None)?;
+        if let Some(i) = self.instances.iter_mut().find(|i| i.id == id) {
+            i.looping = true;
+        }
+        Some(id)
+    }
+
+    /// Lets looping effect `id` end: it plays out what it has started.
+    pub fn stop(&mut self, id: u64) {
+        if let Some(i) = self.instances.iter_mut().find(|i| i.id == id) {
+            i.looping = false;
+        }
+    }
+
+    /// Whether effect `id` is still playing.
+    pub fn playing(&self, id: u64) -> bool {
+        self.instances.iter().any(|i| i.id == id)
+    }
+
+    /// Moves effect `id` and the emitters it has running to `position`
+    /// (Halo world units): what they emit from now on comes from there;
+    /// what they have emitted stays where it is (the weather round the
+    /// camera).
+    pub fn move_to(&mut self, id: u64, position: Vec3) {
+        if let Some(i) = self.instances.iter_mut().find(|i| i.id == id) {
+            i.position = position;
+        }
+        for s in self.systems.iter_mut().filter(|s| s.instance == id) {
+            s.origin = position;
+        }
     }
 
     /// Advances everything by `dt` seconds.
@@ -278,6 +333,20 @@ impl Sim {
                 let lib = self.lib.clone();
                 let inst = &self.instances[k];
                 let Some(effect) = lib.effect(inst.effect) else { break };
+                if inst.looping && inst.next_event >= effect.events.len() && inst.age >= inst.next_start {
+                    // Round again as soon as the last event ends, as Halo
+                    // does: a loop of one event a frame long (Valhalla's man
+                    // cannons: 1/60 s at 50 particles a second) emits without
+                    // a break. Only a loop that takes no time waits.
+                    let first = effect.loop_start.filter(|&l| l < effect.events.len()).unwrap_or(0);
+                    let inst = &mut self.instances[k];
+                    let took = inst.next_start - inst.looped_at;
+                    let again = if took < NO_TIME { inst.looped_at + MIN_LOOP } else { inst.next_start };
+                    inst.next_event = first;
+                    inst.looped_at = again;
+                    inst.next_start = again + effect.events.get(first).map_or(0.0, |n| bounds(n.delay, random(inst.seed, 1000 + first as u32)));
+                    continue;
+                }
                 if inst.next_event >= effect.events.len() || inst.age < inst.next_start {
                     break;
                 }
@@ -313,6 +382,9 @@ impl Sim {
             s.age += dt;
             if !s.started {
                 s.started = true;
+                s.bursts += 1;
+            }
+            for _ in 0..std::mem::take(&mut s.bursts) {
                 let probe = probe(s.seed);
                 let n = s.eval(&em.starting_count, &probe).round().max(0.0) as u32;
                 for _ in 0..n.min(2000) {
@@ -431,8 +503,15 @@ impl Sim {
             f.age += dt;
             lib.lights.get(&f.tag).is_some_and(|l| f.age < l.duration.max(0.05))
         });
-        // Systems end when their event is over and their particles are gone.
-        self.systems.retain(|s| s.age < s.duration || !s.particles.is_empty() || !s.started);
+        // Systems end when their event is over and their particles are
+        // gone; a looping effect keeps its emitters for the next time
+        // round (one that emits less than a particle a loop, Guardian's
+        // lift at 15 a second in a loop 1/60 s long, would otherwise start
+        // from nothing every loop and never emit).
+        let instances = &self.instances;
+        self.systems.retain(|s| {
+            s.age < s.duration || !s.particles.is_empty() || !s.started || instances.iter().any(|i| i.looping && i.id == s.instance)
+        });
         // Effects end when their events are done and nothing of theirs lives.
         let systems = &self.systems;
         let contrails = &self.contrails;
@@ -449,7 +528,12 @@ impl Sim {
         let inst = self.instances[k].clone();
         let Some(effect) = lib.effect(inst.effect) else { return };
         let event = &effect.events[e];
-        for part in &event.parts {
+        // A looping effect's parts play at most every `MIN_LOOP`.
+        let parts: &[blam_effect::Part] = if inst.looping && inst.age - inst.parts_at < MIN_LOOP { &[] } else { &event.parts };
+        if !parts.is_empty() {
+            self.instances[k].parts_at = inst.age;
+        }
+        for part in parts {
             let Some(Ref { class, tag }) = part.what else { continue };
             let at = inst.position + inst.frame * Vec3::from(part.origin_offset);
             match class.as_str() {
@@ -488,8 +572,27 @@ impl Sim {
             }
         }
         for (si, system) in event.systems.iter().enumerate() {
-            let Some(particle) = system.particle.filter(|p| lib.particles.contains_key(p)) else { continue };
+            // Distortion particles (the shimmer of hot air) bend what is
+            // behind them; drawn as sprites their bitmap, a map of offsets,
+            // would show as coloured blots. Not drawn (`effects.md` 10).
+            let drawn = |p: &u32| lib.particles.get(p).is_some_and(|prt| prt.shader.option("specialized_rendering") != Some("distortion"));
+            let Some(particle) = system.particle.filter(drawn) else { continue };
             for ei in 0..system.emitters.len() {
+                // A looping effect come round again: the emitter it already
+                // has goes on emitting for this event's time too, instead
+                // of a new one (and a new mesh) every loop.
+                if inst.looping
+                    && let Some(s) = self
+                        .systems
+                        .iter_mut()
+                        .find(|s| s.instance == inst.id && s.event == e && s.system == si && s.emitter == ei)
+                {
+                    s.duration = s.duration.max(s.age) + duration;
+                    s.origin = inst.position;
+                    s.frame = inst.frame;
+                    s.bursts += 1;
+                    continue;
+                }
                 let id = self.id();
                 let seed = self.next_seed();
                 self.systems.push(System {
@@ -508,6 +611,7 @@ impl Sim {
                     emitted: 0,
                     started: false,
                     accumulator: 0.0,
+                    bursts: 0,
                     particles: Vec::new(),
                     game_time: self.time,
                 });

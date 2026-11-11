@@ -90,6 +90,37 @@ impl LiftVolume {
         self.shape.distance(p) <= margin
     }
 
+    /// How far the shape reaches along the push's direction, wu.
+    pub fn length(&self) -> f32 {
+        match self.shape {
+            LiftShape::Box { axes, half, .. } => 2.0 * (0..3).map(|i| axes[i].dot(self.direction).abs() * half[i]).sum::<f32>(),
+            LiftShape::Capsule { a, b, radius } => (b - a).dot(self.direction).abs() + 2.0 * radius,
+        }
+    }
+
+    /// The speed (wu/s) a launch pad throws a body at, `None` for a volume
+    /// that is not one. A launch pad is a volume too short to bring a body
+    /// to its top speed at its own acceleration, with nothing but the push
+    /// along its direction: Valhalla's man cannons, 60 wu/s^2 up to 11
+    /// wu/s (0.18 s and 1 wu of travel) in a box 0.67 wu long. Halo's
+    /// phantom acts on the whole body for as long as any of it overlaps,
+    /// and a player comes off Valhalla's pad at about the top speed; a
+    /// point crossing the box would leave with 60 % of it and fly a third
+    /// as far. So a launch pad gives its top speed at once. The long
+    /// cannons (Avalanche's, Narrows': 5 to 11 wu of volume, with a pull
+    /// to the axis) and the lifts carry a body as before.
+    pub fn launch_speed(&self) -> Option<f32> {
+        let p = &self.push;
+        let (accel, top) = p.direction;
+        let pad = accel > 0.0
+            && top > 0.0
+            && p.axis.0 == 0.0
+            && p.center.0 == 0.0
+            && !p.negates_gravity
+            && self.length() < top * top / (2.0 * accel);
+        pad.then_some(top)
+    }
+
     /// The acceleration (wu/s^2) the volume gives a body at `p` moving at
     /// `v` over the next `dt` seconds, gravity not included. Each pull adds
     /// its acceleration until the speed along it reaches its top speed, and

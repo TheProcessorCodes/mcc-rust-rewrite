@@ -63,7 +63,9 @@ fn add(
         let weapon = armory
             .as_ref()
             .and_then(|a| a.kinds.iter().find(|k| k.weapon.tag_index == kill.weapon))
-            .map_or_else(|| "Weapon".to_string(), |k| display_name(&k.weapon.tag_path));
+            .map(|k| display_name(&k.weapon.tag_path))
+            .or_else(|| super::kill_name(kill.weapon).map(str::to_string))
+            .unwrap_or_else(|| "Weapon".to_string());
         let weapon = if kill.headshot { format!("[ {weapon} | Headshot ]") } else { format!("[ {weapon} ]") };
         let cell = |s: String, colour: Color| (Text::new(s), TextFont::from_font_size(20.0), TextColor(colour));
         commands.entity(feed).with_children(|f| {

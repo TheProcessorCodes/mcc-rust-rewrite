@@ -113,6 +113,16 @@ impl Enemy {
         })
     }
 
+    /// The nearest point of his body to `from` and how far its surface is
+    /// (a melee's reach), while he is alive.
+    pub fn nearest(&self, from: Vec3) -> Option<(Vec3, f32)> {
+        let b = self.body.as_ref().filter(|b| b.dead.is_none())?;
+        let pa = b.feet + Vec3::Y * RADIUS;
+        let pb = b.feet + Vec3::Y * (b.height - RADIUS).max(RADIUS);
+        let axis = pa + Vec3::Y * (from.y - pa.y).clamp(0.0, pb.y - pa.y);
+        Some((axis, (from.distance(axis) - RADIUS).max(0.0)))
+    }
+
     /// Where an explosion at `at` with `radius` reaches him: the share of
     /// its damage, 1 at the centre to 0 at the edge.
     pub fn splash(&self, at: Vec3, radius: f32) -> f32 {

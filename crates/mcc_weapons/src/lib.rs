@@ -16,6 +16,9 @@
 //! | X / RB | R | reload |
 //! | X / RB, by a weapon | E | pick it up (swap) |
 //! | Y | Tab, wheel, 1 / 2 | switch weapons |
+//! | B | Q | melee (`melee.rs`) |
+//! | LT | G | throw a grenade (`grenades.rs`) |
+//! | LB | X | frag or plasma grenades |
 //!
 //! The numbers are the tags': magazine sizes and spare rounds, rounds per
 //! second, bursts, spread, projectile speeds and ranges, zoom.
@@ -28,8 +31,10 @@
 pub mod assets;
 pub mod enemy;
 mod fire;
+mod grenades;
 mod hud;
 mod killfeed;
+mod melee;
 
 use bevy::input::gamepad::GamepadButton as B;
 use bevy::input::mouse::AccumulatedMouseScroll;
@@ -55,6 +60,8 @@ impl Plugin for WeaponsPlugin {
         app.add_message::<WeaponEvent>()
             .add_message::<WeaponImpact>()
             .init_map_resource::<Inventory>()
+            .init_map_resource::<grenades::Grenades>()
+            .remove_on_map_unload::<grenades::Kit>()
             .remove_on_map_unload::<Items>()
             .remove_on_map_unload::<Placements>()
             .remove_on_map_unload::<Armory>()
@@ -62,7 +69,12 @@ impl Plugin for WeaponsPlugin {
             .add_systems(
                 Update,
                 (
-                    (arm, pick_up, handle, trigger).chain().run_if(mcc_core::pause::running),
+                    (arm, pick_up, handle, melee::strike, grenades::throw, trigger)
+                        .chain()
+                        .run_if(mcc_core::pause::running),
+                    (grenades::place, grenades::pick_up, grenades::fly)
+                        .chain()
+                        .run_if(mcc_core::pause::running),
                     place_held,
                     light_items,
                     respawn_items.run_if(mcc_core::pause::running),
@@ -71,6 +83,16 @@ impl Plugin for WeaponsPlugin {
                     .after(mcc_foot::walk).run_if(mcc_core::map::ready),
             )
             .add_plugins((fire::FirePlugin, hud::HudPlugin, enemy::EnemyPlugin, killfeed::KillFeedPlugin));
+    }
+}
+
+/// What a kill by something other than a weapon is called in the kill
+/// feed: a melee, a grenade.
+pub(crate) fn kill_name(weapon: u32) -> Option<&'static str> {
+    if weapon == melee::KILL {
+        Some("Melee")
+    } else {
+        grenades::KILL.iter().position(|k| *k == weapon).map(|g| ["Frag Grenade", "Plasma Grenade"][g])
     }
 }
 
@@ -178,6 +200,12 @@ pub struct Inventory {
     pub prompt: Option<String>,
     /// Seconds of game time, for respawns.
     clock: f64,
+    /// Grenades carried (frag, plasma, as `grenades::NAMES`) and the type
+    /// thrown next.
+    pub grenades: [u8; 2],
+    pub grenade: usize,
+    /// Seconds the hands are busy with a melee or a throw: no firing.
+    pub busy: f32,
 }
 
 impl Inventory {
@@ -199,7 +227,12 @@ fn setup(
     let Some(arsenal) = pending.and_then(|mut p| p.0.take()) else {
         return;
     };
-    let looks = assets::upload(&arsenal, &mut meshes, &mut images);
+    let (looks, grenade_looks) = assets::upload(&arsenal, &mut meshes, &mut images);
+    commands.insert_resource(grenades::Kit {
+        looks: grenade_looks,
+        to_grip: [0, 1].map(|g| arsenal.grenades[g].as_ref().map_or(Mat4::IDENTITY, |k| k.to_grip)),
+        placed: arsenal.grenades_placed.iter().map(|(g, p)| (*g, p.clone(), 0.0)).collect(),
+    });
     let mut items = Items::default();
     for (n, (kind, placement)) in arsenal.placed.iter().enumerate() {
         let model = halo_to_render() * placement.transform() * arsenal.kinds[*kind].to_grip.inverse();
@@ -292,6 +325,7 @@ fn arm(mut inv: ResMut<Inventory>, armory: Option<Res<Armory>>, mut foot: ResMut
     };
     if !inv.armed {
         inv.armed = true;
+        inv.grenades = grenades::START;
         for (slot, &k) in armory.loadout.iter().take(1).enumerate() {
             inv.slots[slot] = Some(new_held(&armory.kinds[k], k));
         }
@@ -595,6 +629,8 @@ fn trigger(
         || held_down;
     let pressed = (grabbed && mouse.just_pressed(MouseButton::Left))
         || shots.auto_pull(pad.is_some_and(|p| p.get(B::RightTrigger2).unwrap_or(0.0) > 0.4));
+    // A melee or a throw keeps the trigger from firing.
+    let (down, pressed) = if inv.busy > 0.0 { (false, false) } else { (down, pressed) };
     let active = inv.active;
     let Some(held) = inv.slots[active].as_mut() else {
         return;

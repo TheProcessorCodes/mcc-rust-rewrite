@@ -39,7 +39,8 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+# The release's number: players see it as `beta-<version>` (`game_paths::VERSION`).
+version = "0.0.3"
 edition = "2024"
 license = "GPL-3.0-only"
 publish = false
@@ -112,5 +113,9 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# What players download (`scripts/release.ps1`): no debug info and no
+# symbols, so the exe is small and names nothing of the PC that built it.
 [profile.release]
 opt-level = 3
+debug = false
+strip = true

@@ -23,6 +23,13 @@ use mcc_textures::MaterialTextures;
 /// The Spartan's crate owns the list.
 const LOADOUT: [&str; 3] = mcc_foot::STARTING_WEAPONS;
 
+/// The hand grenades the Spartan throws (`grenades.rs`), by their equipment
+/// (`eqip`) tags: frag, plasma.
+pub const GRENADES: [&str; 2] = [
+    "objects\\weapons\\grenade\\frag_grenade\\frag_grenade",
+    "objects\\weapons\\grenade\\plasma_grenade\\plasma_grenade",
+];
+
 /// One weapon kind's mesh piece: grip-space triangles of one material.
 pub struct Piece {
     pub positions: Vec<[f32; 3]>,
@@ -79,6 +86,11 @@ pub struct Arsenal {
     pub placed: Vec<(usize, ItemPlacement)>,
     /// The kinds a Spartan starts with (`LOADOUT`, where the map has them).
     pub loadout: Vec<usize>,
+    /// The hand grenades' models (index as [`GRENADES`]), where the map has
+    /// them, and where the scenario puts grenades to pick up: type and
+    /// placement.
+    pub grenades: [Option<Kind>; 2],
+    pub grenades_placed: Vec<(usize, ItemPlacement)>,
     textures: MaterialTextures,
 }
 
@@ -132,17 +144,73 @@ pub fn load_with(cache: &CacheFile, extra: &[u32]) -> Option<Arsenal> {
         let kind = make_kind(weapon, &scene, pieces);
         kinds.push(kind);
     }
+    let grenades = GRENADES.map(|path| grenade_kind(cache, &resources, &mut materials, &mut scene, path));
     drop(resources);
     if kinds.is_empty() {
         eprintln!("weapons: none on this map");
         return None;
     }
+    let grenades_placed = blam_geometry::weapons::item_placements(cache)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| p.kind == blam_geometry::weapons::ItemKind::Equipment)
+        .filter_map(|p| Some((GRENADES.iter().position(|g| p.tag_path.eq_ignore_ascii_case(g))?, p)))
+        .collect();
     let textures = mcc_textures::load(cache, &scene);
     if let Ok(r) = cache.resources() {
         r.clear_page_cache();
     }
     let loadout = LOADOUT.iter().filter_map(|path| kinds.iter().position(|k| k.weapon.tag_path == *path)).collect();
-    Some(finish(kinds, placements, loadout, textures, started))
+    let mut arsenal = finish(kinds, placements, loadout, textures, started);
+    arsenal.grenades = grenades;
+    arsenal.grenades_placed = grenades_placed;
+    eprintln!(
+        "weapons: grenades {} placed, models {}",
+        arsenal.grenades_placed.len(),
+        arsenal.grenades.iter().filter(|g| g.is_some()).count()
+    );
+    Some(arsenal)
+}
+
+/// A hand grenade's model, read like a weapon's: its equipment tag's
+/// render model, as a kind with no weapon numbers (the grip is the model's
+/// origin). `None` when the map does not have it.
+fn grenade_kind(
+    cache: &CacheFile,
+    resources: &blam_cache::Resources<'_>,
+    materials: &mut blam_geometry::materials::MaterialTable,
+    scene: &mut Scene,
+    path: &str,
+) -> Option<Kind> {
+    let tag = cache.tags.find("eqip", path)?;
+    let mode = blam_geometry::scenario::render_model_of(cache, tag).ok().flatten()?;
+    let first = scene.meshes.len();
+    let parts = blam_geometry::weapons::decode_model(cache, resources, materials, mode.index, scene)
+        .inspect_err(|e| eprintln!("weapons: {path} not decoded: {e}"))
+        .ok()?;
+    let weapon = Weapon {
+        tag_index: tag.index,
+        tag_path: tag.name().to_string(),
+        class: String::new(),
+        short_name: String::new(),
+        model: String::new(),
+        render_model: Some(mode.index),
+        first_person: Vec::new(),
+        zoom_levels: 0,
+        zoom_range: [1.0, 1.0],
+        holster_marker: String::new(),
+        magazines: Vec::new(),
+        triggers: Vec::new(),
+        barrels: Vec::new(),
+        markers: Vec::new(),
+        root: Mat4::IDENTITY,
+    };
+    let pieces = parts
+        .pieces
+        .iter()
+        .filter(|p| p.mesh as usize >= first)
+        .map(|p| (p.mesh, p.transform, p.mirrored));
+    Some(make_kind(weapon, scene, pieces))
 }
 
 /// One kind from its weapon tag and its model's pieces in `scene` (mesh,
@@ -219,6 +287,8 @@ fn finish(
         kinds,
         placed,
         loadout,
+        grenades: [None, None],
+        grenades_placed: Vec::new(),
         textures,
     }
 }
@@ -280,68 +350,77 @@ impl LookMaterial {
     }
 }
 
-/// Makes each kind's meshes and textures (index as `Arsenal::kinds`).
-pub fn upload(arsenal: &Arsenal, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>) -> Vec<Look> {
+/// Makes each kind's meshes and textures (index as `Arsenal::kinds`), and
+/// the grenades' (index as [`GRENADES`]).
+pub fn upload(arsenal: &Arsenal, meshes: &mut Assets<Mesh>, images: &mut Assets<Image>) -> (Vec<Look>, [Option<Look>; 2]) {
     let mut image_handles: HashMap<u32, Option<Handle<Image>>> = HashMap::new();
-    arsenal
-        .kinds
+    let mut look = |kind: &Kind| look_of(arsenal, kind, &mut image_handles, meshes, images);
+    let looks = arsenal.kinds.iter().map(&mut look).collect();
+    let grenades = [0, 1].map(|g| arsenal.grenades[g].as_ref().map(&mut look));
+    (looks, grenades)
+}
+
+/// One kind's meshes and textures.
+fn look_of(
+    arsenal: &Arsenal,
+    kind: &Kind,
+    image_handles: &mut HashMap<u32, Option<Handle<Image>>>,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+) -> Look {
+    let pieces = kind
+        .pieces
         .iter()
-        .map(|kind| {
-            let pieces = kind
-                .pieces
-                .iter()
-                .filter_map(|p| {
-                    let look = arsenal.textures.looks.get(p.material as usize).and_then(Option::as_ref);
-                    if look.is_some_and(|l| l.hidden) {
-                        return None;
-                    }
-                    let texture = look.and_then(|l| l.texture).and_then(|b| {
-                        image_handles
-                            .entry(b)
-                            .or_insert_with(|| {
-                                arsenal
-                                    .textures
-                                    .bitmaps
-                                    .get(&b)
-                                    .and_then(mcc_rider::halo_image)
-                                    .map(|i| images.add(i))
-                            })
-                            .clone()
-                    });
-                    let colour = match (texture.is_some(), look.and_then(|l| l.colour)) {
-                        (_, Some(c)) => Color::srgb(c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0)),
-                        (true, None) => Color::WHITE,
-                        (false, None) => Color::srgb(0.35, 0.36, 0.38),
-                    };
-                    let uv_transform = look.map_or(Affine2::IDENTITY, |l| Affine2 {
-                        matrix2: Mat2::from_diagonal(Vec2::from(l.xform.scale)),
-                        translation: Vec2::from(l.xform.offset),
-                    });
-                    let alpha_mode = if look.is_some_and(|l| l.alpha_test) {
-                        AlphaMode::Mask(0.5)
-                    } else {
-                        AlphaMode::Opaque
-                    };
-                    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, p.positions.clone());
-                    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, p.uvs.clone());
-                    mesh.insert_indices(Indices::U32(p.indices.clone()));
-                    match &p.normals {
-                        Some(n) => mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, n.clone()),
-                        None => mesh.compute_normals(),
-                    }
-                    Some((
-                        meshes.add(mesh),
-                        LookMaterial {
-                            texture,
-                            colour: colour.to_linear(),
-                            uv_transform,
-                            alpha_mode,
-                        },
-                    ))
-                })
-                .collect();
-            Look { pieces }
+        .filter_map(|p| {
+            let look = arsenal.textures.looks.get(p.material as usize).and_then(Option::as_ref);
+            if look.is_some_and(|l| l.hidden) {
+                return None;
+            }
+            let texture = look.and_then(|l| l.texture).and_then(|b| {
+                image_handles
+                    .entry(b)
+                    .or_insert_with(|| {
+                        arsenal
+                            .textures
+                            .bitmaps
+                            .get(&b)
+                            .and_then(mcc_rider::halo_image)
+                            .map(|i| images.add(i))
+                    })
+                    .clone()
+            });
+            let colour = match (texture.is_some(), look.and_then(|l| l.colour)) {
+                (_, Some(c)) => Color::srgb(c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0)),
+                (true, None) => Color::WHITE,
+                (false, None) => Color::srgb(0.35, 0.36, 0.38),
+            };
+            let uv_transform = look.map_or(Affine2::IDENTITY, |l| Affine2 {
+                matrix2: Mat2::from_diagonal(Vec2::from(l.xform.scale)),
+                translation: Vec2::from(l.xform.offset),
+            });
+            let alpha_mode = if look.is_some_and(|l| l.alpha_test) {
+                AlphaMode::Mask(0.5)
+            } else {
+                AlphaMode::Opaque
+            };
+            let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, p.positions.clone());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, p.uvs.clone());
+            mesh.insert_indices(Indices::U32(p.indices.clone()));
+            match &p.normals {
+                Some(n) => mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, n.clone()),
+                None => mesh.compute_normals(),
+            }
+            Some((
+                meshes.add(mesh),
+                LookMaterial {
+                    texture,
+                    colour: colour.to_linear(),
+                    uv_transform,
+                    alpha_mode,
+                },
+            ))
         })
-        .collect()
+        .collect();
+    Look { pieces }
 }

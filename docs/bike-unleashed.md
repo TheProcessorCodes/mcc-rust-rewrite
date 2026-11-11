@@ -115,15 +115,16 @@ Unleashed's Pro 250 as it was and Reflex v1; the rest scale engine power, gearin
 brakes, grip, side stiffness, slide grip, steering lock and lag, lean depth and speed, rider-lean
 influence, weight shift, wheelie hold, spring, damping, air rotation, air damping and gravity.
 Each row reads out what the value means on the tuned bike. Closing the menu saves the values to
-`bike-tuning.json` next to the exe; the next start loads them (Delete puts all back to stock).
-Under the sliders are five setup slots, kept in `bike-setups.json` next to the exe: Shift+1 to 5
+`bike-tuning.json` in the data folder; the next start loads them (Delete puts all back to stock).
+Under the sliders are five setup slots, kept in `bike-setups.json` in the data folder: Shift+1 to 5
 (or Ctrl) saves the current setup to a slot and 1 to 5 loads one, or pick the "Save to slot" /
 "Load slot" row, choose a slot with A / D and press Enter (A on a pad), or click a slot.
 
 ## Not done yet
 
-- Surfaces: only friction zone 1. Halo's collision materials could map to the 16 zones (pavement
-  is zone 2, with far more side grip).
+- Surfaces: done 2026-11-10 (#25) with Reflex's grip and drag classes rather than Unleashed's
+  zones: the ground's kind (`surface.rs`, from the Halo material) scales the tyres' grip and
+  adds terrain drag, on this model and the Reflex one (HANDOFF.md, "Reflex's own simulation").
 - Wheelies come slowly: from a standing start, full gas with the stick back lifts the front
   after about 1.5 s, at about 33 mph (the hold fades with speed). The game moves the rider's weight
   another 1.4 ft back for a moment when the clutch is dumped (`ClutchCofGTravelBack`), which is

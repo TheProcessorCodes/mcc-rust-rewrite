@@ -1,6 +1,6 @@
-//! The physics tuning menu: 0 on the dirt bike opens a column of sliders
-//! over the ride (`reflex::Tuning`); 0 or Esc (B on a pad) closes it. The
-//! bike stands still while it is open.
+//! The physics tuning menu: 0 on the dirt bike (LB + X on a pad) opens a
+//! column of sliders over the ride (`reflex::Tuning`); 0 or Esc (B, or
+//! LB + X again, on a pad) closes it. The bike stands still while it is open.
 //!
 //! The first slider picks the model the others start from: Unleashed's
 //! Pro 250 as it is, Reflex v1 (`reflex.rs`), or Reflex itself (`exact.rs`,
@@ -10,15 +10,13 @@
 //! mouse, or pick one with W / S, the up / down arrows or the d-pad and move
 //! it with A / D, left / right. Right-click a slider, or press Backspace (X
 //! on a pad), to put it back to stock; Delete (Y on a pad) puts them all
-//! back. Closing the menu saves the values to `bike-tuning.json` next to the
-//! exe, and the next start loads them.
+//! back. Closing the menu saves the values to `bike-tuning.json` in the
+//! data folder, and the next start loads them.
 //!
-//! Below the sliders are five setup slots, kept in `bike-setups.json` next to
-//! the exe. Pick the "Save to slot" or "Load slot" row, choose a slot with
+//! Below the sliders are five setup slots, kept in `bike-setups.json` in
+//! the data folder. Pick the "Save to slot" or "Load slot" row, choose a slot with
 //! A / D and press Enter (A on a pad), or click a slot. Shift or Ctrl with
 //! 1 to 5 saves to a slot; 1 to 5 alone loads one.
-
-use std::path::PathBuf;
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
@@ -85,14 +83,9 @@ fn apply(tuning: Res<BikeTuning>) {
     physics::set_tuning(&tuning.0);
 }
 
-/// A file kept next to the exe.
-fn beside_exe(name: &str) -> Option<PathBuf> {
-    Some(std::env::current_exe().ok()?.parent()?.join(name))
-}
-
-/// Reads a JSON file next to the exe, if it is there.
+/// Reads a saved JSON file (`game_paths::read_saved`), if it is there.
 fn read_json(name: &str) -> Option<serde_json::Value> {
-    let text = std::fs::read_to_string(beside_exe(name)?).ok()?;
+    let text = game_paths::read_saved(name)?;
     let value = serde_json::from_str(&text);
     if value.is_err() {
         warn!("bike: {name} is not valid JSON; ignoring it");
@@ -101,12 +94,9 @@ fn read_json(name: &str) -> Option<serde_json::Value> {
 }
 
 fn write_json(name: &str, value: &serde_json::Value) {
-    let Some(path) = beside_exe(name) else {
-        return;
-    };
     let text = serde_json::to_string_pretty(value).unwrap_or_default();
-    if let Err(e) = std::fs::write(&path, text) {
-        warn!("bike: could not save {}: {e}", path.display());
+    if let Err(e) = game_paths::write_saved(name, &text) {
+        warn!("bike: {e}");
     }
 }
 
@@ -862,7 +852,14 @@ fn spawn_menu(mut commands: Commands) {
         });
 }
 
-/// 0 opens and closes the menu while riding; Esc or B on a pad close it.
+/// LB + X on a pad: X pressed with LB held (LB alone is the session
+/// marker's chord, with the d-pad).
+fn pad_chord(gamepads: &Query<&Gamepad>) -> bool {
+    gamepads.iter().any(|p| p.pressed(GamepadButton::LeftTrigger) && p.just_pressed(GamepadButton::West))
+}
+
+/// 0, or LB + X on a pad, opens and closes the menu while riding; Esc or B
+/// on a pad close it.
 #[allow(clippy::too_many_arguments)]
 fn toggle(
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -874,7 +871,7 @@ fn toggle(
     mut overlay: ResMut<Overlay>,
     mut menus: Query<&mut Visibility, With<Menu>>,
 ) {
-    let zero = keys.just_pressed(KeyCode::Digit0) || keys.just_pressed(KeyCode::Numpad0);
+    let zero = keys.just_pressed(KeyCode::Digit0) || keys.just_pressed(KeyCode::Numpad0) || pad_chord(&gamepads);
     let open = if menu.open {
         let escape = keys.just_pressed(KeyCode::Escape);
         if escape {
@@ -1005,7 +1002,9 @@ fn adjust(
             let v = ((k.get)(&tuning.0) + nudge * k.step).clamp(k.range.0, k.range.1);
             put(&mut tuning, k, v);
         }
-        if keys.just_pressed(KeyCode::Backspace) || pad(GamepadButton::West) {
+        // X, not the LB + X that opens and closes the menu.
+        let lb = gamepads.iter().any(|p| p.pressed(GamepadButton::LeftTrigger));
+        if keys.just_pressed(KeyCode::Backspace) || (pad(GamepadButton::West) && !lb) {
             put(&mut tuning, k, (k.get)(&stock));
         }
     } else {

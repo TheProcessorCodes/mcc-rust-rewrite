@@ -418,6 +418,7 @@ pub fn decode_collision(
         scene.collision.materials.push(CollisionMaterial {
             shader: tag.map_or_else(|| "(none)".to_string(), |t| t.name().to_string()),
             shader_class: tag.map(|t| cache.tags.class_of(t).code.as_str().to_string()).unwrap_or_default(),
+            global_materials: Vec::new(),
         });
     }
     let id = ResourceId(cache.reader_at(base + off::COLLISION_RESOURCE).u32()?);

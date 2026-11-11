@@ -1,7 +1,7 @@
 //! The dirt bike's state other crates read: the engine sound (`mcc_audio`)
 //! follows it. `mcc_bike` fills it every frame. `EngineVolume` is the
 //! pause menu's engine slider (`mcc-rust-rewrite` `pause.rs`), kept in
-//! `bike-sound.json` next to the exe.
+//! `bike-sound.json` in the data folder.
 
 use bevy::prelude::*;
 
@@ -23,6 +23,8 @@ pub struct BikeMotion {
     pub crashed: bool,
     /// The clutch slipping (pulling away, creeping).
     pub clutch_slipping: bool,
+    /// The clutch held in: the engine turns free of the rear wheel.
+    pub clutch_in: bool,
     /// The rear tyre spinning or locked.
     pub rear_sliding: bool,
     /// The bike frame's origin (renderer frame, m), its velocity (m/s) and
@@ -46,27 +48,19 @@ impl Default for EngineVolume {
 
 const SAVED: &str = "bike-sound.json";
 
-fn beside_exe() -> Option<std::path::PathBuf> {
-    Some(std::env::current_exe().ok()?.parent()?.join(SAVED))
-}
-
 impl EngineVolume {
     /// The saved level, or the default.
     pub fn load() -> EngineVolume {
-        beside_exe()
-            .and_then(|p| std::fs::read_to_string(p).ok())
+        game_paths::read_saved(SAVED)
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
             .and_then(|v| v.get("engine_volume")?.as_f64())
             .map_or_else(EngineVolume::default, |v| EngineVolume((v as f32).clamp(0.0, 1.0)))
     }
 
     pub fn save(self) {
-        let Some(path) = beside_exe() else {
-            return;
-        };
         let text = serde_json::to_string_pretty(&serde_json::json!({ "engine_volume": self.0 })).unwrap_or_default();
-        if let Err(e) = std::fs::write(&path, text) {
-            warn!("bike: could not save {}: {e}", path.display());
+        if let Err(e) = game_paths::write_saved(SAVED, &text) {
+            warn!("bike: {e}");
         }
     }
 }

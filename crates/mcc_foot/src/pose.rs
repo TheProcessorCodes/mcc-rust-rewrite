@@ -2,9 +2,10 @@
 //! unchanged: standing, walking, running, strafing, crouching and jumping,
 //! made up from a gait cycle rather than Halo's own animations.
 //!
-//! The skater rig (`rig.json`, skate metres) faces +Z with its left at +X
-//! and Y up, its soles at y = 0. Poses come out in that frame; `mod.rs`
-//! turns and places them in the world.
+//! The rig (Skate 3's `rig.json`, or without Skate 3 Master Chief's own
+//! skeleton, `mcc_core::skate::HaloRig`; skate metres) faces +Z with its
+//! left at +X and Y up, its soles at y = 0. Poses come out in that frame;
+//! `mod.rs` turns and places them in the world.
 //!
 //! The gait: each foot spends half the cycle planted, sliding back under
 //! the body at the ground's speed, and half swinging forward through the
@@ -56,7 +57,8 @@ pub struct Hold {
 
 /// Where the grip sits, in the chest's frame turned to the aim: right of
 /// the middle, a little below the chest, close in so the off hand reaches
-/// the fore grip (the skater's arms are short for a Spartan's rifle).
+/// the fore grip (Skate 3's skater's arms are short for a Spartan's rifle;
+/// Master Chief's own reach it as well).
 const GRIP: Vec3 = Vec3::new(-0.07, -0.13, 0.08);
 
 /// The wrist sits behind the hand's grip marker along the barrel: the
@@ -214,4 +216,88 @@ pub fn foot_pose(rig: &Rig, g: &Gait) -> (Vec<Mat4>, Option<Mat4>) {
     rig.set(&mut out, "TRUCK_BACK", Mat4::from_translation(Vec3::new(0.0, 0.06, -0.26)));
     rig.set(&mut out, "TRUCK_FRONT", Mat4::from_translation(Vec3::new(0.0, 0.06, 0.26)));
     (out, weapon)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A made-up rig (our own round numbers, not any game's): bone and
+    /// joint, skate metres, facing +Z with the left at +X, soles at y = 0.
+    /// Places only, as Master Chief's own skeleton has.
+    const JOINTS: [(&str, [f32; 3]); 27] = [
+        ("HIPS", [0.0, 0.95, 0.0]),
+        ("SPINE", [0.0, 1.05, 0.0]),
+        ("SPINE1", [0.0, 1.15, 0.0]),
+        ("SPINE2", [0.0, 1.25, 0.0]),
+        ("SPINE3", [0.0, 1.35, 0.0]),
+        ("NECK", [0.0, 1.48, 0.0]),
+        ("NECK1", [0.0, 1.52, 0.0]),
+        ("HEAD", [0.0, 1.58, 0.01]),
+        ("LEFTSHOULDER", [0.05, 1.42, 0.0]),
+        ("LEFTARM", [0.19, 1.42, 0.0]),
+        ("LEFTFOREARM", [0.21, 1.14, 0.0]),
+        ("LEFTHAND", [0.22, 0.88, 0.02]),
+        ("RIGHTSHOULDER", [-0.05, 1.42, 0.0]),
+        ("RIGHTARM", [-0.19, 1.42, 0.0]),
+        ("RIGHTFOREARM", [-0.21, 1.14, 0.0]),
+        ("RIGHTHAND", [-0.22, 0.88, 0.02]),
+        ("LEFTUPLEG", [0.09, 0.9, 0.0]),
+        ("LEFTLEG", [0.1, 0.5, 0.01]),
+        ("LEFTFOOT", [0.1, 0.1, -0.01]),
+        ("LEFTTOEBASE", [0.1, 0.02, 0.13]),
+        ("RIGHTUPLEG", [-0.09, 0.9, 0.0]),
+        ("RIGHTLEG", [-0.1, 0.5, 0.01]),
+        ("RIGHTFOOT", [-0.1, 0.1, -0.01]),
+        ("RIGHTTOEBASE", [-0.1, 0.02, 0.13]),
+        ("SKATEBOARD_ROOT", [0.0; 3]),
+        ("TRUCK_FRONT", [0.0; 3]),
+        ("TRUCK_BACK", [0.0; 3]),
+    ];
+
+    fn rig() -> Rig {
+        let (names, bind) = JOINTS.iter().map(|(n, p)| (n.to_string(), Mat4::from_translation(Vec3::from(*p)))).unzip();
+        Rig::from_binds(names, bind, "test rig").expect("a rig")
+    }
+
+    /// Standing, walking, running, crouched, in the air, aiming up and down,
+    /// with a weapon and without: every bone finite, and the weapon placed
+    /// exactly while he holds one.
+    #[test]
+    fn every_gait_poses_finite() {
+        let rig = rig();
+        let rifle = Hold {
+            left_hand: Vec3::new(0.12, 0.0, 0.01),
+            scale: blam_geometry::WORLD_UNIT_METRES * mcc_core::skate::DEFAULT_SCALE,
+        };
+        for speed in 0..=7 {
+            for (crouch, air, land) in [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.5, 0.3, 1.0)] {
+                for pitch in [-1.4f32, 0.0, 1.4] {
+                    for hold in [None, Some(rifle)] {
+                        for phase in [0.0f32, 1.0, 3.5, 5.0] {
+                            let g = Gait {
+                                phase,
+                                speed: speed as f32,
+                                direction: Vec2::new(0.6, 0.8),
+                                crouch,
+                                air,
+                                rise: 1.0 - 2.0 * air,
+                                land,
+                                pitch,
+                                hold,
+                                ground: [0.1, -0.1],
+                            };
+                            let (bones, weapon) = foot_pose(&rig, &g);
+                            assert_eq!(bones.len(), rig.names.len());
+                            for (name, m) in rig.names.iter().zip(&bones) {
+                                assert!(m.is_finite(), "{name} in {g:?}: {m}");
+                            }
+                            assert_eq!(weapon.is_some(), hold.is_some(), "{g:?}");
+                            assert!(weapon.is_none_or(|w| w.is_finite()), "{g:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

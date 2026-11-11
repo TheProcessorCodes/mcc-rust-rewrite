@@ -3,6 +3,7 @@ name = "reflex_bevy"
 description = "Bevy 0.20 adapter for reflex_core: the Reflex dirt bike as components, no physics engine needed."
 edition.workspace = true
 version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

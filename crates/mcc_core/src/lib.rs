@@ -1,6 +1,7 @@
 //! What the `mcc-rust-rewrite` crates share: the coordinate frames, the pause flag, the
 //! flying camera, the zone-set state, the rider's pose, the session marker's
-//! flag, the bike's engine state, the places that kill and the lifts that push. Kept small and
+//! flag, the bike's engine state, the places that kill and the lifts that push, the view
+//! settings (look speed, field of view, display mode). Kept small and
 //! slow-changing: every other `halo3_*` crate depends on it, so an edit here
 //! rebuilds them all.
 
@@ -18,5 +19,6 @@ pub mod pause;
 pub mod script_sound;
 pub mod skate;
 pub mod units;
+pub mod view;
 pub mod weapons;
 pub mod zones;

@@ -1,13 +1,11 @@
 //! The player's volumes: master, music, effects, ambience and dialogue, set
 //! on the pause menu's Sound tab (`mcc-rust-rewrite` `pause.rs`) and by the `-` / `=`
-//! (master) and K (mute) keys, saved to `sound-levels.json` next to the
-//! exe and read back at start. `MCC_VOLUME` overrides the saved master
+//! (master) and K (mute) keys, saved to `sound-levels.json` in the
+//! data folder and read back at start. `MCC_VOLUME` overrides the saved master
 //! (a developer override).
 //!
 //! Each slider scales its bus in the mixer on top of everything else: a
 //! sound's tag and class gains, and the scripts' `sound_class_set_gain`.
-
-use std::path::PathBuf;
 
 use bevy::prelude::*;
 
@@ -92,10 +90,6 @@ impl Default for SoundLevels {
 
 const FILE: &str = "sound-levels.json";
 
-fn beside_exe() -> Option<PathBuf> {
-    Some(std::env::current_exe().ok()?.parent()?.join(FILE))
-}
-
 impl SoundLevels {
     pub const MAX: f32 = 2.0;
     /// One press of a key or the d-pad.
@@ -167,7 +161,7 @@ impl SoundLevels {
     /// The saved levels (defaults without a file), then `MCC_VOLUME` for
     /// the master.
     pub fn load() -> SoundLevels {
-        let mut l = match beside_exe().and_then(|p| std::fs::read_to_string(p).ok()) {
+        let mut l = match game_paths::read_saved(FILE) {
             Some(text) => SoundLevels::from_json(&text).unwrap_or_else(|| {
                 warn!("sound: {FILE} is not valid; using the default volumes");
                 SoundLevels::default()
@@ -181,9 +175,8 @@ impl SoundLevels {
     }
 
     fn save(&self) {
-        let Some(path) = beside_exe() else { return };
-        if let Err(e) = std::fs::write(&path, self.to_json()) {
-            warn!("sound: could not save {}: {e}", path.display());
+        if let Err(e) = game_paths::write_saved(FILE, &self.to_json()) {
+            warn!("sound: {e}");
         }
     }
 

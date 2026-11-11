@@ -41,6 +41,7 @@ middle.
 | Home | load every BSP at once |
 | M | music on / off (the map's showpiece: the Warthog run on 120_halo); Shift+M next track |
 | N | music: switch to the alternate loop and back (at the next loop boundary) |
+| U | Halo 3's campaign music on / off, on any map; Shift+U next piece, Ctrl+U a random one (the name shows at the top left) |
 | K | mute / unmute |
 | `-` / `=` | sound volume down / up (10 % steps) |
 | gamepad left stick | move |
@@ -550,6 +551,9 @@ camera; F again flies. `--foot` starts on foot at the start spawn. Code:
 | X or RB | R | reload |
 | X or RB by a weapon | E | swap the weapon in hand for it |
 | Y | Tab, wheel, 1 / 2 | switch weapons |
+| B | Q | melee; a foe a step or two ahead pulls him in (a lunge) |
+| LT | G | throw a grenade |
+| LB | X | frag or plasma grenades |
 
 **Movement** uses the map's own player numbers (`docs/format/movement.md`,
 `blam movement <map>`): run 2.25 wu/s forward, 2.0 back and sideways, 9.6
@@ -587,12 +591,27 @@ tracers, sparks, scorch marks, explosions for the brute shot and missile pod.
 Not from the tags: reload times (2.1 s; 2.6 sniper, 3 missile pod, 0.6 per
 shotgun shell), the shotgun's 15 pellets, the battery use, charge times,
 grenades falling under gravity. Nothing takes damage yet. The HUD shows the
-crosshair (red when empty), both weapons' ammo, and prompts.
+crosshair (red when empty), both weapons' ammo, the grenades, and prompts.
+
+**Melee and grenades** (`melee.rs`, `grenades.rs`). A blow takes 70 off the
+nearest actor (or the enemy Spartan) whose body is within 1.2 m of his eyes
+and in front of him; one within 3.2 m pulls him in at 9 m/s first. It keeps
+the gun from firing for 0.8 s and stops a reload. He starts with two frags
+and carries at most two of each, as in Halo 3; the scenario's grenade
+equipment lies where it is placed (its real models), is picked up by walking
+over it with room to carry it, and comes back after the placement's respawn
+time. A throw leaves at 17 m/s plus a lift from in front of his eyes; a frag
+bounces and goes off 1.3 s after it first lands, a plasma grenade sticks to
+the wall or actor it hits and goes off 2.5 s later, and either goes off after
+6 s. The blast is the explosives' (120 at the centre, nothing at 4.4 m) and
+hurts him too. These numbers are ours, not the tags'; the scenario's starting
+profiles are not read, and neither has a sound yet.
 
 Headless check: `mcc-rust-rewrite riverworld --shot DIR --foot --view spawn12` stands him
 at spawn 12 for `MCC_SKATE_FOR` seconds, then takes the rider pictures;
 `MCC_FOOT_WALK=x,y` holds the stick (X right, Y forward) and
-`MCC_FOOT_FIRE=1` holds the trigger (the log counts rounds and hits).
+`MCC_FOOT_FIRE=1` holds the trigger (the log counts rounds and hits);
+`MCC_SHOT_GRENADE=1` throws a grenade a second in.
 
 ## Dirt bike
 
@@ -636,8 +655,8 @@ it off and on, and the log says which. The Dakumoto 450F's own 54 recordings, re
 Without Reflex the bike is silent (a synthesised engine was tried and dropped on
 2026-10-31: it did not sound good enough). The pause
 menu's Dirt bike tab has an engine volume slider (drag or click it, or d-pad up / down,
-the up / down arrows, W / S); it starts at 70 % and is saved to `bike-sound.json` next to
-the exe when the game carries on.
+the up / down arrows, W / S); it starts at 70 % and is saved to `bike-sound.json` in
+the data folder when the game carries on.
 `MCC_ENGINE_WAV=DIR cargo test -p mcc_audio engine` writes the recordings over a
 scripted nine-second ride to `DIR\engine-reflex.wav`.
 
@@ -686,6 +705,16 @@ this repo. `MCC_AUDIO=0` turns sound off; `--shot` never opens the sound device.
   start (`--music 120_music_15` or an index into the list the log prints). N moves to the
   alternate loop through its transition at the end of the current loop, and back. M again
   plays the outro (or fades out over the track's fade time).
+- **Campaign music on any map** (2026-11-10, #27, `mcc_audio/src/campaign.rs`): U plays Halo
+  3's campaign music on whatever map is loaded, Valhalla, a Halo CE or Reach map alike. The
+  first press reads the `lsnd`s under a `music` folder of every campaign map in the player's
+  `halo3\maps` (005_intro to 130_epilogue, read-only, on a thread, kept for the session; their
+  audio is in the same `sfx.fsb`), and starts the first piece. U again stops it by its rules
+  (outro or fade), Shift+U skips to the next piece, Ctrl+U to a random one; a piece that ends by
+  itself (its music time) is followed by the next. The piece's name (`120_music_15
+  (halo3_trench)`) shows at the top left for 4 s. Stingers ("not a loop") are left out. It has
+  its own player, so the map's own music (M) and the scripts' are left alone; both play on the
+  Music bus. No pad button: every free one is taken on some tab.
 - **Board sounds while skating**: Halo's own samples, picked from the bank by folder: the
   physics tire's hard-surface roll loop for rolling (`materials\havok\tire`, gain and pitch
   with speed, pitched up for small wheels), a vehicle scrape while grinding, and after more
@@ -700,7 +729,7 @@ this repo. `MCC_AUDIO=0` turns sound off; `--shot` never opens the sound device.
   sliders, 0 to 200 % (100 % = the game's own mix; master 80 % by default): up / down picks
   one, left / right (arrow keys, d-pad, left stick) moves it, or click and drag with the mouse.
   Each scales its bus in the mixer, on top of the tag and class gains and the scripts'
-  `sound_class_set_gain`. They are saved to `sound-levels.json` next to the exe and read at
+  `sound_class_set_gain`. They are saved to `sound-levels.json` in the data folder and read at
   start. `-` / `=` change the master and K mutes, anywhere, and the sliders follow.
   `MCC_VOLUME` overrides the saved master (developer override).
 

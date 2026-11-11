@@ -74,6 +74,14 @@ pub(crate) struct Runtime {
     pub new_trick: bool,
     pub modified_trick: bool,
     pub close_tricks: bool,
+    /// mcc-rust-rewrite: what the host shows. Tricks called out so far (a new
+    /// one bumps it, so a host sampling less often than every tick still sees
+    /// each), and the last one's reward when it was called.
+    pub(crate) called: u32,
+    pub(crate) called_points: f32,
+    /// Sequences published so far, and whether the last one was a bail.
+    pub(crate) published: u32,
+    pub(crate) bailed: bool,
 }
 impl Runtime {
     pub fn load(data: &Collections) -> Result<Self, String> {
@@ -110,6 +118,10 @@ impl Runtime {
             new_trick: false,
             modified_trick: false,
             close_tricks: false,
+            called: 0,
+            called_points: 0.,
+            published: 0,
+            bailed: false,
         })
     }
 
@@ -228,6 +240,9 @@ impl Runtime {
                 }
                 if conversion.is_some() {
                     self.trick_name = d.label.clone();
+                    // mcc-rust-rewrite: a conversion is called at once.
+                    self.called = self.called.wrapping_add(1);
+                    self.called_points = carrier.reward;
                 }
                 self.carriers[slot] = Some(carrier);
                 self.sequence_active = true;
@@ -247,6 +262,8 @@ impl Runtime {
                 self.trick_name = d.label.clone();
                 self.stance = [f.switch, f.fakie, f.nollie, false];
                 self.new_trick = true;
+                self.called = self.called.wrapping_add(1);
+                self.called_points = c.reward;
                 if self.collector == Collector::Air && !self.air_repetition_set {
                     self.air_repetition = penalty;
                     self.air_repetition_set = true;
@@ -554,6 +571,8 @@ impl Runtime {
                 self.session
                     .publish_sequence(&self.data.session_rules(), 1., bailout, true);
             self.sequence_active = false;
+            self.published = self.published.wrapping_add(1);
+            self.bailed = bailout;
             // 82775328 -> 82774E88 closes only for ScoreModule reset/bail
             // output 14630 (82DA4010/82DA4238), not a banked landing.
             self.close_tricks = bailout;
@@ -591,5 +610,22 @@ impl Runtime {
         self.session.settle_line(f.teleported || bailout, active);
         self.previous = f.position;
         Ok(())
+    }
+}
+
+/// mcc-rust-rewrite: the scoring as the host shows it (`bridge::Score`).
+impl Runtime {
+    pub(crate) fn trick_name(&self) -> &str {
+        &self.trick_name
+    }
+    /// Switch, fakie and nollie as the last trick was called.
+    pub(crate) fn stance(&self) -> [bool; 3] {
+        [self.stance[0], self.stance[1], self.stance[2]]
+    }
+    pub(crate) fn sequence_score(&self) -> f32 {
+        self.sequence_score
+    }
+    pub(crate) fn sequence_active(&self) -> bool {
+        self.sequence_active
     }
 }

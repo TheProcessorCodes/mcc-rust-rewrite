@@ -24,16 +24,30 @@
 //!
 //! Until the player's games are set up (`mcc_setup`) the menu opens on
 //! its setup screen instead (`setup.rs`): Halo MCC, then Skate 3, then MX vs
-//! ATV Reflex.
+//! ATV Reflex; only MCC is required. While Skate 3 is not set up (skipped,
+//! or its data gone), the settings screen's Skate 3 and Skating rows say so
+//! and open that screen's Skate 3 step, to add it later. Set up, the Skate 3
+//! row opens the same step, to convert it again or to go without it.
+//!
+//! The settings screen has pages, like the map tabs: Games (the three
+//! games' folders), Player, Controls (look speed, invert look), Display
+//! (display mode, vsync, field of view) and Support (open the data folder,
+//! copy diagnostics, reset the settings, delete the converted game data;
+//! `support.rs`). Q / E, Tab, Page Up / Page Down or LB / RB change page, up /
+//! down move, Enter / A or a click on the row's button changes it, and left /
+//! right step a value up or down. Reset and delete ask for a second press.
 //!
 //! `mcc-rust-rewrite --menu-shot FILE [--menu-tab N] [--menu-pick N] [--size WxH]`
 //! draws the menu without a window into a PNG; `--menu-loading` draws the
 //! loading screen instead, `--menu-missing` the picked map's not-installed
-//! notice, `--menu-settings` the settings, `--menu-setup [--menu-step N]` the
-//! setup screen, and `--menu-start` loads the picked map the way Start Game
-//! does and saves the first view of it.
+//! notice, `--menu-settings` the settings (with `--menu-step 1`, the Skate 3
+//! step as Settings opens it), `--menu-setup [--menu-step N]` the setup
+//! screen, and `--menu-start` loads the picked map the way Start Game does
+//! and saves the first view of it. `--menu-row N` puts the focus on row N of
+//! the settings (and shows its page) or the setup step.
 
 mod setup;
+mod support;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -51,12 +65,32 @@ use bevy::window::PrimaryWindow;
 
 use mcc_core::skate::SkateEnabled;
 use mcc_core::units::SpeedUnit;
+use mcc_core::view::{self, LookSettings};
 use mcc_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady, Playing, Warmup};
 
 use crate::Game;
 use crate::key_hint::{self, KeyHint};
 
 const TABS: [&str; 5] = ["HALO 3", "HALO 2", "HALO CE", "REACH", "CAMPAIGN"];
+/// The Campaign tab's index in `TABS`.
+const CAMPAIGN_TAB: usize = TABS.len() - 1;
+
+/// The campaign difficulties, as `--difficulty` takes them.
+const DIFFICULTIES: [&str; 4] = ["easy", "normal", "heroic", "legendary"];
+
+/// The saved campaign difficulty (`game_paths::key::DIFFICULTY`), an index
+/// into [`DIFFICULTIES`]; normal when there is none.
+fn saved_difficulty() -> usize {
+    let saved = game_paths::settings().get(game_paths::key::DIFFICULTY).map(|s| s.trim().to_ascii_lowercase());
+    saved.and_then(|s| DIFFICULTIES.iter().position(|d| *d == s)).unwrap_or(1)
+}
+
+/// Where a map name sits in the menu: its tab and tile.
+fn find_entry(arg: &str) -> Option<(usize, usize)> {
+    SECTIONS.iter().enumerate().find_map(|(t, sections)| {
+        sections.iter().flat_map(|(_, entries)| entries.iter()).position(|e| e.0 == arg).map(|i| (t, i))
+    })
+}
 const COLUMNS: usize = 6;
 
 /// (map argument, shown name, MCC preview texture without `_LARGE` /
@@ -336,8 +370,9 @@ struct Menu {
     click: Option<(usize, f64)>,
     /// Why the last map did not load.
     error: Option<String>,
-    /// The notice opened this frame: the press that opened it does not
-    /// close it ([`dismiss`]).
+    /// The notice, or the setup screen from Settings, opened this frame: the
+    /// press that opened it does not act on it too ([`dismiss`],
+    /// `setup::input`).
     fresh: bool,
     /// The settings row with the focus.
     setting: usize,
@@ -353,6 +388,24 @@ struct Menu {
     note_is_error: bool,
     /// Every game is set up: the setup screen gives way to the maps.
     setup_finished: bool,
+    /// The setup screen's Skate 3 step opened from Settings
+    /// (`setup::open_from_settings`): the settings row to go back to.
+    setup_return: Option<usize>,
+    /// "Without Skate 3" was chosen once with Skate 3 set up and said what
+    /// it deletes: choosing it again does it (`setup::choose`).
+    confirm_skip: bool,
+    /// The settings row (Reset settings, Delete converted data) that was
+    /// pressed once and said what it does: pressing it again does it.
+    confirm: Option<usize>,
+    /// What converted game data there is (`support::converted`), worked
+    /// out when Settings opens and after deleting it.
+    converted: String,
+    /// The campaign difficulty, an index into [`DIFFICULTIES`]: the Campaign
+    /// tab's levels start on it (Y or F2 changes it, and it is saved).
+    difficulty: usize,
+    /// Starting a map saves it as the last one, to open on next time; not in
+    /// a headless shot, which never writes the setup.
+    remember: bool,
 }
 
 /// A folder picker (and, for Skate 3, its conversion), on its thread.
@@ -373,6 +426,26 @@ enum Pick {
 impl Menu {
     fn selected(&self) -> Option<&Map> {
         self.tabs[self.tab].get(self.pick[self.tab])
+    }
+
+    /// The command line the picked map loads with: a campaign level gets
+    /// the chosen difficulty, unless `--difficulty` was given.
+    fn map_args(&self) -> Vec<String> {
+        let mut args = self.args.clone();
+        if self.tab == CAMPAIGN_TAB && !args.iter().any(|a| a == "--difficulty") {
+            args.extend(["--difficulty".to_string(), DIFFICULTIES[self.difficulty].to_string()]);
+        }
+        args
+    }
+
+    /// The next difficulty, saved.
+    fn next_difficulty(&mut self) {
+        self.difficulty = (self.difficulty + 1) % DIFFICULTIES.len();
+        if self.remember
+            && let Err(e) = game_paths::save_setting(game_paths::key::DIFFICULTY, DIFFICULTIES[self.difficulty])
+        {
+            eprintln!("menu: the difficulty was not saved: {e}");
+        }
     }
 }
 
@@ -426,15 +499,19 @@ struct Notice;
 struct NoticeGame;
 #[derive(Component, Clone, Copy, PartialEq)]
 enum MenuButton {
+    /// The campaign difficulty, only on the Campaign tab.
+    Difficulty,
     Settings,
     Start,
     Exit,
 }
+/// The difficulty button's text.
+#[derive(Component)]
+struct DifficultyLabel;
 /// The settings screen.
 #[derive(Component)]
 struct SettingsScreen;
-/// One row of the settings screen: 0 MCC, 1 Reflex, 2 Skate 3, 3 username, 4 speed units,
-/// 5 skating on / off, 6 bike physics (only with Reflex set up).
+/// One row of the settings screen, an index into `SETTING_NAMES`.
 #[derive(Component)]
 struct SettingRow(usize);
 #[derive(Component)]
@@ -448,41 +525,155 @@ struct SettingSelectLabel(usize);
 struct SettingsNote;
 #[derive(Component)]
 struct SettingsBack;
+/// A page's name in the settings' tab bar, an index into `SETTING_PAGES`.
+#[derive(Component)]
+struct SettingTab(usize);
+/// The bar's "left / right step a value", shown on the pages with values.
+#[derive(Component)]
+struct SettingsStepHint;
 
-/// The settings, in row order: three games' folders, the username, the speed
-/// unit, skating on or off, the bike's physics.
-const SETTING_GAMES: [&str; 7] = ["Halo MCC", "MX vs ATV Reflex", "Skate 3", "Username", "Speedometer", "Skating", "Bike physics"];
+/// The settings, in row order, page by page (`SETTING_PAGES`): three games'
+/// folders; the username, the armour colour, the speed unit, skating on or
+/// off, the dialogue language, the bike's physics; the mouse's and the
+/// stick's speed and invert look; the display mode, vsync and the field of
+/// view; the data folder, diagnostics, reset and the converted data.
+const SETTING_NAMES: [&str; 20] = [
+    "Halo MCC",
+    "MX vs ATV Reflex",
+    "Skate 3",
+    "Username",
+    "Armour colour",
+    "Speedometer",
+    "Skating",
+    "Trick display",
+    "Dialogue language",
+    "Bike physics",
+    "Mouse sensitivity",
+    "Stick sensitivity",
+    "Invert look",
+    "Display mode",
+    "VSync",
+    "Field of view",
+    "Data folder",
+    "Diagnostics",
+    "Reset settings",
+    "Converted data",
+];
+/// The settings' pages: their names in the tab bar and their rows.
+const SETTING_PAGES: [(&str, std::ops::Range<usize>); 5] = [
+    ("GAMES", 0..3),
+    ("PLAYER", 3..10),
+    ("CONTROLS", 10..13),
+    ("DISPLAY", 13..16),
+    ("SUPPORT", 16..20),
+];
+/// The row holding Skate 3's folder.
+const SKATE_ROW: usize = 2;
 /// The row holding the username.
 const USERNAME_ROW: usize = 3;
+/// The row choosing the Spartan's armour colour.
+const ARMOUR_ROW: usize = 4;
 /// The row holding the speedometer's unit.
-const UNITS_ROW: usize = 4;
+const UNITS_ROW: usize = 5;
 /// The row turning skating on and off.
-const SKATING_ROW: usize = 5;
+const SKATING_ROW: usize = 6;
+/// The row turning the skate tricks' names and score on (off by default).
+const TRICKS_ROW: usize = 7;
+/// The row choosing the language Halo's dialogue plays in.
+const LANGUAGE_ROW: usize = 8;
 /// The row switching the bike between Arcade and Reflex physics, the last
-/// one; only shown with Reflex set up (it is optional).
-const PHYSICS_ROW: usize = 6;
+/// on the Player page; only shown with Reflex set up (it is optional).
+const PHYSICS_ROW: usize = 9;
+/// The mouse's turning speed (`mcc_core::view::LookSettings`).
+const MOUSE_ROW: usize = 10;
+/// The right stick's turning speed.
+const STICK_ROW: usize = 11;
+/// Looking up and down turned round.
+const INVERT_ROW: usize = 12;
+/// Borderless fullscreen or a window (`mcc_core::view::Display`).
+const DISPLAY_ROW: usize = 13;
+const VSYNC_ROW: usize = 14;
+/// Every camera's field of view.
+const FOV_ROW: usize = 15;
+/// Opens the data folder.
+const FOLDER_ROW: usize = 16;
+/// Copies the diagnostics summary.
+const DIAGNOSTICS_ROW: usize = 17;
+/// Puts the settings back to their defaults (asks first).
+const RESET_ROW: usize = 18;
+/// Deletes the converted Skate 3 and Reflex data (asks first).
+const DELETE_ROW: usize = 19;
+
+/// A dialogue language (`game_paths::LANGUAGES`) as the row shows it.
+fn language_label(language: &str) -> &'static str {
+    match language {
+        "french" => "French",
+        "german" => "German",
+        "italian" => "Italian",
+        "mexican" => "Spanish (Mexico)",
+        "spanish" => "Spanish (Spain)",
+        _ => "English",
+    }
+}
+
+/// The language after `language` in `game_paths::LANGUAGES`, going round.
+fn next_language(language: &str) -> &'static str {
+    let all = game_paths::LANGUAGES;
+    let at = all.iter().position(|l| *l == language).unwrap_or(all.len() - 1);
+    all[(at + 1) % all.len()]
+}
 
 /// Whether the physics row is there: Reflex is set up.
 fn physics_offered() -> bool {
     game_paths::reflex_ready()
 }
 
-/// The rows the settings screen has now.
-fn setting_rows() -> usize {
-    if physics_offered() { SETTING_GAMES.len() } else { PHYSICS_ROW }
+/// Whether a settings row is shown now (the physics row needs Reflex).
+fn row_offered(row: usize) -> bool {
+    row < SETTING_NAMES.len() && (row != PHYSICS_ROW || physics_offered())
 }
 
-/// A row's button: games pick a folder, the username is typed, the unit changes.
-fn button_label(row: usize) -> &'static str {
+/// The page a settings row is on.
+fn page_of(row: usize) -> usize {
+    SETTING_PAGES.iter().position(|(_, rows)| rows.contains(&row)).unwrap_or(0)
+}
+
+/// The rows a page shows now.
+fn page_rows(page: usize) -> Vec<usize> {
+    SETTING_PAGES[page].1.clone().filter(|r| row_offered(*r)).collect()
+}
+
+/// A row's button: games pick a folder, the username is typed, the unit
+/// changes. While Skate 3 is not set up (`skate_ready`), Skate 3 and Skating
+/// both set it up first (the setup screen's Skate 3 step); set up, Skate 3's
+/// row opens that step to convert it again or to go without it. The Support
+/// page's rows each do one thing.
+fn button_label(row: usize, skate_ready: bool) -> &'static str {
     match row {
+        SKATE_ROW | SKATING_ROW if !skate_ready => "SET UP",
         USERNAME_ROW => "EDIT",
-        UNITS_ROW | SKATING_ROW | PHYSICS_ROW => "CHANGE",
+        SKATE_ROW | ARMOUR_ROW | UNITS_ROW | SKATING_ROW | TRICKS_ROW | LANGUAGE_ROW | PHYSICS_ROW => "CHANGE",
+        MOUSE_ROW | STICK_ROW | INVERT_ROW | DISPLAY_ROW | VSYNC_ROW | FOV_ROW => "CHANGE",
+        FOLDER_ROW => "OPEN",
+        DIAGNOSTICS_ROW => "COPY",
+        RESET_ROW => "RESET",
+        DELETE_ROW => "DELETE",
         _ => "SELECT",
     }
 }
 
 /// What each row shows now: the saved folder, or why there is none.
-fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool) -> [String; 7] {
+/// `skate_ready`: Skate 3 is set up (`game_paths::skate_ready`); without it
+/// skating is not there to turn on. `converted`: what converted data there
+/// is (`support::converted`).
+fn setting_values(
+    unit: SpeedUnit,
+    skate: SkateEnabled,
+    reflex_physics: bool,
+    skate_ready: bool,
+    look: LookSettings,
+    converted: &str,
+) -> [String; SETTING_NAMES.len()] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
     let settings = game_paths::settings();
     let reflex = match game_paths::reflex_chosen() {
@@ -491,29 +682,59 @@ fn setting_values(unit: SpeedUnit, skate: SkateEnabled, reflex_physics: bool) ->
             if game_paths::reflex_skipped() { "Not used (optional)" } else { "Not set (optional)" }.to_string()
         }),
     };
-    let skate_folder = settings
-        .get(game_paths::key::SKATE_SOURCE)
-        .map(str::to_owned)
-        .or_else(|| game_paths::skate_assets().map(|_| "Set up (folder not recorded, select to choose it)".to_string()))
-        .unwrap_or_else(|| "Not set".to_string());
-    let skating = if skate.0 {
+    let skate_folder = if skate_ready {
+        settings
+            .get(game_paths::key::SKATE_SOURCE)
+            .map_or_else(|| "Set up (folder not recorded, select to choose it)".to_string(), str::to_owned)
+    } else if game_paths::skate_skipped() {
+        "Not used (optional): adds the skateboard".to_string()
+    } else {
+        "Not set (optional): adds the skateboard".to_string()
+    };
+    let skating = if !skate_ready {
+        "Not available: needs Skate 3 (SET UP adds it)"
+    } else if skate.0 {
         "On (skateboard and grind rails on every map)"
     } else {
         "Off (maps load without the skateboard or grind rails)"
     };
+    let display = view::Display::load();
     [
         shown(game_paths::mcc_root()).unwrap_or_else(|| "Not set".to_string()),
         reflex,
         skate_folder,
         game_paths::username(),
+        format!("{} (the Spartan on multiplayer maps, from the next map you load)", mcc_rider::ARMOUR_COLOURS[mcc_rider::armour()].0),
         format!("{} (miles per hour or kilometres per hour)", unit.label()),
         skating.to_string(),
+        if game_paths::trick_display() {
+            "On (each trick's name and points on screen while skating)"
+        } else {
+            "Off (no trick names or score on screen)"
+        }
+        .to_string(),
+        format!("{} (the voices in Halo 3 and Halo: Combat Evolved)", language_label(game_paths::language())),
         if reflex_physics {
             "Reflex (MX vs ATV Reflex's own bike simulation)"
         } else {
             "Arcade (the bike's own physics)"
         }
         .to_string(),
+        format!("{} % (how fast the mouse turns the camera; left / right step it)", look.mouse),
+        format!("{} % (how fast the right stick turns the camera; left / right step it)", look.stick),
+        if look.invert { "On (pushing up looks down, mouse and stick)" } else { "Off (pushing up looks up)" }.to_string(),
+        if display.windowed { "Windowed" } else { "Borderless fullscreen" }.to_string(),
+        if display.vsync {
+            "On (the frame rate keeps to the screen's, no tearing)"
+        } else {
+            "Off (frames as fast as they come, may tear)"
+        }
+        .to_string(),
+        format!("{} % of each camera's own (wider shows more; left / right step it)", look.fov),
+        game_paths::settings_dir().display().to_string(),
+        "Copies the version, your setup and where the log is, to paste into a bug report".to_string(),
+        "Puts every setting back to its default; keeps your game folders".to_string(),
+        converted.to_string(),
     ]
 }
 
@@ -641,9 +862,22 @@ impl Plugin for MenuPlugin {
             saved: false,
             target: None,
         });
-        let mut tab = value(args, "--menu-tab").and_then(|s| s.parse().ok()).unwrap_or(0usize).min(TABS.len() - 1);
-        let pick = value(args, "--menu-pick").and_then(|s| s.parse().ok()).unwrap_or(0usize);
-        let with_value = ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--menu-step", "--size"];
+        // The last map started, unless the command line picks one (shots).
+        let last = game_paths::settings()
+            .get(game_paths::key::LAST_MAP)
+            .and_then(find_entry)
+            .filter(|_| !headless(args));
+        let mut tab = value(args, "--menu-tab")
+            .and_then(|s| s.parse().ok())
+            .or(last.map(|l| l.0))
+            .unwrap_or(0usize)
+            .min(TABS.len() - 1);
+        let pick = value(args, "--menu-pick")
+            .and_then(|s| s.parse().ok())
+            .or(last.filter(|l| l.0 == tab).map(|l| l.1))
+            .unwrap_or(0usize);
+        let with_value =
+            ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--menu-step", "--menu-row", "--size"];
         let alone = ["--menu-loading", "--menu-start", "--menu-missing", "--menu-settings", "--menu-setup"];
         let mut pass = Vec::new();
         let mut skip = false;
@@ -724,9 +958,33 @@ impl Plugin for MenuPlugin {
             step: 0,
             note_is_error: false,
             setup_finished: false,
+            setup_return: None,
+            confirm_skip: false,
+            confirm: None,
+            converted: String::new(),
+            difficulty: saved_difficulty(),
+            remember: !headless(args),
         };
+        let step = value(args, "--menu-step");
         if first_run {
-            setup::open(&mut menu, value(args, "--menu-step").and_then(|s| s.parse().ok()));
+            setup::open(&mut menu, step.and_then(|s| s.parse().ok()));
+        } else if menu.phase == Phase::Settings && step.is_some() {
+            // `--menu-settings --menu-step 1`: the Skate 3 step, the one
+            // Settings opens.
+            setup::open_from_settings(&mut menu, SKATE_ROW, "");
+        }
+        // `--menu-row N`: the focus on that row (and its page), or the last
+        // one the screen has (a row past it would be chosen as a game's
+        // folder).
+        if let Some(row) = value(args, "--menu-row").and_then(|s| s.parse::<usize>().ok()) {
+            menu.setting = if menu.phase == Phase::Setup {
+                row.min(setup::row_count(&menu) - 1)
+            } else {
+                (0..=row.min(SETTING_NAMES.len() - 1)).rev().find(|r| row_offered(*r)).unwrap_or(0)
+            };
+        }
+        if menu.phase == Phase::Settings {
+            menu.converted = support::converted();
         }
         app.insert_resource(menu)
         .add_systems(Startup, spawn)
@@ -873,7 +1131,9 @@ fn spawn(mut commands: Commands, menu: Res<Menu>, shot: Option<ResMut<MenuShot>>
         });
 }
 
-/// The settings screen: a row per game (name, folder, Select) and Back.
+//// The settings screen: the pages' tab bar, a row per setting (name, what it
+/// is now, its button; [`show_settings`] shows the page's), the note and
+/// Back.
 fn spawn_settings(screen: &mut ChildSpawnerCommands) {
     screen
         .spawn((
@@ -881,25 +1141,37 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
                 width: Val::Percent(92.0),
                 max_width: Val::Vh(165.0),
                 margin: UiRect::top(Val::Vh(4.0)),
-                padding: UiRect::bottom(Val::Px(10.0)),
+                column_gap: Val::Px(36.0),
+                align_items: AlignItems::FlexEnd,
                 border: UiRect::bottom(Val::Px(1.0)),
                 ..default()
             },
             BorderColor::all(LINE),
         ))
-        .with_child(text("SETTINGS", 22.0, LIT));
-    for (i, name) in SETTING_GAMES.iter().enumerate() {
-        if i == 0 || i == USERNAME_ROW || i == UNITS_ROW {
-            screen.spawn((
-                Node {
-                    width: Val::Percent(92.0),
-                    max_width: Val::Vh(165.0),
-                    margin: UiRect::new(Val::Px(0.0), Val::Px(0.0), Val::Vh(3.0), Val::Px(8.0)),
-                    ..default()
-                },
-                text(match i { 0 => "GAMES", USERNAME_ROW => "PLAYER", _ => "OPTIONS" }, 16.0, FAINT),
+        .with_children(|tabs| {
+            tabs.spawn((
+                Node { padding: UiRect::new(Val::Px(2.0), Val::Px(12.0), Val::Px(6.0), Val::Px(13.0)), ..default() },
+                text("SETTINGS", 22.0, Color::WHITE),
             ));
-        }
+            tabs.spawn((KeyHint { pad: "LB", keys: "Q" }, text("Q", 15.0, FAINT)));
+            for (i, (name, _)) in SETTING_PAGES.iter().enumerate() {
+                tabs.spawn((
+                    SettingTab(i),
+                    Node {
+                        padding: UiRect::new(Val::Px(2.0), Val::Px(2.0), Val::Px(6.0), Val::Px(10.0)),
+                        border: UiRect::bottom(Val::Px(3.0)),
+                        margin: UiRect::bottom(Val::Px(-1.0)),
+                        ..default()
+                    },
+                    BorderColor::all(Color::NONE),
+                    text(name, 22.0, DIM),
+                ));
+            }
+            tabs.spawn((KeyHint { pad: "RB", keys: "E" }, text("E", 15.0, FAINT)));
+        });
+    screen.spawn(Node { height: Val::Vh(3.0), flex_shrink: 0.0, ..default() });
+    let skate_ready = game_paths::skate_ready();
+    for (i, name) in SETTING_NAMES.iter().enumerate() {
         screen
             .spawn((
                 SettingRow(i),
@@ -934,7 +1206,7 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
                     },
                     BorderColor::all(LINE),
                 ))
-                .with_child((SettingSelectLabel(i), text(button_label(i), 18.0, DIM)));
+                .with_child((SettingSelectLabel(i), text(button_label(i, skate_ready), 18.0, DIM)));
             });
     }
     screen.spawn((
@@ -958,6 +1230,16 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
             BorderColor::all(LINE),
         ))
         .with_children(|bar| {
+            // Left and right step a value (sensitivity, field of view), on
+            // the left of the bar.
+            bar.spawn((
+                SettingsStepHint,
+                Node { align_items: AlignItems::Center, column_gap: Val::Px(10.0), margin: UiRect::right(Val::Auto), ..default() },
+            ))
+                .with_children(|hint| {
+                    hint.spawn(key_hint::hint("D-PAD LEFT / RIGHT", "LEFT / RIGHT", 17.0, FAINT));
+                    hint.spawn(text("TO STEP A VALUE", 17.0, FAINT));
+                });
             bar.spawn((
                 SettingsBack,
                 Node {
@@ -974,7 +1256,7 @@ fn spawn_settings(screen: &mut ChildSpawnerCommands) {
         });
 }
 
-/// The not-installed notice: what to do, which game, and OK.
+// The not-installed notice: what to do, which game, and OK.
 fn spawn_notice(screen: &mut ChildSpawnerCommands) {
     screen
         .spawn((
@@ -1038,6 +1320,11 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
             ));
         }
         tabs.spawn((KeyHint { pad: "RB", keys: "E" }, text("E", 15.0, FAINT)));
+        // The version, at the right end of the bar.
+        tabs.spawn((
+            Node { margin: UiRect::new(Val::Auto, Val::Px(2.0), Val::ZERO, Val::Px(10.0)), ..default() },
+            text(game_paths::VERSION, 15.0, FAINT),
+        ));
     });
     // A page per tab: each section's heading and its grid of tiles,
     // scrolling up and down when they do not fit.
@@ -1114,6 +1401,7 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
                 name.spawn((Chosen(1), text("", 18.0, DIM)));
             });
         for (button, letter, colour, label, key) in [
+            (MenuButton::Difficulty, "Y", Color::srgb(0.93, 0.76, 0.20), "", "F2"),
             (MenuButton::Settings, "X", Color::srgb(0.30, 0.55, 0.90), "SETTINGS", "F1"),
             (MenuButton::Start, "A", Color::srgb(0.37, 0.75, 0.29), "START GAME", "Enter"),
             (MenuButton::Exit, "B", Color::srgb(0.85, 0.33, 0.31), "EXIT", "Esc"),
@@ -1129,7 +1417,9 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
             ))
             .with_children(|b| {
                 key_hint::badge(b, letter, key, colour);
-                if button == MenuButton::Start {
+                if button == MenuButton::Difficulty {
+                    b.spawn((DifficultyLabel, text(&difficulty_label(menu.difficulty), 20.0, DIM)));
+                } else if button == MenuButton::Start {
                     b.spawn((StartLabel, text(label, 20.0, LIT)));
                 } else {
                     b.spawn(text(label, 20.0, DIM));
@@ -1247,6 +1537,9 @@ fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu
         open_settings(&mut menu);
         return;
     }
+    if menu.tab == CAMPAIGN_TAB && (key(&[KeyCode::F2]) || pad(GamepadButton::North)) {
+        menu.next_difficulty();
+    }
     let tabs = TABS.len();
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let tab_key = keys.just_pressed(KeyCode::Tab);
@@ -1318,6 +1611,7 @@ fn mouse(
         return;
     }
     match bar.iter().find(|(_, n, t)| n.contains_point(**t, at)).map(|(b, ..)| *b) {
+        Some(MenuButton::Difficulty) => menu.next_difficulty(),
         Some(MenuButton::Settings) => open_settings(&mut menu),
         Some(MenuButton::Start) => start(&mut commands, &mut menu),
         Some(MenuButton::Exit) => {
@@ -1327,24 +1621,50 @@ fn mouse(
     }
 }
 
+/// The difficulty button's text.
+fn difficulty_label(difficulty: usize) -> String {
+    format!("DIFFICULTY: {}", DIFFICULTIES[difficulty].to_uppercase())
+}
+
 fn open_settings(menu: &mut Menu) {
     menu.phase = Phase::Settings;
     menu.setting = 0;
+    menu.confirm = None;
     menu.note.clear();
+    menu.converted = support::converted();
 }
 
-/// The settings screen: up / down move between the games, Enter / A (or a
-/// click) on Select picks a new folder, Escape / B (or Back) leaves.
+/// What the settings change at once besides the saved file: the resources
+/// the game reads them from, and the window. Only what is changed is marked
+/// changed.
+struct Live<'a> {
+    unit: Mut<'a, SpeedUnit>,
+    skate: Mut<'a, SkateEnabled>,
+    tuning: Option<Mut<'a, mcc_bike::tune::BikeTuning>>,
+    look: Mut<'a, LookSettings>,
+    window: Option<Mut<'a, Window>>,
+}
+
+/// The settings screen: Q / E (Tab, Page Up / Down, LB / RB, or a click on
+/// a page's name) change page, up / down move between its rows, Enter / A
+/// (or a click) on a row's button changes it, left / right step a value,
+/// Escape / B (or Back) leaves.
 #[allow(clippy::too_many_arguments)]
 fn settings_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut typed: MessageReader<KeyboardInput>,
     buttons: Res<ButtonInput<MouseButton>>,
     gamepads: Query<&Gamepad>,
-    windows: Query<&Window, With<PrimaryWindow>>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut menu: ResMut<Menu>,
-    (mut unit, mut skate, mut tuning): (ResMut<SpeedUnit>, ResMut<SkateEnabled>, Option<ResMut<mcc_bike::tune::BikeTuning>>),
+    (unit, skate, tuning, look): (
+        ResMut<SpeedUnit>,
+        ResMut<SkateEnabled>,
+        Option<ResMut<mcc_bike::tune::BikeTuning>>,
+        ResMut<LookSettings>,
+    ),
     selects: Query<(&SettingSelect, &ComputedNode, &UiGlobalTransform)>,
+    tabs: Query<(&SettingTab, &ComputedNode, &UiGlobalTransform)>,
     back: Query<(&ComputedNode, &UiGlobalTransform), With<SettingsBack>>,
 ) {
     if menu.editing.is_some() {
@@ -1355,37 +1675,87 @@ fn settings_input(
     if menu.picking.is_some() {
         return;
     }
+    let window = windows.single_mut().ok();
+    let cursor = window.as_ref().and_then(|w| w.physical_cursor_position());
+    let mut live = Live { unit: unit.into(), skate: skate.into(), tuning: tuning.map(Into::into), look: look.into(), window };
     let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
     if keys.any_just_pressed([KeyCode::Escape, KeyCode::Backspace]) || pad(GamepadButton::East) {
         menu.phase = Phase::Choosing;
         return;
     }
+    let pages = SETTING_PAGES.len();
+    let page = page_of(menu.setting);
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let tab_key = keys.just_pressed(KeyCode::Tab);
+    let mut to_page = None;
+    if keys.any_just_pressed([KeyCode::KeyE, KeyCode::PageDown]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger) {
+        to_page = Some((page + 1) % pages);
+    }
+    if keys.any_just_pressed([KeyCode::KeyQ, KeyCode::PageUp]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger) {
+        to_page = Some((page + pages - 1) % pages);
+    }
+    let rows = page_rows(page);
+    let at = rows.iter().position(|r| *r == menu.setting).unwrap_or(0);
+    let mut to_row = None;
     if keys.any_just_pressed([KeyCode::ArrowUp, KeyCode::KeyW]) || pad(GamepadButton::DPadUp) {
-        menu.setting = menu.setting.saturating_sub(1);
+        to_row = rows.get(at.saturating_sub(1)).copied();
     }
     if keys.any_just_pressed([KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) {
-        menu.setting = (menu.setting + 1).min(setting_rows() - 1);
+        to_row = rows.get((at + 1).min(rows.len().saturating_sub(1))).copied();
+    }
+    let clicked = buttons.just_pressed(MouseButton::Left).then_some(cursor).flatten();
+    if let Some(at) = clicked
+        && let Some((tab, ..)) = tabs.iter().find(|(_, n, t)| n.contains_point(**t, at))
+    {
+        to_page = Some(tab.0);
+    }
+    if let Some(p) = to_page.filter(|p| *p != page) {
+        go_to_row(&mut menu, page_rows(p).first().copied().unwrap_or(0));
+        return;
+    }
+    if let Some(row) = to_row.filter(|r| *r != menu.setting) {
+        go_to_row(&mut menu, row);
+        return;
+    }
+    let row = menu.setting;
+    let by = if keys.any_just_pressed([KeyCode::ArrowLeft, KeyCode::KeyA]) || pad(GamepadButton::DPadLeft) {
+        -1
+    } else if keys.any_just_pressed([KeyCode::ArrowRight, KeyCode::KeyD]) || pad(GamepadButton::DPadRight) {
+        1
+    } else {
+        0
+    };
+    if by != 0 {
+        adjust(&mut menu, &mut live, row, by);
+        return;
     }
     if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]) || pad(GamepadButton::South) {
-        let row = menu.setting;
-        select(&mut menu, &mut unit, &mut skate, tuning.as_deref_mut(), row);
+        select(&mut menu, &mut live, row);
         return;
     }
-    if !buttons.just_pressed(MouseButton::Left) {
-        return;
-    }
-    let Some(at) = windows.single().ok().and_then(Window::physical_cursor_position) else {
+    let Some(at) = clicked else {
         return;
     };
-    if let Some((s, ..)) = selects.iter().find(|(s, n, t)| s.0 < setting_rows() && n.contains_point(**t, at)) {
-        menu.setting = s.0;
-        select(&mut menu, &mut unit, &mut skate, tuning.as_deref_mut(), s.0);
+    let on_page = |r: usize| page_of(r) == page && row_offered(r);
+    if let Some((s, ..)) = selects.iter().find(|(s, n, t)| on_page(s.0) && n.contains_point(**t, at)) {
+        if s.0 != menu.setting {
+            go_to_row(&mut menu, s.0);
+        }
+        select(&mut menu, &mut live, s.0);
     } else if back.iter().any(|(n, t)| n.contains_point(*t, at)) {
         menu.phase = Phase::Choosing;
     }
 }
 
-/// Keys typed into the username: letters and spaces add, Backspace removes,
+/// Puts the focus on `row`: a question waiting for a second press is
+/// dropped, and so is the note it left.
+fn go_to_row(menu: &mut Menu, row: usize) {
+    menu.setting = row;
+    if menu.confirm.take().is_some() {
+        menu.note.clear();
+    }
+}
+// Keys typed into the username: letters and spaces add, Backspace removes,
 /// Enter saves it at once, Escape keeps the old name.
 fn type_username<'a>(menu: &mut Menu, events: impl Iterator<Item = &'a KeyboardInput>) {
     for event in events.filter(|e| e.state.is_pressed()) {
@@ -1420,18 +1790,25 @@ fn type_username<'a>(menu: &mut Menu, events: impl Iterator<Item = &'a KeyboardI
 
 /// Opens the folder picker for a game on its own thread; the choice is
 /// checked and saved there, and [`settings_poll`] picks up the outcome.
-fn select(
-    menu: &mut Menu,
-    unit: &mut SpeedUnit,
-    skate: &mut SkateEnabled,
-    tuning: Option<&mut mcc_bike::tune::BikeTuning>,
-    row: usize,
-) {
+/// Skate 3 opens the setup screen's Skate 3 step instead
+/// (`setup::open_from_settings`), to add it, convert it again or go without
+/// it; so does Skating while Skate 3 is not set up. The Controls and
+/// Display rows step on ([`adjust`]), and the Support rows do their thing
+/// ([`support_row`]).
+fn select(menu: &mut Menu, live: &mut Live, row: usize) {
+    if matches!(row, MOUSE_ROW | STICK_ROW | INVERT_ROW | DISPLAY_ROW | VSYNC_ROW | FOV_ROW) {
+        adjust(menu, live, row, 0);
+        return;
+    }
+    if matches!(row, FOLDER_ROW | DIAGNOSTICS_ROW | RESET_ROW | DELETE_ROW) {
+        support_row(menu, live, row);
+        return;
+    }
     if row == PHYSICS_ROW {
         // The tuning the bike rides on, or the saved one when this app has
         // no bike (the file is what the next start reads either way).
         let mut loaded = None;
-        let t = match tuning {
+        let t = match live.tuning.as_deref_mut() {
             Some(t) => &mut t.0,
             None => loaded.insert(mcc_bike::tune::load()),
         };
@@ -1445,17 +1822,59 @@ fn select(
         };
         return;
     }
+    if row == SKATE_ROW || (row == SKATING_ROW && !game_paths::skate_ready()) {
+        // The setup screen's Skate 3 step, with its converter row, its
+        // progress and "Without Skate 3". The saved Skating choice stays as
+        // it was, for when Skate 3 is added.
+        let note = if row == SKATING_ROW { "Skating needs Skate 3." } else { "" };
+        setup::open_from_settings(menu, row, note);
+        return;
+    }
     if row == SKATING_ROW {
-        skate.0 = !skate.0;
-        menu.note = match game_paths::set_skating_enabled(skate.0) {
-            Ok(()) if skate.0 => "Skating is on. J (or both sticks clicked) gets on the board.".to_string(),
+        let on = !live.skate.0;
+        live.skate.0 = on;
+        menu.note = match game_paths::set_skating_enabled(on) {
+            Ok(()) if on => "Skating is on. J (or both sticks clicked) gets on the board.".to_string(),
             Ok(()) => "Skating is off. Maps load without the skateboard or grind rails.".to_string(),
             Err(e) => e,
         };
         return;
     }
+    if row == TRICKS_ROW {
+        let on = !game_paths::trick_display();
+        menu.note = match game_paths::save_setting(game_paths::key::TRICK_DISPLAY, if on { "on" } else { "off" }) {
+            Ok(()) if on => "Skating shows each trick's name and points from the next map you load.".to_string(),
+            Ok(()) => "Skating shows no trick names or score from the next map you load.".to_string(),
+            Err(e) => e,
+        };
+        return;
+    }
+    if row == ARMOUR_ROW {
+        let next = mcc_rider::ARMOUR_COLOURS[(mcc_rider::armour() + 1) % mcc_rider::ARMOUR_COLOURS.len()].0;
+        menu.note = match game_paths::save_setting(game_paths::key::ARMOUR, &next.to_ascii_lowercase()) {
+            Ok(()) => format!("The Spartan wears {next} on the next map you load."),
+            Err(e) => e,
+        };
+        return;
+    }
+    if row == LANGUAGE_ROW {
+        let language = next_language(game_paths::language());
+        menu.note = match game_paths::set_language(language) {
+            // `%MCC_LANGUAGE%` (dev) is read before the saved choice.
+            Ok(()) if game_paths::language() != language => {
+                "Saved, but the MCC_LANGUAGE environment variable is set and comes first.".to_string()
+            }
+            Ok(()) => format!(
+                "Dialogue plays in {} on the next map you load, where your MCC has that language installed.",
+                language_label(language)
+            ),
+            Err(e) => e,
+        };
+        return;
+    }
     if row == UNITS_ROW {
-        *unit = unit.toggled();
+        let unit = live.unit.toggled();
+        *live.unit = unit;
         menu.note = match unit.save() {
             Ok(()) => format!("Speedometer now shows {}.", unit.label()),
             Err(e) => e,
@@ -1471,19 +1890,150 @@ fn select(
     std::thread::spawn(move || {
         let _ = send.send(match row {
             0 => mcc_setup::select_mcc(),
-            1 => mcc_setup::select_reflex(),
-            _ => mcc_setup::select_skate(),
+            _ => mcc_setup::select_reflex(),
         });
     });
-    menu.note = match row {
-        2 => "Choose your Skate 3 folder. It is converted once you have chosen, which takes a few minutes.".to_string(),
-        _ => format!("Choose your {} folder in the window that opened.", SETTING_GAMES[row]),
-    };
+    menu.note = format!("Choose your {} folder in the window that opened.", SETTING_NAMES[row]);
     menu.picking = Some(Picking { what: Pick::Setting(row), result: Mutex::new(receive) });
+}
+
+/// Steps a Controls or Display row: `by` -1 or 1 (left / right) moves a
+/// percentage down or up, stopping at the ends; 0 (its button) moves it up
+/// and round. A switch flips either way. Saved and used at once; the window
+/// changes mode and vsync there and then. Other rows ignore left and right.
+fn adjust(menu: &mut Menu, live: &mut Live, row: usize, by: i32) {
+    let mut look = *live.look;
+    let mut display = view::Display::load();
+    let note = match row {
+        MOUSE_ROW => {
+            look.mouse = view::step(&view::SENSITIVITY_STEPS, look.mouse, by);
+            format!("The mouse turns the camera at {} % of its stock speed.", look.mouse)
+        }
+        STICK_ROW => {
+            look.stick = view::step(&view::SENSITIVITY_STEPS, look.stick, by);
+            format!("The right stick turns the camera at {} % of its stock speed.", look.stick)
+        }
+        INVERT_ROW => {
+            look.invert = !look.invert;
+            if look.invert {
+                "Look is inverted: pushing the stick or the mouse up looks down."
+            } else {
+                "Look is not inverted: pushing up looks up."
+            }
+            .to_string()
+        }
+        FOV_ROW => {
+            look.fov = view::step(&view::FOV_STEPS, look.fov, by);
+            format!("Every camera sees {} % as wide as its own: flying, on foot, the bike and the board.", look.fov)
+        }
+        DISPLAY_ROW => {
+            display.windowed = !display.windowed;
+            if display.windowed { "The game runs in a window." } else { "The game fills the screen, borderless." }.to_string()
+        }
+        VSYNC_ROW => {
+            display.vsync = !display.vsync;
+            if display.vsync {
+                "VSync is on: the frame rate keeps to the screen's."
+            } else {
+                "VSync is off: frames show as soon as they are drawn."
+            }
+            .to_string()
+        }
+        _ => return,
+    };
+    let saved = if matches!(row, DISPLAY_ROW | VSYNC_ROW) {
+        if let Some(window) = live.window.as_deref_mut() {
+            display.apply(window);
+        }
+        display.save()
+    } else {
+        if *live.look != look {
+            *live.look = look;
+        }
+        look.save()
+    };
+    menu.note = match saved {
+        Ok(()) => note,
+        Err(e) => e,
+    };
+}
+
+/// The Support page's rows: open the data folder, copy the diagnostics, and
+/// (each asking first: the first press says what it does, the second does
+/// it) reset the settings or delete the converted game data.
+fn support_row(menu: &mut Menu, live: &mut Live, row: usize) {
+    let asked = menu.confirm.take() == Some(row);
+    match row {
+        FOLDER_ROW => {
+            let dir = game_paths::settings_dir();
+            menu.note = match support::open_folder(&dir) {
+                Ok(()) => format!("Opened {} (logs and crash reports are in its logs folder).", dir.display()),
+                Err(e) => e,
+            };
+        }
+        DIAGNOSTICS_ROW => {
+            let text = support::diagnostics(&live.look);
+            eprintln!("settings: diagnostics\n{text}");
+            menu.note = match support::copy(&text) {
+                Ok(()) => "Copied. Paste it into your bug report, with the log from the data folder.".to_string(),
+                Err(e) => {
+                    // No clipboard: a file to attach instead.
+                    let file = game_paths::settings_dir().join("diagnostics.txt");
+                    match std::fs::write(&file, &text) {
+                        Ok(()) => format!("Could not copy ({e}); saved it to {} instead.", file.display()),
+                        Err(_) => format!("Could not copy: {e}"),
+                    }
+                }
+            };
+        }
+        RESET_ROW if !asked => {
+            menu.confirm = Some(row);
+            menu.note = "This puts every setting back to its default. Your game folders and what was converted \
+                         from them stay. Press RESET again to do it."
+                .to_string();
+        }
+        RESET_ROW => {
+            menu.note = match game_paths::reset_settings() {
+                Ok(()) => {
+                    // What the game holds now, read again from the reset file.
+                    *live.unit = SpeedUnit::load();
+                    live.skate.0 = game_paths::skating_enabled();
+                    *live.look = LookSettings::load();
+                    if let Some(window) = live.window.as_deref_mut() {
+                        view::Display::load().apply(window);
+                    }
+                    menu.difficulty = saved_difficulty();
+                    eprintln!("settings: reset to the defaults");
+                    "Every setting is back to its default.".to_string()
+                }
+                Err(e) => e,
+            };
+        }
+        DELETE_ROW if !asked => {
+            menu.confirm = Some(row);
+            menu.note = "This deletes the Skate 3 and Reflex data converted at setup. You then play without them \
+                         until you set them up again on the Games page. Press DELETE again to do it."
+                .to_string();
+        }
+        DELETE_ROW => {
+            let result = support::delete_converted();
+            live.skate.0 = game_paths::skating_enabled();
+            menu.converted = support::converted();
+            menu.note = match result {
+                Ok(said) => {
+                    eprintln!("settings: {said}");
+                    said
+                }
+                Err(e) => e,
+            };
+        }
+        _ => {}
+    }
 }
 
 /// A picker has finished: say how it went. A new MCC folder changes which
 /// maps are installed and their pictures, so the map lists are built again.
+/// (Skate 3 is chosen on the setup screen's step: `setup::finish`.)
 fn settings_poll(world: &mut World) {
     let menu = world.resource::<Menu>();
     let Some(picking) = &menu.picking else {
@@ -1507,8 +2057,8 @@ fn settings_poll(world: &mut World) {
     };
     menu.note = match outcome {
         Ok(Some(path)) => {
-            eprintln!("settings: {} is now {}", SETTING_GAMES[row], path.display());
-            format!("Saved {}.", SETTING_GAMES[row])
+            eprintln!("settings: {} is now {}", SETTING_NAMES[row], path.display());
+            format!("Saved {}.", SETTING_NAMES[row])
         }
         Ok(None) => String::new(),
         Err(e) => {
@@ -1516,6 +2066,10 @@ fn settings_poll(world: &mut World) {
             e
         }
     };
+    if changed {
+        // Choosing Reflex imports it into the data folder.
+        menu.converted = support::converted();
+    }
     if changed && row == 0 {
         refresh_maps(world);
     }
@@ -1539,15 +2093,22 @@ fn refresh_maps(world: &mut World) {
     }
 }
 
-/// Draws the settings screen: shown in [`Phase::Settings`], the saved
-/// folders, the focused row, the note.
-#[allow(clippy::type_complexity)]
+/// Draws the settings screen: shown in [`Phase::Settings`], the focused
+/// row's page (its name lit in the tab bar), the saved values, the focused
+/// row, the note.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn show_settings(
     menu: Res<Menu>,
     unit: Res<SpeedUnit>,
     skate: Res<SkateEnabled>,
     tuning: Option<Res<mcc_bike::tune::BikeTuning>>,
-    mut screen: Query<&mut Node, (With<SettingsScreen>, Without<SettingRow>)>,
+    look: Res<LookSettings>,
+    mut tabs: Query<
+        (&SettingTab, &mut TextColor, &mut BorderColor),
+        (Without<SettingValue>, Without<SettingSelectLabel>, Without<SettingRow>, Without<SettingSelect>, Without<SettingsNote>),
+    >,
+    mut screen: Query<&mut Node, (With<SettingsScreen>, Without<SettingRow>, Without<SettingsStepHint>)>,
+    mut step_hint: Query<&mut Node, (With<SettingsStepHint>, Without<SettingRow>, Without<SettingsScreen>)>,
     mut rows: Query<(&SettingRow, &mut BackgroundColor, &mut BorderColor, &mut Node), (Without<SettingSelect>, Without<SettingsScreen>)>,
     mut values: Query<(&SettingValue, &mut Text, &mut TextColor), (Without<SettingsNote>, Without<SettingSelectLabel>)>,
     mut selects: Query<(&SettingSelect, &mut BorderColor), Without<SettingRow>>,
@@ -1555,7 +2116,7 @@ fn show_settings(
     mut note: Query<&mut Text, (With<SettingsNote>, Without<SettingValue>, Without<SettingSelectLabel>)>,
 ) {
     let tuned = tuning.as_ref().is_some_and(|t| t.is_changed());
-    if !menu.is_changed() && !unit.is_changed() && !skate.is_changed() && !tuned {
+    if !menu.is_changed() && !unit.is_changed() && !skate.is_changed() && !look.is_changed() && !tuned {
         return;
     }
     let open = menu.phase == Phase::Settings;
@@ -1566,9 +2127,19 @@ fn show_settings(
         return;
     }
     let busy = |i: usize| menu.picking.as_ref().is_some_and(|p| p.what == Pick::Setting(i));
-    let offered = setting_rows();
+    let page = page_of(menu.setting);
+    for mut node in &mut step_hint {
+        let steps = SETTING_PAGES[page].1.contains(&MOUSE_ROW) || SETTING_PAGES[page].1.contains(&FOV_ROW);
+        node.display = if steps { Display::Flex } else { Display::None };
+    }
+    for (tab, mut colour, mut border) in &mut tabs {
+        let on = tab.0 == page;
+        colour.0 = if on { LIT } else { DIM };
+        *border = BorderColor::all(if on { LIT } else { Color::NONE });
+    }
     for (row, mut background, mut border, mut node) in &mut rows {
-        let display = if row.0 < offered { Display::Flex } else { Display::None };
+        let shown = page_of(row.0) == page && row_offered(row.0);
+        let display = if shown { Display::Flex } else { Display::None };
         if node.display != display {
             node.display = display;
         }
@@ -1577,7 +2148,8 @@ fn show_settings(
         *border = BorderColor::all(if on { LINE } else { Color::NONE });
     }
     let reflex_physics = tuning.map_or_else(|| mcc_bike::tune::load().model, |t| t.0.model) >= 1.5;
-    let now = setting_values(*unit, *skate, reflex_physics);
+    let skate_ready = game_paths::skate_ready();
+    let now = setting_values(*unit, *skate, reflex_physics, skate_ready, *look, &menu.converted);
     for (value, mut text, mut colour) in &mut values {
         text.0.clone_from(&now[value.0]);
         if value.0 == USERNAME_ROW {
@@ -1592,7 +2164,16 @@ fn show_settings(
     }
     for (label, mut text, mut colour) in &mut labels {
         let editing = label.0 == USERNAME_ROW && menu.editing.is_some();
-        text.0 = if busy(label.0) { "WORKING..." } else if editing { "ENTER" } else { button_label(label.0) }.to_string();
+        text.0 = if busy(label.0) {
+            "WORKING..."
+        } else if editing {
+            "ENTER"
+        } else if menu.confirm == Some(label.0) {
+            "CONFIRM"
+        } else {
+            button_label(label.0, skate_ready)
+        }
+        .to_string();
         colour.0 = if label.0 == menu.setting { LIT } else { DIM };
     }
     for mut text in &mut note {
@@ -1647,8 +2228,13 @@ fn begin(menu: &mut Menu) -> Option<Loading> {
     let map = menu.selected()?;
     let arg = map.arg;
     eprintln!("menu: loading {} ({arg})", map.name);
+    if menu.remember
+        && let Err(e) = game_paths::save_setting(game_paths::key::LAST_MAP, arg)
+    {
+        eprintln!("menu: the last map was not saved: {e}");
+    }
     let (send, receive) = std::sync::mpsc::channel();
-    let args = menu.args.clone();
+    let args = menu.map_args();
     std::thread::spawn(move || {
         let _ = send.send(crate::load(arg, &args));
     });
@@ -1736,7 +2322,7 @@ fn finish_loading(world: &mut World) {
         Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(anyhow::anyhow!("the map crashed while loading")),
     };
     world.remove_resource::<Loading>();
-    let args = world.resource::<Menu>().args.clone();
+    let args = world.resource::<Menu>().map_args();
     let failed = match result {
         Ok(map) => {
             let title = format!("MCC Rust Rewrite - {}", map.scene_name());
@@ -1802,10 +2388,16 @@ fn show(
     mut tiles: Query<(&Tile, &mut BorderColor), Without<TabLabel>>,
     mut names: Query<(&TileLabel, &mut TextColor), (Without<TabLabel>, Without<StartLabel>)>,
     mut start_label: Query<&mut TextColor, (With<StartLabel>, Without<TabLabel>, Without<TileLabel>)>,
-    mut texts: Query<(Option<&Chosen>, Option<&LoadingName>, &mut Text)>,
+    mut texts: Query<(Option<&Chosen>, Option<&LoadingName>, Option<&DifficultyLabel>, &mut Text)>,
+    mut bar: Query<(&MenuButton, &mut Node), (Without<Chooser>, Without<LoadingScreen>, Without<TabPage>)>,
 ) {
     if !menu.is_changed() {
         return;
+    }
+    for (button, mut node) in &mut bar {
+        if *button == MenuButton::Difficulty {
+            node.display = if menu.tab == CAMPAIGN_TAB { Display::Flex } else { Display::None };
+        }
     }
     let loading_now = menu.phase == Phase::Loading;
     let over = matches!(menu.phase, Phase::Settings | Phase::Setup);
@@ -1845,7 +2437,11 @@ fn show(
     for mut colour in &mut start_label {
         colour.0 = if selected.is_some_and(|m| m.installed) { LIT } else { FAINT };
     }
-    for (part, name, mut text) in &mut texts {
+    for (part, name, difficulty, mut text) in &mut texts {
+        if difficulty.is_some() {
+            text.0 = difficulty_label(menu.difficulty);
+            continue;
+        }
         if name.is_some() {
             text.0 = selected.map_or(String::new(), |m| m.name.to_uppercase());
             continue;
@@ -2046,6 +2642,47 @@ mod tests {
                 assert_eq!(crate::codename(map_of(arg)).0, Some(game), "{arg}");
             }
         }
+    }
+
+    /// Without Skate 3, its row and Skating set it up first; with it, its
+    /// row changes it and Skating switches skating as before.
+    #[test]
+    fn skate_rows_set_up_skate_3_first() {
+        assert_eq!(SETTING_NAMES[SKATE_ROW], "Skate 3");
+        assert_eq!(SETTING_NAMES[SKATING_ROW], "Skating");
+        assert_eq!(button_label(SKATE_ROW, false), "SET UP");
+        assert_eq!(button_label(SKATING_ROW, false), "SET UP");
+        assert_eq!(button_label(SKATE_ROW, true), "CHANGE");
+        assert_eq!(button_label(SKATING_ROW, true), "CHANGE");
+        for ready in [false, true] {
+            assert_eq!(button_label(0, ready), "SELECT");
+            assert_eq!(button_label(USERNAME_ROW, ready), "EDIT");
+            assert_eq!(button_label(PHYSICS_ROW, ready), "CHANGE");
+        }
+    }
+
+    /// The pages hold every settings row once, in order, and the rows'
+    /// constants name the rows they mean.
+    #[test]
+    fn settings_pages_cover_every_row() {
+        let mut next = 0;
+        for (page, (_, rows)) in SETTING_PAGES.iter().enumerate() {
+            assert_eq!(rows.start, next);
+            assert!(!rows.is_empty());
+            for row in rows.clone() {
+                assert_eq!(page_of(row), page);
+            }
+            next = rows.end;
+        }
+        assert_eq!(next, SETTING_NAMES.len());
+        assert_eq!(SETTING_NAMES[PHYSICS_ROW], "Bike physics");
+        assert_eq!(SETTING_NAMES[MOUSE_ROW], "Mouse sensitivity");
+        assert_eq!(SETTING_NAMES[FOV_ROW], "Field of view");
+        assert_eq!(SETTING_NAMES[DELETE_ROW], "Converted data");
+        // The physics row is the last on its page, so hiding it leaves no gap.
+        assert_eq!(SETTING_PAGES[page_of(PHYSICS_ROW)].1.end, PHYSICS_ROW + 1);
+        assert_eq!(button_label(DELETE_ROW, true), "DELETE");
+        assert_eq!(button_label(FOV_ROW, false), "CHANGE");
     }
 
     /// Up and down keep the column and stop at a section's shorter row;

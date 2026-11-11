@@ -14,13 +14,14 @@
 //! | right stick | arrow keys | rider: forward, back, left, right |
 //! | RT | W | throttle |
 //! | LT | S | brake; held at a standstill, back up to 10 mph |
+//! | RB (hold) | E (hold) | clutch, in Reflex physics (`exact.rs`) |
 //! | Y | R | stand the bike back up |
 //! | d-pad up | G | jump off on foot, keeping the bike's speed (`mcc_foot`) |
 //! | both sticks clicked | J | onto the skateboard, keeping the bike's speed (`mcc_skate`) |
 //! | LB + d-pad down | | set the session marker (`marker.rs`), shared with the board |
 //! | LB + d-pad up (hold) | | back to the session marker, set on the bike or the board |
 //! | left stick click | H | engine sound on / off (`mcc_audio::engine`) |
-//! | | 0 | physics tuning menu (`tune.rs`) |
+//! | LB + X | 0 | physics tuning menu (`tune.rs`) |
 //!
 //! A crash shows CRASHED in orange in the lower left until the bike is
 //! put back.
@@ -39,6 +40,7 @@ pub mod physics;
 pub mod pose;
 pub mod reflex;
 pub mod stand_in;
+pub mod surface;
 pub mod tune;
 pub mod unleashed;
 
@@ -57,11 +59,13 @@ use mcc_core::coords::{to_halo, to_render, to_render_dir};
 use mcc_core::flag::SessionFlag;
 use mcc_core::fly_camera::FlyCamera;
 use mcc_core::skate::{
-    Bail, Dismount, Mount, Ride, RiderPose, SkateEnabled, Skating, assets_root, bail_pressed, board_pressed, skating_on,
+    Bail, Dismount, HaloRig, Mount, Ride, RiderPose, SkateEnabled, Skating, bail_pressed, board_pressed, skater_rig,
+    skating_on,
 };
 use mcc_core::zones::LoadedBsps;
 
 use physics::{Bike, Controls, World};
+use surface::Surface;
 
 /// The map's collision (Halo units), handed over by `main`.
 #[derive(Resource)]
@@ -267,6 +271,7 @@ fn publish_motion(riding: Res<Riding>, mut motion: ResMut<mcc_core::bike::BikeMo
                 grounded: b.grounded(),
                 crashed: b.crashed.is_some(),
                 clutch_slipping: !b.engine.locked,
+                clutch_in: b.exact().is_some_and(|e| e.clutch_in()),
                 rear_sliding: b.wheels[0].sliding && b.wheels[0].contact.is_some(),
                 position: b.position,
                 velocity: b.velocity,
@@ -319,6 +324,7 @@ fn setup(
     mut pool: ResMut<StickPool>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    halo: Option<Res<HaloRig>>,
 ) {
     // Reflex's 450F physics values, read before the first ride needs them.
     std::thread::spawn(|| {
@@ -335,7 +341,15 @@ fn setup(
             })
         })
         .collect();
-    match pose::Rig::load(&assets_root().join("rig.json")) {
+    // Skate 3's skater, or without Skate 3 the Spartan's own skeleton.
+    let rig = match halo.as_deref() {
+        Some(h) => pose::Rig::from_binds(h.names.clone(), h.binds.clone(), "Master Chief's skeleton"),
+        None => match skater_rig() {
+            Some(file) => pose::Rig::load(&file),
+            None => return,
+        },
+    };
+    match rig {
         Ok(r) => riding.rig = Some(r),
         Err(e) => warn!("bike: {e}; the rider is left off"),
     }
@@ -345,11 +359,14 @@ fn setup(
 pub fn build_world(collision: &Collision, mask: u32) -> World {
     let started = std::time::Instant::now();
     let loaded = collision.of_bsps(mask);
-    let world = World::with_owners(loaded.triangles.iter().map(|t| {
+    // What each collision material is made of, once per material.
+    let kinds: Vec<Surface> = collision.materials.iter().map(Surface::of).collect();
+    let world = World::with_surfaces(loaded.triangles.iter().map(|t| {
         (
             t.points.map(to_render),
             t.flags & surface_flags::TWO_SIDED != 0,
             t.source.object().unwrap_or(u32::MAX),
+            usize::try_from(t.material).ok().and_then(|m| kinds.get(m)).copied().unwrap_or_default(),
         )
     }));
     eprintln!(
@@ -410,6 +427,8 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         ),
         throttle: key(KeyCode::KeyW),
         brake: key(KeyCode::KeyS),
+        // E / RB, as `reflex_bevy`'s own test app has it.
+        clutch: keys.pressed(KeyCode::KeyE),
     };
     if let Some(pad) = pad {
         let l = dead(pad.left_stick(), 0.12);
@@ -419,6 +438,7 @@ fn read_controls(pad: Option<&Gamepad>, keys: &ButtonInput<KeyCode>, rested: &mu
         let rt = trigger(pad, B::RightTrigger2, GamepadAxis::RightZ, &mut rested[1]);
         c.throttle = c.throttle.max(rt.powf(THROTTLE_CURVE));
         c.brake = c.brake.max(trigger(pad, B::LeftTrigger2, GamepadAxis::LeftZ, &mut rested[0]));
+        c.clutch |= pad.pressed(B::RightTrigger);
     }
     c
 }
@@ -429,11 +449,11 @@ fn ride(
     mut riding: ResMut<Riding>,
     mut auto: ResMut<AutoStart>,
     (mut dismount, mut mount): (ResMut<Dismount>, ResMut<Mount>),
-    (mut flag, skate_on): (ResMut<SessionFlag>, Option<Res<SkateEnabled>>),
+    (mut flag, skate_on, look): (ResMut<SessionFlag>, Option<Res<SkateEnabled>>, Option<Res<mcc_core::view::LookSettings>>),
     input: Option<Res<BikeInput>>,
     mut shared: ResMut<SharedWorld>,
     kill: Option<Res<mcc_core::falls::KillZones>>,
-    lifts: Option<Res<mcc_core::lifts::Lifts>>,
+    (lifts, mut flight): (Option<Res<mcc_core::lifts::Lifts>>, Local<mcc_core::lifts::Flight>),
     fallback: Option<Res<mcc_core::falls::FallbackSpot>>,
     (mut rider, mut player): (ResMut<RiderPose>, ResMut<mcc_core::ai::PlayerRespawn>),
     loaded: Res<LoadedBsps>,
@@ -446,6 +466,7 @@ fn ride(
         return;
     };
     let riding = &mut *riding;
+    let look = look.as_deref().copied().unwrap_or_default();
     let pad = gamepads.iter().next();
     let toggle = keys.just_pressed(KeyCode::KeyB) || pad.is_some_and(|p| p.just_pressed(B::Select));
     let Ok((camera, mut transform, mut fly, mut projection)) = cameras.single_mut() else {
@@ -516,11 +537,11 @@ fn ride(
             fly.pitch = f.y.clamp(-1.0, 1.0).asin();
             transform.rotation = fly.rotation();
             if let Projection::Perspective(lens) = &mut *projection {
-                lens.fov = 75f32.to_radians();
+                lens.fov = look.fov_radians(mcc_core::view::FLY_FOV);
             }
             return;
         }
-        if rider.active {
+        if rider.active || rider.foot {
             // On foot or on the board, B is theirs to hand over (`Mount`).
             return;
         }
@@ -632,15 +653,13 @@ fn ride(
     }
 
     bike.step(world, controls, dt);
-    // A gravity lift takes the bike too (unless it ignores vehicles): its
-    // push on top of the bike's own physics, and the bike's gravity given
-    // back while the lift switches gravity off.
-    if let Some(p) = lifts.as_deref().and_then(|l| l.push(bike.position, bike.velocity, dt, 0.5, true)) {
-        let mut a = p.acceleration;
-        if p.negates_gravity {
-            a.y += physics::GRAVITY;
-        }
-        bike.velocity += a * dt;
+    // A gravity lift takes the bike too (unless it ignores vehicles), and
+    // a launch pad throws it as it throws a player (`Lifts::ride`), on top
+    // of the bike's own physics.
+    // The throw flies without air drag, as Halo's (`Flight`).
+    let airborne = bike.grounded() == 0;
+    if let Some(dv) = lifts.as_deref().and_then(|l| flight.ride(l, bike.position, bike.velocity, airborne, dt, 0.5, physics::GRAVITY)) {
+        bike.velocity += dv;
     }
     if let Some(kill) = kill.as_deref()
         && let Some(volume) = kill.deadly(to_halo(bike.position))
@@ -676,7 +695,7 @@ fn ride(
         };
         let place = Mat4::from_translation(bike.position * k) * Mat4::from_quat(bike.rotation);
         rider.bones = rig.pose(k, &stance).into_iter().map(|m| place * m).collect();
-        if rider.names.len() != rig.names.len() {
+        if rider.names != rig.names {
             rider.names = rig.names.clone();
         }
         rider.active = true;
@@ -704,7 +723,7 @@ fn ride(
     };
     riding.eye = Some(eye);
     let view = Transform::from_translation(eye).looking_at(target, Vec3::Y);
-    let fov = 70f32.to_radians();
+    let fov = look.fov_radians(70.0);
     rider.camera = Some((view, fov));
     if rider.drive_camera {
         *transform = view;

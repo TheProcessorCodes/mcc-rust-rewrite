@@ -31,6 +31,7 @@ use bevy::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 use blam_geometry::column_grid::ColumnGrid;
 
 use super::exact::{self, Exact};
+use super::surface::Surface;
 use super::reflex::Tuning;
 use super::unleashed::{RPM, Setup, Tyre, ft, lerp_clamp};
 
@@ -166,6 +167,8 @@ pub struct Controls {
     pub throttle: f32,
     /// Held from a standstill with both wheels down, backs the bike up instead.
     pub brake: f32,
+    /// The clutch held in (Reflex physics only; the arcade models have none).
+    pub clutch: bool,
 }
 
 /// A ray or probe hit on the world.
@@ -174,6 +177,8 @@ pub struct Hit {
     pub distance: f32,
     pub point: Vec3,
     pub normal: Vec3,
+    /// What the ground there is made of (`surface.rs`).
+    pub surface: Surface,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -198,6 +203,8 @@ pub struct World {
     /// renderer frame: their triangles stay in the grid where the scenario
     /// put them and are moved as they are looked at.
     moved: RwLock<Moved>,
+    /// Per triangle, what it is made of; empty when all of it is dirt.
+    surfaces: Vec<Surface>,
 }
 
 /// The moved objects as last read: the pose generation, then per object
@@ -237,16 +244,23 @@ impl World {
     /// The same, with the scene object each triangle belongs to
     /// (`u32::MAX` for none).
     pub fn with_owners(triangles: impl IntoIterator<Item = ([Vec3; 3], bool, u32)>) -> World {
+        World::with_surfaces(triangles.into_iter().map(|(p, two, owner)| (p, two, owner, Surface::Dirt)))
+    }
+
+    /// The same, with what each triangle is made of.
+    pub fn with_surfaces(triangles: impl IntoIterator<Item = ([Vec3; 3], bool, u32, Surface)>) -> World {
         let mut out = Vec::new();
         let mut owners = Vec::new();
+        let mut surfaces = Vec::new();
         let mut grid = ColumnGrid::new(4.0);
-        for ([a, b, c], two_sided, owner) in triangles {
+        for ([a, b, c], two_sided, owner, surface) in triangles {
             let normal = (b - a).cross(c - a);
             if !normal.is_finite() || normal.length_squared() < 1e-10 {
                 continue;
             }
             let i = out.len() as u32;
             owners.push(owner);
+            surfaces.push(surface);
             out.push(Triangle {
                 a,
                 b,
@@ -261,12 +275,40 @@ impl World {
         if owners.iter().all(|o| *o == u32::MAX) {
             owners.clear();
         }
+        if surfaces.iter().all(|s| *s == Surface::Dirt) {
+            surfaces.clear();
+        }
         World {
             triangles: out,
             grid,
             owners,
             moved: RwLock::new(Moved::default()),
+            surfaces,
         }
+    }
+
+    /// What triangle `i` is made of.
+    fn surface_of(&self, i: u32) -> Surface {
+        self.surfaces.get(i as usize).copied().unwrap_or_default()
+    }
+
+    /// What the ground at `point` is made of: the triangle nearest to it
+    /// within 0.3 m (dirt when there is none).
+    pub fn surface_at(&self, point: Vec3) -> Surface {
+        if self.surfaces.is_empty() {
+            return Surface::Dirt;
+        }
+        let mut ids = Vec::new();
+        self.gather(point, 0.3, &mut ids);
+        let moved = self.moved.read().unwrap_or_else(|e| e.into_inner());
+        ids.iter()
+            .map(|&i| {
+                let t = self.triangle(&moved, i);
+                (closest_point(point, t.a, t.b, t.c).distance_squared(point), i)
+            })
+            .filter(|(d, _)| *d < 0.09)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map_or(Surface::Dirt, |(_, i)| self.surface_of(i))
     }
 
     #[allow(clippy::len_without_is_empty)]
@@ -423,6 +465,7 @@ impl World {
                 distance: d,
                 point: origin + dir * d,
                 normal,
+                surface: self.surface_of(i),
             });
         }
         best
@@ -1020,14 +1063,18 @@ impl Bike {
             let rolling = (0.3 * ft(v_long)).clamp(-1.0, 1.0);
             let t = wheel_torque - (tyre.wheel_friction + held.brake * tyre.max_braking_torque) * rolling;
             let wanted = t / tyre.radius;
-            let limit = tyre.max_drive * load;
+            // The ground: snow, metal and ice grip less than dirt, rock and
+            // concrete more; sand, snow and mud hold the bike back.
+            let ground = h.surface.arcade_grip();
+            let limit = tyre.max_drive * load * ground;
             let (f_long, sliding) = if wanted > limit {
-                (tyre.skid_drive * load, true)
+                (tyre.skid_drive * load * ground, true)
             } else if wanted < -limit {
-                (-tyre.skid_drive * load, true)
+                (-tyre.skid_drive * load * ground, true)
             } else {
                 (wanted, false)
             };
+            let bog = -(v_long / 0.5).clamp(-1.0, 1.0) * h.surface.arcade_drag() * load;
             // Sideways: grip against slip speed, stiffer when nearly stopped.
             let mut slip = ft(v_lat);
             let rolling_ft = ft(v_long).abs();
@@ -1046,8 +1093,8 @@ impl Bike {
             if grip.abs() > tyre.side_cap {
                 grip = grip.signum() * tyre.side_cap * tyre.slide_keep;
             }
-            let f_lat = grip * load;
-            let f_tyre = long * f_long + lat * f_lat;
+            let f_lat = grip * load * ground;
+            let f_tyre = long * (f_long + bog) + lat * f_lat;
             force += f_tyre;
             torque += (r * tyre.force_position).cross(f_tyre);
 

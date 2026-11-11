@@ -57,9 +57,11 @@
 //! lists the controls (`pause.rs`).
 //! ```
 //!
-//! The first launch asks for the player's own MCC and Skate 3 (`.iso` or
-//! `default.xex`), both required, and MX vs ATV Reflex if they have it, and
-//! saves the answers (`mcc_setup`); `--setup` asks again. `<map>` is looked up in that MCC's
+//! The first launch asks for the player's own MCC (required), Skate 3
+//! (`.iso` or `default.xex`) and MX vs ATV Reflex if they have them, and
+//! saves the answers (`mcc_setup`); `--setup` asks again. Without Skate 3
+//! there is no skateboard, and the Spartan's skeleton is Master Chief's own
+//! from MCC (`mcc_rider::chief_rig`). `<map>` is looked up in that MCC's
 //! `halo3\maps` (`%HALO3_MAPS%` overrides), Halo 2 maps (`coagulation`,
 //! `lockout`, or `h2:NAME`) in its `halo2\h2_maps_win64_dx11`
 //! (`%HALO2_MAPS%`; `halo2.rs`). Halo 3's Blackout, whose file is
@@ -75,6 +77,7 @@ mod halo1_ai;
 mod halo1_anim;
 mod halo2;
 mod key_hint;
+mod logfile;
 mod menu;
 mod reach;
 mod pause;
@@ -93,10 +96,9 @@ use mcc_textures as textures;
 use mcc_weapons as weapons;
 use mcc_world as world;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use bevy::window::{MonitorSelection, PresentMode, WindowMode};
 
 /// Which game a map belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,6 +144,34 @@ fn resolve_map(arg: &str) -> PathBuf {
     }
 }
 
+/// The Halo 3 maps to look for the Spartan in, for a map that has none of
+/// its own: Valhalla first, then every other `.map` in the folder by name.
+fn chief_sources(maps: &Path) -> Vec<PathBuf> {
+    let first = maps.join("riverworld.map");
+    let mut rest: Vec<PathBuf> = std::fs::read_dir(maps)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("map")) && *p != first)
+        .collect();
+    rest.sort();
+    std::iter::once(first).chain(rest).collect()
+}
+
+/// Halo 3's Spartan for a Halo CE, Halo 2 or Reach map, whose own are not
+/// decoded: Valhalla's, else the first other installed Halo 3 map's that
+/// has one. None without Halo 3.
+pub(crate) fn borrowed_chief() -> Option<rider::ChiefModel> {
+    chief_sources(&maps_dir(Game::Halo3)).iter().enumerate().find_map(|(i, path)| {
+        let chief = blam_cache::CacheFile::open(path).ok().and_then(|c| rider::load_chief(&c))?;
+        if i > 0 {
+            eprintln!("rider: no Spartan in riverworld.map; borrowed from {}", path.display());
+        }
+        Some(chief)
+    })
+}
+
 /// A map argument to (game, file name without `.map`): `h1:` / `h2:` /
 /// `h3:` / `hr:` force the game; `blackout` is Halo 3's `lockout`, and a
 /// bare `lockout` is Halo 2's, so the two maps sharing a file name each have
@@ -160,16 +190,32 @@ fn codename(arg: &str) -> (Option<Game>, &str) {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> std::process::ExitCode {
+    // Everything printed from here on also goes to this run's log file, and
+    // a panic leaves a crash file (`logfile.rs`).
+    let log = logfile::start();
+    let code = match run_main() {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("Error: {e:?}");
+            std::process::ExitCode::FAILURE
+        }
+    };
+    // The last lines reach the console and the file before the exit.
+    drop(log);
+    code
+}
+
+fn run_main() -> anyhow::Result<std::process::ExitCode> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let help = matches!(args.first().map(String::as_str), Some("--help" | "-h"));
-    // First-run setup: MCC and Skate 3 (required) and Reflex (optional),
-    // asked once and saved (`mcc_setup`); `--setup` asks again. Until they
-    // are set up the window opens on the menu's setup screen
+    // First-run setup: MCC (required), Skate 3 and Reflex (each optional,
+    // or skipped), asked once and saved (`mcc_setup`); `--setup` asks again.
+    // Until they are answered the window opens on the menu's setup screen
     // (`menu/setup.rs`), and a map named on the command line waits for the
     // next launch. Headless runs (`--shot`, `--menu-shot`) never ask: they
-    // need the setup done (or the dev overrides), except `--menu-setup`
-    // shots of the setup screen itself.
+    // need MCC set up (or the dev overrides), except `--menu-setup` shots of
+    // the setup screen itself, and `--skate` needs Skate 3 as well.
     let redo = args.iter().any(|a| a == "--setup");
     args.retain(|a| a != "--setup");
     if !help && args.first().map(String::as_str) != Some("--test-scene") {
@@ -186,13 +232,18 @@ fn main() -> anyhow::Result<()> {
             }
         } else if !args.iter().any(|a| a == "--menu-setup") {
             mcc_setup::check().map_err(anyhow::Error::msg)?;
+            // A skating shot would wait minutes for a skater that never
+            // comes.
+            if args.iter().any(|a| a == "--skate") && !game_paths::skate_ready() {
+                anyhow::bail!("--skate needs Skate 3 set up (it is skipped or missing; add it in Settings)");
+            }
         }
     }
     match args.first().map(String::as_str) {
         Some("--help") | Some("-h") => {
             eprintln!("usage:
   mcc-rust-rewrite [--foot]                                             the map menu
-  mcc-rust-rewrite --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-loading | --menu-missing | --menu-settings | --menu-setup [--menu-step N]] [--size WxH]
+  mcc-rust-rewrite --menu-shot FILE [--menu-tab N] [--menu-pick N] [--menu-row N] [--menu-loading | --menu-missing | --menu-settings [--menu-step 1] | --menu-setup [--menu-step N]] [--size WxH]
   mcc-rust-rewrite <map> [--zone N|NAME | --bsps 0,3,5 | --all-bsps]   e.g. riverworld, 120_halo
   mcc-rust-rewrite warthog_run [--foot] [--difficulty ...]             the Warthog run of 120_halo, timed
   mcc-rust-rewrite h1:warthog_run [--foot] [--difficulty ...]          Halo CE's Warthog run (The Maw), against its countdown
@@ -201,17 +252,18 @@ fn main() -> anyhow::Result<()> {
   mcc-rust-rewrite <map> --shot DIR [--view x,y,z,yaw,pitch]... [--size WxH] [--skate | --bike | --foot] [--bench N]
   mcc-rust-rewrite --setup [<map>]                                      choose MCC, Skate 3 and Reflex again (on the setup screen)
   mcc-rust-rewrite --test-scene");
-            std::process::exit(2);
+            return Ok(std::process::ExitCode::from(2));
         }
         // No map (only options, or nothing): the map menu, which loads the
         // chosen map into the same window (`menu.rs`).
-        None => run(&args, None),
-        Some(a) if a.starts_with("--") && a != "--test-scene" => run(&args, None),
+        None => run(&args, None)?,
+        Some(a) if a.starts_with("--") && a != "--test-scene" => run(&args, None)?,
         Some(map) => {
             let map = load(map, &args)?;
-            run(&args, Some(map))
+            run(&args, Some(map))?
         }
     }
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 /// A map decoded and ready to go into the app. Made up front for
@@ -252,6 +304,9 @@ pub(crate) struct MapExtras {
     /// The effects the scripts and the objects they damage play, read
     /// with their bitmaps (`mcc_effects`).
     effects: Option<mcc_effects::EffectAssets>,
+    /// The effects the map plays by itself: its placed objects' and its
+    /// weather (`mcc_effects::ambient`).
+    ambient: Option<mcc_effects::ambient::Ambient>,
     /// Halo CE actors' animations (`halo1_anim.rs`).
     h1_moves: Option<halo1_anim::H1Moves>,
 }
@@ -387,11 +442,8 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             eprintln!("halo ce lightmap: mean irradiance {mean:.3}");
             world::lighting::set_scene_mean(mean);
         }
-        // The rider is Halo 3's Spartan, borrowed from Valhalla as for
-        // Halo 2.
-        let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
-            .ok()
-            .and_then(|c| rider::load_chief(&c));
+        // The rider is Halo 3's Spartan, borrowed as for Halo 2.
+        let chief = borrowed_chief();
         return Ok(LoadedMap {
             scene: h1.scene,
             textures: h1.textures,
@@ -417,11 +469,10 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             eprintln!("halo 2 lightmap: mean irradiance {mean:.3}");
             world::lighting::set_scene_mean(mean);
         }
-        // The rider is Halo 3's Spartan, borrowed from Valhalla when
-        // Halo 3 is installed (Halo 2's Master Chief is not decoded).
-        let chief = blam_cache::CacheFile::open(resolve_map("riverworld"))
-            .ok()
-            .and_then(|c| rider::load_chief(&c));
+        // The rider is Halo 3's Spartan, borrowed from Valhalla (or
+        // another Halo 3 map) when Halo 3 is installed (Halo 2's Master
+        // Chief is not decoded).
+        let chief = borrowed_chief();
         return Ok(LoadedMap {
             scene,
             textures,
@@ -475,10 +526,27 @@ fn load_map(map: &str, args: &[String], mission: Option<&Mission>) -> anyhow::Re
             let n = blam_geometry::objects::add_collision(cache, &mut scene);
             eprintln!("object collision: {n} triangles");
         }
-        extras.scripts = scripts_for(args, cache, &mut scene);
-        if let Some(s) = &extras.scripts {
-            extras.effects = Some(mcc_effects::load::load(cache, &s.effect_roots));
+        // Man cannons and gravity lifts: the phantoms of placed objects.
+        scene.lifts = blam_geometry::objects::lifts(cache, &scene);
+        if !scene.lifts.is_empty() {
+            eprintln!("lifts: {} pushing volumes", scene.lifts.len());
         }
+        extras.scripts = scripts_for(args, cache, &mut scene);
+        // The waterfall mist and the snow play from the start; read with
+        // what the scripts name.
+        let ambient = mcc_effects::ambient::Ambient::read(cache, &scene);
+        let weather = ambient.weather.iter().flatten().count();
+        eprintln!("ambient effects: {} placed, {weather} weather", ambient.placed.len());
+        let mut roots = ambient.roots();
+        if let Some(s) = &extras.scripts {
+            roots.extend(&s.effect_roots);
+        }
+        roots.sort_unstable();
+        roots.dedup();
+        if !roots.is_empty() {
+            extras.effects = Some(mcc_effects::load::load(cache, &roots));
+        }
+        extras.ambient = Some(ambient);
     }
     eprintln!(
         "{}: {} meshes, {} placements, {} triangles, decoded in {:.1} s",
@@ -657,16 +725,11 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         )),
         None if menu::headless(args) => menu::add_headless_plugins(&mut app),
         None => {
-            let plugins = DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title,
-                    present_mode: PresentMode::AutoVsync,
-                    // Borderless fullscreen on the monitor the window opens on.
-                    mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
-                    ..default()
-                }),
-                ..default()
-            });
+            // Borderless fullscreen on the monitor the window opens on, or
+            // a window, with or without vsync: as chosen in Settings.
+            let mut window = Window { title, ..default() };
+            mcc_core::view::Display::load().configure(&mut window);
+            let plugins = DefaultPlugins.set(WindowPlugin { primary_window: Some(window), ..default() });
             if sound {
                 app.add_plugins(plugins)
             } else {
@@ -684,8 +747,9 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
         });
     }
     // Skating on or off (Settings; the menu changes it for the next map).
-    // A `--skate` shot needs the board, whatever the setting says.
-    let skate_shot = args.iter().any(|a| a == "--skate");
+    // A `--skate` shot needs the board, whatever the setting says, but
+    // nothing turns skating on without Skate 3.
+    let skate_shot = args.iter().any(|a| a == "--skate") && game_paths::skate_ready();
     app.insert_resource(mcc_core::skate::SkateEnabled(skate_shot || game_paths::skating_enabled()));
     let skating = shot.as_ref().is_none_or(|p| p.rides());
     // Off the menu every map gets every mode; a map named on the command
@@ -797,6 +861,32 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
         scene.trigger_volumes.clone(),
         scene.water_triangles(),
     ));
+    // The rider's skeleton: Skate 3's skater when Skate 3 is set up, else
+    // Master Chief's own, made from the model just decoded (rider, foot and
+    // bike read it in the map's start-up, next frame).
+    if game_paths::skate_ready() {
+        w.remove_resource::<mcc_core::skate::HaloRig>();
+        eprintln!("rider: Skate 3's skater skeleton (rig.json)");
+    } else {
+        match chief.as_ref().map(|c| rider::chief_rig(c, mcc_core::skate::scale())) {
+            Some(Ok(rig)) => {
+                eprintln!("rider: Master Chief's own skeleton, {} bones (Skate 3 is not set up)", rig.names.len());
+                w.insert_resource(rig);
+            }
+            Some(Err(e)) => {
+                eprintln!("rider: Master Chief's skeleton is not usable ({e}); no rider is drawn");
+                w.remove_resource::<mcc_core::skate::HaloRig>();
+            }
+            None => {
+                eprintln!("rider: no Master Chief on this map and no Skate 3; no rider is drawn");
+                w.remove_resource::<mcc_core::skate::HaloRig>();
+            }
+        }
+    }
+    // Skating as the player left it in Settings, read again for each map:
+    // Skate 3 may have been set up since the game started.
+    let skate_shot = args.iter().any(|a| a == "--skate") && game_paths::skate_ready();
+    w.insert_resource(mcc_core::skate::SkateEnabled(skate_shot || mcc_core::skate::SkateEnabled::load().0));
     w.insert_resource(rider::PendingChief(chief));
     w.insert_resource(bike::BikeInput(std::sync::Arc::new(scene.collision.clone())));
     if let Some(t) = foot_tuning {
@@ -872,6 +962,9 @@ pub(crate) fn install(w: &mut World, map: LoadedMap, args: &[String]) -> anyhow:
     w.insert_resource(weapons::PendingArsenal(arsenal));
     let scripted = extras.scripts.is_some();
     w.insert_resource(mcc_effects::PendingEffects(extras.effects));
+    if let Some(a) = extras.ambient {
+        w.insert_resource(a);
+    }
     if let Some(ScriptStart { pending: s, devices, .. }) = extras.scripts {
         // The scripts' `ai_*` calls go to the enemies through the bridge
         // the AI plugin reads; the islands and pillars move by their own
@@ -1065,4 +1158,29 @@ fn shot_plan(args: &[String], scene: &blam_geometry::Scene) -> anyhow::Result<Op
         foot: args.iter().any(|a| a == "--foot"),
         bench: value("--bench").map(|n| n.parse()).transpose()?.unwrap_or(0),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Valhalla is tried first whether or not it is there, then the other
+    /// maps by name; files that are not maps are left out.
+    #[test]
+    fn the_spartan_is_looked_for_in_valhalla_first() {
+        let dir = std::env::temp_dir().join(format!("mcc-chief-sources-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["zanzibar.map", "120_halo.map", "shared.map", "notes.txt"] {
+            std::fs::write(dir.join(f), b"").unwrap();
+        }
+        let names = |dir: &Path| -> Vec<String> {
+            chief_sources(dir).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect()
+        };
+        assert_eq!(names(&dir), ["riverworld.map", "120_halo.map", "shared.map", "zanzibar.map"]);
+        std::fs::write(dir.join("riverworld.map"), b"").unwrap();
+        assert_eq!(names(&dir), ["riverworld.map", "120_halo.map", "shared.map", "zanzibar.map"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+        // A folder that is not there: only Valhalla is tried, and not found.
+        assert_eq!(names(&dir), ["riverworld.map"]);
+    }
 }

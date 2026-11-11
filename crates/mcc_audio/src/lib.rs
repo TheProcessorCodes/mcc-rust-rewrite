@@ -5,14 +5,17 @@
 //! `docs/format/sound.md` has the data, `docs/viewer.md` "Sound" the rules.
 //!
 //! Music (`music.rs`) follows the map's scripts when they run, and the
-//! keys: M music on / off, Shift+M next track, N alternate loop, K mute,
+//! keys: M music on / off, Shift+M next track, N alternate loop; U plays
+//! Halo 3's campaign music on any map (`campaign.rs`; Shift+U next, Ctrl+U
+//! random), K mute,
 //! `-` / `=` master volume, H the bike's engine sound on / off;
 //! the pause menu's Sound tab sets the master, music, effects, ambience and
-//! dialogue volumes (`levels.rs`, saved next to the exe), its Dirt bike tab
+//! dialogue volumes (`levels.rs`, saved in the data folder), its Dirt bike tab
 //! the engine's. `MCC_AUDIO=0` turns sound off; it is off in `--shot`
 //! mode, where `MCC_AUDIO_TRACE=1` runs the logic without output and
 //! logs which emitters are active at each view.
 
+mod campaign;
 pub mod engine;
 pub mod halo1;
 pub mod halo2;
@@ -96,6 +99,15 @@ impl Plugin for HaloAudioPlugin {
             Update,
             engine::bike_engine.before(VolumeKeys).run_if(mcc_core::map::ready),
         );
+        // Halo 3's campaign music by hand, on any map, whatever its own
+        // sound (`campaign.rs`).
+        app.init_resource::<campaign::CampaignMusic>().add_systems(
+            Update,
+            (campaign::keys.run_if(mcc_core::map::playing), campaign::update)
+                .chain()
+                .after(VolumeKeys)
+                .run_if(mcc_core::map::ready),
+        );
         // A map's sounds go when it is unloaded (`mcc_core::map`).
         app.remove_on_map_unload::<Loader>()
             .remove_on_map_unload::<Sounds>()
@@ -172,6 +184,9 @@ fn unload_sounds(world: &mut World) {
     if let Some(mut music) = world.get_resource_mut::<music::MusicPlayer>() {
         let fresh = music.fresh();
         *music = fresh;
+    }
+    if let Some(mut campaign) = world.get_resource_mut::<campaign::CampaignMusic>() {
+        campaign.reset_player();
     }
     if let Some(mut trace) = world.get_resource_mut::<Trace>() {
         let on = trace.on;

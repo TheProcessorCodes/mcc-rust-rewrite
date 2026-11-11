@@ -17,6 +17,15 @@
 //! frame divided by `k` (`skate.rs`). The Spartan's bind pose is in Halo
 //! model units, Z up; `halo_to_skate` takes it into skate metres, where the
 //! Spartan (2.14 m real) comes out the skater's 1.8 m.
+//!
+//! Without Skate 3 there is no board and no `rig.json`: the rig is the
+//! Spartan's own skeleton (`halo_rig.rs`, [`HaloRig`]), which `main` makes
+//! from the same model as each map loads. On it the retarget changes
+//! nothing, and on foot and on the bike he keeps his own proportions.
+
+mod halo_rig;
+
+pub use halo_rig::{chief_rig, halo_rig};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -34,11 +43,11 @@ use serde::Deserialize;
 
 use blam_cache::CacheFile;
 use blam_geometry::render_model::ModelParts;
-use blam_geometry::{Scene, WORLD_UNIT_METRES};
+use blam_geometry::{Bone, Scene, WORLD_UNIT_METRES};
 use blam_texture::{Texture, rgba};
 
 use mcc_core::coords::to_halo;
-use mcc_core::skate::{RiderPose, SkateEnabled, assets_root, skating_on};
+use mcc_core::skate::{HaloRig, RiderPose, SkateEnabled, assets_root, skater_rig, skating_on};
 use mcc_textures::MaterialTextures;
 use mcc_world::lighting::{SceneLights, default_light, exposure};
 
@@ -99,17 +108,48 @@ pub struct ChiefModel {
 const PRIMARY: [f32; 3] = [0.34, 0.40, 0.21];
 const SECONDARY: [f32; 3] = [0.27, 0.31, 0.17];
 
+/// The armour colours Settings offers (`game_paths::key::ARMOUR`): name,
+/// primary and secondary (sRGB), our own picks in the spirit of Halo 3's
+/// list. The first is Master Chief's olive drab; red is left out, as it is
+/// the enemy Spartan's.
+pub const ARMOUR_COLOURS: [(&str, [f32; 3], [f32; 3]); 11] = [
+    ("Olive", PRIMARY, SECONDARY),
+    ("Steel", [0.42, 0.45, 0.48], [0.30, 0.32, 0.35]),
+    ("White", [0.85, 0.85, 0.83], [0.62, 0.62, 0.60]),
+    ("Orange", [0.80, 0.36, 0.08], [0.55, 0.24, 0.05]),
+    ("Gold", [0.78, 0.60, 0.18], [0.55, 0.42, 0.12]),
+    ("Green", [0.20, 0.50, 0.16], [0.14, 0.35, 0.11]),
+    ("Teal", [0.10, 0.45, 0.45], [0.07, 0.31, 0.31]),
+    ("Blue", [0.12, 0.25, 0.65], [0.08, 0.17, 0.45]),
+    ("Violet", [0.40, 0.20, 0.60], [0.28, 0.14, 0.42]),
+    ("Pink", [0.85, 0.45, 0.60], [0.60, 0.31, 0.42]),
+    ("Brown", [0.40, 0.27, 0.16], [0.28, 0.19, 0.11]),
+];
+
+/// The armour colour chosen in Settings, an index into [`ARMOUR_COLOURS`]
+/// (olive when none is saved or the name is unknown).
+pub fn armour() -> usize {
+    let saved = game_paths::settings().get(game_paths::key::ARMOUR).map(|s| s.trim().to_ascii_lowercase());
+    saved
+        .and_then(|s| ARMOUR_COLOURS.iter().position(|c| c.0.eq_ignore_ascii_case(&s)))
+        .unwrap_or(0)
+}
+
 /// The red team's primary and secondary colours (sRGB): the enemy Spartan.
 const RED: [[f32; 3]; 2] = [[0.62, 0.07, 0.06], [0.36, 0.05, 0.04]];
 
-fn primary_colour() -> [f32; 3] {
-    std::env::var("MCC_RIDER_COLOUR")
+/// The player's primary and secondary colours: the chosen [`armour`], with
+/// `MCC_RIDER_COLOUR` (dev) over the primary.
+fn armour_colours() -> [[f32; 3]; 2] {
+    let (_, primary, secondary) = ARMOUR_COLOURS[armour()];
+    let primary = std::env::var("MCC_RIDER_COLOUR")
         .ok()
         .and_then(|s| {
             let v: Vec<f32> = s.split(',').filter_map(|x| x.trim().parse().ok()).collect();
             <[f32; 3]>::try_from(v).ok()
         })
-        .unwrap_or(PRIMARY)
+        .unwrap_or(primary);
+    [primary, secondary]
 }
 
 /// Bakes a `two_change_color` shader's tint into its colour map:
@@ -151,8 +191,9 @@ fn bake_change_colour(
 #[derive(Resource)]
 pub struct PendingChief(pub Option<ChiefModel>);
 
-/// Decodes the map's Spartan and its colour maps. `None` (logged) when the
-/// map has none, e.g. most campaign maps carry only `masterchief`.
+/// Decodes the map's Spartan and its colour maps: the multiplayer Spartan,
+/// else the campaign's Master Chief. `None` (logged) when the map has
+/// neither or it does not decode.
 pub fn load_chief(cache: &CacheFile) -> Option<ChiefModel> {
     let mode = CHIEF_TAGS.iter().find_map(|name| cache.tags.find("mode", name))?;
     let resources = cache.resources().ok()?;
@@ -206,7 +247,7 @@ pub fn load_chief(cache: &CacheFile) -> Option<ChiefModel> {
             let shader = scene.materials.get(i as usize).and_then(|m| m.shader_tag);
             if let (Some(base), Some(shader)) = (base, shader)
                 && let Some(t) = textures.bitmaps.get(&base)
-                && let Some(baked) = bake_change_colour(cache, &resources, shader, t, [primary_colour(), SECONDARY])
+                && let Some(baked) = bake_change_colour(cache, &resources, shader, t, armour_colours())
             {
                 tinted.insert(i, baked);
                 if let Some(red) = bake_change_colour(cache, &resources, shader, t, RED) {
@@ -239,6 +280,7 @@ impl Plugin for RiderPlugin {
     fn build(&self, app: &mut App) {
         app.remove_on_map_unload::<SpartanStatue>()
             .remove_on_map_unload::<Rider>()
+            .remove_on_map_unload::<HaloRig>()
             .add_systems(mcc_core::map::MapStartup, spawn_rider)
             .add_systems(
                 PostUpdate,
@@ -403,6 +445,7 @@ fn spawn_rider(
     mut binds: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut pose: ResMut<RiderPose>,
     enabled: Option<Res<SkateEnabled>>,
+    halo: Option<Res<HaloRig>>,
 ) {
     let chief = pending.and_then(|mut p| p.0.take());
     if let Some(chief) = &chief {
@@ -410,19 +453,38 @@ fn spawn_rider(
         commands.insert_resource(statue);
     }
     let root = assets_root();
-    let rig: Vec<RigBone> = match read_json(&root.join("rig.json")) {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("rider: {e}; the rider stays a stick figure");
-            return;
+    // Skate 3's skater, or without Skate 3 the Spartan's own skeleton.
+    let rig: Vec<RigBone> = match halo.as_deref() {
+        Some(h) => {
+            info!("rider: Master Chief's own skeleton (no Skate 3)");
+            h.names
+                .iter()
+                .zip(&h.binds)
+                .map(|(name, m)| RigBone {
+                    name: name.clone(),
+                    bind: m.to_cols_array().map(f64::from),
+                    inverse_bind: m.inverse().to_cols_array(),
+                })
+                .collect()
         }
+        None => match skater_rig().map(|file| read_json(&file)) {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
+                warn!("rider: {e}; no rider is drawn");
+                return;
+            }
+            // Neither skeleton: `main` has said why.
+            None => return,
+        },
     };
     let k = pose.scale;
     let mut rider = Rider::default();
     let hidden = Visibility::Hidden;
 
-    // The board, unless skating is off in Settings.
-    let board = skating_on(enabled.as_deref()).then(|| read_json::<BoardFile>(&root.join("board.json")));
+    // The board, unless skating is off in Settings. Never on the Spartan's
+    // own skeleton: the board's joints are the skater's.
+    let board = (halo.is_none() && skating_on(enabled.as_deref()))
+        .then(|| read_json::<BoardFile>(&root.join("board.json")));
     match board {
         None => {}
         Some(Ok(board)) => {
@@ -553,67 +615,11 @@ fn spawn_chief(
         return Err(format!("{} bones", bones.len()));
     }
     let h = halo_to_skate(k);
-    let index = |name: &str| bones.iter().position(|b| b.name == name);
-    let chief_at = |i: usize| h.transform_point3(bones[i].world.w_axis.truncate());
     let skate_bind = |name: &str| -> Option<Mat4> {
         let r = rig.iter().find(|b| b.name == name)?;
         Some(Mat4::from_cols_array(&r.bind.map(|v| v as f32)))
     };
-    let skate_at = |name: &str| skate_bind(name).map(|m| m.w_axis.truncate());
-    let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).try_normalize();
-
-    // Turn the Spartan to face the way the skater faces (heel to toe).
-    let facing = (|| {
-        let (foot, toe) = (index("l_foot")?, index("l_toe")?);
-        let from = flat(chief_at(toe) - chief_at(foot))?;
-        let to = flat(skate_at("LEFTTOEBASE")? - skate_at("LEFTFOOT")?)?;
-        Some(Quat::from_rotation_arc(from, to))
-    })()
-    .unwrap_or(Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2));
-
-    // Per bone: the skate bone it follows and `Bk^-1 * fit * H`, the move
-    // from Halo model space to the skater's bind space.
-    let mut follow: Vec<Option<(String, Mat4)>> = Vec::with_capacity(bones.len());
-    for (i, bone) in bones.iter().enumerate() {
-        let parent = bone.parent.map(usize::from).filter(|&p| p < i);
-        let mapped = MAPPING.iter().find(|m| m.0 == bone.name).and_then(|&(_, skate, child)| {
-            let bind = skate_bind(skate)?;
-            if FLAT_FEET.contains(&bone.name.as_str()) {
-                // The ground point under the ankle onto the skater's,
-                // turned only to face the same way: soles flat on the deck.
-                // Toes move with their foot.
-                let foot = if bone.name.ends_with("toe") { parent? } else { i };
-                let ankle = MAPPING.iter().find(|m| m.0 == bones[foot].name)?.1;
-                let ground = Vec3::new(1.0, 0.0, 1.0);
-                let from = chief_at(foot) * ground;
-                let to = skate_at(ankle)? * ground;
-                let fit = Mat4::from_rotation_translation(facing, to - facing * from);
-                return Some((skate.to_string(), bind.inverse() * fit * h));
-            }
-            let (from, to) = (chief_at(i), bind.w_axis.truncate());
-            let rotation = child
-                .and_then(|(halo_child, skate_child)| {
-                    let a = (facing * (chief_at(index(halo_child)?) - from)).try_normalize()?;
-                    let b = (skate_at(skate_child)? - to).try_normalize()?;
-                    Some(Quat::from_rotation_arc(a, b) * facing)
-                })
-                .or_else(|| {
-                    // Terminal bones keep their parent's alignment, so
-                    // wrists, toes and the head stay attached.
-                    let p = parent?;
-                    let (_, parent_skate, _) =
-                        MAPPING.iter().find(|m| m.0 == bones[p].name)?;
-                    let a = (facing * (from - chief_at(p))).try_normalize()?;
-                    let b = (to - skate_at(parent_skate)?).try_normalize()?;
-                    Some(Quat::from_rotation_arc(a, b) * facing)
-                })
-                .unwrap_or(facing);
-            let fit = Mat4::from_rotation_translation(rotation, to - rotation * from);
-            Some((skate.to_string(), bind.inverse() * fit * h))
-        });
-        let entry = mapped.or_else(|| parent.and_then(|p| follow[p].clone()));
-        follow.push(entry);
-    }
+    let follow = follow(bones, skate_bind, k);
 
     let mut joints = Vec::with_capacity(bones.len());
     let first = rider.joints.len();
@@ -697,6 +703,74 @@ fn spawn_chief(
         }
     }
     Ok(())
+}
+
+/// Per Halo bone: the skate bone it follows and `Bk^-1 * fit * H`, the move
+/// from Halo model space to the skater's bind space; `skate_bind` gives a
+/// skate bone's bind pose by name. Each mapped Halo bone is moved rigidly
+/// so its joint lands on the skate bone's and its segment points along the
+/// skate bone's; the others follow their parent. `None`: follows nothing.
+fn follow(bones: &[Bone], skate_bind: impl Fn(&str) -> Option<Mat4>, k: f32) -> Vec<Option<(String, Mat4)>> {
+    let h = halo_to_skate(k);
+    let index = |name: &str| bones.iter().position(|b| b.name == name);
+    let chief_at = |i: usize| h.transform_point3(bones[i].world.w_axis.truncate());
+    let skate_at = |name: &str| skate_bind(name).map(|m| m.w_axis.truncate());
+    let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).try_normalize();
+
+    // Turn the Spartan to face the way the skater faces (heel to toe).
+    let facing = (|| {
+        let (foot, toe) = (index("l_foot")?, index("l_toe")?);
+        let from = flat(chief_at(toe) - chief_at(foot))?;
+        let to = flat(skate_at("LEFTTOEBASE")? - skate_at("LEFTFOOT")?)?;
+        Some(Quat::from_rotation_arc(from, to))
+    })()
+    .unwrap_or(Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2));
+
+    // Per bone: the skate bone it follows and `Bk^-1 * fit * H`, the move
+    // from Halo model space to the skater's bind space.
+    let mut follow: Vec<Option<(String, Mat4)>> = Vec::with_capacity(bones.len());
+    for (i, bone) in bones.iter().enumerate() {
+        let parent = bone.parent.map(usize::from).filter(|&p| p < i);
+        let mapped = MAPPING.iter().find(|m| m.0 == bone.name).and_then(|&(_, skate, child)| {
+            let bind = skate_bind(skate)?;
+            if FLAT_FEET.contains(&bone.name.as_str()) {
+                // The ground point under the ankle onto the skater's,
+                // turned only to face the same way: soles flat on the deck.
+                // Toes move with their foot.
+                let foot = if bone.name.ends_with("toe") { parent? } else { i };
+                let ankle = MAPPING.iter().find(|m| m.0 == bones[foot].name)?.1;
+                let ground = Vec3::new(1.0, 0.0, 1.0);
+                let from = chief_at(foot) * ground;
+                let to = skate_at(ankle)? * ground;
+                let fit = Mat4::from_rotation_translation(facing, to - facing * from);
+                return Some((skate.to_string(), bind.inverse() * fit * h));
+            }
+            let (from, to) = (chief_at(i), bind.w_axis.truncate());
+            let rotation = child
+                .and_then(|(halo_child, skate_child)| {
+                    let a = (facing * (chief_at(index(halo_child)?) - from)).try_normalize()?;
+                    let b = (skate_at(skate_child)? - to).try_normalize()?;
+                    Some(Quat::from_rotation_arc(a, b) * facing)
+                })
+                .or_else(|| {
+                    // Terminal bones keep their parent's alignment, so
+                    // wrists, toes and the head stay attached.
+                    let p = parent?;
+                    let (_, parent_skate, _) =
+                        MAPPING.iter().find(|m| m.0 == bones[p].name)?;
+                    let a = (facing * (from - chief_at(p))).try_normalize()?;
+                    let b = (to - skate_at(parent_skate)?).try_normalize()?;
+                    Some(Quat::from_rotation_arc(a, b) * facing)
+                })
+                .unwrap_or(facing);
+            let fit = Mat4::from_rotation_translation(rotation, to - rotation * from);
+            Some((skate.to_string(), bind.inverse() * fit * h))
+        });
+        let entry = mapped.or_else(|| parent.and_then(|p| follow[p].clone()));
+        follow.push(entry);
+    }
+
+    follow
 }
 
 /// A Spartan material, its colour map tinted from `tinted` where it has a

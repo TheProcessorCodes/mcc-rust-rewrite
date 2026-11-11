@@ -186,6 +186,12 @@ pub struct CollisionMaterial {
     /// The shader tag's path.
     pub shader: String,
     pub shader_class: String,
+    /// The global materials (`matg`) the shader names, what the surface is
+    /// made of (`tough_terrain_dirt`, `hard_metal_thick`, `soft_terrain_snow`
+    /// ...): one, or a terrain shader's (`rmtr`) four layers. Empty when the
+    /// shader names none or the game's shaders are not read for it (Halo CE,
+    /// Halo 2, Reach).
+    pub global_materials: Vec<String>,
 }
 
 /// Where a player can start: a respawn point's place and facing.

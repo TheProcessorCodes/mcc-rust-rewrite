@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "blam_anim"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "game_paths",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "blam_cache"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "flate2",
  "game_paths",
@@ -1655,7 +1655,7 @@ dependencies = [
 
 [[package]]
 name = "blam_cli"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "blam_anim",
@@ -1672,7 +1672,7 @@ dependencies = [
 
 [[package]]
 name = "blam_effect"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "blam_texture",
@@ -1682,7 +1682,7 @@ dependencies = [
 
 [[package]]
 name = "blam_geometry"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "game_paths",
@@ -1692,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "blam_h1"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "blam_effect",
@@ -1709,7 +1709,7 @@ dependencies = [
 
 [[package]]
 name = "blam_h2"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_geometry",
  "blam_texture",
@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "blam_reach"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "blam_geometry",
@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "blam_script"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "game_paths",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "blam_sound"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "game_paths",
@@ -1753,7 +1753,7 @@ dependencies = [
 
 [[package]]
 name = "blam_texture"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "blam_geometry",
@@ -2434,7 +2434,7 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
 name = "fsb_celt"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "cc",
 ]
@@ -2505,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "game_paths"
-version = "0.1.0"
+version = "0.0.3"
 
 [[package]]
 name = "getrandom"
@@ -3233,7 +3233,7 @@ dependencies = [
 
 [[package]]
 name = "mcc-rust-rewrite"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "bevy",
@@ -3265,7 +3265,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_ai"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
  "blam_cache",
@@ -3286,7 +3286,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_anim"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
  "blam_anim",
@@ -3303,7 +3303,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_audio"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "bevy",
@@ -3318,7 +3318,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_bike"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
  "blam_geometry",
@@ -3334,7 +3334,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_core"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "bevy",
@@ -3345,7 +3345,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_effects"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
  "blam_cache",
@@ -3361,9 +3361,10 @@ dependencies = [
 
 [[package]]
 name = "mcc_foot"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
+ "blam_cache",
  "blam_geometry",
  "blam_h2",
  "game_paths",
@@ -3374,13 +3375,15 @@ dependencies = [
 
 [[package]]
 name = "mcc_rider"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
  "blam_cache",
  "blam_geometry",
  "blam_texture",
+ "game_paths",
  "half",
+ "mcc_bike",
  "mcc_core",
  "mcc_textures",
  "mcc_world",
@@ -3390,7 +3393,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_script"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
  "blam_cache",
@@ -3405,7 +3408,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_setup"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "game_paths",
@@ -3420,7 +3423,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_skate"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
  "blam_geometry",
@@ -3431,7 +3434,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_swim"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
  "blam_geometry",
@@ -3440,7 +3443,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_textures"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "blam_cache",
  "blam_geometry",
@@ -3449,7 +3452,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_weapons"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "bevy",
  "blam_cache",
@@ -3465,7 +3468,7 @@ dependencies = [
 
 [[package]]
 name = "mcc_world"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "bevy",
@@ -4419,7 +4422,7 @@ dependencies = [
 
 [[package]]
 name = "reflex_assets"
-version = "0.1.0"
+version = "0.0.3"
 dependencies = [
  "flate2",
  "game_paths",

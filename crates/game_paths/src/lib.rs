@@ -14,16 +14,20 @@
 //!
 //! No bevy and no other dependencies: the `blam_*` readers' tests use it too.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 /// The setup keys `setup.env` holds.
 pub mod key {
     /// The MCC install folder (the one holding `halo3\maps`).
     pub const MCC: &str = "MCC";
-    /// The converted Skate 3 data (holding `private\game.json`).
+    /// The converted Skate 3 data (holding `private\game.json`), or
+    /// [`SKATE_SKIPPED`](super::SKATE_SKIPPED) when the player chose to go
+    /// without Skate 3.
     pub const SKATE_ASSETS: &str = "SKATE_ASSETS";
     /// The folder the player chose for Skate 3 (the extracted game or the
-    /// one holding the `.iso`), kept to show in the settings.
+    /// one holding the `.iso`), kept to show in the settings. Not there
+    /// when Skate 3 was skipped.
     pub const SKATE_SOURCE: &str = "SKATE_SOURCE";
     /// The player's name, shown in the kill feed.
     pub const USERNAME: &str = "USERNAME";
@@ -40,10 +44,41 @@ pub mod key {
     /// Whether skating is on: `off` turns it off; anything else, or no
     /// line, leaves it on. See [`skating_enabled`](super::skating_enabled).
     pub const SKATING: &str = "SKATING";
+    /// `on` shows the skate tricks' names and score; off is the default.
+    /// See [`trick_display`](super::trick_display).
+    pub const TRICK_DISPLAY: &str = "TRICK_DISPLAY";
+    /// The last map started from the map menu (its menu name, `warthog_run`,
+    /// `h2:ascension`, ...), which the menu opens on next time.
+    pub const LAST_MAP: &str = "LAST_MAP";
+    /// The campaign difficulty the map menu starts levels on: `easy`,
+    /// `normal` (the default), `heroic` or `legendary`.
+    pub const DIFFICULTY: &str = "DIFFICULTY";
+    /// The Spartan's armour colour, one of `mcc_rider`'s colour names.
+    pub const ARMOUR: &str = "ARMOUR";
+    /// How fast the mouse turns the camera, in percent of the stock speed
+    /// (`mcc_core::view`).
+    pub const MOUSE_SENSITIVITY: &str = "MOUSE_SENSITIVITY";
+    /// How fast the right stick turns the camera, in percent.
+    pub const STICK_SENSITIVITY: &str = "STICK_SENSITIVITY";
+    /// `on` turns looking up and down round (mouse and stick).
+    pub const INVERT_LOOK: &str = "INVERT_LOOK";
+    /// Every camera's field of view, in percent of its own.
+    pub const FIELD_OF_VIEW: &str = "FIELD_OF_VIEW";
+    /// `windowed`, or borderless fullscreen (the default).
+    pub const DISPLAY_MODE: &str = "DISPLAY_MODE";
+    /// `off` turns vsync off; on is the default.
+    pub const VSYNC: &str = "VSYNC";
+
+    /// The keys that name the player's games and their converted data:
+    /// what resetting the settings keeps ([`reset_settings`](super::reset_settings)).
+    pub const GAMES: [&str; 5] = [MCC, SKATE_ASSETS, SKATE_SOURCE, SKATE_CONVERTER, REFLEX];
 }
 
 /// What `REFLEX` holds when the player chose to go without Reflex.
 pub const REFLEX_SKIPPED: &str = "skip";
+
+/// What `SKATE_ASSETS` holds when the player chose to go without Skate 3.
+pub const SKATE_SKIPPED: &str = "skip";
 
 /// Whether the player chose in setup to play without Reflex (the bike is
 /// then our own model, with no engine sound). `REFLEX_GAME=skip` does the same
@@ -102,6 +137,30 @@ pub fn reflex_chosen() -> Option<PathBuf> {
         return Some(PathBuf::from(p));
     }
     settings().get(key::REFLEX).filter(|v| *v != REFLEX_SKIPPED).map(PathBuf::from)
+}
+
+/// The version players see: the release's name.
+pub const VERSION: &str = concat!("beta-", env!("CARGO_PKG_VERSION"));
+
+/// A saved file of the game's own (the sound levels, the bike's tuning) by
+/// its name: its text from the data folder ([`settings_dir`]). Builds up to
+/// beta-0.0.2 kept these beside the exe; one left there is read while the
+/// data folder has none, so nothing a player set is lost.
+pub fn read_saved(name: &str) -> Option<String> {
+    std::fs::read_to_string(settings_dir().join(name)).ok().or_else(|| {
+        let beside = std::env::current_exe().ok()?.parent()?.join(name);
+        std::fs::read_to_string(beside).ok()
+    })
+}
+
+/// Saves a file of the game's own in the data folder ([`settings_dir`]),
+/// which a player can always write to (the exe's folder may be read-only).
+pub fn write_saved(name: &str, text: &str) -> Result<(), String> {
+    let dir = settings_dir();
+    let path = dir.join(name);
+    std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(&path, text))
+        .map_err(|e| format!("could not save {}: {e}", path.display()))
 }
 
 /// Where the setup and the converted Skate 3 data live:
@@ -225,9 +284,9 @@ pub fn reach_maps() -> Option<PathBuf> {
 pub const LANGUAGES: [&str; 6] = ["english", "french", "german", "italian", "mexican", "spanish"];
 
 /// The language Halo 3's dialogue plays in: `%MCC_LANGUAGE%` (a dev
-/// override), else `LANGUAGE` in the saved setup (`key::LANGUAGE`; setup
-/// does not ask, so it is only there when written by hand), else
-/// `english`. Anything not in [`LANGUAGES`] falls back to `english`.
+/// override), else `LANGUAGE` in the saved setup (`key::LANGUAGE`, chosen
+/// in the menu's Settings: [`set_language`]), else `english`. Anything not
+/// in [`LANGUAGES`] falls back to `english`.
 pub fn language() -> &'static str {
     let wanted = std::env::var("MCC_LANGUAGE")
         .ok()
@@ -236,6 +295,34 @@ pub fn language() -> &'static str {
     wanted
         .and_then(|w| LANGUAGES.iter().copied().find(|l| *l == w))
         .unwrap_or("english")
+}
+
+/// Saves one setting (`key`, a [`key`] constant) in the saved setup,
+/// keeping the others.
+pub fn save_setting(key: &str, value: &str) -> Result<(), String> {
+    let path = settings_path();
+    let mut s = Settings::read(&path);
+    s.set(key, value);
+    s.write(&path)
+}
+
+/// Puts every setting back to its default by forgetting it, keeping the
+/// game folders and their converted data ([`key::GAMES`]) and any comment
+/// lines. The game's other saved files (the bike's tuning, the sound
+/// levels, [`read_saved`]) are not touched.
+pub fn reset_settings() -> Result<(), String> {
+    let path = settings_path();
+    let mut s = Settings::read(&path);
+    s.keep_only(&key::GAMES);
+    s.write(&path)
+}
+
+/// Saves the dialogue language (one of [`LANGUAGES`]) for the next map load.
+pub fn set_language(language: &str) -> Result<(), String> {
+    let path = settings_path();
+    let mut s = Settings::read(&path);
+    s.set(key::LANGUAGE, language);
+    s.write(&path)
 }
 
 /// A Halo 3 map by bare name (`riverworld`), when it is installed. For tests.
@@ -264,26 +351,68 @@ pub fn is_skate_assets(assets: &Path) -> bool {
     SKATE_FILES.iter().all(|f| assets.join(f).is_file())
 }
 
-/// The converted Skate 3 data: `%MCC_SKATE_ASSETS%` or
-/// `%IW4L_SKATE_ASSETS%`, else the saved setup. None before setup has run.
-pub fn skate_assets() -> Option<PathBuf> {
-    ["MCC_SKATE_ASSETS", "IW4L_SKATE_ASSETS"]
-        .iter()
-        .find_map(std::env::var_os)
-        .map(PathBuf::from)
-        .or_else(|| settings().get(key::SKATE_ASSETS).map(PathBuf::from))
+/// The dev override for the Skate 3 data, `%MCC_SKATE_ASSETS%` or
+/// `%IW4L_SKATE_ASSETS%`: a folder, or [`SKATE_SKIPPED`].
+fn skate_override() -> Option<OsString> {
+    ["MCC_SKATE_ASSETS", "IW4L_SKATE_ASSETS"].iter().find_map(std::env::var_os)
 }
 
-/// Whether skating is on (the default). Off, maps load no grind rails, no
-/// skate session and no board, and J does nothing; setup still asks for
-/// Skate 3, as the rider's skeleton comes from it. `MCC_SKATING=off` (or
-/// `on`) overrides the saved choice for a dev run.
+/// Whether a Skate 3 choice is "without Skate 3": the override when one is
+/// set (`env`), else the saved `SKATE_ASSETS` (`saved`).
+fn skipped(env: Option<&OsStr>, saved: Option<&str>) -> bool {
+    match env {
+        Some(v) => v == SKATE_SKIPPED,
+        None => saved == Some(SKATE_SKIPPED),
+    }
+}
+
+/// The Skate 3 data a choice names: the override when one is set, else the
+/// saved folder; never the skip.
+fn chosen_skate(env: Option<&OsStr>, saved: Option<&str>) -> Option<PathBuf> {
+    if skipped(env, saved) {
+        return None;
+    }
+    env.map(PathBuf::from).or_else(|| saved.map(PathBuf::from))
+}
+
+/// Whether the player chose in setup to play without Skate 3 (no skateboard
+/// or grind rails, and the Spartan's skeleton comes from MCC's Master Chief).
+/// `MCC_SKATE_ASSETS=skip` does the same for a dev run, and an override
+/// naming a folder wins over a saved skip.
+pub fn skate_skipped() -> bool {
+    skipped(skate_override().as_deref(), settings().get(key::SKATE_ASSETS))
+}
+
+/// The converted Skate 3 data: `%MCC_SKATE_ASSETS%` or
+/// `%IW4L_SKATE_ASSETS%`, else the saved setup. None before setup has run
+/// and when Skate 3 was skipped. See [`skate_ready`] for whether it is usable.
+pub fn skate_assets() -> Option<PathBuf> {
+    chosen_skate(skate_override().as_deref(), settings().get(key::SKATE_ASSETS))
+}
+
+/// Whether Skate 3 is set up: not skipped, its converted data there
+/// ([`is_skate_assets`]), and the `rig.json` and `board.json` setup derives
+/// from it beside that. The board, skating and the skater's skeleton all
+/// need it; without it the Spartan's skeleton comes from MCC's Master Chief
+/// and skating is off.
+pub fn skate_ready() -> bool {
+    skate_assets().is_some_and(|a| {
+        is_skate_assets(&a) && a.join("rig.json").is_file() && a.join("board.json").is_file()
+    })
+}
+
+/// Whether skating is on: Skate 3 is set up ([`skate_ready`]) and the player
+/// has not turned it off (on is the default). Off, maps load no grind rails,
+/// no skate session and no board, and J does nothing. `MCC_SKATING=off` (or
+/// `on`) overrides the saved choice for a dev run; nothing turns it on
+/// without Skate 3.
 pub fn skating_enabled() -> bool {
     let off = |v: &str| v.trim().eq_ignore_ascii_case("off");
-    match std::env::var("MCC_SKATING") {
+    let chosen = match std::env::var("MCC_SKATING") {
         Ok(v) => !off(&v),
         Err(_) => !settings().get(key::SKATING).is_some_and(off),
-    }
+    };
+    chosen && skate_ready()
 }
 
 /// Saves whether skating is on.
@@ -292,6 +421,12 @@ pub fn set_skating_enabled(on: bool) -> Result<(), String> {
     let mut s = Settings::read(&path);
     s.set(key::SKATING, if on { "on" } else { "off" });
     s.write(&path)
+}
+
+/// Whether skating shows each trick's name and score: off until the player
+/// turns it on in Settings.
+pub fn trick_display() -> bool {
+    settings().get(key::TRICK_DISPLAY).is_some_and(|v| v.trim().eq_ignore_ascii_case("on"))
 }
 
 /// The name a player has until they choose one.
@@ -359,6 +494,12 @@ impl Settings {
         self.lines.retain(|line| line.split_once('=').is_none_or(|(name, _)| name.trim() != key));
     }
 
+    /// Drops every `KEY=value` line whose key is not in `keys`; other lines
+    /// (comments, blanks) stay.
+    pub fn keep_only(&mut self, keys: &[&str]) {
+        self.lines.retain(|line| line.split_once('=').is_none_or(|(name, _)| keys.contains(&name.trim())));
+    }
+
     /// Writes the file, creating its folder.
     pub fn write(&self, path: &Path) -> Result<(), String> {
         if let Some(dir) = path.parent() {
@@ -397,6 +538,56 @@ mod tests {
         assert_eq!(s.lines.len(), 3);
         s.remove(key::REFLEX);
         assert_eq!(s.get(key::REFLEX), None);
+    }
+
+    #[test]
+    fn resetting_keeps_the_games_and_comments() {
+        let mut s = Settings {
+            lines: vec![
+                "# mine".into(),
+                "MCC=\"E:\\Games\\MCC\"".into(),
+                "USERNAME=\"Player One\"".into(),
+                "SKATE_ASSETS=\"skip\"".into(),
+                "FIELD_OF_VIEW=\"110\"".into(),
+                "REFLEX=\"E:\\Games\\Reflex\"".into(),
+            ],
+        };
+        s.keep_only(&key::GAMES);
+        assert_eq!(s.lines.len(), 4);
+        assert_eq!(s.lines[0], "# mine");
+        assert_eq!(s.get(key::MCC), Some(r"E:\Games\MCC"));
+        assert_eq!(s.get(key::SKATE_ASSETS), Some(SKATE_SKIPPED));
+        assert_eq!(s.get(key::REFLEX), Some(r"E:\Games\Reflex"));
+        assert_eq!(s.get(key::USERNAME), None);
+        assert_eq!(s.get(key::FIELD_OF_VIEW), None);
+    }
+
+    #[test]
+    fn skate_skip_comes_from_the_override_else_the_saved_choice() {
+        let os = |s: &'static str| Some(OsStr::new(s));
+        let folder = r"E:\Games\skate-data\assets";
+        // The override wins, whatever is saved.
+        assert!(skipped(os("skip"), None));
+        assert!(skipped(os("skip"), Some(folder)));
+        assert!(!skipped(os(folder), None));
+        assert!(!skipped(os(folder), Some(SKATE_SKIPPED)));
+        // Without one, the saved choice.
+        assert!(skipped(None, Some(SKATE_SKIPPED)));
+        assert!(!skipped(None, Some(folder)));
+        // Nothing set is not a skip: setup has not asked yet.
+        assert!(!skipped(None, None));
+    }
+
+    #[test]
+    fn skate_assets_are_never_the_skip() {
+        let os = |s: &'static str| Some(OsStr::new(s));
+        let (mine, saved) = (r"D:\dev\assets", r"E:\Games\skate-data\assets");
+        assert_eq!(chosen_skate(os("skip"), Some(saved)), None);
+        assert_eq!(chosen_skate(None, Some(SKATE_SKIPPED)), None);
+        assert_eq!(chosen_skate(os(mine), Some(SKATE_SKIPPED)), Some(PathBuf::from(mine)));
+        assert_eq!(chosen_skate(os(mine), Some(saved)), Some(PathBuf::from(mine)));
+        assert_eq!(chosen_skate(None, Some(saved)), Some(PathBuf::from(saved)));
+        assert_eq!(chosen_skate(None, None), None);
     }
 
     #[test]

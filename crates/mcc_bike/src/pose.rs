@@ -6,9 +6,10 @@
 //! the right stick and the torso tilts with them; two-bone IK keeps the
 //! feet on the pegs and the hands on the grips (which turn with the bars).
 //!
-//! The skater rig (`rig.json`, skate metres) faces +Z with its left at +X
-//! and Y up: the bike's own frame. Poses come out in skate metres in the
-//! bike frame; `mod.rs` places them in the world.
+//! The rig (Skate 3's `rig.json`, or without Skate 3 Master Chief's own
+//! skeleton, `mcc_core::skate::HaloRig`; skate metres) faces +Z with its
+//! left at +X and Y up: the bike's own frame. Poses come out in skate metres
+//! in the bike frame; `mod.rs` places them in the world.
 
 use std::collections::HashMap;
 
@@ -23,7 +24,7 @@ struct RigBone {
     bind: [f64; 16],
 }
 
-/// The skater rig's bind pose.
+/// The rig's bind pose: Skate 3's skater, or Master Chief's own skeleton.
 pub struct Rig {
     pub names: Vec<String>,
     bind: Vec<Mat4>,
@@ -49,7 +50,34 @@ const TORSO: f32 = 0.78;
 /// him smaller; on foot and on the board he keeps his size.
 pub const RIDER_SIZE: f32 = 0.85;
 
+/// The bones the poses need: the trunk and both sides' limbs.
+const REQUIRED: [&str; 16] = [
+    "HIPS",
+    "SPINE",
+    "NECK",
+    "HEAD",
+    "LEFTARM",
+    "LEFTFOREARM",
+    "LEFTHAND",
+    "LEFTUPLEG",
+    "LEFTLEG",
+    "LEFTFOOT",
+    "RIGHTARM",
+    "RIGHTFOREARM",
+    "RIGHTHAND",
+    "RIGHTUPLEG",
+    "RIGHTLEG",
+    "RIGHTFOOT",
+];
+
+/// The limbs the IK bends, on each side: upper, middle and end bone.
+const LIMBS: [[&str; 3]; 2] = [["ARM", "FOREARM", "HAND"], ["UPLEG", "LEG", "FOOT"]];
+
+/// The shortest a limb segment may be, skate metres.
+const MIN_LIMB: f32 = 0.01;
+
 impl Rig {
+    /// Skate 3's skater, from `rig.json`.
     pub fn load(path: &std::path::Path) -> Result<Rig, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let bones: Vec<RigBone> =
@@ -59,11 +87,34 @@ impl Rig {
             .iter()
             .map(|b| Mat4::from_cols_array(&b.bind.map(|v| v as f32)))
             .collect();
+        Rig::from_binds(names, bind, &path.display().to_string())
+    }
+
+    /// A rig from its bones' names and bind poses (skate metres), `what`
+    /// naming it in errors. Fails when a bone the poses need is missing, a
+    /// bind is not finite or a limb has no length.
+    pub fn from_binds(names: Vec<String>, bind: Vec<Mat4>, what: &str) -> Result<Rig, String> {
+        if names.len() != bind.len() {
+            return Err(format!("{what}: {} names for {} bones", names.len(), bind.len()));
+        }
         let index = names.iter().enumerate().map(|(i, n)| (n.clone(), i)).collect();
         let rig = Rig { names, bind, index };
-        for n in ["HIPS", "SPINE", "NECK", "HEAD", "LEFTARM", "LEFTFOREARM", "LEFTHAND", "LEFTUPLEG", "LEFTLEG", "LEFTFOOT"] {
+        for n in REQUIRED {
             if !rig.index.contains_key(n) {
-                return Err(format!("{}: no bone {n}", path.display()));
+                return Err(format!("{what}: no bone {n}"));
+            }
+        }
+        if let Some(i) = rig.bind.iter().position(|m| !m.is_finite()) {
+            return Err(format!("{what}: bone {} is not finite", rig.names[i]));
+        }
+        for prefix in ["LEFT", "RIGHT"] {
+            for limb in LIMBS {
+                let [a, b, c] = limb.map(|part| format!("{prefix}{part}"));
+                for (from, to) in [(&a, &b), (&b, &c)] {
+                    if rig.at(from).distance(rig.at(to)) < MIN_LIMB {
+                        return Err(format!("{what}: bone {from} has no length"));
+                    }
+                }
             }
         }
         Ok(rig)
@@ -173,7 +224,10 @@ impl Rig {
         let l2 = self.at(b).distance(self.at(c));
         let d = target - root;
         let dir = d.normalize_or(Vec3::NEG_Y);
-        let dist = d.length().clamp((l1 - l2).abs() + 1e-3, l1 + l2 - 1e-4);
+        // In reach and never folded flat. A limb too short for both (which
+        // `from_binds` refuses) reaches out straight rather than panicking.
+        let lo = (l1 - l2).abs() + 1e-3;
+        let dist = d.length().clamp(lo, (l1 + l2 - 1e-4).max(lo));
         let cos = ((l1 * l1 + dist * dist - l2 * l2) / (2.0 * l1 * dist)).clamp(-1.0, 1.0);
         let sin = (1.0 - cos * cos).max(0.0).sqrt();
         let bend = (pole - dir * pole.dot(dir)).normalize_or(dir.any_orthonormal_vector());
@@ -193,5 +247,115 @@ pub fn arc(from: Vec3, to: Vec3) -> Quat {
     match (from.try_normalize(), to.try_normalize()) {
         (Some(a), Some(b)) => Quat::from_rotation_arc(a, b),
         _ => Quat::IDENTITY,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physics::{BAR_HALF_WIDTH, bar_centre};
+
+    /// A made-up rig (our own round numbers, not any game's): bone and
+    /// joint, skate metres, facing +Z with the left at +X, soles at y = 0.
+    /// Places only, as Master Chief's own skeleton has.
+    const JOINTS: [(&str, [f32; 3]); 27] = [
+        ("HIPS", [0.0, 0.95, 0.0]),
+        ("SPINE", [0.0, 1.05, 0.0]),
+        ("SPINE1", [0.0, 1.15, 0.0]),
+        ("SPINE2", [0.0, 1.25, 0.0]),
+        ("SPINE3", [0.0, 1.35, 0.0]),
+        ("NECK", [0.0, 1.48, 0.0]),
+        ("NECK1", [0.0, 1.52, 0.0]),
+        ("HEAD", [0.0, 1.58, 0.01]),
+        ("LEFTSHOULDER", [0.05, 1.42, 0.0]),
+        ("LEFTARM", [0.19, 1.42, 0.0]),
+        ("LEFTFOREARM", [0.21, 1.14, 0.0]),
+        ("LEFTHAND", [0.22, 0.88, 0.02]),
+        ("RIGHTSHOULDER", [-0.05, 1.42, 0.0]),
+        ("RIGHTARM", [-0.19, 1.42, 0.0]),
+        ("RIGHTFOREARM", [-0.21, 1.14, 0.0]),
+        ("RIGHTHAND", [-0.22, 0.88, 0.02]),
+        ("LEFTUPLEG", [0.09, 0.9, 0.0]),
+        ("LEFTLEG", [0.1, 0.5, 0.01]),
+        ("LEFTFOOT", [0.1, 0.1, -0.01]),
+        ("LEFTTOEBASE", [0.1, 0.02, 0.13]),
+        ("RIGHTUPLEG", [-0.09, 0.9, 0.0]),
+        ("RIGHTLEG", [-0.1, 0.5, 0.01]),
+        ("RIGHTFOOT", [-0.1, 0.1, -0.01]),
+        ("RIGHTTOEBASE", [-0.1, 0.02, 0.13]),
+        ("SKATEBOARD_ROOT", [0.0; 3]),
+        ("TRUCK_FRONT", [0.0; 3]),
+        ("TRUCK_BACK", [0.0; 3]),
+    ];
+
+    fn bones() -> (Vec<String>, Vec<Mat4>) {
+        JOINTS.iter().map(|(n, p)| (n.to_string(), Mat4::from_translation(Vec3::from(*p)))).unzip()
+    }
+
+    fn rig() -> Rig {
+        let (names, bind) = bones();
+        Rig::from_binds(names, bind, "test rig").expect("a rig")
+    }
+
+    #[test]
+    fn from_binds_refuses_what_the_poses_cannot_use() {
+        let (mut names, mut bind) = bones();
+        let i = names.iter().position(|n| n == "RIGHTLEG").unwrap();
+        names.remove(i);
+        bind.remove(i);
+        let e = Rig::from_binds(names, bind, "test rig").err().expect("no RIGHTLEG");
+        assert!(e.contains("RIGHTLEG"), "{e}");
+
+        // A shin of no length: the knee on the ankle.
+        let (names, mut bind) = bones();
+        let at = |n: &str| names.iter().position(|b| b == n).unwrap();
+        bind[at("LEFTLEG")] = bind[at("LEFTFOOT")];
+        let e = Rig::from_binds(names.clone(), bind, "test rig").err().expect("no shin");
+        assert!(e.contains("LEFTLEG"), "{e}");
+
+        let (names, mut bind) = bones();
+        bind[3].w_axis.y = f32::INFINITY;
+        assert!(Rig::from_binds(names, bind, "test rig").is_err());
+
+        let (names, mut bind) = bones();
+        bind.pop();
+        assert!(Rig::from_binds(names, bind, "test rig").is_err());
+    }
+
+    /// `limb` on a limb of no length reaches straight, never panicking (it
+    /// did, in `f32::clamp`, with its bounds crossed).
+    #[test]
+    fn a_limb_of_no_length_does_not_panic() {
+        let (names, bind) = bones();
+        let index = names.iter().enumerate().map(|(i, n)| (n.clone(), i)).collect();
+        let mut rig = Rig { names, bind, index };
+        let flat = rig.bind("LEFTARM");
+        for n in ["LEFTFOREARM", "LEFTHAND"] {
+            let i = rig.index[n];
+            rig.bind[i] = flat;
+        }
+        let (middle, end) = rig.limb("LEFTARM", "LEFTFOREARM", "LEFTHAND", Vec3::ZERO, Vec3::Y, Vec3::Z);
+        assert!(!middle.is_nan() && !end.is_nan(), "{middle} {end}");
+    }
+
+    #[test]
+    fn every_stance_poses_finite() {
+        let rig = rig();
+        let centre = bar_centre();
+        let side = Vec3::X * BAR_HALF_WIDTH;
+        for x in [-1.0f32, 0.0, 1.0] {
+            for y in [-1.0f32, 0.0, 1.0] {
+                let stance = Stance {
+                    grips: [centre + side, centre - side],
+                    lean: Vec2::new(x, y),
+                    contacts: [Vec3::new(0.0, -0.6, -0.75), Vec3::new(0.0, -0.6, 0.75)],
+                };
+                let pose = rig.pose(mcc_core::skate::DEFAULT_SCALE, &stance);
+                assert_eq!(pose.len(), rig.names.len());
+                for (name, m) in rig.names.iter().zip(&pose) {
+                    assert!(m.is_finite(), "{name} at lean {x}, {y}: {m}");
+                }
+            }
+        }
     }
 }
