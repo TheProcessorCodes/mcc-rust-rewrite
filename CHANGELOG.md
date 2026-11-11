@@ -8,6 +8,12 @@ from the merge history.
 Releases: **beta-0.0.3** holds everything up to and including 2026-11-10; beta-0.0.1 was
 2026-11-06.
 
+## 2026-11-11
+
+### Fixed
+- Screenshots and recordings taken with NVIDIA's overlay are saved in a folder named
+  MCC Rust Rewrite, not one named after the folder the game is in (#3).
+
 ## 2026-11-10
 
 ### Added

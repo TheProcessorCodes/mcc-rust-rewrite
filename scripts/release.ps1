@@ -64,6 +64,12 @@ try {
     }
     Say 'the exe names neither the user nor the checkout'
 
+    # NVIDIA's overlay files captures under the exe's file description, and under the folder
+    # the exe is in when it has none (crates\mcc-rust-rewrite\build.rs).
+    $described = (Get-Item $exe).VersionInfo.FileDescription
+    if ($described -ne 'MCC Rust Rewrite') { throw "the exe's file description is '$described', not 'MCC Rust Rewrite'" }
+    Say "the exe's file description is '$described'"
+
     $stage = Join-Path $Out $name
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
     New-Item -ItemType Directory -Force $stage | Out-Null
