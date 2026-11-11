@@ -201,7 +201,7 @@ Maps checked (counts pinned by `cargo test`, matched to HaloExport where it has 
 | Halo CE: all 19 multiplayer maps | `h1:bloodgulch` ... (MCC `halo1\maps`) | built 2026-10-31, every map drawn in headless shots (textures, lightmaps, sky, spawns); HaloExportH1 counts match on 4 maps; bike, skate and foot stand on Blood Gulch; no weapons or sound yet; not playtested |
 | Halo CE: The Warthog Run | `h1:warthog_run` (The Maw, `d40`, BSPs 5-7) | built 2026-11-02 with the map's own scripts, countdown, win and loss; not playtested (see "Halo CE's Warthog run") |
 | Standoff, Avalanche, the rest | `bunkerworld`, `sidewinder`, ... | decode, not checked |
-| Reach: all 20 multiplayer maps | `hr:20_sword_slayer`, `hr:cex_timberland`, ... | built 2026-10-31, counts pinned, each drawn headlessly; not playtested. Lightmaps read without their directions (per-vertex and probe-lit instances use the fallback), no fog, sound or weapons |
+| Reach: all 20 multiplayer maps | `hr:20_sword_slayer`, `hr:cex_timberland`, ... | built 2026-10-31, counts pinned, each drawn headlessly; not playtested. Lightmaps read without their directions (per-vertex and probe-lit instances use the fallback), no fog or weapons. Ambience and sound scenery play since 2026-11-11 (#28, `docs/format/sound.md` 12: Reach layouts in `blam_sound::tags::Layout`, the cluster found loosely because Reach BSPs are not sealed, +18 dB of our own) |
 
 Narrows, Isolation and Sandbox were "written, not built yet" when their README entries were
 made; they are on master now and build with the rest. This audit did not re-run their tests.
