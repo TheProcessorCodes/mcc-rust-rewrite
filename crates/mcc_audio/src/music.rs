@@ -753,11 +753,6 @@ impl MusicPlayer {
         }
     }
 
-    /// Whether a piece is playing or about to (not ending).
-    pub(crate) fn live(&self) -> bool {
-        self.pieces.iter().any(|p| p.state != State::Ending)
-    }
-
     /// Whether anything still sounds or waits to (pieces ending included).
     pub(crate) fn busy(&self) -> bool {
         !self.pieces.is_empty()

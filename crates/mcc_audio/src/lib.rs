@@ -10,7 +10,7 @@
 //! random), K mute,
 //! `-` / `=` master volume, H the bike's engine sound on / off;
 //! the pause menu's Sound tab sets the master, music, effects, ambience and
-//! dialogue volumes (`levels.rs`, saved next to the exe), its Dirt bike tab
+//! dialogue volumes (`levels.rs`, saved in the data folder), its Dirt bike tab
 //! the engine's. `MCC_AUDIO=0` turns sound off; it is off in `--shot`
 //! mode, where `MCC_AUDIO_TRACE=1` runs the logic without output and
 //! logs which emitters are active at each view.

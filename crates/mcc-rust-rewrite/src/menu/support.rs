@@ -110,7 +110,7 @@ fn shown(path: &Path) -> String {
 /// username.
 pub(super) fn diagnostics(look: &mcc_core::view::LookSettings) -> String {
     let mut lines = vec![
-        format!("MCC Rust Rewrite {}", env!("CARGO_PKG_VERSION")),
+        format!("MCC Rust Rewrite {}", game_paths::VERSION),
         format!("System: {}", os_version()),
     ];
     let mcc = match game_paths::mcc_root() {

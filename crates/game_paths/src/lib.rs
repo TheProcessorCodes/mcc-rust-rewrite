@@ -139,6 +139,30 @@ pub fn reflex_chosen() -> Option<PathBuf> {
     settings().get(key::REFLEX).filter(|v| *v != REFLEX_SKIPPED).map(PathBuf::from)
 }
 
+/// The version players see: the release's name.
+pub const VERSION: &str = concat!("beta-", env!("CARGO_PKG_VERSION"));
+
+/// A saved file of the game's own (the sound levels, the bike's tuning) by
+/// its name: its text from the data folder ([`settings_dir`]). Builds up to
+/// beta-0.0.2 kept these beside the exe; one left there is read while the
+/// data folder has none, so nothing a player set is lost.
+pub fn read_saved(name: &str) -> Option<String> {
+    std::fs::read_to_string(settings_dir().join(name)).ok().or_else(|| {
+        let beside = std::env::current_exe().ok()?.parent()?.join(name);
+        std::fs::read_to_string(beside).ok()
+    })
+}
+
+/// Saves a file of the game's own in the data folder ([`settings_dir`]),
+/// which a player can always write to (the exe's folder may be read-only).
+pub fn write_saved(name: &str, text: &str) -> Result<(), String> {
+    let dir = settings_dir();
+    let path = dir.join(name);
+    std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(&path, text))
+        .map_err(|e| format!("could not save {}: {e}", path.display()))
+}
+
 /// Where the setup and the converted Skate 3 data live:
 /// `%MCC_SETUP_DIR%`, else `%LOCALAPPDATA%\MccRustRewrite`.
 pub fn settings_dir() -> PathBuf {
@@ -284,8 +308,8 @@ pub fn save_setting(key: &str, value: &str) -> Result<(), String> {
 
 /// Puts every setting back to its default by forgetting it, keeping the
 /// game folders and their converted data ([`key::GAMES`]) and any comment
-/// lines. Files kept beside the exe (the bike's tuning, the sound levels)
-/// are not touched.
+/// lines. The game's other saved files (the bike's tuning, the sound
+/// levels, [`read_saved`]) are not touched.
 pub fn reset_settings() -> Result<(), String> {
     let path = settings_path();
     let mut s = Settings::read(&path);

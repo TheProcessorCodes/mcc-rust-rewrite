@@ -418,7 +418,7 @@ skateboard. Players with Skate 3 see no change.
 The user's `reflex-physics` workspace (`D:\reflex-physics`) rebuilt Reflex's bike step by step from
 the decompile and checked it frame by frame against recordings of the game (`reflex_core`), with a
 Bevy adapter (`reflex_bevy`). Both are vendored in `third_party/reflex-physics` (its README lists
-our changes; no licence chosen yet, ask before a release). `crates/mcc_bike/src/exact.rs` rides
+our changes; GPL-3.0-only since 2026-11-10). `crates/mcc_bike/src/exact.rs` rides
 the bike on it:
 
 - The 450F's 108 values come from the player's Reflex install: the BXML asset `mx450f_vehicle` in
@@ -813,7 +813,7 @@ commented). Headless on the run: music -18 dBFS, ambience next to two plates -25
 -11). The mixer has buses (music, ambience, effects, dialogue) with per-bus volumes and level
 meters; `MCC_AUDIO_TRACE=1` logs `audio levels` every 5 s. The pause menu has a fifth tab,
 **Sound**: Master, Music, Effects, Ambience, Dialogue sliders, 0-200 % (100 % = the game's
-mix), keyboard / pad / mouse, saved to `sound-levels.json` next to the exe
+mix), keyboard / pad / mouse, saved to `sound-levels.json` in the data folder
 (`mcc_audio/src/levels.rs`); `-` / `=` / K drive the same Master value. A slider multiplies
 on top of the scripts' `sound_class_set_gain` (music, amb). Awaiting the user's playtest.
 

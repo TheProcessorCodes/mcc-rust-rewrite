@@ -650,8 +650,8 @@ fn sound_page(panel: &mut ChildSpawnerCommands, levels: Option<&SoundLevels>) {
                     "Or click and drag a bar with the mouse. The tick marks 100 %, the game's own mix.",
                 ),
                 (
-                    "Saved next to the game, in sound-levels.json.",
-                    "K mutes and - / = change the master at any time. Saved next to the game, in sound-levels.json.",
+                    "Saved with your settings.",
+                    "K mutes and - / = change the master at any time. Saved with your settings.",
                 ),
                 (
                     "Music on the keyboard: M the map's own, U Halo 3's campaign music on any map (Shift: next, Ctrl+U: random).",
