@@ -64,11 +64,41 @@ try {
     }
     Say 'the exe names neither the user nor the checkout'
 
-    # NVIDIA's overlay files captures under the exe's file description, and under the folder
-    # the exe is in when it has none (crates\mcc-rust-rewrite\build.rs).
+    # Windows names the game from the exe's file description (Task Manager, the volume mixer).
     $described = (Get-Item $exe).VersionInfo.FileDescription
     if ($described -ne 'MCC Rust Rewrite') { throw "the exe's file description is '$described', not 'MCC Rust Rewrite'" }
     Say "the exe's file description is '$described'"
+
+    # So does NVIDIA's overlay, for the folder it files captures under, or it uses the folder
+    # the exe is in. Its reader takes the code page from the wrong word of the translation
+    # list (crates\mcc-rust-rewrite\build.rs), so ask for the description the way it does.
+    if (-not ('Win32.VersionApi' -as [type])) {
+        Add-Type -Namespace Win32 -Name VersionApi -MemberDefinition (@(
+            '[DllImport("version.dll", CharSet = CharSet.Unicode)] public static extern uint GetFileVersionInfoSizeW(string file, out uint handle);'
+            '[DllImport("version.dll", CharSet = CharSet.Unicode)] public static extern bool GetFileVersionInfoW(string file, uint handle, uint size, IntPtr data);'
+            '[DllImport("version.dll", CharSet = CharSet.Unicode)] public static extern bool VerQueryValueW(IntPtr data, string key, out IntPtr value, out uint length);'
+        ) -join "`n")
+    }
+    $marshal = [System.Runtime.InteropServices.Marshal]
+    $filed = ''
+    $handle = [uint32]0
+    $size = [Win32.VersionApi]::GetFileVersionInfoSizeW($exe, [ref]$handle)
+    if ($size) {
+        $info = $marshal::AllocHGlobal([int]$size * 2)
+        try {
+            $value = [IntPtr]::Zero
+            $length = [uint32]0
+            if ([Win32.VersionApi]::GetFileVersionInfoW($exe, 0, $size, $info) -and
+                [Win32.VersionApi]::VerQueryValueW($info, '\VarFileInfo\Translation', [ref]$value, [ref]$length)) {
+                $key = '\StringFileInfo\{0:x4}{1:x4}\FileDescription' -f $marshal::ReadInt16($value, 0), $marshal::ReadInt16($value, 4)
+                if ([Win32.VersionApi]::VerQueryValueW($info, $key, [ref]$value, [ref]$length)) { $filed = $marshal::PtrToStringUni($value) }
+            }
+        } finally {
+            $marshal::FreeHGlobal($info)
+        }
+    }
+    if ($filed -ne 'MCC Rust Rewrite') { throw "NVIDIA's overlay would not read 'MCC Rust Rewrite' from the exe (it reads '$filed'), and would name captures after the exe's folder" }
+    Say "NVIDIA's overlay will file captures under '$filed'"
 
     $stage = Join-Path $Out $name
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
