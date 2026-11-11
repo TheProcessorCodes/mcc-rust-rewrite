@@ -128,7 +128,18 @@ exe and their licences are in THIRD-PARTY-NOTICES.txt.
 
     $zip = Join-Path $Out "$name.zip"
     if (Test-Path $zip) { Remove-Item $zip -Force }
-    Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal
+    # Not Compress-Archive: Windows PowerShell's writes the names with backslashes, which
+    # other unzippers take for part of the file name.
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::Open($zip, 'Create')
+    try {
+        Get-ChildItem $stage -File | Sort-Object Name | ForEach-Object {
+            [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $archive, $_.FullName, "$name/$($_.Name)", [System.IO.Compression.CompressionLevel]::Optimal)
+        }
+    } finally {
+        $archive.Dispose()
+    }
     $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
     Say "$zip ($([Math]::Round((Get-Item $zip).Length / 1MB, 1)) MB, exe $([Math]::Round((Get-Item $exe).Length / 1MB, 1)) MB)"
     Say "sha256 $hash"
