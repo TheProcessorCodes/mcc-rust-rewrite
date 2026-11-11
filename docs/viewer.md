@@ -655,8 +655,8 @@ it off and on, and the log says which. The Dakumoto 450F's own 54 recordings, re
 Without Reflex the bike is silent (a synthesised engine was tried and dropped on
 2026-10-31: it did not sound good enough). The pause
 menu's Dirt bike tab has an engine volume slider (drag or click it, or d-pad up / down,
-the up / down arrows, W / S); it starts at 70 % and is saved to `bike-sound.json` next to
-the exe when the game carries on.
+the up / down arrows, W / S); it starts at 70 % and is saved to `bike-sound.json` in
+the data folder when the game carries on.
 `MCC_ENGINE_WAV=DIR cargo test -p mcc_audio engine` writes the recordings over a
 scripted nine-second ride to `DIR\engine-reflex.wav`.
 
@@ -729,7 +729,7 @@ this repo. `MCC_AUDIO=0` turns sound off; `--shot` never opens the sound device.
   sliders, 0 to 200 % (100 % = the game's own mix; master 80 % by default): up / down picks
   one, left / right (arrow keys, d-pad, left stick) moves it, or click and drag with the mouse.
   Each scales its bus in the mixer, on top of the tag and class gains and the scripts'
-  `sound_class_set_gain`. They are saved to `sound-levels.json` next to the exe and read at
+  `sound_class_set_gain`. They are saved to `sound-levels.json` in the data folder and read at
   start. `-` / `=` change the master and K mutes, anywhere, and the sliders follow.
   `MCC_VOLUME` overrides the saved master (developer override).
 

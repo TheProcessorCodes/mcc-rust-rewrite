@@ -56,7 +56,7 @@ pub fn start() -> LogGuard {
     let _ = writeln!(
         file,
         "MCC Rust Rewrite {} ({} {}), started {} UTC",
-        env!("CARGO_PKG_VERSION"),
+        game_paths::VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
         stamp()
@@ -120,7 +120,7 @@ fn crash_report(message: &str, place: &str, thread: &str, backtrace: &str) -> St
     format!(
         "MCC Rust Rewrite {} ({} {}) crashed at {} UTC.\n\n\
          Panic: {message}\nAt: {place}\nThread: {thread}\nLog: {log}\n\nBacktrace:\n{backtrace}\n",
-        env!("CARGO_PKG_VERSION"),
+        game_paths::VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
         stamp()

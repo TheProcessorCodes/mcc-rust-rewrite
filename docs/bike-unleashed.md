@@ -115,8 +115,8 @@ Unleashed's Pro 250 as it was and Reflex v1; the rest scale engine power, gearin
 brakes, grip, side stiffness, slide grip, steering lock and lag, lean depth and speed, rider-lean
 influence, weight shift, wheelie hold, spring, damping, air rotation, air damping and gravity.
 Each row reads out what the value means on the tuned bike. Closing the menu saves the values to
-`bike-tuning.json` next to the exe; the next start loads them (Delete puts all back to stock).
-Under the sliders are five setup slots, kept in `bike-setups.json` next to the exe: Shift+1 to 5
+`bike-tuning.json` in the data folder; the next start loads them (Delete puts all back to stock).
+Under the sliders are five setup slots, kept in `bike-setups.json` in the data folder: Shift+1 to 5
 (or Ctrl) saves the current setup to a slot and 1 to 5 loads one, or pick the "Save to slot" /
 "Load slot" row, choose a slot with A / D and press Enter (A on a pad), or click a slot.
 

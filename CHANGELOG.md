@@ -1,13 +1,17 @@
 # Changelog
 
 What changed in MCC Rust Rewrite, newest first, written for players. Each line names its
-GitHub issue where there is one. There are no numbered releases yet, so entries are grouped
-by the day they reached master. Entries before 2026-11-09 were written afterwards from the
-merge history.
+GitHub issue where there is one. Entries are grouped by the day they reached master; a
+release holds everything up to its day. Entries before 2026-11-09 were written afterwards
+from the merge history.
+
+Releases: **beta-0.0.3** holds everything up to and including 2026-11-10; beta-0.0.1 was
+2026-11-06.
 
 ## 2026-11-10
 
 ### Added
+- The map menu shows the game's version in the top right (#40).
 - The map menu opens on the last map you started (#13).
 - The Campaign tab has a difficulty choice (Y or F2), kept for next time (#17).
 - Campaign runs show a clock in the top right, and the completion screen keeps your best time
@@ -38,6 +42,8 @@ merge history.
 
 ### Changed
 - The Settings screen is split into pages: Games, Player, Controls, Display and Support (#20).
+- The sound levels and the bike's tuning, setups and engine volume are saved with your other
+  settings in the data folder, not beside the exe; ones saved beside the exe are still read (#40).
 
 ### Fixed
 - Pause menu: the Dirt bike tab no longer says A backs the bike up; the brake held at a

@@ -1320,6 +1320,11 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
             ));
         }
         tabs.spawn((KeyHint { pad: "RB", keys: "E" }, text("E", 15.0, FAINT)));
+        // The version, at the right end of the bar.
+        tabs.spawn((
+            Node { margin: UiRect::new(Val::Auto, Val::Px(2.0), Val::ZERO, Val::Px(10.0)), ..default() },
+            text(game_paths::VERSION, 15.0, FAINT),
+        ));
     });
     // A page per tab: each section's heading and its grid of tiles,
     // scrolling up and down when they do not fit.

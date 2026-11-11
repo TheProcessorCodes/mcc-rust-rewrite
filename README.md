@@ -179,7 +179,7 @@ version, Windows version, which games are set up and whether Halo 3 reads, the m
 and where the log is; paths under the player's own folders are written `%LOCALAPPDATA%` /
 `%USERPROFILE%`, and the username is left out), resets the settings to their defaults
 (keeping the game folders and converted data; the bike's tuning and the sound levels, kept
-beside the exe, stay) and deletes the converted Skate 3 and Reflex data (each game deleted is
+in their own files in the data folder, stay) and deletes the converted Skate 3 and Reflex data (each game deleted is
 then played without, as if skipped, until set up again). Reset and delete each ask for a
 second press.
 
@@ -261,6 +261,17 @@ Reach maps go by `hr:NAME` (`%HALOREACH_MAPS%` or MCC's `haloreach\maps`): `hr:2
 Sword Base, `hr:cex_timberland` Timberland, `hr:70_boneyard` Boneyard, ... (the menu's Reach tab
 lists all 20).
 
+## Making a release
+
+`& scripts\release.ps1` builds the release exe (no debug info, and with this PC's paths mapped
+out of it; the script fails if the exe still names the Windows user or the checkout) and
+writes `out\release\mcc-rust-rewrite-beta-<version>.zip`: the exe, `LICENSE`, `LICENSE-APACHE`,
+`THIRD-PARTY-NOTICES.txt` (every library in the build with the licence texts its source
+carries), this README, the changelog and a short `READ ME FIRST.txt`. The version is
+`[workspace.package] version` in `Cargo.toml`; players see it as `beta-<version>` in the map
+menu's top right, the log and the diagnostics summary. Never attach `out\bin` or
+`target\debug` exes to a release: they are development builds with this PC's paths in them.
+
 ## Licence
 
 The whole project, every crate and any released `mcc-rust-rewrite.exe`, is distributed under the GNU
@@ -268,7 +279,8 @@ General Public License version 3 only (`LICENSE`), with this source, the same li
 Skate 3 engine it links (`third_party/skate-engine`). A few files are copied or adapted from
 IW4L, which is Apache-2.0 (`blam_geometry/src/rails.rs`, `mcc_setup/src/board.rs`, the
 retarget in `mcc_rider`); Apache-2.0 code may be used in a GPL-3.0 work, and its licence
-text stays in `LICENSE-APACHE` as Apache-2.0 asks. The CELT decoder in
+text stays in `LICENSE-APACHE` as Apache-2.0 asks. The Reflex bike simulation in
+`third_party/reflex-physics` is GPL-3.0-only too. The CELT decoder in
 `third_party/celt-0.11.0` keeps its BSD-3-Clause licence (`COPYING`). The Skate 3
 converter `iw4l-skate-convert.exe` is not shipped; it comes from the player's MW2 Skate 3
 download, with its own licence files. None of this
