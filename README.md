@@ -238,8 +238,12 @@ Game loads the map into the same window behind a loading screen; Q (or View)
 in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
 left stick move, Q / E, Tab / Shift+Tab, Page Up / Page Down or LB / RB change tab (the hints by the tabs show Q / E, or LB / RB when a controller was used last), Enter / A start, Escape / B exit, F2 / Y on the Campaign tab change the difficulty (saved); the menu opens on the last map started;
 the mouse picks a tile and a double click starts it. Naming a map on the
-command line skips the menu, and Q then quits. `mcc-rust-rewrite.exe --menu-shot FILE
-[--menu-tab N] [--menu-pick N] [--menu-row N] [--menu-loading | --menu-missing | --menu-settings
+command line skips the menu, and Q then quits. When the menu opens it asks GitHub (with
+Windows' own `curl.exe`, in the background) whether a newer release is out; if so a pop-up
+offers its release page (Enter / A) or Close (Esc / B), once per launch. Offline, nothing
+shows; `MCC_NO_UPDATE_CHECK=1` turns the check off, and `--menu-update TAG` pretends release
+TAG is out. `mcc-rust-rewrite.exe --menu-shot FILE
+[--menu-tab N] [--menu-pick N] [--menu-row N] [--menu-update TAG] [--menu-loading | --menu-missing | --menu-settings
 [--menu-step 1] | --menu-setup [--menu-step N] | --menu-start [--menu-back TAB,PICK]]` draws
 the menu, the loading screen, the picked map's not-installed notice, the Settings screen
 (with `--menu-step 1`, the Skate 3 step as Settings' SET UP opens it), the setup screen or

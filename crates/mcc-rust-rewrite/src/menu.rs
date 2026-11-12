@@ -44,10 +44,16 @@
 //! step as Settings opens it), `--menu-setup [--menu-step N]` the setup
 //! screen, and `--menu-start` loads the picked map the way Start Game does
 //! and saves the first view of it. `--menu-row N` puts the focus on row N of
-//! the settings (and shows its page) or the setup step.
+//! the settings (and shows its page) or the setup step. `--menu-update TAG`
+//! draws the new-version pop-up for release TAG (`update.rs`).
+//!
+//! When a newer release is out on GitHub (`update.rs`), a pop-up over the
+//! maps says so once: Enter / A or its button opens the release's page in
+//! the browser, Escape / B or Close shuts it.
 
 mod setup;
 mod support;
+mod update;
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -321,6 +327,9 @@ enum Phase {
     Settings,
     /// The first-run setup screen (`setup.rs`).
     Setup,
+    /// The pop-up over the chooser: a newer release is out
+    /// ([`Menu::update`]).
+    Update,
 }
 
 /// The map file a menu entry plays: its own, or a mission's
@@ -406,6 +415,11 @@ struct Menu {
     /// Starting a map saves it as the last one, to open on next time; not in
     /// a headless shot, which never writes the setup.
     remember: bool,
+    /// The new-version check, while it runs on its thread (`update.rs`).
+    update_check: Option<update::UpdateCheck>,
+    /// A newer release: waiting for the chooser, then shown in the pop-up
+    /// until it is closed (once per launch).
+    update: Option<update::NewRelease>,
 }
 
 /// A folder picker (and, for Skate 3, its conversion), on its thread.
@@ -508,6 +522,18 @@ enum MenuButton {
 /// The difficulty button's text.
 #[derive(Component)]
 struct DifficultyLabel;
+/// The new-version pop-up over the chooser.
+#[derive(Component)]
+struct UpdateNotice;
+/// The pop-up's line naming the versions.
+#[derive(Component)]
+struct UpdateLine;
+/// The pop-up's buttons.
+#[derive(Component, Clone, Copy, PartialEq)]
+enum UpdateButton {
+    Open,
+    Close,
+}
 /// The settings screen.
 #[derive(Component)]
 struct SettingsScreen;
@@ -876,8 +902,16 @@ impl Plugin for MenuPlugin {
             .and_then(|s| s.parse().ok())
             .or(last.filter(|l| l.0 == tab).map(|l| l.1))
             .unwrap_or(0usize);
-        let with_value =
-            ["--menu-shot", "--menu-tab", "--menu-pick", "--menu-back", "--menu-step", "--menu-row", "--size"];
+        let with_value = [
+            "--menu-shot",
+            "--menu-tab",
+            "--menu-pick",
+            "--menu-back",
+            "--menu-step",
+            "--menu-row",
+            "--menu-update",
+            "--size",
+        ];
         let alone = ["--menu-loading", "--menu-start", "--menu-missing", "--menu-settings", "--menu-setup"];
         let mut pass = Vec::new();
         let mut skip = false;
@@ -964,6 +998,10 @@ impl Plugin for MenuPlugin {
             converted: String::new(),
             difficulty: saved_difficulty(),
             remember: !headless(args),
+            // Not in a headless shot, nor with `--menu-update TAG`, which
+            // pretends TAG is out (to see the pop-up while ours is the newest).
+            update_check: if headless(args) || value(args, "--menu-update").is_some() { None } else { update::start() },
+            update: value(args, "--menu-update").map(|tag| update::NewRelease { tag }),
         };
         let step = value(args, "--menu-step");
         if first_run {
@@ -997,9 +1035,12 @@ impl Plugin for MenuPlugin {
                 setup::input.run_if(setup_open),
                 setup::finish.run_if(|menu: Res<Menu>| menu.setup_finished),
                 dismiss.run_if(missing),
+                update_poll,
+                update_input.run_if(|menu: Res<Menu>| menu.phase == Phase::Update),
                 show,
                 follow,
                 show_notice,
+                show_update,
                 show_settings,
                 setup::show,
                 spin,
@@ -1100,6 +1141,20 @@ fn spawn(mut commands: Commands, menu: Res<Menu>, shot: Option<ResMut<MenuShot>>
                 BackgroundColor(BACKGROUND.with_alpha(0.8)),
             ))
             .with_children(spawn_notice);
+            root.spawn((
+                UpdateNotice,
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(BACKGROUND.with_alpha(0.8)),
+            ))
+            .with_children(spawn_update);
             root.spawn((
                 SettingsScreen,
                 Node {
@@ -1286,6 +1341,54 @@ fn spawn_notice(screen: &mut ChildSpawnerCommands) {
                 .with_children(|b| {
                     key_hint::badge(b, "A", "Enter", Color::srgb(0.37, 0.75, 0.29));
                     b.spawn(text("OK", 20.0, LIT));
+                });
+        });
+}
+
+/// The new-version pop-up: what is out, and its two buttons.
+fn spawn_update(screen: &mut ChildSpawnerCommands) {
+    screen
+        .spawn((
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(18.0),
+                padding: UiRect::axes(Val::Px(56.0), Val::Px(36.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(BAR),
+            BorderColor::all(LINE),
+        ))
+        .with_children(|panel| {
+            panel.spawn(text("A new version is available", 28.0, Color::WHITE));
+            panel.spawn((UpdateLine, text("", 19.0, DIM)));
+            panel
+                .spawn(Node { column_gap: Val::Px(18.0), margin: UiRect::top(Val::Px(14.0)), ..default() })
+                .with_children(|row| {
+                    let buttons = [
+                        (UpdateButton::Open, "A", "Enter", Color::srgb(0.37, 0.75, 0.29), "OPEN RELEASE PAGE", LIT),
+                        (UpdateButton::Close, "B", "Esc", Color::srgb(0.85, 0.33, 0.31), "CLOSE", DIM),
+                    ];
+                    for (button, letter, key, colour, label, label_colour) in buttons {
+                        row.spawn((
+                            button,
+                            Node {
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(10.0),
+                                padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(5.0)),
+                                ..default()
+                            },
+                            BorderColor::all(LINE),
+                        ))
+                        .with_children(|b| {
+                            key_hint::badge(b, letter, key, colour);
+                            b.spawn(text(label, 20.0, label_colour));
+                        });
+                    }
                 });
         });
 }
@@ -2264,6 +2367,70 @@ fn dismiss(
     }
 }
 
+/// The new-version check's answer; a newer release shows its pop-up once the
+/// chooser is up (not over the setup, settings or a loading map).
+fn update_poll(mut menu: ResMut<Menu>) {
+    if let Some(check) = &menu.update_check {
+        let answer = match check.0.lock() {
+            Ok(receiver) => match receiver.try_recv() {
+                Ok(found) => Some(found),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(None),
+            },
+            Err(_) => Some(None),
+        };
+        if let Some(found) = answer {
+            menu.update_check = None;
+            menu.update = found;
+        }
+    }
+    if menu.update.is_some() && menu.phase == Phase::Choosing {
+        menu.phase = Phase::Update;
+        menu.fresh = true;
+    }
+}
+
+/// The new-version pop-up: Enter / Space / A or its button open the
+/// release's page; Escape / B or Close shut it. Either way it is gone for
+/// this launch.
+fn update_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    gamepads: Query<&Gamepad>,
+    clickable: Query<(&UpdateButton, &ComputedNode, &UiGlobalTransform)>,
+    mut menu: ResMut<Menu>,
+) {
+    // The press that was down as it opened is not one that answers it.
+    if menu.fresh {
+        menu.fresh = false;
+        return;
+    }
+    let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
+    let clicked = buttons
+        .just_pressed(MouseButton::Left)
+        .then(|| windows.single().ok().and_then(Window::physical_cursor_position))
+        .flatten()
+        .and_then(|at| clickable.iter().find(|(_, n, t)| n.contains_point(**t, at)).map(|(b, ..)| *b));
+    let open = clicked == Some(UpdateButton::Open)
+        || keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space])
+        || pad(GamepadButton::South);
+    let close = clicked == Some(UpdateButton::Close) || keys.just_pressed(KeyCode::Escape) || pad(GamepadButton::East);
+    if !open && !close {
+        return;
+    }
+    if open && let Some(release) = &menu.update {
+        let page = release.page();
+        match support::open_link(&page) {
+            Ok(()) => eprintln!("menu: opened {page}"),
+            Err(e) => eprintln!("menu: cannot open {page}: {e}"),
+        }
+    }
+    menu.update = None;
+    menu.phase = Phase::Choosing;
+    menu.click = None;
+}
+
 /// Q in the pause menu (`pause.rs`): unload the map and show the menu again.
 fn back_to_menu(world: &mut World) {
     if world.remove_resource::<BackToMenu>().is_none() {
@@ -2536,6 +2703,25 @@ fn show_notice(menu: Res<Menu>, mut notice: Query<&mut Node, With<Notice>>, mut 
     if let Some(game) = game {
         for mut text in &mut line {
             text.0 = format!("{} isn't installed in your Master Chief Collection.", game_title(game));
+        }
+    }
+}
+
+fn show_update(
+    menu: Res<Menu>,
+    mut notice: Query<&mut Node, With<UpdateNotice>>,
+    mut line: Query<&mut Text, With<UpdateLine>>,
+) {
+    if !menu.is_changed() {
+        return;
+    }
+    let release = menu.update.as_ref().filter(|_| menu.phase == Phase::Update);
+    for mut node in &mut notice {
+        node.display = if release.is_some() { Display::Flex } else { Display::None };
+    }
+    if let Some(release) = release {
+        for mut text in &mut line {
+            text.0 = format!("{} is out on GitHub. You have {}.", release.tag, game_paths::VERSION);
         }
     }
 }

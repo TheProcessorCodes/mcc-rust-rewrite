@@ -8,6 +8,12 @@ from the merge history.
 Releases: **beta-0.0.4** holds everything up to and including 2026-11-11; beta-0.0.3 was
 2026-11-10 and beta-0.0.1 was 2026-11-06.
 
+## 2026-11-12
+
+### Added
+- When a newer release is out, the map menu says so with a pop-up that can open its download
+  page on GitHub (#45).
+
 ## 2026-11-11
 
 ### Added
