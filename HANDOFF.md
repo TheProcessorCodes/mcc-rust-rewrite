@@ -150,6 +150,13 @@ What the game does now:
   a headless load of all 47 maps not checked by hand (Halo 3 multiplayer, campaign and Halo 2) drew
   each one with textures and lighting; they have not been walked for spawns, collision or water.
   Crow's Nest has no preview picture in MCC. A map named on the command line skips the menu.
+- **New-version pop-up (2026-11-12, #45).** The menu asks GitHub's releases API on a thread
+  (`menu/update.rs`) through Windows' own `curl.exe`, so the game links no HTTP or TLS crate.
+  The newest non-draft tag that parses as a version (`beta-X.Y.Z`, `vX.Y`) and is above
+  `game_paths::VERSION` gets a pop-up over the chooser (`Phase::Update`) once the chooser is up;
+  its page link is built from the tag, never taken from the reply, and opened with
+  `rundll32 url.dll,FileProtocolHandler`. Any failure is a log line and no pop-up. So the check
+  works, release tags must stay `beta-X.Y.Z` (the old plain `beta` tag is ignored).
 - **Skating optional (2026-11-02).** Settings on the map menu has a Skating row (on by default,
   `SKATING=off` in `setup.env`, `mcc_core::skate::SkateEnabled`). Off, a map loads no grind
   rails, skate session or board (Valhalla ready in 0.8 s instead of 8.1 s), J does nothing on

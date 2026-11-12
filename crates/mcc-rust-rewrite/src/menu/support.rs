@@ -10,6 +10,11 @@ use std::process::{Command, Stdio};
 
 /// A command without a console window of its own.
 fn quiet(program: &str) -> Command {
+    quiet_command(program.as_ref())
+}
+
+/// [`quiet`], for a program named by its path.
+pub(super) fn quiet_command(program: &std::ffi::OsStr) -> Command {
     #[allow(unused_mut)]
     let mut command = Command::new(program);
     #[cfg(windows)]
@@ -35,6 +40,24 @@ pub(super) fn open_folder(dir: &Path) -> Result<(), String> {
     let mut command = quiet(program);
     command.arg(dir);
     command.spawn().map(|_| ()).map_err(|e| format!("cannot start {program}: {e}"))
+}
+
+/// Opens a web page in the player's browser. Only `https://` links: the
+/// handler would start anything else it is given.
+pub(super) fn open_link(url: &str) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err(format!("not a web link: {url}"));
+    }
+    // Windows' URL handler opens it in the default browser, without a
+    // console window and without cmd's quoting.
+    let (program, args): (&str, &[&str]) = if cfg!(windows) {
+        ("rundll32.exe", &["url.dll,FileProtocolHandler"])
+    } else if cfg!(target_os = "macos") {
+        ("open", &[])
+    } else {
+        ("xdg-open", &[])
+    };
+    quiet(program).args(args).arg(url).spawn().map(|_| ()).map_err(|e| format!("cannot start {program}: {e}"))
 }
 
 /// Puts `text` on the clipboard.
