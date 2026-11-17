@@ -56,8 +56,8 @@ pub trait Ground {
     /// up above 400 triangles).
     fn triangles(&self, center: Vec3, half_extent: f64, out: &mut Vec<Triangle>);
 
-    /// First hit of the segment a -> b: (point, surface normal). Used by the chassis collision points (a segment
-    /// from the chassis CM to each point).
+    /// First hit of the segment a -> b: (point, surface normal). Used by [`Ground::segment_hits`]; the chassis
+    /// collision points query `triangles` (a box around the chassis CM) and test their segments themselves.
     fn raycast(&self, a: Vec3, b: Vec3) -> Option<(Vec3, Vec3)>;
 
     /// Does the segment a -> b hit the terrain? Used by the jump-lip helper (a horizontal 25 ft probe ahead of
@@ -179,6 +179,10 @@ pub struct Sim {
     /// At rest (sim+0x90) and the stored ground normal (sim+0x8af0) the chassis may move along.
     pub at_rest: bool,
     pub rest_axis: Vec3,
+    /// Front / rear contact points saved on coming to rest (sim+0x8b10 / 0x8b00), held by the resting pin.
+    pub rest_points: [Vec3; 2],
+    /// Rolling-orientation filters of the wheel positions (`00445800`).
+    pub roll: contact::RollState,
     /// Front / rear wheel spin relative to the chassis, rad/s (slot 17).
     pub spin_rel: [f64; 2],
     /// Front, rear.
@@ -237,6 +241,8 @@ impl Sim {
             parked: false,
             at_rest: false,
             rest_axis: Vec3::Y,
+            rest_points: [Vec3::ZERO; 2],
+            roll: contact::RollState::default(),
             spin_rel: [0.0; 2],
             tyres: [Tyre::new(), Tyre::new()],
             airborne: true,
@@ -289,6 +295,7 @@ impl Sim {
         self.hold = None;
         self.parked = false;
         self.at_rest = false;
+        self.roll = contact::RollState::default();
         self.speed_filt = 0.0;
         self.up_filt = Vec3::Y;
         self.lean = LeanState::default();
@@ -608,6 +615,7 @@ impl Sim {
             self.at_rest = true;
             let n = self.tyres[0].normal + self.tyres[1].normal;
             self.rest_axis = if n.length_squared() > 0.0 { n.normalize() } else { Vec3::Y };
+            self.rest_points = [self.tyres[0].point, self.tyres[1].point];
             for b in &mut self.sys.bodies {
                 b.v = Vec3::ZERO;
                 b.w = Vec3::ZERO;
@@ -657,10 +665,26 @@ impl Sim {
             b.x += shift;
         }
         chassis::depenetrate(&mut self.sys, &self.chassis);
+        // 00445800: the wheels touching with lateral grip roll with the filtered ground speed (resting or held they
+        // keep following the chassis); 00446f80: the resting pin, rider on.
+        let pos = [self.sys.bodies[FRONT].x, self.sys.bodies[REAR].x];
+        let vel = contact::roll_velocities(&mut self.roll, pos, DT);
+        if !self.at_rest && self.hold.is_none() {
+            for (i, wi) in [(0, FRONT), (1, REAR)] {
+                let t = &self.tyres[i];
+                if t.contact && t.side_grip {
+                    let b = &mut self.sys.bodies[wi];
+                    b.q = contact::roll_wheel(b.prev_q, b.w, vel[i], t.roll_dir, self.params.tyres[i].radius, DT);
+                }
+            }
+        }
         // The wheels end the step back on their slider lines: the recordings fit "slide along chassis up, then
         // project onto the line" to 1e-5 ft (static, coast, half_throttle), so the front wheel moves along the
         // fork by a cos(rake). Measured, not traced in the code (no projection call found after 004456d0).
         self.sys.project_positions();
+        if self.at_rest && !self.crashed {
+            contact::rest_pin(&mut self.sys, [self.tyres[0].arm_chassis, self.tyres[1].arm_chassis], self.rest_points);
+        }
     }
 
     /// Slot 17: wheel spin about its axle relative to the chassis.
