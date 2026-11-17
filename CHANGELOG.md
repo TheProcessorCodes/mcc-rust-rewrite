@@ -8,6 +8,14 @@ from the merge history.
 Releases: **beta-0.0.4** holds everything up to and including 2026-11-11; beta-0.0.3 was
 2026-11-10 and beta-0.0.1 was 2026-11-06.
 
+## 2026-11-17
+
+### Changed
+- The Reflex bike physics were checked line by line against OPEN REFLEX's copy of Reflex's own code
+  and corrected: rear wheelspin and slides, steering wobble when rolling backwards and on rough
+  ground, landing and air control (the trick-hold snap now works), a parked bike stays put on
+  slopes, and wrecks follow the game's timing (#46).
+
 ## 2026-11-12
 
 ### Added
