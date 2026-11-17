@@ -1,5 +1,6 @@
 //! A static triangle-soup ground for engine adapters: triangles in Reflex units and frame, bucketed in a
-//! uniform grid for the wheel queries (+-1.2 ft boxes) and the lip helper's segment probe. Builders for the
+//! uniform grid for the wheel queries (+-1.2 ft boxes), the chassis probes (one box of about +-4.5 ft around the
+//! chassis) and the lip helper's segment probe. Builders for the
 //! primitive shapes engines use (boxes, cylinders, convex point clouds).
 
 use std::collections::HashMap;
