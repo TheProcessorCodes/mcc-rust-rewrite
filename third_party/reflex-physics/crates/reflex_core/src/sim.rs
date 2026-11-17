@@ -651,7 +651,7 @@ impl Sim {
             self.sys.project_velocities();
         } else {
             self.sys.project_velocities();
-            self.parked = drivetrain::rolling_friction(&mut self.sys, &self.params, self.inputs.front_brake, self.inputs.rear_brake);
+            self.parked = drivetrain::rolling_friction(&mut self.sys, &self.params, self.cstate.front_brake_in, self.inputs.rear_brake);
             self.rest_check();
         }
         if self.at_rest {
