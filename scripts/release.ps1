@@ -105,6 +105,8 @@ try {
     New-Item -ItemType Directory -Force $stage | Out-Null
     Copy-Item $exe $stage
     foreach ($f in 'LICENSE', 'LICENSE-APACHE', 'README.md', 'CHANGELOG.md') { Copy-Item (Join-Path $root $f) $stage }
+    # The menus' font (Barlow) is compiled into the exe: its licence goes with it.
+    Copy-Item (Join-Path $root 'crates/mcc_core/fonts/OFL.txt') (Join-Path $stage 'LICENSE-OFL-Barlow.txt')
 
     @"
 MCC Rust Rewrite $("beta-$version")
@@ -124,7 +126,8 @@ README.md says more; CHANGELOG.md lists what changed.
 
 Licence: GNU General Public License version 3 only (LICENSE). The source code is at
 https://github.com/TheProcessorCodes/mcc-rust-rewrite
-A few files are adapted from Apache-2.0 code (LICENSE-APACHE). The libraries built into the
+A few files are adapted from Apache-2.0 code (LICENSE-APACHE). The menus' font is Barlow, under
+the SIL Open Font License (LICENSE-OFL-Barlow.txt). The libraries built into the
 exe and their licences are in THIRD-PARTY-NOTICES.txt.
 "@ | Set-Content (Join-Path $stage 'READ ME FIRST.txt') -Encoding utf8
 

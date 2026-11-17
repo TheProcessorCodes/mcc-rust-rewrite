@@ -11,6 +11,7 @@
 //! its letter, or a key cap with the key's name.
 
 use bevy::prelude::*;
+use mcc_core::ui::{self, u};
 
 /// A hint's two wordings: for the controller and for the keyboard.
 #[derive(Component)]
@@ -26,16 +27,18 @@ impl KeyHint {
     }
 }
 
-/// A badge (`badge`): round in the pad's colour, or a light key cap.
+/// A badge (`badge`): round in the pad's colour (a pill when the button's
+/// name is a word: Start, View), or a light key cap.
 #[derive(Component)]
-pub struct KeyBadge(pub Color);
+pub struct KeyBadge(pub Color, pub bool);
 
-const SIZE: f32 = 26.0;
+/// On a 1080-line screen (`mcc_core::ui::u`).
+const SIZE: f32 = 32.0;
 const KEY_CAP: Color = Color::srgb(0.82, 0.85, 0.90);
 
 /// A text with its controller and keyboard wordings (keyboard to start).
 pub fn hint(pad: &'static str, keys: &'static str, size: f32, colour: Color) -> impl Bundle {
-    (KeyHint { pad, keys }, Text::new(keys), TextFont::from_font_size(size), TextColor(colour))
+    (KeyHint { pad, keys }, ui::text(keys, size, colour))
 }
 
 /// A bar button's badge: the pad's `letter` on a round `colour` button, or
@@ -43,17 +46,17 @@ pub fn hint(pad: &'static str, keys: &'static str, size: f32, colour: Color) -> 
 pub fn badge(parent: &mut ChildSpawnerCommands, letter: &'static str, key: &'static str, colour: Color) {
     parent
         .spawn((
-            KeyBadge(colour),
+            KeyBadge(colour, letter.len() > 1),
             Node {
-                min_width: Val::Px(SIZE),
-                height: Val::Px(SIZE),
+                min_width: u(SIZE),
+                height: u(SIZE),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()
             },
             BackgroundColor(KEY_CAP),
         ))
-        .with_child(hint(letter, key, 15.0, Color::BLACK));
+        .with_child((KeyHint { pad: letter, keys: key }, ui::bold(key, 17.0, Color::srgb(0.02, 0.04, 0.07))));
 }
 
 pub struct KeyHintPlugin;
@@ -94,15 +97,20 @@ fn show(
         if !switched && !badge.is_added() {
             continue;
         }
-        if pad {
-            node.width = Val::Px(SIZE);
+        if pad && badge.1 {
+            node.width = Val::Auto;
+            node.padding = UiRect::horizontal(u(13.0));
+            node.border_radius = BorderRadius::MAX;
+            background.0 = badge.0;
+        } else if pad {
+            node.width = u(SIZE);
             node.padding = UiRect::ZERO;
             node.border_radius = BorderRadius::MAX;
             background.0 = badge.0;
         } else {
             node.width = Val::Auto;
-            node.padding = UiRect::horizontal(Val::Px(8.0));
-            node.border_radius = BorderRadius::all(Val::Px(4.0));
+            node.padding = UiRect::horizontal(u(10.0));
+            node.border_radius = BorderRadius::all(u(5.0));
             background.0 = KEY_CAP;
         }
     }

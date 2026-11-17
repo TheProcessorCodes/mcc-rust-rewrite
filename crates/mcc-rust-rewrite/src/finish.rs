@@ -93,8 +93,8 @@ impl RunClock {
 #[derive(Resource, Default)]
 pub struct RunFinished(pub bool);
 
-const DIM: Color = Color::srgb(0.65, 0.70, 0.78);
-const LIT: Color = Color::srgb(1.0, 0.82, 0.35);
+const DIM: Color = mcc_core::ui::TEXT;
+const LIT: Color = mcc_core::ui::ACCENT;
 const HOVER: Color = Color::WHITE;
 
 /// The choices, in order.
@@ -198,7 +198,7 @@ pub fn countdown(ticks: i64) -> String {
 }
 
 fn text(s: &str, size: f32, colour: Color) -> impl Bundle {
-    (Text::new(s), TextFont::from_font_size(size), TextColor(colour))
+    mcc_core::ui::text(s, size, colour)
 }
 
 fn spawn_screen(mut commands: Commands) {
@@ -212,7 +212,7 @@ fn spawn_screen(mut commands: Commands) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            BackgroundColor(Color::srgba(0.0, 0.01, 0.03, 0.72)),
             GlobalZIndex(110),
             Visibility::Hidden,
         ))
@@ -221,18 +221,18 @@ fn spawn_screen(mut commands: Commands) {
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(6.0),
-                    padding: UiRect::all(Val::Px(28.0)),
-                    min_width: Val::Px(520.0),
+                    row_gap: mcc_core::ui::u(6.0),
+                    padding: UiRect::all(mcc_core::ui::u(28.0)),
+                    min_width: mcc_core::ui::u(520.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.05, 0.07, 0.10, 0.92)),
+                BackgroundColor(Color::srgb(0.035, 0.078, 0.130)),
             ))
             .with_children(|panel| {
                 panel.spawn((Title, text("MISSION COMPLETE", 36.0, Color::WHITE)));
                 panel.spawn((Subtitle, text("", 16.0, DIM)));
                 panel.spawn(Node {
-                    height: Val::Px(14.0),
+                    height: mcc_core::ui::u(14.0),
                     ..default()
                 });
                 panel.spawn(text("TIME", 16.0, DIM));
@@ -240,8 +240,8 @@ fn spawn_screen(mut commands: Commands) {
                 panel.spawn((BestText, text("", 18.0, DIM)));
                 panel
                     .spawn(Node {
-                        column_gap: Val::Px(18.0),
-                        margin: UiRect::top(Val::Px(18.0)),
+                        column_gap: mcc_core::ui::u(18.0),
+                        margin: UiRect::top(mcc_core::ui::u(18.0)),
                         ..default()
                     })
                     .with_children(|row| {
@@ -249,16 +249,16 @@ fn spawn_screen(mut commands: Commands) {
                             row.spawn((
                                 Choice(i),
                                 Node {
-                                    padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+                                    padding: UiRect::axes(mcc_core::ui::u(14.0), mcc_core::ui::u(6.0)),
                                     ..default()
                                 },
-                                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, if i == 0 { 0.10 } else { 0.0 })),
+                                BackgroundColor(if i == 0 { mcc_core::ui::FOCUS } else { Color::NONE }),
                                 text(name, 24.0, if i == 0 { LIT } else { DIM }),
                             ));
                         }
                     });
                 panel.spawn(Node {
-                    height: Val::Px(8.0),
+                    height: mcc_core::ui::u(8.0),
                     ..default()
                 });
                 panel.spawn(crate::key_hint::hint(
@@ -495,7 +495,7 @@ fn choose(
         if colour.0 != want {
             colour.0 = want;
         }
-        let fill = Color::srgba(1.0, 1.0, 1.0, if c.0 == index { 0.10 } else { 0.0 });
+        let fill = if c.0 == index { mcc_core::ui::FOCUS } else { Color::NONE };
         if back.0 != fill {
             back.0 = fill;
         }
@@ -549,7 +549,7 @@ fn restart(world: &mut World) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.043, 0.059, 0.082)),
+            BackgroundColor(mcc_core::ui::BACKGROUND),
         ))
         .with_child(text("RESTARTING...", 36.0, LIT));
 }

@@ -28,7 +28,9 @@ use bevy::window::PrimaryWindow;
 use mcc_core::skate::SkateEnabled;
 use mcc_setup::Missing;
 
-use super::{BAR, DIM, FAINT, LINE, LIT, Menu, Phase, Pick, Picking, refresh_maps, text};
+use mcc_core::ui::{self, bold, text, u};
+
+use super::{DIM, FAINT, LIT, Menu, Phase, Pick, Picking, refresh_maps};
 
 /// A row on the setup screen: a folder to choose, or Skate 3 or Reflex
 /// declined.
@@ -129,7 +131,7 @@ const FROM_SETTINGS_READY: &str =
 const LATER_IN_SETTINGS: &str = " You can add Skate 3 later in Settings.";
 
 /// The colour of a note that is a problem.
-const ERROR: Color = Color::srgb(0.95, 0.47, 0.43);
+const ERROR: Color = ui::ERROR;
 
 #[derive(Component)]
 pub(super) struct SetupScreen;
@@ -288,156 +290,100 @@ fn row_value(row: SetupRow, from_settings: bool) -> (String, bool) {
     }
 }
 
-/// The setup screen: the welcome, the steps, a page per step with its rows,
-/// the note, and the bar.
+//// The setup screen: its title and the steps in the header, what it is for,
+/// a page per step with its rows, the note, and the footer.
 pub(super) fn spawn(screen: &mut ChildSpawnerCommands) {
-    let wide = || Node { width: Val::Percent(92.0), max_width: Val::Vh(165.0), ..default() };
-    screen
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(8.0),
-                margin: UiRect::top(Val::Vh(4.0)),
-                padding: UiRect::bottom(Val::Px(12.0)),
-                border: UiRect::bottom(Val::Px(1.0)),
-                ..wide()
-            },
-            BorderColor::all(LINE),
-        ))
-        .with_children(|head| {
-            head.spawn((SetupHeading, text("WELCOME", 22.0, LIT)));
-            head.spawn((SetupIntro, text(INTRO, 17.0, DIM)));
-        });
-    // The steps, drawn like the map menu's tabs.
-    screen
-        .spawn((
-            StepTabs,
-            Node {
-                margin: UiRect::top(Val::Vh(3.0)),
-                column_gap: Val::Px(36.0),
-                align_items: AlignItems::FlexEnd,
-                border: UiRect::bottom(Val::Px(1.0)),
-                ..wide()
-            },
-            BorderColor::all(LINE),
-        ))
-        .with_children(|tabs| {
+    screen.spawn((ui::header_node(), ui::bar())).with_children(|head| {
+        head.spawn((
+            SetupHeading,
+            Node { padding: UiRect::bottom(u(10.0)), margin: UiRect::right(u(24.0)), ..default() },
+            bold("SETUP", 40.0, ui::BRIGHT),
+        ));
+        // The steps, drawn like the map menu's tabs.
+        head.spawn((StepTabs, Node { column_gap: u(34.0), align_items: AlignItems::FlexEnd, ..default() })).with_children(|tabs| {
             for (i, step) in STEPS.iter().enumerate() {
                 tabs.spawn((
                     StepLabel(i),
-                    Node {
-                        padding: UiRect::new(Val::Px(2.0), Val::Px(2.0), Val::Px(6.0), Val::Px(10.0)),
-                        border: UiRect::bottom(Val::Px(3.0)),
-                        margin: UiRect::bottom(Val::Px(-1.0)),
-                        ..default()
-                    },
+                    ui::tab_node(),
                     BorderColor::all(Color::NONE),
-                    text(&format!("{}  {}", i + 1, step.tab), 22.0, DIM),
+                    bold(&format!("{}  {}", i + 1, step.tab), 24.0, FAINT),
                 ));
             }
         });
-    for (i, step) in STEPS.iter().enumerate() {
-        screen
-            .spawn((
-                StepPage(i),
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
-                    margin: UiRect::top(Val::Vh(3.5)),
-                    display: Display::None,
-                    ..wide()
-                },
-            ))
-            .with_children(|page| {
-                page.spawn(Node { column_gap: Val::Px(18.0), align_items: AlignItems::Baseline, ..default() })
-                    .with_children(|title| {
-                        title.spawn(text(step.title, 30.0, Color::WHITE));
-                        title.spawn(text(if step.required { "REQUIRED" } else { "OPTIONAL" }, 15.0, FAINT));
-                    });
-                for (j, line) in step.about.iter().enumerate() {
-                    page.spawn((About(i, j), Node { max_width: Val::Px(1180.0), ..default() }, text(line, 18.0, DIM)));
-                }
-                page.spawn(Node { height: Val::Px(14.0), ..default() });
-                for &row in step.rows {
-                    spawn_row(page, row);
-                }
-            });
-    }
-    screen.spawn((SetupNote, Node { margin: UiRect::top(Val::Px(18.0)), ..wide() }, text("", 17.0, DIM)));
-    screen.spawn(Node { flex_grow: 1.0, ..default() });
-    // The bar, as on the map menu: where you are, then the buttons.
+    });
     screen
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Vh(11.0),
-                padding: UiRect::horizontal(Val::Percent(4.0)),
-                align_items: AlignItems::Center,
-                column_gap: Val::Px(40.0),
-                border: UiRect::top(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(BAR),
-            BorderColor::all(LINE),
-        ))
-        .with_children(|bar| {
-            bar.spawn((Node { flex_grow: 1.0, ..default() }, StepCount, text("", 18.0, DIM)));
-            for (button, letter, colour, key) in [
-                (BarButton::Choose, "A", Color::srgb(0.37, 0.75, 0.29), "Enter"),
-                (BarButton::Back, "B", Color::srgb(0.85, 0.33, 0.31), "Esc"),
-            ] {
-                bar.spawn((
-                    button,
+        .spawn(Node {
+            flex_grow: 1.0,
+            min_height: Val::Px(0.0),
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::new(u(72.0), u(72.0), u(36.0), u(24.0)),
+            ..default()
+        })
+        .with_children(|body| {
+            body.spawn((SetupIntro, Node { max_width: u(1500.0), ..default() }, text(INTRO, 20.0, FAINT)));
+            for (i, step) in STEPS.iter().enumerate() {
+                body.spawn((
+                    StepPage(i),
                     Node {
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(10.0),
-                        padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: u(12.0),
+                        margin: UiRect::top(u(34.0)),
+                        max_width: u(1500.0),
+                        display: Display::None,
                         ..default()
                     },
                 ))
-                .with_children(|b| {
-                    crate::key_hint::badge(b, letter, key, colour);
-                    let lit = if button == BarButton::Choose { LIT } else { DIM };
-                    b.spawn((BarLabel(button), text("", 20.0, lit)));
+                .with_children(|page| {
+                    page.spawn(Node { column_gap: u(20.0), align_items: AlignItems::Baseline, ..default() })
+                        .with_children(|title| {
+                            title.spawn(bold(step.title, 42.0, ui::BRIGHT));
+                            title.spawn(text(if step.required { "REQUIRED" } else { "OPTIONAL" }, 17.0, LIT));
+                        });
+                    for (j, line) in step.about.iter().enumerate() {
+                        page.spawn((About(i, j), text(line, 21.0, DIM)));
+                    }
+                    page.spawn(Node { height: u(12.0), ..default() });
+                    for &row in step.rows {
+                        spawn_row(page, row);
+                    }
                 });
             }
+            body.spawn((SetupNote, Node { margin: UiRect::top(u(22.0)), max_width: u(1500.0), ..default() }, text("", 21.0, DIM)));
         });
-}
-
-/// A row, as on the settings screen: the game, its folder, its button.
-fn spawn_row(page: &mut ChildSpawnerCommands, row: SetupRow) {
-    page.spawn((
-        RowNode(row),
-        Node {
-            align_items: AlignItems::Center,
-            column_gap: Val::Px(24.0),
-            padding: UiRect::axes(Val::Px(20.0), Val::Px(14.0)),
-            border: UiRect::all(Val::Px(1.0)),
-            border_radius: BorderRadius::all(Val::Px(6.0)),
-            ..default()
-        },
-        BackgroundColor(Color::NONE),
-        BorderColor::all(Color::NONE),
-    ))
-    .with_children(|r| {
-        r.spawn((Node { width: Val::Px(240.0), flex_shrink: 0.0, ..default() }, text(row.name(), 22.0, Color::WHITE)));
-        r.spawn((RowValue(row), Node { flex_grow: 1.0, flex_basis: Val::Px(0.0), ..default() }, text("", 18.0, DIM)));
-        r.spawn((
-            RowButton(row),
-            Node {
-                padding: UiRect::axes(Val::Px(26.0), Val::Px(9.0)),
-                border: UiRect::all(Val::Px(2.0)),
-                border_radius: BorderRadius::all(Val::Px(5.0)),
-                flex_shrink: 0.0,
-                ..default()
-            },
-            BorderColor::all(LINE),
-        ))
-        .with_child((RowButtonLabel(row), text(row.button(), 18.0, DIM)));
+    // The footer, as on the map menu: where you are, then the buttons.
+    screen.spawn((ui::footer_node(), ui::bar())).with_children(|bar| {
+        bar.spawn((Node { margin: UiRect::right(Val::Auto), ..default() }, StepCount, text("", 19.0, FAINT)));
+        for (button, letter, colour, key) in [
+            (BarButton::Choose, "A", Color::srgb(0.37, 0.75, 0.29), "Enter"),
+            (BarButton::Back, "B", Color::srgb(0.85, 0.33, 0.31), "Esc"),
+        ] {
+            bar.spawn((
+                button,
+                Node { align_items: AlignItems::Center, column_gap: u(12.0), padding: UiRect::axes(u(8.0), u(10.0)), ..default() },
+            ))
+            .with_children(|b| {
+                crate::key_hint::badge(b, letter, key, colour);
+                if button == BarButton::Choose {
+                    b.spawn((BarLabel(button), bold("", 20.0, ui::BRIGHT)));
+                } else {
+                    b.spawn((BarLabel(button), text("", 20.0, DIM)));
+                }
+            });
+        }
     });
 }
 
-/// How many rows the step on screen has.
+/// A row, as on the settings screen: the game, its folder, and what
+/// choosing it does. The whole row is its button.
+fn spawn_row(page: &mut ChildSpawnerCommands, row: SetupRow) {
+    page.spawn((RowNode(row), RowButton(row), ui::row(66.0))).with_children(|r| {
+        r.spawn((Node { width: u(330.0), flex_shrink: 0.0, ..default() }, bold(row.name(), 24.0, ui::BRIGHT)));
+        r.spawn((RowValue(row), Node { flex_grow: 1.0, flex_basis: Val::Px(0.0), ..default() }, text("", 21.0, DIM)));
+        r.spawn((RowButtonLabel(row), Node { flex_shrink: 0.0, ..default() }, bold(row.button(), 19.0, FAINT)));
+    });
+}
+
+// How many rows the step on screen has.
 pub(super) fn row_count(menu: &Menu) -> usize {
     STEPS[menu.step].rows.len()
 }
@@ -683,7 +629,7 @@ pub(super) fn finish(world: &mut World) {
                 true
             }
             None => {
-                menu.phase = Phase::Choosing;
+                menu.phase = Phase::Main;
                 menu.setting = 0;
                 say(&mut menu, "", false);
                 false
@@ -706,7 +652,10 @@ pub(super) fn finish(world: &mut World) {
 pub(super) fn show(
     menu: Res<Menu>,
     mut nodes: Query<(Option<&SetupScreen>, Option<&StepPage>, Option<&StepTabs>, &mut Node)>,
-    mut frames: Query<(Option<&StepLabel>, Option<&RowNode>, Option<&RowButton>, Option<&mut BackgroundColor>, &mut BorderColor)>,
+    mut frames: Query<
+        (Option<&StepLabel>, Option<&RowNode>, Option<&mut BackgroundColor>, &mut BorderColor),
+        Or<(With<StepLabel>, With<RowNode>)>,
+    >,
     mut texts: Query<(
         AnyOf<(
             &StepLabel,
@@ -756,23 +705,17 @@ pub(super) fn show(
     let done: Vec<bool> = (0..STEPS.len()).map(step_done).collect();
     let focus = focused(&menu);
     let busy = |row: SetupRow| menu.picking.as_ref().is_some_and(|p| p.what == Pick::Setup(row));
-    for (step, row, button, background, mut border) in &mut frames {
+    for (step, row, fill, mut border) in &mut frames {
         if let Some(step) = step {
-            *border = BorderColor::all(if step.0 == menu.step { LIT } else { Color::NONE });
-        } else if let Some(row) = row {
-            let on = row.0 == focus;
-            if let Some(mut background) = background {
-                background.0 = if on { BAR } else { Color::NONE };
-            }
-            *border = BorderColor::all(if on { LINE } else { Color::NONE });
-        } else if let Some(button) = button {
-            *border = BorderColor::all(if button.0 == focus { LIT } else { LINE });
+            *border = ui::tab_lit(step.0 == menu.step, false).1;
+        } else if let (Some(row), Some(mut fill)) = (row, fill) {
+            ui::focus(row.0 == focus, &mut fill, &mut border);
         }
     }
     let progress = mcc_setup::progress();
     for ((step, value, label, note, count, bar, heading, intro, about), mut text, mut colour) in &mut texts {
         if heading.is_some() {
-            text.0 = if one_step { "SETTINGS" } else { "WELCOME" }.to_string();
+            text.0 = if one_step { "SETTINGS" } else { "SETUP" }.to_string();
         } else if intro.is_some() {
             text.0 = match one_step {
                 true if mcc_setup::skate_ready() => FROM_SETTINGS_READY,
@@ -793,7 +736,7 @@ pub(super) fn show(
             };
             text.0 = format!("{}  {}{mark}", step.0 + 1, STEPS[step.0].tab);
             colour.0 = if step.0 == menu.step {
-                LIT
+                ui::BRIGHT
             } else if step.0 == 0 || done[..step.0].iter().all(|d| *d) {
                 DIM
             } else {
@@ -805,7 +748,7 @@ pub(super) fn show(
             colour.0 = if set { DIM } else { FAINT };
         } else if let Some(label) = label {
             text.0 = if busy(label.0) { "WORKING..." } else { label.0.button() }.to_string();
-            colour.0 = if label.0 == focus { LIT } else { DIM };
+            colour.0 = if label.0 == focus { LIT } else { FAINT };
         } else if note.is_some() {
             text.0 = if converting && !progress.is_empty() {
                 format!("Converting Skate 3. This takes a few minutes.\n{progress}")

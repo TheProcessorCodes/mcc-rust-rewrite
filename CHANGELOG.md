@@ -11,6 +11,10 @@ Releases: **beta-0.0.4** holds everything up to and including 2026-11-11; beta-0
 ## 2026-11-17
 
 ### Changed
+- Every menu has a new look and layout: the game opens on a main menu (Campaign, Multiplayer maps,
+  Settings, Exit); maps are picked from a list with a large preview; Settings explains the row you are
+  on; and the pause menu, setup, loading screen and pop-ups match. Menus now scale with the window, so
+  they fit a 720p window and stay readable at 4K (#50, #33).
 - The Reflex bike physics were checked line by line against OPEN REFLEX's copy of Reflex's own code
   and corrected: rear wheelspin and slides, steering wobble when rolling backwards and on rough
   ground, landing and air control (the trick-hold snap now works), a parked bike stays put on

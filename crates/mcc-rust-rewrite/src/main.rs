@@ -771,6 +771,7 @@ fn run(args: &[String], map: Option<LoadedMap>) -> anyhow::Result<()> {
     app.add_plugins((
         mcc_core::map::MapPhasePlugin,
         pause::PausePlugin,
+        mcc_core::ui::UiThemePlugin,
         key_hint::KeyHintPlugin,
         speedo::SpeedoPlugin,
         // The map's scripts, and the completion screen when they win.
