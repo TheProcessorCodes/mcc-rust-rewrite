@@ -5,8 +5,8 @@
 //! - stock XML dump (`dumps\stock\*.xml`): `<vehicle_physics>` children with `preset` and `kind`
 //! - in-memory tuning (`runs\...\tuning-*.json`): `"Key": {"type": 0..3, "value": ...}`
 //!
-//! Keys are kept by name; nothing is dropped. A key that is not present reads as the sentinel
-//! [`SENTINEL`], as in the original.
+//! Keys are kept by name; nothing is dropped. A key that is not present reads as the original's registration
+//! default: [`SENTINEL`] for scalars, [`VEC3_SENTINEL`] for vectors.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -16,8 +16,22 @@ use serde_json::Value as Json;
 
 use crate::curve::{blend3, Curve};
 
-/// Value the original reads for a key that the vehicle file does not define.
+/// Value the original reads for a scalar key that the vehicle file does not define (the registration default of
+/// `004392f0`, .rdata 0xc4426ccd).
 pub const SENTINEL: f64 = -777.7;
+
+/// Value the original reads in every component of a vector key the vehicle file does not define (0xc0f8a3d7,
+/// OpenReflex build_vehicle_params.inc).
+pub const VEC3_SENTINEL: f64 = -7.77;
+
+/// A per-surface set read with some of its three values missing: the parameter reader (OpenReflex
+/// build_vehicle_sim.c `0043a560`) fills the missing ones with the first value it read.
+fn fill_triple(key: &str, p: [Option<f64>; 3]) -> Result<[f64; 3], LoadError> {
+    let Some(first) = p.iter().flatten().next().copied() else {
+        return err(format!("{key}: empty Sticky/Normal/Slippery set"));
+    };
+    Ok(p.map(|x| x.unwrap_or(first)))
+}
 
 /// One tuning value. `Triple` is a per-surface key: (Sticky, Normal, Slippery).
 #[derive(Clone, Debug, PartialEq)]
@@ -132,10 +146,7 @@ impl Vehicle {
                     p[1] = Some(*n);
                 }
             }
-            let [Some(a), Some(b), Some(c)] = p else {
-                return err(format!("{key}: incomplete Sticky/Normal/Slippery set"));
-            };
-            values.insert(key, Value::Triple([a, b, c]));
+            values.insert(key.clone(), Value::Triple(fill_triple(&key, p)?));
         }
         Ok(Self { values })
     }
@@ -188,8 +199,7 @@ impl Vehicle {
         for (key, p) in presets {
             let value = match p {
                 [None, Some(n), None] => Value::Scalar(n),
-                [Some(a), Some(b), Some(c)] => Value::Triple([a, b, c]),
-                _ => return err(format!("{key}: incomplete Sticky/Normal/Slippery set")),
+                _ => Value::Triple(fill_triple(&key, p)?),
             };
             values.insert(key, value);
         }
@@ -209,11 +219,11 @@ impl Vehicle {
         }
     }
 
-    /// vec3 key; a missing key reads as [`SENTINEL`] in every component.
+    /// vec3 key; a missing key reads as [`VEC3_SENTINEL`] in every component.
     pub fn vec3(&self, key: &str) -> [f64; 3] {
         match self.values.get(key) {
             Some(Value::Vec3(v)) => *v,
-            _ => [SENTINEL; 3],
+            _ => [VEC3_SENTINEL; 3],
         }
     }
 

@@ -151,7 +151,7 @@ impl ReflexBike {
 
     /// Garage multipliers (1 = stock): suspension stiffness, gearing, brakes.
     pub fn with_garage(mut self, suspension: f64, gearing: f64, brakes: f64) -> Self {
-        self.sim.set_garage(Garage { suspension, gearing, brakes });
+        self.sim.set_garage(Garage { suspension, gearing, brakes, ..Garage::default() });
         self
     }
 

@@ -19,7 +19,8 @@ use crate::vehicle::Vehicle;
 use crate::wreck::{WreckChecker, WreckInputs, MIN_WRECK_BEFORE_RESET, WRECK_DURATION};
 use crate::DT;
 
-/// Most substeps per rendered frame; beyond this, time is dropped (the game slows).
+/// Most substeps per rendered frame; beyond this, time is dropped (the game slows). S+b8 = 6 (OpenReflex
+/// build_vehicle_sim.c `00430b50`).
 pub const MAX_SUBSTEPS: usize = 6;
 
 /// The sim's input block (sim+0x1c..0x48), latched once per rendered frame.
@@ -208,6 +209,10 @@ pub struct Sim {
     pub wreck: WreckChecker,
     /// Respawn in place, upright, `WreckDuration` after a wreck. Off: the host decides (see `respawn_due`).
     pub auto_respawn: bool,
+    /// Brake-hold latch of the input block (S+54, block +0x38): set when the simulation is built (`00430b50`);
+    /// both brakes read 1.0 while it is set, and the first throttle or reverse input clears it (`004308a0`).
+    /// A respawn does not set it again (`0044a650` leaves it).
+    pub brake_hold: bool,
     tri_buf: Vec<Triangle>,
 }
 
@@ -254,6 +259,7 @@ impl Sim {
             frame_hit: false,
             wreck: WreckChecker::default(),
             auto_respawn: true,
+            brake_hold: true,
             tri_buf: vec![],
         };
         sim.reset(x, q);
@@ -370,11 +376,37 @@ impl Sim {
         (b.prev_x.lerp(b.x, a), b.prev_q.slerp(b.q, a))
     }
 
-    /// Latches a frame's inputs: the lean input restarts from the steer stick once per frame (the substeps then
+    /// Latches a frame's inputs as the controller read (`004308a0`) and the set-input slot (`00433380`) leave
+    /// them in the input block: non-finite axes read 0, the reverse button is 0 or 1, and the brake-hold latch
+    /// forces both brakes to 1 until a throttle or reverse input clears it (after this frame's brakes are set).
+    /// The lean input restarts from the steer stick once per frame (`0044bfb0` / `0044bff0`; the substeps then
     /// edit it in place).
     pub fn latch(&mut self, inputs: Inputs) {
-        self.inputs = inputs;
-        self.ctl.lean_input = inputs.steer_x;
+        let mut i = inputs;
+        for a in [
+            &mut i.throttle,
+            &mut i.brake_button,
+            &mut i.front_brake,
+            &mut i.rear_brake,
+            &mut i.steer_x,
+            &mut i.steer_y,
+            &mut i.rider_x,
+            &mut i.rider_y,
+        ] {
+            if !a.is_finite() {
+                *a = 0.0;
+            }
+        }
+        i.brake_button = if i.brake_button == 0.0 { 0.0 } else { 1.0 };
+        if self.brake_hold {
+            i.front_brake = 1.0;
+            i.rear_brake = 1.0;
+        }
+        if i.throttle > 0.0 || i.brake_button > 0.0 {
+            self.brake_hold = false;
+        }
+        self.inputs = i;
+        self.ctl.lean_input = i.steer_x;
     }
 
     /// Applies garage multipliers (1.0 = stock) to the values the sim runs on.
@@ -382,6 +414,7 @@ impl Sim {
         self.params = Params::with_garage(&self.vehicle, g);
         self.cstate.front_brake.tau = self.params.brake_time_constant;
         self.cstate.rear_brake.tau = self.params.brake_time_constant;
+        self.cstate.steer.tau = self.params.steering_tau;
     }
 
     /// Loads a vehicle file (stock JSON / XML dump or tuning JSON) and places the bike at rest.
@@ -389,14 +422,18 @@ impl Sim {
         Ok(Sim::new(Vehicle::load(path)?, x, q))
     }
 
-    /// One rendered frame (`00430ef0`): latch inputs, apply the hold pin, run the substeps the frame time
-    /// calls for. Returns the number of substeps run. Render with [`Sim::render_alpha`].
+    /// One rendered frame (`00430ef0`): latch inputs, run the substeps the frame time calls for. Returns the
+    /// number of substeps run. Render with [`Sim::render_alpha`]. As in the scheduler, a frame that runs no
+    /// substep only shrinks the carry: the hold pin (slot 34) and the clearing of the crash flags (S+14 / S+18)
+    /// happen only on a frame that steps.
     pub fn frame(&mut self, frame_dt: f64, inputs: Inputs, ground: &dyn Ground) -> usize {
         self.latch(inputs);
         let n = self.substeps_for(frame_dt);
-        self.apply_hold_pin();
-        self.frame_touch = false;
-        self.frame_hit = false;
+        if n > 0 {
+            self.apply_hold_pin();
+            self.frame_touch = false;
+            self.frame_hit = false;
+        }
         for _ in 0..n {
             self.substep(ground);
         }
@@ -427,21 +464,30 @@ impl Sim {
     }
 
     /// Hold pin (slot 34 `0044e830`, mode 2), once per frame before the substeps: shift every body so the
-    /// chassis x / z return to the anchor (y free), then rotate every body about the chassis to the held
-    /// orientation.
+    /// chassis x / z return to the anchor (y free), then turn the mechanism by R = conj(q_chassis) q_held the way
+    /// OpenReflex phys_mech.c `0085c530` does: every orientation q = q R (the chassis lands on q_held), every
+    /// position = root + R (x - root) R*. The joint projections of the substep put rider and wheels back.
     pub fn apply_hold_pin(&mut self) {
         let Some(h) = self.hold else { return };
         let x0 = self.sys.bodies[CHASSIS].x;
         let shift = Vec3 { x: h.pos.x - x0.x, y: 0.0, z: h.pos.z - x0.z };
-        let r = h.q * self.sys.bodies[CHASSIS].q.conj();
-        let pivot = x0 + shift;
         for b in &mut self.sys.bodies {
-            b.x = pivot + r.rotate(b.x + shift - pivot);
-            b.q = (r * b.q).normalize();
+            b.x += shift;
+        }
+        let r = self.sys.bodies[CHASSIS].q.conj() * h.q;
+        let root = self.sys.bodies[CHASSIS].x;
+        for b in &mut self.sys.bodies {
+            b.q = b.q * r;
+            b.x = root + r.rotate(b.x - root);
         }
     }
 
-    /// One 7.5 ms substep (`00431d60`), stages in the original order.
+    /// One 7.5 ms substep (OpenReflex bike_sim.c `00431d60`), stages in the original order: (the scheduler's
+    /// prev := cur), slot 9 controls, force reset, slot 11 forces, the joint solve and velocity integration,
+    /// slot 12 (skipped while held), slot 15, pose integration, slot 16, node slot 6 (joint pose projection),
+    /// slot 13 contacts, slot 17, the speed filter. Left out: the replay follow, the external-object impulse
+    /// (`004355d0`), the debug push keys, the scheduler's slots 6 / 14 (no motocross code) and slot 7 (a pose
+    /// save for a debug restore toggle).
     pub fn substep(&mut self, ground: &dyn Ground) {
         self.sys.save_prev_poses();
         self.controls(ground); // 1
@@ -522,16 +568,17 @@ impl Sim {
                 self.ctl.steer_angle = h.steer;
             }
         }
+        // rider weld S+6060 = S+8d80 = Rider_RiderCenterOfMass + (rx LeanLeftRight, 0, ry LeanForwardBack), or
+        // + (0, -1, 0) with the rider off; no CM offset (OpenReflex bike_controls.c 0044c170 / 0044e0d0)
         let p = &self.params;
-        let cm = self.geometry.cm_offset;
         let r = if self.crashed {
-            p.rider_com - cm + Vec3 { x: 0.0, y: -1.0, z: 0.0 }
+            p.rider_com + Vec3 { x: 0.0, y: -1.0, z: 0.0 }
         } else {
             Vec3 {
                 x: p.rider_com.x + p.rider_lean_lr * self.inputs.rider_x,
                 y: p.rider_com.y,
                 z: p.rider_com.z + p.rider_lean_fb * self.inputs.rider_y,
-            } - cm
+            }
         };
         if let Joint::Fixed { offset, .. } = &mut self.sys.joints[RIDER_JOINT] {
             *offset = r;
@@ -562,19 +609,23 @@ impl Sim {
         }
     }
 
-    /// Stage 11 (slot 15 `00443c30`): angular speed clamp; held: chassis velocity kept along its up axis and
-    /// spins zeroed, then joint velocity projection; otherwise joint velocity projection, then rolling friction /
-    /// brake lock. Chassis collision impulses and rest detection are not implemented yet.
+    /// Stage 11 (slot 15, OpenReflex bike_response.c `00443c30`): the chassis contact response (`004360b0`), the
+    /// angular speed clamps (`00443af0`: chassis 20 rad/s, the other bodies 120 rad/s); held (pose override mode
+    /// 2): not at rest, chassis velocity kept along its up axis and chassis / wheel spins zeroed, then the joint
+    /// velocity projection (node slot 7); otherwise the joint velocity projection, rolling friction / brake lock
+    /// (`00447810`) and the rest state. At rest the wheels spin with the chassis. (The planar lock of S+5c is not
+    /// used in free ride and left out.)
     fn velocity_fixups(&mut self) {
         chassis::impulses(&mut self.sys, &self.chassis);
         for (i, b) in self.sys.bodies.iter_mut().enumerate() {
-            let max = if i == CHASSIS { 20.0 } else { 120.0 };
+            let max = if i == CHASSIS { 20.0 /* 00935aac */ } else { 120.0 /* 00977480 */ };
             let w = b.w.length();
             if w > max {
                 b.w = b.w * (max / w);
             }
         }
         if self.hold.is_some() {
+            self.at_rest = false;
             let b0 = &mut self.sys.bodies[CHASSIS];
             let up = b0.q.rotate(Vec3::Y);
             b0.v = up * b0.v.dot(up);
@@ -587,38 +638,86 @@ impl Sim {
             self.parked = drivetrain::rolling_friction(&mut self.sys, &self.params, self.inputs.front_brake, self.inputs.rear_brake);
             self.rest_check();
         }
+        if self.at_rest {
+            // wheels_follow_chassis: wheel spin = the chassis's world spin in the wheel frame
+            let w0 = self.sys.bodies[CHASSIS].omega();
+            for i in [FRONT, REAR] {
+                let b = &mut self.sys.bodies[i];
+                b.w = b.q.inv_rotate(w0);
+            }
+        }
     }
 
-    /// Rest (sim+0x90, slot 15 with slots 25 / 26 `004324d0` / `00432360`), partly decoded: a bike stopped with
-    /// a brake held and both wheels locked comes to rest: all velocities are zeroed once (`0085c4b0`) and the
-    /// ground normal under the wheels is stored (sim+0x8af0); while at rest the chassis velocity keeps only its
-    /// component along that normal (the suspension still works, sliding along the ground does not), until throttle
-    /// without brake, the brakes released, a wheel leaving the ground or a crash. Without it the one-step support
-    /// lag lets a parked bike creep down slopes (spec 10). The entry / exit tests are approximations of slots 25 / 26.
-    fn rest_check(&mut self) {
+    /// The rider drives (OpenReflex bike_sim.c, the input chains of slots 25 / 26 / 28): throttle with the clutch
+    /// out and no brake, or reverse and no brake.
+    fn driving_inputs(&self) -> bool {
         let i = &self.inputs;
-        let braking = i.front_brake > 0.0 || i.rear_brake > 0.0;
-        let grounded = self.tyres[0].contact && self.tyres[1].contact;
+        let brakes_idle = !(i.front_brake > 0.0) && !(i.rear_brake > 0.0);
+        (i.throttle > 0.0 && !i.clutch && brakes_idle) || (i.brake_button > 0.0 && brakes_idle)
+    }
+
+    /// Slot 30 (`00447750`): both wheels touch (slot 29 `00447730`) and both keep their rolling and lateral
+    /// grip (the tyre step's W+c0 / W+c4 flags).
+    fn wheels_gripping(&self) -> bool {
+        self.tyres.iter().all(|t| t.contact && t.roll_grip && t.side_grip)
+    }
+
+    /// A large external impulse (|S+2ec0| > 3, `0092fe48`); only its first vector exists here.
+    fn large_impulse(&self) -> bool {
+        self.input_vec.length() > 3.0
+    }
+
+    /// Slot 26, leave rest (`00432360`): driving inputs, a wheel losing contact or grip, the rider off, or a
+    /// large external impulse.
+    fn leave_rest_test(&self) -> bool {
+        self.driving_inputs() || !self.wheels_gripping() || self.crashed || self.large_impulse()
+    }
+
+    /// Slot 25, enter rest (`004324d0`): never while driving, without both wheels gripping or with the rider
+    /// off. Then either stopped (|v| < 1 ft/s with a brake pressed and both wheels locked by it, sim+0xa8), or
+    /// settled (both wheels touching, the speed filter below 0.5 ft/s) on flat ground: the normalized sum of
+    /// the two contact normals has y > 0.9962 (slot 31 `00447790`, `00977770`).
+    fn enter_rest_test(&self) -> bool {
+        let speed = self.sys.bodies[CHASSIS].v.length();
+        let both = self.tyres[0].contact && self.tyres[1].contact;
+        if self.driving_inputs() || !self.wheels_gripping() || self.crashed {
+            return false;
+        }
+        let i = &self.inputs;
+        if speed < 1.0 && (i.front_brake > 0.0 || i.rear_brake > 0.0) && self.parked {
+            return true;
+        }
+        if !(both && self.speed_filt < 0.5) {
+            return false;
+        }
+        let n = self.tyres[0].normal + self.tyres[1].normal;
+        n.length_squared() > 0.0 && n.normalize().y > 0.9962
+    }
+
+    /// Rest (sim+0x90, slot 15 with slots 25 / 26): entering it stops every body (`0085c4b0`) and stores the
+    /// normalized sum of the wheel contact normals (sim+0x8af0); while at rest the chassis velocity keeps only
+    /// its component along that normal (the suspension still works, sliding along the ground does not). Without
+    /// it the one-step support lag lets a parked bike creep down slopes (spec 10). The rest pin of slot 13
+    /// (`00446f80`, the saved wheel geometry) is not ported.
+    fn rest_check(&mut self) {
         if self.at_rest {
-            if !braking || (i.throttle > 0.0 && !braking) || !grounded || self.crashed {
+            if self.leave_rest_test() {
                 self.at_rest = false;
-                return;
             }
-        } else if braking && self.parked && grounded && !self.crashed && self.sys.bodies[CHASSIS].v.length() < 1.0 {
+        } else if self.enter_rest_test() {
             self.at_rest = true;
-            let n = self.tyres[0].normal + self.tyres[1].normal;
-            self.rest_axis = if n.length_squared() > 0.0 { n.normalize() } else { Vec3::Y };
             for b in &mut self.sys.bodies {
                 b.v = Vec3::ZERO;
                 b.w = Vec3::ZERO;
             }
-            return;
-        } else {
-            return;
+            let n = self.tyres[0].normal + self.tyres[1].normal;
+            self.rest_axis = if n.length_squared() > 0.0 { n.normalize() } else { Vec3::Y };
         }
-        let a = self.rest_axis;
-        let b0 = &mut self.sys.bodies[CHASSIS];
-        b0.v = a * b0.v.dot(a);
+        if self.at_rest {
+            let a = self.rest_axis;
+            let b0 = &mut self.sys.bodies[CHASSIS];
+            b0.v = a * a.dot(b0.v);
+        }
     }
 
     /// Stage 15 (slot 13 `00444b90`): contact per wheel (front, then rear), airborne flag, then the position
@@ -687,6 +786,35 @@ mod tests {
         let mean = pattern.iter().sum::<usize>() as f64 / pattern.len() as f64;
         assert!((mean - 2.2222).abs() < 1e-3, "mean {mean}");
         assert!(s.carry >= 0.0 && s.carry < DT);
+    }
+
+    #[test]
+    fn brake_hold_latch() {
+        let mut s = Sim::new(Vehicle::default(), Vec3::ZERO, Quat::IDENTITY);
+        s.latch(Inputs::default());
+        assert_eq!((s.inputs.front_brake, s.inputs.rear_brake), (1.0, 1.0));
+        // the throttle frame still has the brakes forced, then the latch is clear
+        s.latch(Inputs { throttle: 0.5, ..Inputs::default() });
+        assert_eq!(s.inputs.rear_brake, 1.0);
+        s.latch(Inputs::default());
+        assert_eq!(s.inputs.rear_brake, 0.0);
+        // a respawn does not set it again
+        s.reset(Vec3::ZERO, Quat::IDENTITY);
+        s.latch(Inputs::default());
+        assert_eq!(s.inputs.rear_brake, 0.0);
+        s.latch(Inputs { brake_button: 0.3, steer_x: f64::NAN, ..Inputs::default() });
+        assert_eq!((s.inputs.brake_button, s.inputs.steer_x), (1.0, 0.0));
+    }
+
+    #[test]
+    fn hold_pin_lands_on_the_held_pose() {
+        let mut s = Sim::new(Vehicle::default(), Vec3::ZERO, Quat::IDENTITY);
+        let q = Quat::from_axis_angle(Vec3::Y, 0.4);
+        s.hold = Some(Hold { pos: Vec3 { x: 3.0, y: 9.0, z: -2.0 }, q, steer: 0.0 });
+        s.apply_hold_pin();
+        let b0 = &s.sys.bodies[CHASSIS];
+        assert!((b0.x - Vec3 { x: 3.0, y: 0.0, z: -2.0 }).length() < 1e-12);
+        assert!(1.0 - b0.q.dot(q).abs() < 1e-12);
     }
 
     #[test]
