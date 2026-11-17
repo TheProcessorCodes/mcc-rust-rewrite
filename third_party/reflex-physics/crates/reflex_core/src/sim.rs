@@ -286,10 +286,7 @@ impl Sim {
             ..Drivetrain::default()
         };
         self.cstate = ControlState::new(p);
-        self.air = AirState::default();
-        self.air.roll.tau = p.air.rpy_tau[0];
-        self.air.pitch.tau = p.air.rpy_tau[1];
-        self.air.yaw.tau = p.air.rpy_tau[2];
+        self.air = AirState::placed(q, p.air.rpy_tau);
         self.inputs = Inputs::default();
         self.ctl = Controls::default();
         self.carry = 0.0;
@@ -338,6 +335,10 @@ impl Sim {
 
     /// Once per frame after the substeps: the crash decision, the wreck timer and the automatic respawn.
     fn after_substeps(&mut self, frame_dt: f64) {
+        // stunt latches / stick gestures, once per frame (OpenReflex bike_air.c 00440da0 from 00463900)
+        let (rx, ry) = if self.crashed { (0.0, 0.0) } else { (self.inputs.rider_x, self.inputs.rider_y) };
+        let q = self.sys.bodies[CHASSIS].q;
+        air::stunt_latches(&mut self.air, q, rx, ry, self.airborne, self.cstate.lip_takeoff, self.air_inhibit, frame_dt);
         if self.crashed {
             self.wreck.wreck_timer -= frame_dt;
             if self.auto_respawn && self.respawn_due() {
@@ -543,7 +544,7 @@ impl Sim {
                 clutch_engagement: ((p.clutch_reset_time - self.drive.clutch_timer) / p.clutch_reset_time).clamp(0.0, 1.0),
             };
             lean::ground_step(&mut self.sys, &mut self.lean, &li, &mut self.ctl.lean_cmd, &mut self.cstate.lean, DT);
-            // after the grounded correction, which turns the bodies and trims the velocity (`00443610`)
+            // after the grounded correction, which rewrites the root velocities (OpenReflex bike_slot12.c 00443610)
             air::ground_update(&mut self.air, &self.sys, sticks);
         }
         self.velocity_fixups(); // 11
