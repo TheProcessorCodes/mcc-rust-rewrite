@@ -273,6 +273,11 @@ impl Exact {
         let forward = bike.velocity.dot(bike.forward());
         let radii = self.bike.wheel_radii();
         let sim = self.bike.sim_mut();
+        // Reflex holds both brakes on a new bike until the first throttle (`Sim::brake_hold`), for a
+        // standing start; a bike mounted on the move must not brake by itself.
+        if bike.velocity.length() > 0.5 {
+            sim.brake_hold = false;
+        }
         for (i, body) in sim.sys.bodies.iter_mut().enumerate() {
             body.v = v;
             if i == FRONT || i == REAR {

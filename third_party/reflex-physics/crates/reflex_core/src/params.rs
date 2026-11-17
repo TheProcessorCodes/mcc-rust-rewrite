@@ -36,18 +36,21 @@ pub struct SuspensionParams {
     pub bottom_out_length: f64,
 }
 
-/// Garage multipliers (sim+0x2ef0..0x2efc), 1.0 = stock. They scale the values the sim runs on: suspension
-/// spring and damper rates, overall gear ratios, the brake time constant.
+/// Garage multipliers (sim+0x2ef0 / 0x2ef4 / 0x2ef8 / 0x2efc), 1.0 = stock. They scale the values the sim runs on
+/// (OpenReflex loop_vehicle.c `0043be80`): suspension spring and damper rates, overall gear ratios, the steering
+/// time constant, the brake time constant.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Garage {
     pub suspension: f64,
     pub gearing: f64,
     pub brakes: f64,
+    /// `VehicleSim_SteeringTimeConstant` multiplier (sim+0x2ef8).
+    pub steering: f64,
 }
 
 impl Default for Garage {
     fn default() -> Self {
-        Garage { suspension: 1.0, gearing: 1.0, brakes: 1.0 }
+        Garage { suspension: 1.0, gearing: 1.0, brakes: 1.0, steering: 1.0 }
     }
 }
 
@@ -67,6 +70,8 @@ pub struct Params {
     pub rolling_friction_curve: Curve,
     /// Overall ratio per gear (GearRatio_i x PrimaryReduction x FinalRatio; garage gearing scale 1).
     pub gear_ratios: [f64; 5],
+    /// `DriveTrain_ManualTransmission` > 0 (S+2eb0): the automatic gear choice is off.
+    pub manual_transmission: bool,
     pub torque_curve: Curve,
     pub drag_torque_curve: Curve,
     pub engine_drag_coefficient: f64,
@@ -92,10 +97,14 @@ pub struct Params {
     pub rider_lean_lr: f64,
 }
 
+/// A per-surface key. A single value fills all three (the parameter reader copies the first value into the
+/// missing ones); a missing key reads 0, the registration default of these records (OpenReflex
+/// build_vehicle_sim.c `004392f0`: kind 3 records start zeroed).
 fn triple(v: &Vehicle, key: &str) -> [f64; 3] {
     match v.get(key) {
         Some(crate::Value::Triple(t)) => *t,
-        _ => [v.scalar(key); 3],
+        Some(crate::Value::Scalar(s)) => [*s; 3],
+        _ => [0.0; 3],
     }
 }
 
@@ -156,6 +165,7 @@ impl Params {
             *r *= g.gearing;
         }
         p.brake_time_constant *= g.brakes;
+        p.steering_tau *= g.steering;
         p
     }
 
@@ -177,7 +187,9 @@ impl Params {
             gravity: Vec3::from_array(v.vec3("VehicleSim_Gravity")),
             tyres: [TyreParams::load(v, "Front"), TyreParams::load(v, "Rear")],
             suspension: [SuspensionParams::load(v, "Front"), SuspensionParams::load(v, "Rear")],
-            speed_filter_tau: 1.0,
+            // the speed filter S+94 runs on this key (OpenReflex 0043b750 / 0044a650: phys_lag_filter_set(S+0x94, 0,
+            // S+33c4)); the step's alpha is min(dt, tau) / tau (bike_sim.c 00431d60)
+            speed_filter_tau: v.scalar("VehicleSim_SpeedFilterTimeConstant"),
             up_vector_tau: v.scalar("VehicleSim_UpVectorTimeConstant"),
             brake_time_constant: v.scalar("Brakes_TimeConstant"),
             front_brake_max: v.scalar("Brakes_FrontBrakeMaxTorque"),
@@ -189,6 +201,7 @@ impl Params {
                 let base = v.scalar("DriveTrain_PrimaryReduction") * v.scalar("DriveTrain_FinalRatio");
                 std::array::from_fn(|i| v.scalar(&format!("DriveTrain_GearRatio{}", i + 1)) * base)
             },
+            manual_transmission: v.scalar("DriveTrain_ManualTransmission") > 0.0,
             torque_curve: curve(v, "Engine_TorqueCurve"),
             drag_torque_curve: curve(v, "Engine_MaximumDragTorqueCurve"),
             engine_drag_coefficient: v.scalar("Engine_DragCoefficient"),

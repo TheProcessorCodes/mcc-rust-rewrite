@@ -35,8 +35,8 @@ impl Curve {
     ///   (450F torque peaks at 40.7 lbf ft, above its highest knot).
     /// - The end segments use phantom points built from `mleft` / `mright`.
     ///
-    /// Stock curves have 3..10 knots. With 2 knots the original reads a stale slot; this uses both
-    /// end slopes instead.
+    /// Stock curves have 3..10 knots. With 2 knots the original's first segment reads the unused slot y[2]
+    /// as its far neighbour; this uses the end slope `mright` instead.
     pub fn eval(&self, x: f64) -> f64 {
         let (xs, ys) = (&self.x, &self.y);
         let n = xs.len();
@@ -54,17 +54,20 @@ impl Curve {
         let Some(i) = seg else {
             return if x < xs[0] { ys[0] } else { ys[n - 1] };
         };
-        let dx = xs[i + 1] - xs[i];
-        let t = (x - xs[i]) / dx;
-        let p1 = ys[i];
-        let p2 = ys[i + 1];
-        let p0 = if i == 0 { p2 - 2.0 * self.mleft * dx } else { ys[i - 1] };
-        let p3 = if i == n - 2 { p1 + 2.0 * self.mright * dx } else { ys[i + 2] };
-        let m0 = (p2 - p0) * 0.5;
-        let m1 = (p3 - p1) * 0.5;
-        let c2 = 3.0 * (p2 - p1) - 2.0 * m0 - m1;
-        let c3 = m0 + m1 - 2.0 * (p2 - p1);
-        ((c3 * t + c2) * t + m0) * t + p1
+        // OpenReflex bike_curve.c 00438ee0: neighbours prev / cur / next / next2, half differences B and A,
+        // C = 3 ((next - cur) - B) - (A - B), D = ((A - B) - 2 C) * 0.33333299 (009774d8, not exactly 1/3).
+        let d = xs[i + 1] - xs[i];
+        let t = (x - xs[i]) / d;
+        let cur = ys[i];
+        let next = ys[i + 1];
+        let prev = if i == 0 { next - self.mleft * d * 2.0 } else { ys[i - 1] };
+        let next2 = if i == n - 2 { self.mright * d * 2.0 + cur } else { ys[i + 2] };
+        let a = (next2 - cur) * 0.5;
+        let b = (next - prev) * 0.5;
+        let ab = a - b;
+        let c = ((next - cur) - b) * 3.0 - ab;
+        let dd = (ab - c * 2.0) * 0.333_332_99;
+        ((dd * t + c) * t + b) * t + cur
     }
 }
 
@@ -73,23 +76,31 @@ fn ftol_round(x: f64) -> i64 {
     (x + 0.5f64.copysign(x)) as i64
 }
 
-/// Three-preset blend `004390d0`: `a` = (Sticky, Normal, Slippery), `s` = grip or drag index in [0, 1].
+/// Three-preset blend `004390d0` (OpenReflex bike_curve.c IndexedCurve_Interp): `a` = (Sticky, Normal,
+/// Slippery), `s` = grip or drag index in [0, 1].
 ///
-/// `lerp(a[lo], a[hi], 2s - lo)` with `lo = round(2s - 0.49999999999)`, `hi = round(2s)`. Quirk kept on
-/// purpose: when the fractional part of 2s is below 0.5, lo == hi and the result is flat (s = 0.65 is
-/// pure Normal).
+/// `lerp_clamped(2s - lo, a[lo], a[hi])` with `lo = round(2s - 0.49999999999)`, `hi = round(2s)`, rounding
+/// halves away from zero. Quirk kept on purpose: when the fractional part of 2s is below 0.5, lo == hi and
+/// the result is flat (s = 0.65 is pure Normal). The game's table holds 20 entries, one every 0.5 of the
+/// index; a grip or drag index in [0, 1] only reaches the first three, so this clamps instead of reading
+/// past them.
 pub fn blend3(a: &[f64; 3], s: f64) -> f64 {
     let s2 = s * 2.0;
     let lo = ftol_round(s2 - 0.49999999999).clamp(0, 2) as usize;
     let hi = ftol_round(s2).clamp(0, 2) as usize;
     let t = s2 - lo as f64;
-    let (a0, a1) = (a[lo], a[hi]);
-    if t <= 0.0 {
-        a0
+    lerp_clamped(t, a[lo], a[hi])
+}
+
+/// `00430810` Lerp_Clamped (OpenReflex bike_curve.c): `t <= 0` gives `a`, `t >= 1` gives `b`, else
+/// `(b - a) t + a`. A NaN `t` falls through to the formula.
+pub fn lerp_clamped(t: f64, a: f64, b: f64) -> f64 {
+    if 0.0 >= t {
+        a
     } else if t >= 1.0 {
-        a1
+        b
     } else {
-        a0 + (a1 - a0) * t
+        (b - a) * t + a
     }
 }
 
@@ -103,7 +114,32 @@ mod tests {
         assert_eq!(c.eval(-1.0), 1.0);
         assert_eq!(c.eval(3.0), 5.0);
         assert_eq!(c.eval(0.0), 1.0);
-        assert_eq!(c.eval(2.0), 5.0);
+        // at the far end of a segment (t = 1) the 0.33333299 factor misses the knot value by about 1e-6 of
+        // the cubic term (here 5.0000144), as in the game
+        assert!((c.eval(2.0) - 5.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn eval_matches_hermite_form() {
+        // inner segment of a 4-knot curve at t = 0.25: prev 0, cur 1, next 4, next2 9 (y = x^2 at x = 1.25)
+        let c = Curve::new(&[(0.0, 0.0), (1.0, 1.0), (2.0, 4.0), (3.0, 9.0)], 0.0, 6.0);
+        let (b, a) = (2.0, 4.0);
+        let cc = 3.0 * ((4.0 - 1.0) - b) - (a - b);
+        let d = ((a - b) - 2.0 * cc) * 0.333_332_99;
+        let want = ((d * 0.25 + cc) * 0.25 + b) * 0.25 + 1.0;
+        assert!((c.eval(1.25) - want).abs() < 1e-12);
+        assert!((c.eval(1.25) - 1.5625).abs() < 1e-5);
+        // first segment: phantom prev = next - 2 d s0 = -2, so B = 2, A = 0, C = 2, D ~ -2 -> 1.25 at t = 0.5
+        let e = Curve::new(&[(0.0, 0.0), (2.0, 2.0), (4.0, 0.0)], 1.0, -1.0);
+        assert!((e.eval(1.0) - 1.25).abs() < 1e-5, "{}", e.eval(1.0));
+    }
+
+    #[test]
+    fn lerp_clamped_ends() {
+        assert_eq!(lerp_clamped(-0.5, 2.0, 4.0), 2.0);
+        assert_eq!(lerp_clamped(1.5, 2.0, 4.0), 4.0);
+        assert_eq!(lerp_clamped(0.25, 2.0, 4.0), 2.5);
+        assert!(lerp_clamped(f64::NAN, 2.0, 4.0).is_nan());
     }
 
     #[test]

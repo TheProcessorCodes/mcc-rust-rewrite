@@ -480,6 +480,16 @@ the bike on it:
   drag beyond dirt's. Placed objects' collision (no shader) rides as dirt. The mapping is ours;
   not playtested.
 - Not done: the engine sound picking takes by Reflex's rpm (it reads `bike.engine` as before).
+- Checked against OPEN REFLEX (2026-11-17, #46): ItZFerret/OpenReflex (public, GPL-3.0) is Reflex
+  transliterated by hand into C and verified bit for bit against the game, so it is now the reference
+  for `reflex_core` (read only the public repository; a team member's private client must not be
+  copied into this public one). Every module was compared with its C functions and fixed; the
+  vendored README lists what changed. The integrator, solver, substep order, engine, gearbox,
+  suspension and wreck limits already matched; the differences were in the tyre's slide rules, the
+  controls (rider off, wobbles, lean hold, up vector), the air stunt latches, chassis probes, rest and
+  the brake hold. `exact.rs` clears the brake hold when the bike is mounted on the move. Still
+  unwired from the game: the stunt modifier (`Sim::air_inhibit`, S+3c) and the four-button bail
+  (`WreckChecker::bail_combo`).
 
 ## Dirt bike (2026-10-28)
 

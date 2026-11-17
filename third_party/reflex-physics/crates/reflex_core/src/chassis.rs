@@ -1,16 +1,18 @@
 //! Chassis collision (`00435b00` detection, `00438180` position correction, `004360b0` impulses) and the
-//! per-substep crash flags (slot 4 `0043b4a0`, slot 5 `0043b5e0`). Decoded from the asm (local notes
-//! `local\notes\crash.md`).
+//! per-substep crash flags (slot 4 `0043b4a0`, slot 5 `0043b5e0`). Checked against OpenReflex `bike_slot13.c`,
+//! `bike_contact.c`, `bike_response.c`, `bike_post.c` (slot 32) and `phys_pair2.c` (`0086fac0` / `0085ee70`).
 //!
-//! The collision geometry is 12 hard-coded points in the chassis frame (the rider has none). The original tests
-//! them against the heightfield (vertical query) and against meshes (a segment from the chassis CM to each
-//! point); engine ports see only meshes, so every point uses the mesh path: first hit of CM -> point, penetration
-//! = normal x |(point - hit) . normal|, and the point counts as touching when the hit lies within 0.75 ft of it.
+//! The collision geometry is 12 hard-coded probe points in the chassis frame (the rider has none). The original tests
+//! them two ways: against the height-field terrain (a vertical query under each point, flags S+1af0) and against
+//! the meshes of the level's objects (the DynamicRays shape S+20d0: one segment from the chassis origin to each
+//! point, flags S+1b54). Engine ports have no height field, so the whole ground goes the mesh way, as the original
+//! does it for objects: every front-facing triangle each segment crosses is a contact, with penetration =
+//! normal x |point - hit|, and a probe touches when any contact lies within 0.75 ft of it.
 
 use crate::bike::{CHASSIS, FRONT, REAR};
 use crate::math::{v3, Vec3};
 use crate::multibody::System;
-use crate::sim::Ground;
+use crate::sim::{Ground, Triangle};
 
 pub const POINTS: usize = 12;
 /// Points whose contact is a crash (slot 5); 0 and 2 (handlebar ends) only when the takeoff slide assist is off.
@@ -22,9 +24,9 @@ const BAR_POINTS: [usize; 2] = [0, 2];
 pub struct ChassisContacts {
     /// Points in the chassis frame as last rebuilt.
     pub local: [Vec3; POINTS],
-    /// Point i touches (hit within 0.75 ft of it).
+    /// Probe i touches (some contact within 0.75 ft of it: S+1b54 + 4i).
     pub near: [bool; POINTS],
-    /// Contacts: world point, penetration vector, normal (at most 12).
+    /// Contacts: world point (S+2100), penetration vector (S+21c0), normal (S+2280); at most 12.
     pub hits: Vec<(Vec3, Vec3, Vec3)>,
 }
 
@@ -52,24 +54,106 @@ pub fn points(sys: &System, lift_on: bool) -> [Vec3; POINTS] {
     ]
 }
 
-/// Detection at the end of a substep.
+/// A probe touches when a contact lies closer than this to it, ft ([00935aa8] 0.75).
+pub const NEAR: f64 = 0.75;
+/// Smallest determinant of the segment / triangle test ([009777c4] 1e-6): back faces and grazing hits do not count.
+const DET_EPS: f64 = 1e-6;
+
+/// Segment s -> e against one triangle as `0085ee70` tests it (Moller-Trumbore on the unit direction, one-sided):
+/// the hit point and the triangle's unit normal from its winding when the segment enters the front face strictly
+/// between its ends.
+fn segment_triangle(s: Vec3, e: Vec3, t: &Triangle) -> Option<(Vec3, Vec3)> {
+    let d = e - s;
+    let len = d.length();
+    if len == 0.0 {
+        return None;
+    }
+    let dir = d / len;
+    let (e1, e2) = (t.b - t.a, t.c - t.a);
+    let p = dir.cross(e2);
+    let det = e1.dot(p);
+    if det < DET_EPS {
+        return None;
+    }
+    let inv = 1.0 / det;
+    let sv = s - t.a;
+    let u = sv.dot(p) * inv;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let q = sv.cross(e1);
+    let v = dir.dot(q) * inv;
+    if v < 0.0 || u + v > 1.0 {
+        return None;
+    }
+    let dist = e2.dot(q) * inv;
+    if !(dist > 0.0 && dist < len && dist < f32::MAX as f64) {
+        return None;
+    }
+    let n = e1.cross(e2);
+    Some((s + dir * dist, n / n.length()))
+}
+
+/// Detection at the end of a substep (`00435b00`, mesh part, with the pair `0086fac0`): the 12 segments from the
+/// chassis origin to the probes against the ground's triangles. Contacts are taken in the pair's order (segment by
+/// segment when there are at least as many triangles as segments, else triangle by triangle), at most 12; then
+/// every probe within 0.75 ft of any contact is marked touching.
 pub fn detect(sys: &System, ground: &dyn Ground, lift_on: bool) -> ChassisContacts {
     let b0 = &sys.bodies[CHASSIS];
     let local = points(sys, lift_on);
     let mut c = ChassisContacts { local, ..Default::default() };
-    for (i, l) in local.iter().enumerate() {
-        let p = b0.x + b0.q.rotate(*l);
-        if let Some((hit, n)) = ground.raycast(b0.x, p) {
-            if c.hits.len() < POINTS {
-                let depth = (p - hit).dot(n).abs();
-                c.hits.push((hit, n * depth, n));
+    let world: [Vec3; POINTS] = std::array::from_fn(|i| b0.x + b0.q.rotate(local[i]));
+    // one query box around the chassis origin holding every segment (two-sided triangles then face the origin)
+    let half = world.iter().fold(0.0f64, |m, p| {
+        let d = *p - b0.x;
+        m.max(d.x.abs()).max(d.y.abs()).max(d.z.abs())
+    });
+    let mut tris = Vec::new();
+    ground.triangles(b0.x, half, &mut tris);
+    let test = |k: usize, t: &Triangle, hits: &mut Vec<(Vec3, Vec3, Vec3)>| {
+        if hits.len() >= POINTS {
+            return;
+        }
+        let (s, e) = (b0.x, world[k]);
+        let (slo, shi) = (v_min(s, e), v_max(s, e));
+        let (tlo, thi) = (v_min(v_min(t.a, t.b), t.c), v_max(v_max(t.a, t.b), t.c));
+        if (0..3).any(|i| tlo[i] > shi[i] || slo[i] > thi[i]) {
+            return;
+        }
+        if let Some((hit, n)) = segment_triangle(s, e, t) {
+            // depth vec4 = |segment end - hit| (0086fac0), contact = depth x normal (00435b00)
+            hits.push((hit, n * (e - hit).length(), n));
+        }
+    };
+    if tris.len() >= POINTS {
+        for k in 0..POINTS {
+            for t in &tris {
+                test(k, t, &mut c.hits);
             }
-            if (hit - p).length() < 0.75 {
-                c.near[i] = true;
+        }
+    } else {
+        for t in &tris {
+            for k in 0..POINTS {
+                test(k, t, &mut c.hits);
+            }
+        }
+    }
+    for &(hit, _, _) in &c.hits {
+        for (k, p) in world.iter().enumerate() {
+            if (hit - *p).length() < NEAR {
+                c.near[k] = true;
             }
         }
     }
     c
+}
+
+fn v_min(a: Vec3, b: Vec3) -> Vec3 {
+    v3(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z))
+}
+
+fn v_max(a: Vec3, b: Vec3) -> Vec3 {
+    v3(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z))
 }
 
 /// Position correction: the mean penetration vector, added to every body (no velocity change).
@@ -143,4 +227,32 @@ pub fn crash_hit(c: &ChassisContacts, slide_assist: bool) -> bool {
 /// Slot 4: any crash-point contact (unmasked), or stuck: input vector set, slower than 4 ft/s and airborne.
 pub fn crash_touch(c: &ChassisContacts, input_active: bool, speed: f64, airborne: bool) -> bool {
     CRASH_POINTS.iter().chain(BAR_POINTS.iter()).any(|&i| c.near[i]) || (input_active && speed < 4.0 && airborne)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::math::Quat;
+    use crate::sim::PlaneGround;
+
+    #[test]
+    fn belly_probes_through_flat_ground() {
+        let vehicle = crate::vehicle::Vehicle::default();
+        let (sys, _) = crate::bike::build_system(&vehicle, v3(0.0, 0.5, 0.0), Quat::IDENTITY);
+        let g = PlaneGround { point: Vec3::ZERO, normal: Vec3::Y };
+        let c = detect(&sys, &g, false);
+        // probe 5 (0, -0.8, 0.5) is 0.3 ft under: the segment from the origin enters at 5/8 of its length, and the
+        // depth is the rest of the segment, not the vertical 0.3
+        let e = v3(0.0, -0.3, 0.5);
+        let hit = v3(0.0, 0.0, 0.5 * 0.625);
+        let h = c.hits.iter().find(|h| (h.0 - hit).length() < 1e-9).expect("probe 5 contact");
+        assert!((h.1 - Vec3::Y * (e - hit).length()).length() < 1e-9, "{h:?}");
+        assert!(c.near[5] && c.near[6]);
+        // the probes up top are far from every contact
+        assert!(!c.near[0] && !c.near[2] && !c.near[4]);
+        assert!(c.hits.len() <= POINTS);
+        // seen from behind (ground facing down) nothing is hit
+        let g = PlaneGround { point: Vec3::ZERO, normal: -Vec3::Y };
+        assert!(detect(&sys, &g, false).hits.is_empty());
+    }
 }

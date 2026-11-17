@@ -33,6 +33,18 @@ recordings of the game. Make changes there first where possible, then copy them 
   `reflex_triangle` public (2026-11-06).
 
 - `Cargo.toml`, `crates/*/Cargo.toml`: `license = "GPL-3.0-only"` (2026-11-10).
+- `reflex_core` checked against OPEN REFLEX (2026-11-17, #46): every module compared with the
+  matching functions of ItZFerret/OpenReflex (GPL-3.0, commit b8d170f; `core/game/bike_*.c`,
+  `phys_*.c`, `world_wreck_checker.c`), a public hand transliteration of the game verified bit for
+  bit against it, and corrected where ours differed. Each fix cites its C function and address in
+  a comment. In short: the tyre's rear wheelspin bound, grip flags and airborne branch; the rider-off
+  controls, backwards wobble, rough-ground head shake, lean hold, the up vector and the front brake
+  easing with steering; the stunt latches and stick gestures (the trick hold now runs); per-triangle
+  chassis probes, the rest pin and rolling orientation; rest entry / exit, the new bike's brake hold,
+  the speed filter time constant and the garage steering factor; the wreck cooldown surviving a
+  respawn and the four-button bail. Kept as before: no stick-flick recovery window (upstream 15a977d,
+  described in `wreck.rs`), the zero-normal guard in `disc_contact`, f64 throughout. These changes
+  are only here so far, not in the `reflex-physics` workspace.
 
 ## Licence
 
