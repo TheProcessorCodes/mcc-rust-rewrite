@@ -4,6 +4,9 @@
 //!   (**body frame**), diagonal body-frame inertia. External forces are world-frame, torques body-frame.
 //! - Joints are equality constraints solved exactly at the acceleration level (dense KKT; any exact solver
 //!   gives the original's body-tree result). No Baumgarte terms; drift is removed by projection.
+//!   Checked against OpenReflex phys_constraint.c (rows and biases 00859f90 / 0085b8b0, projections 0085a8f0 /
+//!   0085ac20 / 0085b750 / 0085bc30), phys_mech.c (0085ca40 force composition, 0085d100 poses, 0085cb70 /
+//!   0085cf80 the tree factorization and solve, an exact solve of the same system) and phys_mechanism.c (0085d270).
 //! - Semi-implicit Euler: velocities first, then (after the caller's kinematic edits and fix-ups) positions.
 //!
 //! The substep calls the stages separately so controllers can run between them (spec 4):
@@ -259,16 +262,18 @@ impl System {
         self.joint_force = joint_force;
     }
 
-    /// Stage 11 part (`0085d330`): joint velocity projection. Rider: child w = parent w, child v = weld point
+    /// Stage 11 part (`0085d330`): joint velocity projection. Rider: child world w = parent world w, child v = weld point
     /// velocity. Wheels: v keeps only the slide; w keeps its x (spin) and takes y, z from the parent's angular
     /// velocity in the joint's base frame (measured: matches the recordings, the wheel's spin angle is ignored).
     pub fn project_velocities(&mut self) {
         for j in self.joints.clone() {
             match j {
-                Joint::Fixed { parent, child, offset, rel } => {
+                Joint::Fixed { parent, child, offset, .. } => {
+                    // OpenReflex phys_constraint.c 0085bc30: w_c = q_c^-1 W_p q_c with the child's own orientation,
+                    // v_c = v_p + R_p (w_p x r)
                     let p = self.bodies[parent].clone();
                     let c = &mut self.bodies[child];
-                    c.w = rel.inv_rotate(p.w);
+                    c.w = c.q.inv_rotate(p.omega());
                     c.v = p.point_velocity(offset);
                 }
                 Joint::SlidingRotor { parent, child, axis, base, .. } => {
