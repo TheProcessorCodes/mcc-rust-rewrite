@@ -395,8 +395,12 @@ impl Sim {
         self.latch(inputs);
         let n = self.substeps_for(frame_dt);
         self.apply_hold_pin();
-        self.frame_touch = false;
-        self.frame_hit = false;
+        // OpenReflex bike_sim.c 00430ef0: the contact flags are cleared only when the frame runs substeps; a
+        // frame with none keeps the last ones for the wreck check.
+        if n > 0 {
+            self.frame_touch = false;
+            self.frame_hit = false;
+        }
         for _ in 0..n {
             self.substep(ground);
         }
@@ -463,6 +467,9 @@ impl Sim {
         self.tyre_forces();
         self.sys.solve_and_integrate_velocities(DT); // 5-9
         // 10 (slot 12): skipped while held; ground lean constraint; air and crashed steps not implemented yet
+        // OpenReflex bike_slot12.c 00443610: the removed roll rate (S+8b60) is cleared every substep, so the
+        // wreck check never sees a stale one in the air.
+        self.lean.removed_roll = Vec3::ZERO;
         if self.hold.is_none() && self.crashed {
             // crashed step (0043f270): chassis |w| <= 10 rad/s, nothing else
             let w = self.sys.bodies[CHASSIS].w;
