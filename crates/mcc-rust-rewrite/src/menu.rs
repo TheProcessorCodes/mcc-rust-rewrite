@@ -1020,9 +1020,11 @@ impl Plugin for MenuPlugin {
             _ => Phase::Main,
         };
         let main_open = |menu: Res<Menu>| menu.phase == Phase::Main;
-        let choosing = |menu: Res<Menu>| menu.phase == Phase::Choosing;
+        // Not in the frame the main menu opened them: the press that chose
+        // the row would start the picked map, or change the first setting.
+        let choosing = |menu: Res<Menu>| menu.phase == Phase::Choosing && !menu.fresh;
         let missing = |menu: Res<Menu>| matches!(menu.phase, Phase::Missing(_));
-        let settings_open = |menu: Res<Menu>| menu.phase == Phase::Settings;
+        let settings_open = |menu: Res<Menu>| menu.phase == Phase::Settings && !menu.fresh;
         let setup_open = |menu: Res<Menu>| menu.phase == Phase::Setup;
         // What `install` (main.rs) puts in goes when the map is unloaded.
         app.insert_resource(MapMenu)
@@ -1102,6 +1104,7 @@ impl Plugin for MenuPlugin {
                 dismiss.run_if(missing),
                 update_poll,
                 update_input.run_if(|menu: Res<Menu>| menu.phase == Phase::Update),
+                settle,
                 show,
                 follow,
                 show_notice,
@@ -1626,6 +1629,15 @@ fn open_main_row(menu: &mut Menu, row: usize, exit: &mut MessageWriter<AppExit>)
         }
     }
     menu.click = None;
+    menu.fresh = true;
+}
+
+/// The frame is over for the input systems: a screen opened in it takes
+/// presses from the next one.
+fn settle(mut menu: ResMut<Menu>) {
+    if menu.fresh {
+        menu.fresh = false;
+    }
 }
 
 /// The main menu: up / down move, Enter / A (or a click) open the row; the
