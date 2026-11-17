@@ -70,6 +70,8 @@ pub struct Params {
     pub rolling_friction_curve: Curve,
     /// Overall ratio per gear (GearRatio_i x PrimaryReduction x FinalRatio; garage gearing scale 1).
     pub gear_ratios: [f64; 5],
+    /// `DriveTrain_ManualTransmission` > 0 (S+2eb0): the automatic gear choice is off.
+    pub manual_transmission: bool,
     pub torque_curve: Curve,
     pub drag_torque_curve: Curve,
     pub engine_drag_coefficient: f64,
@@ -199,6 +201,7 @@ impl Params {
                 let base = v.scalar("DriveTrain_PrimaryReduction") * v.scalar("DriveTrain_FinalRatio");
                 std::array::from_fn(|i| v.scalar(&format!("DriveTrain_GearRatio{}", i + 1)) * base)
             },
+            manual_transmission: v.scalar("DriveTrain_ManualTransmission") > 0.0,
             torque_curve: curve(v, "Engine_TorqueCurve"),
             drag_torque_curve: curve(v, "Engine_MaximumDragTorqueCurve"),
             engine_drag_coefficient: v.scalar("Engine_DragCoefficient"),
