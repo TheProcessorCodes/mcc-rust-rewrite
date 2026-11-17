@@ -414,6 +414,7 @@ impl Sim {
         }
         self.inputs = i;
         self.ctl.lean_input = i.steer_x;
+        self.cstate.latch(&i);
     }
 
     /// Applies garage multipliers (1.0 = stock) to the values the sim runs on.
@@ -531,7 +532,6 @@ impl Sim {
             air::step(&mut self.sys, &mut self.air, &self.params.air, sticks, self.air_inhibit, self.takeoff, DT);
         }
         if self.hold.is_none() && !self.crashed && !self.airborne {
-            air::ground_update(&mut self.air, &self.sys, sticks);
             let p = &self.params;
             let li = LeanInputs {
                 tyres: &self.tyres,
@@ -543,6 +543,8 @@ impl Sim {
                 clutch_engagement: ((p.clutch_reset_time - self.drive.clutch_timer) / p.clutch_reset_time).clamp(0.0, 1.0),
             };
             lean::ground_step(&mut self.sys, &mut self.lean, &li, &mut self.ctl.lean_cmd, &mut self.cstate.lean, DT);
+            // after the grounded correction, which turns the bodies and trims the velocity (`00443610`)
+            air::ground_update(&mut self.air, &self.sys, sticks);
         }
         self.velocity_fixups(); // 11
         self.sys.integrate_positions(DT); // 12
@@ -570,6 +572,7 @@ impl Sim {
                 ground,
             };
             let mods = controls::step(&mut self.cstate, &mut self.ctl, &mut self.drive.clutch_timer, &self.params, &ci);
+            self.lean.hold = self.cstate.lean_hold;
             for (t, (side, roll)) in self.tyres.iter_mut().zip(mods) {
                 t.side_mod = side;
                 t.roll_mod = roll;
@@ -593,7 +596,9 @@ impl Sim {
         if let Joint::Fixed { offset, .. } = &mut self.sys.joints[RIDER_JOINT] {
             *offset = r;
         }
-        lean::step_up_vector(&mut self.up_filt, &self.tyres, self.airborne, self.inputs.steer_x, self.params.up_vector_tau, DT);
+        let steer = if self.crashed { 0.0 } else { self.inputs.steer_x };
+        let q0 = self.sys.bodies[CHASSIS].q;
+        lean::step_up_vector(&mut self.up_filt, &self.tyres, self.airborne, steer, q0, self.params.up_vector_tau, DT);
     }
 
     fn tyre_inputs(&self) -> TyreInputs {

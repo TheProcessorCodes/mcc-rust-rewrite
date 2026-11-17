@@ -13,19 +13,29 @@ use crate::tyre::Tyre;
 
 const DEG: f64 = std::f64::consts::PI / 180.0;
 
-/// Steps the up-vector filter (each axis separately, tau = `VehicleSim_UpVectorTimeConstant`) toward world up,
-/// or, grounded with |steer| >= 0.02, toward the contact normal under the touching tyre(s).
-pub fn step_up_vector(up: &mut Vec3, tyres: &[Tyre; 2], airborne: bool, steer: f64, tau: f64, dt: f64) {
-    let target = if !airborne && steer.abs() >= 0.02 {
-        match (tyres[0].contact, tyres[1].contact) {
-            (true, true) => (tyres[0].normal + tyres[1].normal) * 0.5,
-            (true, false) => tyres[0].normal,
-            (false, true) => tyres[1].normal,
+/// Steps the up-vector filter (`0043e9f0`, each axis separately, tau = `VehicleSim_UpVectorTimeConstant`) toward
+/// world up, or, grounded with |steer| >= 0.02, toward the contact normal under the touching tyre(s) (both: their
+/// normalized sum). The normal is kept only when it tilts to the side the rider steers to (the chassis forward
+/// axis `q` Z against up x normal); otherwise world up. `steer` is the left stick X (0 while the rider is off).
+pub fn step_up_vector(up: &mut Vec3, tyres: &[Tyre; 2], airborne: bool, steer: f64, q: Quat, tau: f64, dt: f64) {
+    let mut target = Vec3::Y;
+    if !airborne && steer.abs() >= 0.02 {
+        target = match (tyres[1].contact, tyres[0].contact) {
+            (true, true) => {
+                let n = tyres[0].normal + tyres[1].normal;
+                if n.length_squared() > 0.0 { n.normalize() } else { Vec3::ZERO }
+            }
+            (true, false) => tyres[1].normal,
+            (false, true) => tyres[0].normal,
             (false, false) => Vec3::Y,
-        }
-    } else {
-        Vec3::Y
-    };
+        };
+    }
+    // OpenReflex bike_controls.c 0043e9f0: right = fwd . (up x d) > 0; kept when right == (steer <= 0)
+    let right = q.rotate(Vec3::Z).dot(Vec3::Y.cross(target)) > 0.0;
+    let not_left = !(steer > 0.0);
+    if right != not_left {
+        target = Vec3::Y;
+    }
     let a = dt.min(tau) / tau;
     *up += (target - *up) * a;
 }
