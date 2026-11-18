@@ -227,9 +227,9 @@ target\debug\blam.exe anim 120_halo --all
 
 `mcc-rust-rewrite.exe` with no map opens the main menu: Campaign, Multiplayer maps, Settings
 and Exit (up / down, Enter / A or a click; Escape / B goes to Exit, and from there out). Campaign
-and Multiplayer maps open the map chooser: a list of maps down the left (Multiplayer has Halo 3,
-Halo 2, Halo CE and Reach tabs; left / right change tab too) and the picked map's name and MCC's
-own preview picture on the right (`Data\UI\texturepacks\levelstexturepack`, read at run time);
+and Multiplayer maps open the map chooser: a grid of tiles, six across, each with MCC's own
+picture of the map (`Data\UI\texturepacks\levelstexturepack`, read at run time) and its name
+(Multiplayer has Halo 3, Halo 2, Halo CE and Reach tabs); the footer names the picked map.
 Escape / B goes back to the main menu. The menus' look is shared (`mcc_core::ui`: the Barlow
 font, colours, and sizes as parts of the window's height, so every screen fits any window).
 A `--menu-shot` with no `--menu-tab` / `--menu-pick` draws the main menu. The Campaign tab
@@ -242,7 +242,7 @@ with MCC" instead of loading (A / B / Enter / Esc or a click closes it). Start
 Game loads the map into the same window behind a loading screen; Q (or View)
 in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
 left stick move, Q / E, Tab / Shift+Tab, Page Up / Page Down or LB / RB change tab (the hints by the tabs show Q / E, or LB / RB when a controller was used last), Enter / A start, Escape / B exit, F2 / Y on the Campaign tab change the difficulty (saved); the menu opens on the last map started;
-the mouse picks a map's row and a double click starts it. Naming a map on the
+the mouse picks a map's tile and a double click starts it. Naming a map on the
 command line skips the menu, and Q then quits. When the menu opens it asks GitHub (with
 Windows' own `curl.exe`, in the background) whether a newer release is out; if so a pop-up
 offers its release page (Enter / A) or Close (Esc / B), once per launch. Offline, nothing

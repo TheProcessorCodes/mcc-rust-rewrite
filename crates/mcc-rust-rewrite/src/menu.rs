@@ -282,6 +282,8 @@ const RING_SPEED: f32 = 0.6;
 
 /// A missing map's picture is drawn through this tint.
 const MISSING_TINT: Color = Color::srgb(0.30, 0.30, 0.32);
+/// The tiles not picked are drawn a little darker than the picked one.
+const TILE_TINT: Color = Color::srgb(0.66, 0.70, 0.76);
 
 /// One map the menu offers.
 struct Map {
@@ -480,18 +482,18 @@ struct TabPage(usize);
 /// A section's heading on a tab's page: tab, its first map.
 #[derive(Component)]
 struct SectionHead(usize, usize);
-/// A map's row in a tab's list: tab, map.
+/// A map's place in a tab's grid (its tile and name): tab, map.
 #[derive(Component)]
-struct MapRow(usize, usize);
-/// The name in a map's row.
+struct TileCell(usize, usize);
+/// A map's tile: its framed picture.
 #[derive(Component)]
-struct MapName(usize, usize);
-/// The picked map's picture beside the list, and the words shown in its
-/// frame when MCC has none.
+struct Tile(usize, usize);
+/// The picture in a map's tile.
 #[derive(Component)]
-struct PreviewPicture;
+struct TilePicture(usize, usize);
+/// The name across the foot of a map's tile.
 #[derive(Component)]
-struct NoPicture;
+struct TileName(usize, usize);
 /// The chooser's title: MULTIPLAYER MAPS or CAMPAIGN.
 #[derive(Component)]
 struct ChooserTitle;
@@ -1404,9 +1406,10 @@ fn spawn_update(screen: &mut ChildSpawnerCommands) {
     });
 }
 
-/// The map chooser: its title and the games' tabs; a list of the tab's maps
-/// down the left (a page per tab, scrolling when it does not fit); the picked
-/// map's picture, name and kind on the right; the footer's buttons.
+/// The map chooser: its title and the games' tabs; a grid of the tab's maps'
+/// tiles (a page per tab, each section under its heading, scrolling when
+/// they do not fit); the footer with the picked map's name and kind and the
+/// buttons.
 fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
     root.spawn((ui::header_node(), ui::bar())).with_children(|head| {
         title(head, ChooserTitle, "MULTIPLAYER MAPS");
@@ -1416,91 +1419,75 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
         }
         tab_hint(head, TabExtra, "RB", "E");
     });
+    // A page per tab: each section's heading and its grid of tiles.
     root.spawn(Node {
         flex_grow: 1.0,
         min_height: Val::Px(0.0),
-        padding: UiRect::new(u(72.0), u(72.0), u(36.0), u(30.0)),
-        column_gap: u(56.0),
+        flex_direction: FlexDirection::Column,
+        padding: UiRect::new(u(72.0), u(72.0), u(30.0), u(20.0)),
         ..default()
     })
     .with_children(|body| {
-        body.spawn(Node { width: u(560.0), flex_shrink: 0.0, flex_direction: FlexDirection::Column, ..default() })
-            .with_children(|left| {
-                for (t, maps) in menu.tabs.iter().enumerate() {
-                    left.spawn((
-                        TabPage(t),
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            flex_grow: 1.0,
-                            flex_basis: Val::Px(0.0),
-                            min_height: Val::Px(0.0),
-                            overflow: Overflow::scroll_y(),
-                            display: Display::None,
-                            ..default()
-                        },
-                        ScrollPosition::default(),
-                    ))
-                    .with_children(|page| {
-                        let mut first = 0;
-                        for (heading, entries) in SECTIONS[t] {
-                            let range = first..(first + entries.len()).min(maps.len());
-                            first += entries.len();
+        for (t, maps) in menu.tabs.iter().enumerate() {
+            body.spawn((
+                TabPage(t),
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: u(30.0),
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.0),
+                    min_height: Val::Px(0.0),
+                    overflow: Overflow::scroll_y(),
+                    display: Display::None,
+                    ..default()
+                },
+                ScrollPosition::default(),
+            ))
+            .with_children(|page| {
+                let mut first = 0;
+                for (heading, entries) in SECTIONS[t] {
+                    let range = first..(first + entries.len()).min(maps.len());
+                    first += entries.len();
+                    page.spawn(Node { flex_direction: FlexDirection::Column, flex_shrink: 0.0, row_gap: u(14.0), ..default() })
+                        .with_children(|section| {
                             if let Some(heading) = heading {
-                                page.spawn((
+                                section.spawn((
                                     SectionHead(t, range.start),
-                                    Node {
-                                        flex_shrink: 0.0,
-                                        padding: UiRect::new(u(26.0), Val::ZERO, u(if range.start == 0 { 4.0 } else { 26.0 }), u(8.0)),
-                                        ..default()
-                                    },
-                                    text(heading, 17.0, ui::ACCENT),
+                                    Node { padding: UiRect::bottom(u(8.0)), border: UiRect::bottom(u(1.5)), ..default() },
+                                    BorderColor::all(LINE),
+                                    bold(&heading.to_uppercase(), 19.0, ui::ACCENT),
                                 ));
                             }
-                            for i in range {
-                                let map = &maps[i];
-                                page.spawn((MapRow(t, i), ui::row(54.0))).with_children(|row| {
-                                    row.spawn((MapName(t, i), bold(map.name, 25.0, if map.installed { DIM } else { ui::OFF })));
-                                    if !map.installed {
-                                        row.spawn(Node { flex_grow: 1.0, ..default() });
-                                        row.spawn(text("NOT INSTALLED", 15.0, ui::OFF));
+                            section
+                                .spawn(Node {
+                                    display: Display::Grid,
+                                    grid_template_columns: RepeatedGridTrack::flex(COLUMNS as u16, 1.0),
+                                    column_gap: u(18.0),
+                                    row_gap: u(18.0),
+                                    ..default()
+                                })
+                                .with_children(|grid| {
+                                    for i in range {
+                                        grid.spawn((TileCell(t, i), Node { flex_direction: FlexDirection::Column, ..default() }))
+                                            .with_children(|cell| spawn_tile(cell, t, i, &maps[i]));
                                     }
                                 });
-                            }
-                        }
-                    });
+                        });
                 }
             });
-        body.spawn(Node { flex_grow: 1.0, flex_basis: Val::Px(0.0), flex_direction: FlexDirection::Column, ..default() })
-            .with_children(|right| {
-                right
-                    .spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            aspect_ratio: Some(PICTURE_ASPECT),
-                            border: UiRect::all(u(1.5)),
-                            overflow: Overflow::clip(),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(ui::WELL),
-                        BorderColor::all(LINE),
-                    ))
-                    .with_children(|frame| {
-                        frame.spawn((NoPicture, text("NO PICTURE IN MCC", 18.0, ui::OFF)));
-                        frame.spawn((
-                            PreviewPicture,
-                            ImageNode { color: Color::NONE, ..default() },
-                            Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
-                        ));
-                    });
-                right.spawn((Chosen(0), Node { margin: UiRect::top(u(22.0)), ..default() }, bold("", 54.0, ui::BRIGHT)));
-                right.spawn((Chosen(1), text("", 23.0, LIT)));
-                right.spawn((Chosen(2), Node { margin: UiRect::top(u(14.0)), ..default() }, text("", 21.0, DIM)));
-            });
+        }
     });
-    // The footer: the difficulty (Campaign), Settings, Start Game and Back.
+    // The footer: the picked map's name and kind (and a note when it cannot
+    // start), then the difficulty (Campaign), Settings, Start Game and Back.
     root.spawn((ui::footer_node(), ui::bar())).with_children(|bar| {
+        bar.spawn(Node { margin: UiRect::right(Val::Auto), flex_direction: FlexDirection::Column, row_gap: u(2.0), ..default() })
+            .with_children(|about| {
+                about.spawn(Node { column_gap: u(16.0), align_items: AlignItems::Baseline, ..default() }).with_children(|line| {
+                    line.spawn((Chosen(0), bold("", 28.0, ui::BRIGHT)));
+                    line.spawn((Chosen(1), text("", 18.0, LIT)));
+                });
+                about.spawn((Chosen(2), text("", 17.0, DIM)));
+            });
         footer_button(
             bar,
             MenuButton::Difficulty,
@@ -1512,6 +1499,60 @@ fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
         footer_button(bar, MenuButton::Settings, "X", "F1", PAD_X, text("SETTINGS", 20.0, DIM));
         footer_button(bar, MenuButton::Start, "A", "Enter", PAD_A, (StartLabel, bold("START GAME", 20.0, ui::BRIGHT)));
         footer_button(bar, MenuButton::Exit, "B", "Esc", PAD_B, text("BACK", 20.0, DIM));
+    });
+}
+
+/// A map's tile: its picture in a frame (a plain well when MCC has none),
+/// with its name across the foot, and NOT INSTALLED when MCC lacks it.
+fn spawn_tile(cell: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
+    cell.spawn((
+        Tile(t, i),
+        Node {
+            width: Val::Percent(100.0),
+            aspect_ratio: Some(PICTURE_ASPECT),
+            border: UiRect::all(u(3.0)),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        BackgroundColor(ui::WELL),
+        BorderColor::all(Color::NONE),
+    ))
+    .with_children(|frame| {
+        if let Some(picture) = &map.picture {
+            frame.spawn((
+                TilePicture(t, i),
+                ImageNode { color: TILE_TINT, ..ImageNode::new(picture.clone()) },
+                Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+            ));
+        }
+        // The name on a shaded strip along the bottom.
+        frame
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    padding: UiRect::new(u(12.0), u(12.0), u(16.0), u(7.0)),
+                    align_items: AlignItems::Baseline,
+                    column_gap: u(10.0),
+                    ..default()
+                },
+                BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                    ColorStop::auto(Color::NONE),
+                    ColorStop::auto(Color::srgba(0.0, 0.01, 0.03, 0.85)),
+                ])),
+            ))
+            .with_children(|strip| {
+                strip.spawn((
+                    TileName(t, i),
+                    Node { flex_grow: 1.0, ..default() },
+                    bold(&map.name.to_uppercase(), 18.0, if map.installed { ui::TEXT } else { ui::OFF }),
+                ));
+                if !map.installed {
+                    strip.spawn(text("NOT INSTALLED", 13.0, ui::OFF));
+                }
+            });
     });
 }
 
@@ -1709,9 +1750,9 @@ fn main_input(
     }
 }
 
-/// The chooser's keys and pads: up / down move through the maps; left /
-/// right, Q / E, Tab, Page Up / Page Down or LB / RB change the game's tab
-/// (the Campaign has none).
+/// The chooser's keys and pads: the arrows, WASD, the d-pad and the left
+/// stick move between the tiles; Q / E, Tab, Page Up / Page Down or LB / RB
+/// change the game's tab (the Campaign has none).
 fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu: ResMut<Menu>, mut stick: Local<[bool; 4]>) {
     let key = |k: &[KeyCode]| k.iter().any(|k| keys.just_pressed(*k));
     let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
@@ -1728,10 +1769,10 @@ fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu
         let tabs = CAMPAIGN_TAB;
         let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
         let tab_key = keys.just_pressed(KeyCode::Tab);
-        if go.right || key(&[KeyCode::KeyE, KeyCode::PageDown]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger) {
+        if key(&[KeyCode::KeyE, KeyCode::PageDown]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger) {
             menu.tab = (menu.tab + 1) % tabs;
         }
-        if go.left || key(&[KeyCode::KeyQ, KeyCode::PageUp]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger) {
+        if key(&[KeyCode::KeyQ, KeyCode::PageUp]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger) {
             menu.tab = (menu.tab + tabs - 1) % tabs;
         }
         if menu.mp_tab != menu.tab {
@@ -1739,24 +1780,53 @@ fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu
         }
     }
     let t = menu.tab;
-    let count = menu.tabs[t].len();
-    if count == 0 {
+    if menu.tabs[t].is_empty() {
         return;
     }
-    let at = stepped(menu.pick[t], count, go.down as isize - go.up as isize);
+    let (dx, dy) = (go.right as isize - go.left as isize, go.down as isize - go.up as isize);
+    let at = moved(&rows(t), menu.pick[t], dx, dy).min(menu.tabs[t].len() - 1);
     if at != menu.pick[t] {
         menu.pick[t] = at;
     }
 }
 
-/// The row `by` rows down a list of `count` from `at`, stopping at its ends.
-fn stepped(at: usize, count: usize, by: isize) -> usize {
-    (at as isize + by).clamp(0, count as isize - 1) as usize
+/// Tiles across a tab's page.
+const COLUMNS: usize = 6;
+
+/// A tab's rows of tiles as (first map, how many): each section starts a new
+/// row.
+fn rows(tab: usize) -> Vec<(usize, usize)> {
+    let mut rows = Vec::new();
+    let mut first = 0;
+    for (_, entries) in SECTIONS[tab] {
+        for at in (0..entries.len()).step_by(COLUMNS) {
+            rows.push((first + at, (entries.len() - at).min(COLUMNS)));
+        }
+        first += entries.len();
+    }
+    rows
 }
 
-/// The mouse: a click on a tab shows it, on a map's row picks it, a double
-/// click on a row or a click on Start Game starts, a click on Back goes
-/// back to the main menu.
+/// The tile `dx` tiles along and `dy` rows down from `at`: along runs on
+/// across sections, down keeps the column (or the last tile of a shorter
+/// row); both stop at the ends.
+fn moved(rows: &[(usize, usize)], at: usize, dx: isize, dy: isize) -> usize {
+    let Some(&(last, len)) = rows.last() else {
+        return 0;
+    };
+    let at = (at as isize + dx).clamp(0, (last + len) as isize - 1) as usize;
+    if dy == 0 {
+        return at;
+    }
+    let r = rows.iter().rposition(|&(first, _)| first <= at).unwrap_or(0);
+    let column = at - rows[r].0;
+    let (first, len) = rows[(r as isize + dy).clamp(0, rows.len() as isize - 1) as usize];
+    first + column.min(len - 1)
+}
+
+/// The mouse: a click on a tab shows it, on a tile picks it, a double click
+/// on a tile or a click on Start Game starts, a click on Back goes back to
+/// the main menu.
 #[allow(clippy::too_many_arguments)]
 fn mouse(
     mut commands: Commands,
@@ -1765,7 +1835,7 @@ fn mouse(
     time: Res<Time<Real>>,
     mut menu: ResMut<Menu>,
     tabs: Query<(&TabLabel, &ComputedNode, &UiGlobalTransform)>,
-    rows: Query<(&MapRow, &ComputedNode, &UiGlobalTransform)>,
+    tiles: Query<(&Tile, &ComputedNode, &UiGlobalTransform)>,
     pages: Query<(&TabPage, &ComputedNode, &UiGlobalTransform)>,
     bar: Query<(&MenuButton, &ComputedNode, &UiGlobalTransform)>,
 ) {
@@ -1783,9 +1853,9 @@ fn mouse(
         return;
     }
     let tab = menu.tab;
-    // A row scrolled out of the page is not there to click.
+    // A tile scrolled out of the page is not there to click.
     let on_page = pages.iter().any(|(page, n, t)| page.0 == tab && n.contains_point(*t, at));
-    if let Some((row, ..)) = rows.iter().find(|(row, n, t)| on_page && row.0 == tab && n.contains_point(**t, at)) {
+    if let Some((row, ..)) = tiles.iter().find(|(tile, n, t)| on_page && tile.0 == tab && n.contains_point(**t, at)) {
         let now = time.elapsed_secs_f64();
         let double = menu.click.is_some_and(|(i, then)| i == row.1 && now - then < 0.4);
         menu.pick[row.0] = row.1;
@@ -2629,19 +2699,18 @@ fn leave(
 
 /// Draws the state: which screen is up; on the main menu its focused row,
 /// what it is and the picture; on the chooser its title, the tab shown, the
-/// picked map's row, picture and words, and the footer.
+/// picked map's tile, its words in the footer, and the footer's buttons.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn show(
     menu: Res<Menu>,
     mut screens: Query<
         (AnyOf<(&MainScreen, &Chooser, &LoadingScreen, &TabPage, &MenuButton, &TabExtra, &TabLabel)>, &mut Node),
     >,
-    mut pictures: Query<(AnyOf<(&MainPicture, &PreviewPicture, &LoadingPicture)>, &mut ImageNode)>,
-    mut rows: Query<
-        (AnyOf<(&MainRow, &MapRow)>, &mut BackgroundColor, &mut BorderColor),
-        (Without<TabLabel>, Without<SettingRow>),
-    >,
-    mut labels: Query<(&TabLabel, &mut TextColor, &mut BorderColor), Without<MapRow>>,
+    mut pictures: Query<(AnyOf<(&MainPicture, &LoadingPicture)>, &mut ImageNode), Without<TilePicture>>,
+    mut tile_pictures: Query<(&TilePicture, &mut ImageNode), (Without<MainPicture>, Without<LoadingPicture>)>,
+    mut rows: Query<(&MainRow, &mut BackgroundColor, &mut BorderColor), (Without<TabLabel>, Without<SettingRow>, Without<Tile>)>,
+    mut tiles: Query<(&Tile, &mut BorderColor), (Without<TabLabel>, Without<MainRow>)>,
+    mut labels: Query<(&TabLabel, &mut TextColor, &mut BorderColor), (Without<MainRow>, Without<Tile>)>,
     mut texts: Query<
         (
             AnyOf<(
@@ -2652,9 +2721,8 @@ fn show(
                 &MainAbout,
                 &MainCaption,
                 &ChooserTitle,
-                &MapName,
+                &TileName,
                 &StartLabel,
-                &NoPicture,
             )>,
             &mut Text,
             &mut TextColor,
@@ -2693,14 +2761,9 @@ fn show(
         }
     }
     let selected = menu.selected();
-    for ((main, preview, _), mut image) in &mut pictures {
-        let tint = match selected {
-            Some(map) if !map.installed && preview.is_some() => MISSING_TINT,
-            // Behind the loading screen's words, and quieter on the main menu.
-            Some(_) if preview.is_some() => Color::WHITE,
-            Some(_) if main.is_some() => Color::srgb(0.82, 0.86, 0.92),
-            _ => Color::srgb(0.62, 0.66, 0.72),
-        };
+    for ((main, _), mut image) in &mut pictures {
+        // Behind the loading screen's words, and quieter on the main menu.
+        let tint = if main.is_some() { Color::srgb(0.82, 0.86, 0.92) } else { Color::srgb(0.62, 0.66, 0.72) };
         match selected.and_then(|m| m.picture.clone()) {
             Some(handle) => {
                 image.image = handle;
@@ -2709,19 +2772,29 @@ fn show(
             None => image.color = Color::NONE,
         }
     }
-    for ((main, map), mut fill, mut border) in &mut rows {
-        let on = match (main, map) {
-            (Some(row), _) => row.0 == menu.main_row,
-            (_, Some(row)) => row.1 == menu.pick[row.0],
-            _ => false,
+    for (row, mut fill, mut border) in &mut rows {
+        ui::focus(row.0 == menu.main_row, &mut fill, &mut border);
+    }
+    // The picked tile is framed in the accent and drawn at full brightness;
+    // a map MCC lacks stays dark.
+    for (tile, mut border) in &mut tiles {
+        let on = tile.1 == menu.pick[tile.0];
+        *border = BorderColor::all(if on { ui::ACCENT } else { Color::NONE });
+    }
+    for (picture, mut image) in &mut tile_pictures {
+        let on = picture.1 == menu.pick[picture.0];
+        let installed = menu.tabs[picture.0].get(picture.1).is_some_and(|m| m.installed);
+        image.color = match (installed, on) {
+            (false, _) => MISSING_TINT,
+            (true, true) => Color::WHITE,
+            (true, false) => TILE_TINT,
         };
-        ui::focus(on, &mut fill, &mut border);
     }
     for (label, mut colour, mut border) in &mut labels {
         // On Campaign the tabs are hidden: their nodes are left alone.
         (colour.0, *border) = ui::tab_lit(label.0 == menu.tab, false);
     }
-    for ((part, loading, difficulty, main, about, caption, heading, name, start, no_picture), mut text, mut colour) in &mut texts {
+    for ((part, loading, difficulty, main, about, caption, heading, name, start), mut text, mut colour) in &mut texts {
         if let Some(part) = part {
             let note = |map: &Map| match &menu.error {
                 Some(error) => error.clone(),
@@ -2753,28 +2826,25 @@ fn show(
             let installed = menu.tabs[name.0].get(name.1).is_some_and(|m| m.installed);
             colour.0 = match (name.1 == menu.pick[name.0], installed) {
                 (true, true) => ui::BRIGHT,
-                (true, false) => DIM,
-                (false, true) => DIM,
+                (true, false) => ui::QUIET,
+                (false, true) => ui::TEXT,
                 (false, false) => ui::OFF,
             };
         } else if start.is_some() {
             colour.0 = if selected.is_some_and(|m| m.installed) { ui::BRIGHT } else { ui::OFF };
-        } else if no_picture.is_some() {
-            let none = selected.is_some_and(|m| m.picture.is_none());
-            colour.0 = if none { ui::OFF } else { Color::NONE };
         }
     }
 }
 
-/// Scrolls the shown page so the picked map's row is all in view: picking
-/// the row below the page's bottom row moves the page up by that row, and
-/// the same upwards (with the section's heading, for its first row). Waits
-/// for the page to be laid out (just shown, or rebuilt).
+/// Scrolls the shown page so the picked tile is all in view: picking a tile
+/// below the page's bottom row moves the page up by that row, and the same
+/// upwards (with the section's heading, for its first row). Waits for the
+/// page to be laid out (just shown, or rebuilt).
 #[allow(clippy::type_complexity)]
 fn follow(
     menu: Res<Menu>,
     mut pages: Query<(Entity, &TabPage, &ComputedNode, &UiGlobalTransform, &mut ScrollPosition)>,
-    rows: Query<(&MapRow, &ComputedNode, &UiGlobalTransform)>,
+    cells: Query<(&TileCell, &ComputedNode, &UiGlobalTransform)>,
     sections: Query<(&SectionHead, &ComputedNode, &UiGlobalTransform)>,
     mut done: Local<Option<(Entity, usize, usize)>>,
 ) {
@@ -2785,7 +2855,7 @@ fn follow(
     if *done == Some((page, t, i)) {
         return;
     }
-    let Some((_, row, row_at)) = rows.iter().find(|(r, ..)| r.0 == t && r.1 == i) else {
+    let Some((_, row, row_at)) = cells.iter().find(|(c, ..)| c.0 == t && c.1 == i) else {
         return;
     };
     if node.size.y <= 0.0 || row.size.y <= 0.0 {
@@ -2796,7 +2866,7 @@ fn follow(
     let (page_top, page_bottom) = span(node, at);
     let (mut top, bottom) = span(row, row_at);
     // A section's first row brings its heading with it.
-    if let Some((_, n, a)) = sections.iter().find(|(s, ..)| s.0 == t && s.1 == i) {
+    if let Some((_, n, a)) = sections.iter().find(|(s, ..)| s.0 == t && i >= s.1 && i - s.1 < COLUMNS) {
         top = span(n, a).0;
     }
     let by = if bottom > page_bottom {
@@ -3009,13 +3079,22 @@ mod tests {
         assert_eq!(button_label(FOV_ROW, false), "CHANGE");
     }
 
-    /// Up and down stop at the list's ends.
     #[test]
-    fn moving_through_a_list() {
-        assert_eq!(stepped(0, 5, -1), 0);
-        assert_eq!(stepped(0, 5, 1), 1);
-        assert_eq!(stepped(4, 5, 1), 4);
-        assert_eq!(stepped(3, 5, 0), 3);
+    fn moving_between_sections() {
+        // The Campaign tab: rows of 1, 1, 6 and 5 maps.
+        let campaign = rows(4);
+        assert_eq!(campaign, [(0, 1), (1, 1), (2, 6), (8, 5)]);
+        assert_eq!(moved(&campaign, 0, 0, 1), 1);
+        assert_eq!(moved(&campaign, 1, 0, 1), 2);
+        assert_eq!(moved(&campaign, 7, 0, -1), 1);
+        assert_eq!(moved(&campaign, 7, 0, 1), 12);
+        assert_eq!(moved(&campaign, 4, 0, 1), 10);
+        assert_eq!(moved(&campaign, 12, 0, 1), 12);
+        assert_eq!(moved(&campaign, 0, 0, -1), 0);
+        assert_eq!(moved(&campaign, 1, 1, 0), 2);
+        assert_eq!(moved(&campaign, 12, 1, 0), 12);
+        // One section: rows of six.
+        assert_eq!(moved(&rows(0), 3, 0, 1), 9);
     }
 
     /// Every settings row says what it is, and its value is drawn between
