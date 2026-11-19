@@ -624,11 +624,11 @@ const KNOBS: [Knob; 23] = [
     },
 ];
 
-const DIM: Color = Color::srgb(0.65, 0.70, 0.78);
-const LIT: Color = Color::srgb(1.0, 0.82, 0.35);
-const CHANGED: Color = Color::srgb(0.55, 0.85, 1.0);
-const TRACK: Color = Color::srgb(0.22, 0.25, 0.30);
-const FILL: Color = Color::srgb(0.85, 0.55, 0.15);
+const DIM: Color = mcc_core::ui::TEXT;
+const LIT: Color = Color::WHITE;
+const CHANGED: Color = mcc_core::ui::ACCENT;
+const TRACK: Color = Color::srgb(0.13, 0.20, 0.29);
+const FILL: Color = mcc_core::ui::ACCENT;
 const TRACK_WIDTH: f32 = 220.0;
 
 #[derive(Component)]
@@ -670,7 +670,7 @@ struct SlotCell {
 struct SlotText(usize);
 
 fn text(s: impl Into<String>, size: f32, colour: Color) -> impl Bundle {
-    (Text::new(s), TextFont::from_font_size(size), TextColor(colour))
+    (Text::new(s), TextFont { font: mcc_core::ui::FONT.into(), ..TextFont::from_font_size(size) }, TextColor(colour))
 }
 
 fn cell(width: f32) -> Node {
@@ -708,7 +708,7 @@ fn spawn_menu(mut commands: Commands) {
                     padding: UiRect::all(Val::Px(20.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.05, 0.07, 0.10, 0.90)),
+                BackgroundColor(Color::srgba(0.035, 0.078, 0.130, 0.94)),
             ))
             .with_children(|panel| {
                 panel.spawn(text("BIKE PHYSICS", 28.0, Color::WHITE));
@@ -1087,7 +1087,7 @@ fn show(
     }
     for (row, mut bg) in &mut rows {
         let want = if row.0 == menu.selected {
-            Color::srgba(1.0, 0.82, 0.35, 0.12)
+            mcc_core::ui::FOCUS.with_alpha(0.28)
         } else {
             Color::NONE
         };
@@ -1122,7 +1122,7 @@ fn show(
     }
     for (cell, mut bg) in &mut cells {
         let want = if menu.selected == cell.row && menu.slot == cell.slot {
-            Color::srgba(1.0, 0.82, 0.35, 0.45)
+            mcc_core::ui::FOCUS
         } else if cell.row == LOAD_ROW && setups.0[cell.slot].is_some() {
             Color::srgb(0.18, 0.32, 0.42)
         } else {

@@ -1,26 +1,33 @@
-//! The map menu: `mcc-rust-rewrite` with no map opens it. Five tabs (Halo 3, Halo 2,
-//! Halo CE, Reach, Campaign) hold a grid of the maps found in the user's MCC install, each
-//! shown with MCC's own preview picture (`levelstexturepack`, read at run
-//! time, never copied into the repo). Start Game decodes the map on a thread
-//! behind a loading screen, then puts it into this same app (`main.rs`
-//! `install`, `mcc_core::map`); Exit closes the game.
+//! The menus before a map: `mcc-rust-rewrite` with no map opens the main
+//! menu (Campaign, Multiplayer maps, Settings, Exit). Campaign and
+//! Multiplayer maps open the map chooser: the maps found in the user's MCC
+//! install in a list down the left (Multiplayer has a tab per game: Halo 3,
+//! Halo 2, Halo CE, Reach), and on the right the picked map's name and MCC's
+//! own preview picture (`levelstexturepack`, read at run time, never copied
+//! into the repo). Start Game decodes the map on a thread behind a loading
+//! screen, then puts it into this same app (`main.rs` `install`,
+//! `mcc_core::map`). Every screen is built from `mcc_core::ui` (font,
+//! colours, sizes as parts of the window's height).
 //!
 //! MCC lets the player leave out any game but Halo 3 (or part of one): a map
 //! whose `.map` file is not in its game's maps folder is still listed, grayed
 //! out, and starting it shows a notice to install it with MCC instead of
 //! loading.
 //!
-//! Keys: arrows / WASD / d-pad / left stick move, Q / E, Tab / Shift+Tab,
-//! Page Up / Page Down or LB / RB change tab (the hints by the tabs show Q / E,
-//! or LB / RB when a controller was used last, `key_hint.rs`),
-//! Enter / Space / A start, Escape / B exit. The mouse selects a tile with a
-//! click and starts it with a double click. On the notice, Enter / Space /
-//! Escape / A / B or a click close it.
+//! Keys, main menu: up / down (arrows, W / S, d-pad, left stick) move,
+//! Enter / Space / A or a click open the row, Escape / B go to Exit and from
+//! Exit leave the game. Chooser: up / down move through the maps; left /
+//! right, Q / E, Tab / Shift+Tab, Page Up / Page Down or LB / RB change tab
+//! (the hints by the tabs show Q / E, or LB / RB when a controller was used
+//! last, `key_hint.rs`); Enter / Space / A start; Escape / B go back to the
+//! main menu; F1 / X open Settings. The mouse selects a map with a click and
+//! starts it with a double click. On the notice, Enter / Space / Escape /
+//! A / B or a click close it.
 //!
-//! The Campaign tab groups its maps under headings: the missions that have
-//! been played through (Halo CE, Halo 3), then the untested ones. A page
-//! taller than the screen scrolls: moving past its bottom (or top) row moves
-//! it one row, and the mouse wheel scrolls it.
+//! The Campaign's list has headings: the missions that have been played
+//! through (Halo CE, Halo 3), then the untested ones; F2 / Y change the
+//! difficulty. A list taller than the screen scrolls: moving past its bottom
+//! (or top) row moves it one row, and the mouse wheel scrolls it.
 //!
 //! Until the player's games are set up (`mcc_setup`) the menu opens on
 //! its setup screen instead (`setup.rs`): Halo MCC, then Skate 3, then MX vs
@@ -34,7 +41,7 @@
 //! (display mode, vsync, field of view) and Support (open the data folder,
 //! copy diagnostics, reset the settings, delete the converted game data;
 //! `support.rs`). Q / E, Tab, Page Up / Page Down or LB / RB change page, up /
-//! down move, Enter / A or a click on the row's button changes it, and left /
+//! down move, Enter / A (or a click on the focused row) changes it, and left /
 //! right step a value up or down. Reset and delete ask for a second press.
 //!
 //! `mcc-rust-rewrite --menu-shot FILE [--menu-tab N] [--menu-pick N] [--size WxH]`
@@ -70,6 +77,7 @@ use bevy::ui::UiGlobalTransform;
 use bevy::window::PrimaryWindow;
 
 use mcc_core::skate::SkateEnabled;
+use mcc_core::ui::{self, bold, text, u};
 use mcc_core::units::SpeedUnit;
 use mcc_core::view::{self, LookSettings};
 use mcc_core::map::{BackToMenu, MapAppExt, MapInstalled, MapMenu, MapReady, Playing, Warmup};
@@ -97,7 +105,6 @@ fn find_entry(arg: &str) -> Option<(usize, usize)> {
         sections.iter().flat_map(|(_, entries)| entries.iter()).position(|e| e.0 == arg).map(|i| (t, i))
     })
 }
-const COLUMNS: usize = 6;
 
 /// (map argument, shown name, MCC preview texture without `_LARGE` /
 /// `LARGE`).
@@ -242,37 +249,6 @@ type Section = (Option<&'static str>, &'static [Entry]);
 /// entries one after the other.
 const SECTIONS: [&[Section]; TABS.len()] = [&[(None, HALO3)], &[(None, HALO2)], &[(None, HALO1)], &[(None, REACH)], CAMPAIGN];
 
-/// A tab's rows of tiles as (first map, how many): each section starts a new
-/// row.
-fn rows(tab: usize) -> Vec<(usize, usize)> {
-    let mut rows = Vec::new();
-    let mut first = 0;
-    for (_, entries) in SECTIONS[tab] {
-        for at in (0..entries.len()).step_by(COLUMNS) {
-            rows.push((first + at, (entries.len() - at).min(COLUMNS)));
-        }
-        first += entries.len();
-    }
-    rows
-}
-
-/// The tile `dx` tiles along and `dy` rows down from `at`: along runs on
-/// across sections, down keeps the column (or the last tile of a shorter
-/// row); both stop at the ends.
-fn moved(rows: &[(usize, usize)], at: usize, dx: isize, dy: isize) -> usize {
-    let Some(&(last, len)) = rows.last() else {
-        return 0;
-    };
-    let at = (at as isize + dx).clamp(0, (last + len) as isize - 1) as usize;
-    if dy == 0 {
-        return at;
-    }
-    let r = rows.iter().rposition(|&(first, _)| first <= at).unwrap_or(0);
-    let column = at - rows[r].0;
-    let (first, len) = rows[(r as isize + dy).clamp(0, rows.len() as isize - 1) as usize];
-    first + column.min(len - 1)
-}
-
 const KINDS: [&str; 5] = [
     "Halo 3 multiplayer",
     "Halo 2 multiplayer",
@@ -290,22 +266,24 @@ fn kind(tab: usize, map: &Map) -> &'static str {
     }
 }
 
-const BACKGROUND: Color = Color::srgb(0.043, 0.059, 0.082);
-const BAR: Color = Color::srgb(0.071, 0.098, 0.141);
-const LINE: Color = Color::srgb(0.149, 0.192, 0.259);
-const DIM: Color = Color::srgb(0.65, 0.70, 0.78);
-const FAINT: Color = Color::srgb(0.34, 0.39, 0.48);
-const LIT: Color = Color::srgb(1.0, 0.82, 0.35);
-const EMPTY: Color = Color::srgb(0.10, 0.13, 0.18);
+const BACKGROUND: Color = ui::BACKGROUND;
+const LINE: Color = ui::LINE;
+const DIM: Color = ui::TEXT;
+const FAINT: Color = ui::QUIET;
+const LIT: Color = ui::ACCENT;
+/// The loading ring's unlit segments.
+const RING_DARK: Color = Color::srgb(0.13, 0.20, 0.29);
 
 /// The spinner: a Halo ring of segments with a bright arc running round it.
 const RING_SEGMENTS: usize = 32;
-const RING_RADIUS: f32 = 70.0;
+const RING_RADIUS: f32 = 52.0;
 /// Turns per second.
 const RING_SPEED: f32 = 0.6;
 
 /// A missing map's picture is drawn through this tint.
 const MISSING_TINT: Color = Color::srgb(0.30, 0.30, 0.32);
+/// The tiles not picked are drawn a little darker than the picked one.
+const TILE_TINT: Color = Color::srgb(0.66, 0.70, 0.76);
 
 /// One map the menu offers.
 struct Map {
@@ -319,6 +297,9 @@ struct Map {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
+    /// The main menu: Campaign, Multiplayer maps, Settings, Exit.
+    Main,
+    /// The map chooser: the multiplayer tabs, or the Campaign tab alone.
     Choosing,
     Loading,
     /// The notice over the chooser: this game's map is not installed.
@@ -415,6 +396,14 @@ struct Menu {
     /// Starting a map saves it as the last one, to open on next time; not in
     /// a headless shot, which never writes the setup.
     remember: bool,
+    /// The main menu's focused row, an index into [`MAIN_ROWS`].
+    main_row: usize,
+    /// The multiplayer tab the chooser showed last (the Campaign has its own
+    /// row on the main menu).
+    mp_tab: usize,
+    /// Where Settings and the new-version pop-up go back to: the main menu
+    /// or the chooser, whichever they were opened over.
+    under: Phase,
     /// The new-version check, while it runs on its thread (`update.rs`).
     update_check: Option<update::UpdateCheck>,
     /// A newer release: waiting for the chooser, then shown in the pop-up
@@ -490,17 +479,46 @@ struct TabLabel(usize);
 /// ([`follow`]).
 #[derive(Component)]
 struct TabPage(usize);
-/// A section on a tab's page: tab, its first map.
+/// A section's heading on a tab's page: tab, its first map.
 #[derive(Component)]
-struct SectionBox(usize, usize);
-/// A tile with its name under it: tab, map.
+struct SectionHead(usize, usize);
+/// A map's place in a tab's grid (its tile and name): tab, map.
 #[derive(Component)]
 struct TileCell(usize, usize);
+/// A map's tile: its framed picture.
 #[derive(Component)]
 struct Tile(usize, usize);
+/// The picture in a map's tile.
 #[derive(Component)]
-struct TileLabel(usize, usize);
-/// The bar's text: 0 the map's name, 1 which game and mode.
+struct TilePicture(usize, usize);
+/// The name across the foot of a map's tile.
+#[derive(Component)]
+struct TileName(usize, usize);
+/// The chooser's title: MULTIPLAYER MAPS or CAMPAIGN.
+#[derive(Component)]
+struct ChooserTitle;
+/// The bumper hints beside the chooser's tabs (hidden on Campaign, which has
+/// no tabs).
+#[derive(Component)]
+struct TabExtra;
+/// The main menu.
+#[derive(Component)]
+struct MainScreen;
+/// A row of the main menu, an index into [`MAIN_ROWS`], and its name.
+#[derive(Component)]
+struct MainRow(usize);
+#[derive(Component)]
+struct MainLabel(usize);
+/// Under the main menu's rows: what the focused one is.
+#[derive(Component)]
+struct MainAbout;
+/// The main menu's picture (the map the chooser opens on) and its caption.
+#[derive(Component)]
+struct MainPicture;
+#[derive(Component)]
+struct MainCaption;
+/// The picked map's words: 0 its name, 1 which game and mode, 2 a note
+/// (not installed, or why it did not load).
 #[derive(Component)]
 struct Chosen(usize);
 #[derive(Component)]
@@ -513,6 +531,8 @@ struct Notice;
 struct NoticeGame;
 #[derive(Component, Clone, Copy, PartialEq)]
 enum MenuButton {
+    /// The main menu's A: open the focused row.
+    Select,
     /// The campaign difficulty, only on the Campaign tab.
     Difficulty,
     Settings,
@@ -542,11 +562,16 @@ struct SettingsScreen;
 struct SettingRow(usize);
 #[derive(Component)]
 struct SettingValue(usize);
-/// A row's Select button, and its label.
+/// On the right of the settings: the focused row's name and what it is.
 #[derive(Component)]
-struct SettingSelect(usize);
+struct SettingTitle;
 #[derive(Component)]
-struct SettingSelectLabel(usize);
+struct SettingAbout;
+/// The footer's A button, and its label: what A does to the focused row.
+#[derive(Component)]
+struct SettingsAct;
+#[derive(Component)]
+struct SettingActionLabel;
 #[derive(Component)]
 struct SettingsNote;
 #[derive(Component)]
@@ -557,6 +582,17 @@ struct SettingTab(usize);
 /// The bar's "left / right step a value", shown on the pages with values.
 #[derive(Component)]
 struct SettingsStepHint;
+
+/// The main menu's rows and what each one is.
+const MAIN_ROWS: [(&str, &str); 4] = [
+    ("CAMPAIGN", "The missions: the Warthog runs, played through from start to finish, and the rest to explore."),
+    ("MULTIPLAYER MAPS", "Skate, ride and walk the multiplayer maps of Halo 3, Halo 2, Halo CE and Reach."),
+    ("SETTINGS", "Your games, player, controls, display and support."),
+    ("EXIT", "Close the game."),
+];
+const MAIN_CAMPAIGN: usize = 0;
+const MAIN_MAPS: usize = 1;
+const MAIN_SETTINGS: usize = 2;
 
 /// The settings, in row order, page by page (`SETTING_PAGES`): three games'
 /// folders; the username, the armour colour, the speed unit, skating on or
@@ -688,7 +724,8 @@ fn button_label(row: usize, skate_ready: bool) -> &'static str {
     }
 }
 
-/// What each row shows now: the saved folder, or why there is none.
+/// What each row shows now, in short: the saved folder or choice, or why
+/// there is none ([`setting_about`] says what the row is).
 /// `skate_ready`: Skate 3 is set up (`game_paths::skate_ready`); without it
 /// skating is not there to turn on. `converted`: what converted data there
 /// is (`support::converted`).
@@ -701,28 +738,19 @@ fn setting_values(
     converted: &str,
 ) -> [String; SETTING_NAMES.len()] {
     let shown = |p: Option<PathBuf>| p.map(|p| p.display().to_string());
+    let on_off = |on: bool| if on { "On" } else { "Off" }.to_string();
     let settings = game_paths::settings();
     let reflex = match game_paths::reflex_chosen() {
         Some(p) if game_paths::reflex_imported() => format!("Imported from {}", p.display()),
-        chosen => shown(chosen.filter(|_| game_paths::reflex_ready())).unwrap_or_else(|| {
-            if game_paths::reflex_skipped() { "Not used (optional)" } else { "Not set (optional)" }.to_string()
-        }),
+        chosen => shown(chosen.filter(|_| game_paths::reflex_ready()))
+            .unwrap_or_else(|| if game_paths::reflex_skipped() { "Not used" } else { "Not set" }.to_string()),
     };
     let skate_folder = if skate_ready {
-        settings
-            .get(game_paths::key::SKATE_SOURCE)
-            .map_or_else(|| "Set up (folder not recorded, select to choose it)".to_string(), str::to_owned)
+        settings.get(game_paths::key::SKATE_SOURCE).map_or_else(|| "Set up".to_string(), str::to_owned)
     } else if game_paths::skate_skipped() {
-        "Not used (optional): adds the skateboard".to_string()
+        "Not used".to_string()
     } else {
-        "Not set (optional): adds the skateboard".to_string()
-    };
-    let skating = if !skate_ready {
-        "Not available: needs Skate 3 (SET UP adds it)"
-    } else if skate.0 {
-        "On (skateboard and grind rails on every map)"
-    } else {
-        "Off (maps load without the skateboard or grind rails)"
+        "Not set".to_string()
     };
     let display = view::Display::load();
     [
@@ -730,38 +758,65 @@ fn setting_values(
         reflex,
         skate_folder,
         game_paths::username(),
-        format!("{} (the Spartan on multiplayer maps, from the next map you load)", mcc_rider::ARMOUR_COLOURS[mcc_rider::armour()].0),
-        format!("{} (miles per hour or kilometres per hour)", unit.label()),
-        skating.to_string(),
-        if game_paths::trick_display() {
-            "On (each trick's name and points on screen while skating)"
-        } else {
-            "Off (no trick names or score on screen)"
-        }
-        .to_string(),
-        format!("{} (the voices in Halo 3 and Halo: Combat Evolved)", language_label(game_paths::language())),
-        if reflex_physics {
-            "Reflex (MX vs ATV Reflex's own bike simulation)"
-        } else {
-            "Arcade (the bike's own physics)"
-        }
-        .to_string(),
-        format!("{} % (how fast the mouse turns the camera; left / right step it)", look.mouse),
-        format!("{} % (how fast the right stick turns the camera; left / right step it)", look.stick),
-        if look.invert { "On (pushing up looks down, mouse and stick)" } else { "Off (pushing up looks up)" }.to_string(),
+        mcc_rider::ARMOUR_COLOURS[mcc_rider::armour()].0.to_string(),
+        unit.label().to_string(),
+        if skate_ready { on_off(skate.0) } else { "Not available".to_string() },
+        on_off(game_paths::trick_display()),
+        language_label(game_paths::language()).to_string(),
+        if reflex_physics { "Reflex" } else { "Arcade" }.to_string(),
+        format!("{} %", look.mouse),
+        format!("{} %", look.stick),
+        on_off(look.invert),
         if display.windowed { "Windowed" } else { "Borderless fullscreen" }.to_string(),
-        if display.vsync {
-            "On (the frame rate keeps to the screen's, no tearing)"
-        } else {
-            "Off (frames as fast as they come, may tear)"
-        }
-        .to_string(),
-        format!("{} % of each camera's own (wider shows more; left / right step it)", look.fov),
+        on_off(display.vsync),
+        format!("{} %", look.fov),
         game_paths::settings_dir().display().to_string(),
-        "Copies the version, your setup and where the log is, to paste into a bug report".to_string(),
-        "Puts every setting back to its default; keeps your game folders".to_string(),
+        String::new(),
+        String::new(),
         converted.to_string(),
     ]
+}
+
+/// What a row is, for the panel beside the rows.
+fn setting_about(row: usize, skate_ready: bool, skating: bool) -> &'static str {
+    match row {
+        0 => "Required. The maps, their pictures and their sounds are read from your own Master Chief Collection \
+              while you play. Nothing in it is changed.",
+        1 => "Optional. With your MX vs ATV Reflex the dirt bike is its Dakumoto 450F, with its engine recordings. \
+              Without it the bike is our own model and has no engine sound.",
+        SKATE_ROW if skate_ready => "Your Skate 3 adds the skateboard and the grind rails. Change it to convert it \
+                                     again or to go without it.",
+        SKATE_ROW => "Optional. Your own Skate 3 adds the skateboard and grind rails on every map.",
+        USERNAME_ROW => "The name the game shows for you.",
+        ARMOUR_ROW => "The Spartan's armour on multiplayer maps, from the next map you load.",
+        UNITS_ROW => "The speedometer shows miles per hour or kilometres per hour.",
+        SKATING_ROW if !skate_ready => "Skating needs Skate 3. Set it up to add the skateboard.",
+        SKATING_ROW if skating => "Maps load with the skateboard and grind rails. J (or both sticks clicked) gets on the board.",
+        SKATING_ROW => "Maps load without the skateboard or grind rails, and are ready sooner.",
+        TRICKS_ROW => "Shows each trick's name and points on screen while skating, from the next map you load.",
+        LANGUAGE_ROW => "The voices in Halo 3 and Halo: Combat Evolved, where your MCC has that language installed.",
+        PHYSICS_ROW => "Reflex is MX vs ATV Reflex's own bike simulation; Arcade is the bike's own physics. The pause \
+                        menu's Dirt bike tab switches it too.",
+        MOUSE_ROW => "How fast the mouse turns the camera, against its stock speed.",
+        STICK_ROW => "How fast the right stick turns the camera, against its stock speed.",
+        INVERT_ROW => "On: pushing up looks down, with the mouse and the stick.",
+        DISPLAY_ROW => "Fill the screen without a border, or run in a window.",
+        VSYNC_ROW => "On: the frame rate keeps to the screen's, with no tearing. Off: frames show as fast as they \
+                      come, and may tear.",
+        FOV_ROW => "How wide every camera sees, against its own: flying, on foot, the bike and the board. Wider shows more.",
+        FOLDER_ROW => "Where your settings, logs and crash reports are kept.",
+        DIAGNOSTICS_ROW => "Copies the version, your setup and where the log is, to paste into a bug report.",
+        RESET_ROW => "Puts every setting back to its default. Your game folders stay.",
+        DELETE_ROW => "The Skate 3 and Reflex data converted at setup. Deleting it means playing without them until \
+                       you set them up again on the Games page.",
+        _ => "",
+    }
+}
+
+/// Whether left and right change a row (the Controls and Display pages'):
+/// its value is drawn between arrows while it has the focus.
+fn steps(row: usize) -> bool {
+    matches!(row, MOUSE_ROW | STICK_ROW | INVERT_ROW | DISPLAY_ROW | VSYNC_ROW | FOV_ROW)
 }
 
 /// MCC's install root, as first-run setup saved it (`game_paths`).
@@ -952,16 +1007,26 @@ impl Plugin for MenuPlugin {
         // `--menu-shot --menu-missing`: open on the picked map's notice.
         // The games not set up yet: the setup screen first (`--menu-setup`
         // draws it in a shot).
+        // A shot that names a map, or starts one, is of the chooser; any
+        // other, and the game itself, opens on the main menu.
+        let to_chooser = headless(args)
+            && ["--menu-tab", "--menu-pick", "--menu-loading", "--menu-start", "--menu-missing"]
+                .iter()
+                .any(|flag| args.iter().any(|a| a == flag));
         let first_run = args.iter().any(|a| a == "--menu-setup") || (!headless(args) && mcc_setup::needs_setup());
         let phase = match tabs[tab].get(picks[tab]) {
             _ if first_run => Phase::Setup,
             _ if args.iter().any(|a| a == "--menu-settings") => Phase::Settings,
             Some(map) if shot.as_ref().is_some_and(|s| s.missing) => Phase::Missing(map.game),
-            _ => Phase::Choosing,
+            _ if to_chooser => Phase::Choosing,
+            _ => Phase::Main,
         };
-        let choosing = |menu: Res<Menu>| menu.phase == Phase::Choosing;
+        let main_open = |menu: Res<Menu>| menu.phase == Phase::Main;
+        // Not in the frame the main menu opened them: the press that chose
+        // the row would start the picked map, or change the first setting.
+        let choosing = |menu: Res<Menu>| menu.phase == Phase::Choosing && !menu.fresh;
         let missing = |menu: Res<Menu>| matches!(menu.phase, Phase::Missing(_));
-        let settings_open = |menu: Res<Menu>| menu.phase == Phase::Settings;
+        let settings_open = |menu: Res<Menu>| menu.phase == Phase::Settings && !menu.fresh;
         let setup_open = |menu: Res<Menu>| menu.phase == Phase::Setup;
         // What `install` (main.rs) puts in goes when the map is unloaded.
         app.insert_resource(MapMenu)
@@ -998,6 +1063,9 @@ impl Plugin for MenuPlugin {
             converted: String::new(),
             difficulty: saved_difficulty(),
             remember: !headless(args),
+            main_row: if tab == CAMPAIGN_TAB { MAIN_CAMPAIGN } else { MAIN_MAPS },
+            mp_tab: if tab == CAMPAIGN_TAB { 0 } else { tab },
+            under: if to_chooser { Phase::Choosing } else { Phase::Main },
             // Not in a headless shot, nor with `--menu-update TAG`, which
             // pretends TAG is out (to see the pop-up while ours is the newest).
             update_check: if headless(args) || value(args, "--menu-update").is_some() { None } else { update::start() },
@@ -1030,6 +1098,7 @@ impl Plugin for MenuPlugin {
             Update,
             (
                 settings_poll.run_if(|menu: Res<Menu>| menu.picking.is_some()),
+                main_input.run_if(main_open),
                 (navigate, mouse, wheel, act).run_if(choosing),
                 settings_input.run_if(settings_open),
                 setup::input.run_if(setup_open),
@@ -1037,6 +1106,7 @@ impl Plugin for MenuPlugin {
                 dismiss.run_if(missing),
                 update_poll,
                 update_input.run_if(|menu: Res<Menu>| menu.phase == Phase::Update),
+                settle,
                 show,
                 follow,
                 show_notice,
@@ -1072,8 +1142,89 @@ fn build_tabs(pack: Option<&Pack>, images: &mut Assets<Image>) -> [Vec<Map>; TAB
     })
 }
 
-fn text(s: &str, size: f32, colour: Color) -> impl Bundle {
-    (Text::new(s), TextFont::from_font_size(size), TextColor(colour))
+/// The pad's face buttons, as the footers' badges colour them.
+const PAD_A: Color = Color::srgb(0.37, 0.75, 0.29);
+const PAD_B: Color = Color::srgb(0.85, 0.33, 0.31);
+const PAD_X: Color = Color::srgb(0.30, 0.55, 0.90);
+const PAD_Y: Color = Color::srgb(0.93, 0.76, 0.20);
+
+/// A map picture's shape in MCC's texture pack.
+const PICTURE_ASPECT: f32 = 668.0 / 292.0;
+
+/// A full-screen layer of the menu, hidden until its phase shows it.
+fn layer() -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        width: Val::Percent(100.0),
+        height: Val::Percent(100.0),
+        flex_direction: FlexDirection::Column,
+        display: Display::None,
+        ..default()
+    }
+}
+
+/// A layer holding a pop-up in its middle, over a darkened screen.
+fn popup_layer() -> impl Bundle {
+    (
+        Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..layer() },
+        BackgroundColor(Color::srgba(0.0, 0.01, 0.03, 0.72)),
+    )
+}
+
+/// A footer's button: its badge (the pad's `letter` in `colour`, or `key`)
+/// and its label.
+fn footer_button(
+    bar: &mut ChildSpawnerCommands,
+    marker: impl Bundle,
+    letter: &'static str,
+    key: &'static str,
+    colour: Color,
+    label: impl Bundle,
+) {
+    bar.spawn((
+        marker,
+        Node { align_items: AlignItems::Center, column_gap: u(12.0), padding: UiRect::axes(u(8.0), u(10.0)), ..default() },
+    ))
+    .with_children(|b| {
+        key_hint::badge(b, letter, key, colour);
+        b.spawn(label);
+    });
+}
+
+/// A header's title, sitting on the rule like the tabs.
+fn title(head: &mut ChildSpawnerCommands, marker: impl Bundle, name: &str) {
+    head.spawn((
+        marker,
+        Node { padding: UiRect::bottom(u(10.0)), margin: UiRect::right(u(24.0)), ..default() },
+        bold(name, 40.0, ui::BRIGHT),
+    ));
+}
+
+/// The hint beside a header's tabs: the pad's bumper or the key.
+fn tab_hint(head: &mut ChildSpawnerCommands, marker: impl Bundle, pad: &'static str, keys: &'static str) {
+    head.spawn((marker, KeyHint { pad, keys }, Node { padding: UiRect::bottom(u(18.0)), ..default() }, text(keys, 17.0, FAINT)));
+}
+
+/// A pop-up's panel: its title on a strip, then what `body` puts under it.
+fn popup(screen: &mut ChildSpawnerCommands, name: &str, body: impl FnOnce(&mut ChildSpawnerCommands)) {
+    screen
+        .spawn((
+            Node { width: u(860.0), flex_direction: FlexDirection::Column, border: UiRect::all(u(1.5)), ..default() },
+            BackgroundColor(Color::srgb(0.035, 0.078, 0.130)),
+            BorderColor::all(LINE),
+        ))
+        .with_children(|panel| {
+            panel
+                .spawn((
+                    Node { padding: UiRect::axes(u(36.0), u(20.0)), border: UiRect::bottom(u(1.5)), ..default() },
+                    BackgroundColor(ui::FOCUS.with_alpha(0.22)),
+                    BorderColor::all(LINE),
+                ))
+                .with_child(bold(name, 30.0, ui::BRIGHT));
+            panel
+                .spawn(Node { flex_direction: FlexDirection::Column, row_gap: u(26.0), padding: UiRect::all(u(36.0)), ..default() })
+                .with_children(body);
+        });
 }
 
 fn spawn(mut commands: Commands, menu: Res<Menu>, shot: Option<ResMut<MenuShot>>, mut images: ResMut<Assets<Image>>) {
@@ -1091,540 +1242,397 @@ fn spawn(mut commands: Commands, menu: Res<Menu>, shot: Option<ResMut<MenuShot>>
         .spawn((
             MenuRoot,
             UiTargetCamera(camera),
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                ..default()
-            },
+            Node { width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
             BackgroundColor(BACKGROUND),
+            ui::backdrop(),
             GlobalZIndex(200),
         ))
         .with_children(|root| {
-            root.spawn((
-                Chooser,
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-            ))
-            .with_children(|chooser| spawn_chooser(chooser, &menu));
-            root.spawn((
-                LoadingScreen,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    row_gap: Val::Px(28.0),
-                    display: Display::None,
-                    ..default()
-                },
-                BackgroundColor(BACKGROUND),
-            ))
-            .with_children(spawn_loading);
-            root.spawn((
-                Notice,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    display: Display::None,
-                    ..default()
-                },
-                BackgroundColor(BACKGROUND.with_alpha(0.8)),
-            ))
-            .with_children(spawn_notice);
-            root.spawn((
-                UpdateNotice,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    display: Display::None,
-                    ..default()
-                },
-                BackgroundColor(BACKGROUND.with_alpha(0.8)),
-            ))
-            .with_children(spawn_update);
-            root.spawn((
-                SettingsScreen,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    display: Display::None,
-                    ..default()
-                },
-                BackgroundColor(BACKGROUND),
-            ))
-            .with_children(spawn_settings);
-            root.spawn((
-                setup::SetupScreen,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    display: Display::None,
-                    ..default()
-                },
-                BackgroundColor(BACKGROUND),
-            ))
-            .with_children(setup::spawn);
+            root.spawn((MainScreen, layer())).with_children(|screen| spawn_main(screen, &menu));
+            root.spawn((Chooser, layer())).with_children(|chooser| spawn_chooser(chooser, &menu));
+            root.spawn((LoadingScreen, layer(), BackgroundColor(BACKGROUND), ui::backdrop())).with_children(spawn_loading);
+            root.spawn((SettingsScreen, layer())).with_children(spawn_settings);
+            root.spawn((setup::SetupScreen, layer())).with_children(setup::spawn);
+            root.spawn((Notice, popup_layer())).with_children(spawn_notice);
+            root.spawn((UpdateNotice, popup_layer())).with_children(spawn_update);
         });
 }
 
-//// The settings screen: the pages' tab bar, a row per setting (name, what it
-/// is now, its button; [`show_settings`] shows the page's), the note and
-/// Back.
-fn spawn_settings(screen: &mut ChildSpawnerCommands) {
+/// The main menu: the game's name, the big rows down the left (what each one
+/// is, under them), and the picked map's picture on the right.
+fn spawn_main(screen: &mut ChildSpawnerCommands, menu: &Menu) {
     screen
-        .spawn((
-            Node {
-                width: Val::Percent(92.0),
-                max_width: Val::Vh(165.0),
-                margin: UiRect::top(Val::Vh(4.0)),
-                column_gap: Val::Px(36.0),
-                align_items: AlignItems::FlexEnd,
-                border: UiRect::bottom(Val::Px(1.0)),
-                ..default()
-            },
-            BorderColor::all(LINE),
-        ))
-        .with_children(|tabs| {
-            tabs.spawn((
-                Node { padding: UiRect::new(Val::Px(2.0), Val::Px(12.0), Val::Px(6.0), Val::Px(13.0)), ..default() },
-                text("SETTINGS", 22.0, Color::WHITE),
-            ));
-            tabs.spawn((KeyHint { pad: "LB", keys: "Q" }, text("Q", 15.0, FAINT)));
-            for (i, (name, _)) in SETTING_PAGES.iter().enumerate() {
-                tabs.spawn((
-                    SettingTab(i),
-                    Node {
-                        padding: UiRect::new(Val::Px(2.0), Val::Px(2.0), Val::Px(6.0), Val::Px(10.0)),
-                        border: UiRect::bottom(Val::Px(3.0)),
-                        margin: UiRect::bottom(Val::Px(-1.0)),
-                        ..default()
-                    },
-                    BorderColor::all(Color::NONE),
-                    text(name, 22.0, DIM),
-                ));
-            }
-            tabs.spawn((KeyHint { pad: "RB", keys: "E" }, text("E", 15.0, FAINT)));
-        });
-    screen.spawn(Node { height: Val::Vh(3.0), flex_shrink: 0.0, ..default() });
-    let skate_ready = game_paths::skate_ready();
-    for (i, name) in SETTING_NAMES.iter().enumerate() {
-        screen
-            .spawn((
-                SettingRow(i),
-                Node {
-                    width: Val::Percent(92.0),
-                    max_width: Val::Vh(165.0),
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(24.0),
-                    padding: UiRect::axes(Val::Px(20.0), Val::Px(14.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    border_radius: BorderRadius::all(Val::Px(6.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::NONE),
-                BorderColor::all(Color::NONE),
-            ))
-            .with_children(|row| {
-                row.spawn((Node { width: Val::Px(240.0), flex_shrink: 0.0, ..default() }, text(name, 22.0, Color::WHITE)));
-                row.spawn((
-                    SettingValue(i),
-                    Node { flex_grow: 1.0, flex_basis: Val::Px(0.0), ..default() },
-                    text("", 18.0, DIM),
-                ));
-                row.spawn((
-                    SettingSelect(i),
-                    Node {
-                        padding: UiRect::axes(Val::Px(26.0), Val::Px(9.0)),
-                        border: UiRect::all(Val::Px(2.0)),
-                        border_radius: BorderRadius::all(Val::Px(5.0)),
-                        flex_shrink: 0.0,
-                        ..default()
-                    },
-                    BorderColor::all(LINE),
-                ))
-                .with_child((SettingSelectLabel(i), text(button_label(i, skate_ready), 18.0, DIM)));
-            });
-    }
-    screen.spawn((
-        SettingsNote,
-        Node { width: Val::Percent(92.0), max_width: Val::Vh(165.0), margin: UiRect::top(Val::Px(16.0)), ..default() },
-        text("", 17.0, DIM),
-    ));
-    screen.spawn(Node { flex_grow: 1.0, ..default() });
-    screen
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Vh(11.0),
-                padding: UiRect::horizontal(Val::Percent(4.0)),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::FlexEnd,
-                border: UiRect::top(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(BAR),
-            BorderColor::all(LINE),
-        ))
-        .with_children(|bar| {
-            // Left and right step a value (sensitivity, field of view), on
-            // the left of the bar.
-            bar.spawn((
-                SettingsStepHint,
-                Node { align_items: AlignItems::Center, column_gap: Val::Px(10.0), margin: UiRect::right(Val::Auto), ..default() },
-            ))
-                .with_children(|hint| {
-                    hint.spawn(key_hint::hint("D-PAD LEFT / RIGHT", "LEFT / RIGHT", 17.0, FAINT));
-                    hint.spawn(text("TO STEP A VALUE", 17.0, FAINT));
+        .spawn(Node {
+            flex_grow: 1.0,
+            min_height: Val::Px(0.0),
+            padding: UiRect::horizontal(u(96.0)),
+            column_gap: u(84.0),
+            align_items: AlignItems::Center,
+            ..default()
+        })
+        .with_children(|body| {
+            body.spawn(Node { width: u(640.0), flex_shrink: 0.0, flex_direction: FlexDirection::Column, ..default() })
+                .with_children(|left| {
+                    left.spawn(bold("MCC RUST REWRITE", 62.0, ui::BRIGHT));
+                    left.spawn((
+                        Node { margin: UiRect::new(u(4.0), Val::ZERO, u(2.0), u(54.0)), ..default() },
+                        text("HALO MAPS  /  SKATEBOARD  /  DIRT BIKE", 19.0, ui::ACCENT),
+                    ));
+                    for (i, (name, _)) in MAIN_ROWS.iter().enumerate() {
+                        left.spawn((MainRow(i), ui::row(74.0))).with_child((MainLabel(i), bold(name, 34.0, DIM)));
+                    }
+                    left.spawn((
+                        MainAbout,
+                        Node { margin: UiRect::new(u(26.0), Val::ZERO, u(34.0), Val::ZERO), min_height: u(60.0), ..default() },
+                        text("", 21.0, FAINT),
+                    ));
                 });
-            bar.spawn((
-                SettingsBack,
+            body.spawn(Node { flex_grow: 1.0, flex_basis: Val::Px(0.0), flex_direction: FlexDirection::Column, row_gap: u(14.0), ..default() })
+                .with_children(|right| {
+                    right
+                        .spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                aspect_ratio: Some(PICTURE_ASPECT),
+                                border: UiRect::all(u(1.5)),
+                                overflow: Overflow::clip(),
+                                ..default()
+                            },
+                            BackgroundColor(ui::WELL),
+                            BorderColor::all(LINE),
+                        ))
+                        .with_child((
+                            MainPicture,
+                            ImageNode { color: Color::NONE, ..default() },
+                            Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+                        ));
+                    right.spawn((MainCaption, text("", 20.0, FAINT)));
+                });
+        });
+    screen.spawn((ui::footer_node(), ui::bar())).with_children(|bar| {
+        bar.spawn((Node { margin: UiRect::right(Val::Auto), ..default() }, text(game_paths::VERSION, 18.0, FAINT)));
+        footer_button(bar, MenuButton::Select, "A", "Enter", PAD_A, bold("SELECT", 20.0, ui::BRIGHT));
+        footer_button(bar, MenuButton::Exit, "B", "Esc", PAD_B, text("EXIT", 20.0, DIM));
+    });
+    let _ = menu;
+}
+
+/// The settings screen: the pages' tab bar; the page's rows down the left
+/// (name, what it is now; [`show_settings`] shows the page's); on the right
+/// what the focused row is and the note; the footer with what A does.
+fn spawn_settings(screen: &mut ChildSpawnerCommands) {
+    screen.spawn((ui::header_node(), ui::bar())).with_children(|head| {
+        title(head, (), "SETTINGS");
+        tab_hint(head, (), "LB", "Q");
+        for (i, (name, _)) in SETTING_PAGES.iter().enumerate() {
+            head.spawn((SettingTab(i), ui::tab_node(), BorderColor::all(Color::NONE), bold(name, 24.0, FAINT)));
+        }
+        tab_hint(head, (), "RB", "E");
+    });
+    screen
+        .spawn(Node {
+            flex_grow: 1.0,
+            min_height: Val::Px(0.0),
+            padding: UiRect::new(u(72.0), u(72.0), u(40.0), u(30.0)),
+            column_gap: u(56.0),
+            ..default()
+        })
+        .with_children(|body| {
+            body.spawn(Node { width: Val::Percent(58.0), flex_shrink: 0.0, flex_direction: FlexDirection::Column, row_gap: u(4.0), ..default() })
+                .with_children(|list| {
+                    for (i, name) in SETTING_NAMES.iter().enumerate() {
+                        list.spawn((SettingRow(i), ui::row(64.0))).with_children(|row| {
+                            row.spawn((Node { width: u(310.0), flex_shrink: 0.0, ..default() }, bold(name, 24.0, ui::BRIGHT)));
+                            row.spawn((
+                                SettingValue(i),
+                                Node { flex_grow: 1.0, flex_basis: Val::Px(0.0), ..default() },
+                                TextLayout::justify(Justify::Right),
+                                text("", 21.0, DIM),
+                            ));
+                        });
+                    }
+                });
+            body.spawn((
                 Node {
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(10.0),
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.0),
+                    align_self: AlignSelf::FlexStart,
+                    min_height: u(320.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: u(18.0),
+                    padding: UiRect::all(u(34.0)),
+                    border: UiRect::all(u(1.5)),
                     ..default()
                 },
+                ui::panel(),
             ))
-            .with_children(|b| {
-                key_hint::badge(b, "B", "Esc", Color::srgb(0.85, 0.33, 0.31));
-                b.spawn(text("BACK", 20.0, DIM));
+            .with_children(|about| {
+                about.spawn((SettingTitle, bold("", 32.0, ui::BRIGHT)));
+                about.spawn((SettingAbout, text("", 21.0, DIM)));
+                about.spawn((SettingsNote, Node { margin: UiRect::top(u(10.0)), ..default() }, text("", 21.0, LIT)));
             });
         });
+    screen.spawn((ui::footer_node(), ui::bar())).with_children(|bar| {
+        // Left and right step a value (sensitivity, field of view), on the
+        // left of the bar.
+        bar.spawn((SettingsStepHint, Node { align_items: AlignItems::Center, column_gap: u(10.0), margin: UiRect::right(Val::Auto), ..default() }))
+            .with_children(|hint| {
+                hint.spawn((KeyHint { pad: "D-PAD LEFT / RIGHT", keys: "LEFT / RIGHT" }, text("LEFT / RIGHT", 18.0, FAINT)));
+                hint.spawn(text("TO STEP A VALUE", 18.0, FAINT));
+            });
+        footer_button(bar, SettingsAct, "A", "Enter", PAD_A, (SettingActionLabel, bold("", 20.0, ui::BRIGHT)));
+        footer_button(bar, SettingsBack, "B", "Esc", PAD_B, text("BACK", 20.0, DIM));
+    });
 }
 
 // The not-installed notice: what to do, which game, and OK.
 fn spawn_notice(screen: &mut ChildSpawnerCommands) {
-    screen
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(18.0),
-                padding: UiRect::axes(Val::Px(56.0), Val::Px(36.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                border_radius: BorderRadius::all(Val::Px(6.0)),
-                ..default()
-            },
-            BackgroundColor(BAR),
-            BorderColor::all(LINE),
-        ))
-        .with_children(|panel| {
-            panel.spawn(text("You must install these Halo maps with MCC", 28.0, Color::WHITE));
-            panel.spawn((NoticeGame, text("", 19.0, DIM)));
-            panel
-                .spawn(Node {
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(10.0),
-                    margin: UiRect::top(Val::Px(14.0)),
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
-                    ..default()
-                })
-                .with_children(|b| {
-                    key_hint::badge(b, "A", "Enter", Color::srgb(0.37, 0.75, 0.29));
-                    b.spawn(text("OK", 20.0, LIT));
-                });
+    popup(screen, "You must install these Halo maps with MCC", |panel| {
+        panel.spawn((NoticeGame, text("", 22.0, DIM)));
+        panel.spawn(Node { justify_content: JustifyContent::FlexEnd, ..default() }).with_children(|row| {
+            footer_button(row, (), "A", "Enter", PAD_A, bold("OK", 20.0, ui::BRIGHT));
         });
+    });
 }
 
 /// The new-version pop-up: what is out, and its two buttons.
 fn spawn_update(screen: &mut ChildSpawnerCommands) {
-    screen
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(18.0),
-                padding: UiRect::axes(Val::Px(56.0), Val::Px(36.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                border_radius: BorderRadius::all(Val::Px(6.0)),
-                ..default()
-            },
-            BackgroundColor(BAR),
-            BorderColor::all(LINE),
-        ))
-        .with_children(|panel| {
-            panel.spawn(text("A new version is available", 28.0, Color::WHITE));
-            panel.spawn((UpdateLine, text("", 19.0, DIM)));
-            panel
-                .spawn(Node { column_gap: Val::Px(18.0), margin: UiRect::top(Val::Px(14.0)), ..default() })
-                .with_children(|row| {
-                    let buttons = [
-                        (UpdateButton::Open, "A", "Enter", Color::srgb(0.37, 0.75, 0.29), "OPEN RELEASE PAGE", LIT),
-                        (UpdateButton::Close, "B", "Esc", Color::srgb(0.85, 0.33, 0.31), "CLOSE", DIM),
-                    ];
-                    for (button, letter, key, colour, label, label_colour) in buttons {
-                        row.spawn((
-                            button,
-                            Node {
-                                align_items: AlignItems::Center,
-                                column_gap: Val::Px(10.0),
-                                padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
-                                border: UiRect::all(Val::Px(1.0)),
-                                border_radius: BorderRadius::all(Val::Px(5.0)),
-                                ..default()
-                            },
-                            BorderColor::all(LINE),
-                        ))
-                        .with_children(|b| {
-                            key_hint::badge(b, letter, key, colour);
-                            b.spawn(text(label, 20.0, label_colour));
-                        });
-                    }
-                });
+    popup(screen, "A new version is available", |panel| {
+        panel.spawn((UpdateLine, text("", 22.0, DIM)));
+        panel.spawn(Node { justify_content: JustifyContent::FlexEnd, column_gap: u(28.0), ..default() }).with_children(|row| {
+            footer_button(row, UpdateButton::Open, "A", "Enter", PAD_A, bold("OPEN RELEASE PAGE", 20.0, ui::BRIGHT));
+            footer_button(row, UpdateButton::Close, "B", "Esc", PAD_B, text("CLOSE", 20.0, DIM));
         });
+    });
 }
 
+/// The map chooser: its title and the games' tabs; a grid of the tab's maps'
+/// tiles (a page per tab, each section under its heading, scrolling when
+/// they do not fit); the footer with the picked map's name and kind and the
+/// buttons.
 fn spawn_chooser(root: &mut ChildSpawnerCommands, menu: &Menu) {
-    // The tabs.
-    root.spawn((
-        Node {
-            width: Val::Percent(92.0),
-            max_width: Val::Vh(165.0),
-            margin: UiRect::top(Val::Vh(4.0)),
-            column_gap: Val::Px(36.0),
-            align_items: AlignItems::FlexEnd,
-            border: UiRect::bottom(Val::Px(1.0)),
-            ..default()
-        },
-        BorderColor::all(LINE),
-    ))
-    .with_children(|tabs| {
-        tabs.spawn((KeyHint { pad: "LB", keys: "Q" }, text("Q", 15.0, FAINT)));
-        for (i, name) in TABS.iter().enumerate() {
-            tabs.spawn((
-                TabLabel(i),
-                Node {
-                    padding: UiRect::new(Val::Px(2.0), Val::Px(2.0), Val::Px(6.0), Val::Px(10.0)),
-                    border: UiRect::bottom(Val::Px(3.0)),
-                    margin: UiRect::bottom(Val::Px(-1.0)),
-                    ..default()
-                },
-                BorderColor::all(Color::NONE),
-                text(name, 22.0, DIM),
-            ));
+    root.spawn((ui::header_node(), ui::bar())).with_children(|head| {
+        title(head, ChooserTitle, "MULTIPLAYER MAPS");
+        tab_hint(head, TabExtra, "LB", "Q");
+        for (i, name) in TABS.iter().enumerate().take(CAMPAIGN_TAB) {
+            head.spawn((TabLabel(i), ui::tab_node(), BorderColor::all(Color::NONE), bold(name, 24.0, FAINT)));
         }
-        tabs.spawn((KeyHint { pad: "RB", keys: "E" }, text("E", 15.0, FAINT)));
-        // The version, at the right end of the bar.
-        tabs.spawn((
-            Node { margin: UiRect::new(Val::Auto, Val::Px(2.0), Val::ZERO, Val::Px(10.0)), ..default() },
-            text(game_paths::VERSION, 15.0, FAINT),
-        ));
+        tab_hint(head, TabExtra, "RB", "E");
     });
-    // A page per tab: each section's heading and its grid of tiles,
-    // scrolling up and down when they do not fit.
-    for (t, maps) in menu.tabs.iter().enumerate() {
-        root.spawn((
-            TabPage(t),
-            Node {
-                width: Val::Percent(92.0),
-                max_width: Val::Vh(165.0),
-                margin: UiRect::new(Val::Px(0.0), Val::Px(0.0), Val::Vh(3.0), Val::Vh(1.6)),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Vh(3.0),
-                flex_grow: 1.0,
-                flex_basis: Val::Px(0.0),
-                min_height: Val::Px(0.0),
-                overflow: Overflow::scroll_y(),
-                ..default()
-            },
-            ScrollPosition::default(),
-        ))
-        .with_children(|page| {
-            let mut first = 0;
-            for (heading, entries) in SECTIONS[t] {
-                let range = first..(first + entries.len()).min(maps.len());
-                first += entries.len();
-                page.spawn((
-                    SectionBox(t, range.start),
-                    Node { flex_direction: FlexDirection::Column, flex_shrink: 0.0, row_gap: Val::Px(10.0), ..default() },
-                ))
-                .with_children(|section| {
-                    if let Some(heading) = heading {
-                        section.spawn((
-                            Node { padding: UiRect::bottom(Val::Px(6.0)), border: UiRect::bottom(Val::Px(1.0)), ..default() },
-                            BorderColor::all(LINE),
-                            text(heading, 16.0, FAINT),
-                        ));
-                    }
-                    section
-                        .spawn(Node {
-                            display: Display::Grid,
-                            grid_template_columns: RepeatedGridTrack::flex(COLUMNS as u16, 1.0),
-                            column_gap: Val::Vh(1.6),
-                            row_gap: Val::Vh(1.6),
-                            ..default()
-                        })
-                        .with_children(|grid| {
-                            for i in range {
-                                grid.spawn((TileCell(t, i), Node { flex_direction: FlexDirection::Column, ..default() }))
-                                    .with_children(|tile| spawn_tile(tile, t, i, &maps[i]));
-                            }
-                        });
-                });
-            }
-        });
-    }
-    // The bar: the chosen map, Start Game and Exit.
-    root.spawn((
-        Node {
-            width: Val::Percent(100.0),
-            height: Val::Vh(11.0),
-            padding: UiRect::horizontal(Val::Percent(4.0)),
-            align_items: AlignItems::Center,
-            column_gap: Val::Px(40.0),
-            border: UiRect::top(Val::Px(1.0)),
-            ..default()
-        },
-        BackgroundColor(BAR),
-        BorderColor::all(LINE),
-    ))
-    .with_children(|bar| {
-        bar.spawn(Node { flex_grow: 1.0, column_gap: Val::Px(14.0), align_items: AlignItems::Baseline, ..default() })
-            .with_children(|name| {
-                name.spawn((Chosen(0), text("", 26.0, Color::WHITE)));
-                name.spawn((Chosen(1), text("", 18.0, DIM)));
-            });
-        for (button, letter, colour, label, key) in [
-            (MenuButton::Difficulty, "Y", Color::srgb(0.93, 0.76, 0.20), "", "F2"),
-            (MenuButton::Settings, "X", Color::srgb(0.30, 0.55, 0.90), "SETTINGS", "F1"),
-            (MenuButton::Start, "A", Color::srgb(0.37, 0.75, 0.29), "START GAME", "Enter"),
-            (MenuButton::Exit, "B", Color::srgb(0.85, 0.33, 0.31), "EXIT", "Esc"),
-        ] {
-            bar.spawn((
-                button,
+    // A page per tab: each section's heading and its grid of tiles.
+    root.spawn(Node {
+        flex_grow: 1.0,
+        min_height: Val::Px(0.0),
+        flex_direction: FlexDirection::Column,
+        padding: UiRect::new(u(72.0), u(72.0), u(30.0), u(20.0)),
+        ..default()
+    })
+    .with_children(|body| {
+        for (t, maps) in menu.tabs.iter().enumerate() {
+            body.spawn((
+                TabPage(t),
                 Node {
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(10.0),
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: u(30.0),
+                    flex_grow: 1.0,
+                    flex_basis: Val::Px(0.0),
+                    min_height: Val::Px(0.0),
+                    overflow: Overflow::scroll_y(),
+                    display: Display::None,
                     ..default()
                 },
+                ScrollPosition::default(),
             ))
-            .with_children(|b| {
-                key_hint::badge(b, letter, key, colour);
-                if button == MenuButton::Difficulty {
-                    b.spawn((DifficultyLabel, text(&difficulty_label(menu.difficulty), 20.0, DIM)));
-                } else if button == MenuButton::Start {
-                    b.spawn((StartLabel, text(label, 20.0, LIT)));
-                } else {
-                    b.spawn(text(label, 20.0, DIM));
+            .with_children(|page| {
+                let mut first = 0;
+                for (heading, entries) in SECTIONS[t] {
+                    let range = first..(first + entries.len()).min(maps.len());
+                    first += entries.len();
+                    page.spawn(Node { flex_direction: FlexDirection::Column, flex_shrink: 0.0, row_gap: u(14.0), ..default() })
+                        .with_children(|section| {
+                            if let Some(heading) = heading {
+                                section.spawn((
+                                    SectionHead(t, range.start),
+                                    Node { padding: UiRect::bottom(u(8.0)), border: UiRect::bottom(u(1.5)), ..default() },
+                                    BorderColor::all(LINE),
+                                    bold(&heading.to_uppercase(), 19.0, ui::ACCENT),
+                                ));
+                            }
+                            section
+                                .spawn(Node {
+                                    display: Display::Grid,
+                                    grid_template_columns: RepeatedGridTrack::flex(COLUMNS as u16, 1.0),
+                                    column_gap: u(18.0),
+                                    row_gap: u(18.0),
+                                    ..default()
+                                })
+                                .with_children(|grid| {
+                                    for i in range {
+                                        grid.spawn((TileCell(t, i), Node { flex_direction: FlexDirection::Column, ..default() }))
+                                            .with_children(|cell| spawn_tile(cell, t, i, &maps[i]));
+                                    }
+                                });
+                        });
                 }
             });
-    }
+        }
+    });
+    // The footer: the picked map's name and kind (and a note when it cannot
+    // start), then the difficulty (Campaign), Settings, Start Game and Back.
+    root.spawn((ui::footer_node(), ui::bar())).with_children(|bar| {
+        bar.spawn(Node { margin: UiRect::right(Val::Auto), flex_direction: FlexDirection::Column, row_gap: u(2.0), ..default() })
+            .with_children(|about| {
+                about.spawn(Node { column_gap: u(16.0), align_items: AlignItems::Baseline, ..default() }).with_children(|line| {
+                    line.spawn((Chosen(0), bold("", 28.0, ui::BRIGHT)));
+                    line.spawn((Chosen(1), text("", 18.0, LIT)));
+                });
+                about.spawn((Chosen(2), text("", 17.0, DIM)));
+            });
+        footer_button(
+            bar,
+            MenuButton::Difficulty,
+            "Y",
+            "F2",
+            PAD_Y,
+            (DifficultyLabel, text(&difficulty_label(menu.difficulty), 20.0, DIM)),
+        );
+        footer_button(bar, MenuButton::Settings, "X", "F1", PAD_X, text("SETTINGS", 20.0, DIM));
+        footer_button(bar, MenuButton::Start, "A", "Enter", PAD_A, (StartLabel, bold("START GAME", 20.0, ui::BRIGHT)));
+        footer_button(bar, MenuButton::Exit, "B", "Esc", PAD_B, text("BACK", 20.0, DIM));
     });
 }
 
-/// A map's tile: its picture (or its name on a plain card) and its name
-/// under it.
-fn spawn_tile(tile: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
-    tile.spawn((
+/// A map's tile: its picture in a frame (a plain well when MCC has none),
+/// with its name across the foot, and NOT INSTALLED when MCC lacks it.
+fn spawn_tile(cell: &mut ChildSpawnerCommands, t: usize, i: usize, map: &Map) {
+    cell.spawn((
         Tile(t, i),
         Node {
             width: Val::Percent(100.0),
-            aspect_ratio: Some(668.0 / 292.0),
-            border: UiRect::all(Val::Px(3.0)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
+            aspect_ratio: Some(PICTURE_ASPECT),
+            border: UiRect::all(u(3.0)),
             overflow: Overflow::clip(),
             ..default()
         },
+        BackgroundColor(ui::WELL),
         BorderColor::all(Color::NONE),
-        BackgroundColor(if map.picture.is_some() { Color::NONE } else { EMPTY }),
     ))
     .with_children(|frame| {
-        match &map.picture {
-            Some(picture) => {
-                let tint = if map.installed { Color::WHITE } else { MISSING_TINT };
-                frame.spawn((
-                    ImageNode { color: tint, ..ImageNode::new(picture.clone()) },
-                    Node {
-                        position_type: PositionType::Absolute,
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
-                        ..default()
-                    },
-                ));
-            }
-            None => {
-                let colour = if map.installed { FAINT } else { FAINT.mix(&BACKGROUND, 0.5) };
-                frame.spawn(text(&map.name.to_uppercase(), 16.0, colour));
-            }
+        if let Some(picture) = &map.picture {
+            frame.spawn((
+                TilePicture(t, i),
+                ImageNode { color: TILE_TINT, ..ImageNode::new(picture.clone()) },
+                Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+            ));
         }
+        // The name on a shaded strip along the bottom.
+        frame
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    padding: UiRect::new(u(12.0), u(12.0), u(16.0), u(7.0)),
+                    align_items: AlignItems::Baseline,
+                    column_gap: u(10.0),
+                    ..default()
+                },
+                BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                    ColorStop::auto(Color::NONE),
+                    ColorStop::auto(Color::srgba(0.0, 0.01, 0.03, 0.85)),
+                ])),
+            ))
+            .with_children(|strip| {
+                strip.spawn((
+                    TileName(t, i),
+                    Node { flex_grow: 1.0, ..default() },
+                    bold(&map.name.to_uppercase(), 18.0, if map.installed { ui::TEXT } else { ui::OFF }),
+                ));
+                if !map.installed {
+                    strip.spawn(text("NOT INSTALLED", 13.0, ui::OFF));
+                }
+            });
     });
-    tile.spawn((
-        TileLabel(t, i),
-        Node { margin: UiRect::top(Val::Px(5.0)), ..default() },
-        text(map.name, 17.0, if map.installed { DIM } else { FAINT }),
-    ));
 }
 
-/// The loading screen: the map's picture, its name, the ring.
+/// The loading screen: the map's picture across the screen behind a shade,
+/// its name and what is being got ready at the bottom left, the ring at the
+/// bottom right.
 fn spawn_loading(screen: &mut ChildSpawnerCommands) {
-    screen.spawn((
-        LoadingPicture,
-        ImageNode::default(),
-        Node {
-            width: Val::Vh(62.0),
-            aspect_ratio: Some(668.0 / 292.0),
-            ..default()
-        },
-    ));
-    screen.spawn((LoadingName, text("", 34.0, Color::WHITE)));
-    screen.spawn((LoadingStatus, text("", 18.0, DIM)));
-    let size = RING_RADIUS * 2.0 + 24.0;
     screen
         .spawn(Node {
-            width: Val::Px(size),
-            height: Val::Px(size),
-            margin: UiRect::top(Val::Px(12.0)),
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
             ..default()
         })
+        .with_child((
+            LoadingPicture,
+            ImageNode { color: Color::NONE, ..default() },
+            Node { width: Val::Percent(100.0), aspect_ratio: Some(PICTURE_ASPECT), ..default() },
+        ));
+    screen.spawn((
+        Node { position_type: PositionType::Absolute, bottom: Val::ZERO, width: Val::Percent(100.0), height: Val::Percent(62.0), ..default() },
+        BackgroundGradient::from(LinearGradient::to_bottom(vec![
+            ColorStop::new(ui::BACKDROP_BOTTOM.with_alpha(0.0), Val::Percent(0.0)),
+            ColorStop::new(ui::BACKDROP_BOTTOM.with_alpha(0.96), Val::Percent(78.0)),
+        ])),
+    ));
+    screen
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            left: u(96.0),
+            bottom: u(92.0),
+            flex_direction: FlexDirection::Column,
+            ..default()
+        })
+        .with_children(|words| {
+            words.spawn(text("LOADING", 21.0, LIT));
+            words.spawn((LoadingName, bold("", 88.0, ui::BRIGHT)));
+            words.spawn((LoadingStatus, Node { min_height: u(30.0), ..default() }, text("", 22.0, DIM)));
+        });
+    let size = RING_RADIUS * 2.0 + 24.0;
+    screen
+        .spawn(Node { position_type: PositionType::Absolute, right: u(96.0), bottom: u(96.0), width: u(size), height: u(size), ..default() })
         .with_children(|ring| {
             let arc = std::f32::consts::TAU * RING_RADIUS / RING_SEGMENTS as f32;
             for n in 0..RING_SEGMENTS {
                 let a = n as f32 / RING_SEGMENTS as f32 * std::f32::consts::TAU;
-                let (w, h) = (arc * 0.7, 7.0);
+                let (w, h) = (arc * 0.7, 6.0);
                 ring.spawn((
                     RingSegment(n),
                     Node {
                         position_type: PositionType::Absolute,
-                        left: Val::Px(size / 2.0 + RING_RADIUS * a.cos() - w / 2.0),
-                        top: Val::Px(size / 2.0 + RING_RADIUS * a.sin() - h / 2.0),
-                        width: Val::Px(w),
-                        height: Val::Px(h),
+                        left: u(size / 2.0 + RING_RADIUS * a.cos() - w / 2.0),
+                        top: u(size / 2.0 + RING_RADIUS * a.sin() - h / 2.0),
+                        width: u(w),
+                        height: u(h),
                         ..default()
                     },
                     UiTransform::from_rotation(Rot2::radians(a + std::f32::consts::FRAC_PI_2)),
-                    BackgroundColor(LINE),
+                    BackgroundColor(RING_DARK),
                 ));
             }
         });
-    screen.spawn(text("LOADING", 18.0, DIM));
 }
 
-/// Keys and pads: move, change tab.
-fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu: ResMut<Menu>, mut stick: Local<[bool; 4]>) {
-    let key = |k: &[KeyCode]| k.iter().any(|k| keys.just_pressed(*k));
+/// What the keys, the pad and the left stick ask of a list this frame.
+#[derive(Default)]
+struct Moves {
+    up: bool,
+    down: bool,
+    left: bool,
+    right: bool,
+}
+
+/// Arrows / WASD / d-pad, and the left stick once each time it is pushed
+/// past half way (`stick`: which ways it was already held).
+fn moves(keys: &ButtonInput<KeyCode>, gamepads: &Query<&Gamepad>, stick: &mut [bool; 4]) -> Moves {
+    let key = |k: [KeyCode; 2]| keys.any_just_pressed(k);
     let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
-    // The left stick steps once each time it is pushed past half way.
     let axis = |a: GamepadAxis| {
         gamepads
             .iter()
@@ -1635,48 +1643,190 @@ fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu
     let held = [x < -0.5, x > 0.5, y > 0.5, y < -0.5];
     let pushed: Vec<bool> = held.iter().zip(stick.iter()).map(|(h, was)| *h && !was).collect();
     *stick = held;
+    Moves {
+        left: key([KeyCode::ArrowLeft, KeyCode::KeyA]) || pad(GamepadButton::DPadLeft) || pushed[0],
+        right: key([KeyCode::ArrowRight, KeyCode::KeyD]) || pad(GamepadButton::DPadRight) || pushed[1],
+        up: key([KeyCode::ArrowUp, KeyCode::KeyW]) || pad(GamepadButton::DPadUp) || pushed[2],
+        down: key([KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) || pushed[3],
+    }
+}
 
+/// Opens a row of the main menu: the Campaign's maps, the multiplayer maps
+/// on the tab last shown, Settings, or out of the game.
+fn open_main_row(menu: &mut Menu, row: usize, exit: &mut MessageWriter<AppExit>) {
+    menu.main_row = row;
+    match row {
+        MAIN_CAMPAIGN => {
+            menu.tab = CAMPAIGN_TAB;
+            menu.phase = Phase::Choosing;
+        }
+        MAIN_MAPS => {
+            menu.tab = menu.mp_tab.min(CAMPAIGN_TAB - 1);
+            menu.phase = Phase::Choosing;
+        }
+        MAIN_SETTINGS => open_settings(menu),
+        _ => {
+            exit.write(AppExit::Success);
+        }
+    }
+    menu.click = None;
+    menu.fresh = true;
+}
+
+/// The frame is over for the input systems: a screen opened in it takes
+/// presses from the next one.
+fn settle(mut menu: ResMut<Menu>) {
+    if menu.fresh {
+        menu.fresh = false;
+    }
+}
+
+/// The main menu: up / down move, Enter / A (or a click) open the row; the
+/// mouse lights the row it is over. Escape / B go to Exit, and from Exit
+/// leave the game.
+#[allow(clippy::too_many_arguments)]
+fn main_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    gamepads: Query<&Gamepad>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut menu: ResMut<Menu>,
+    rows: Query<(&MainRow, &ComputedNode, &UiGlobalTransform)>,
+    bar: Query<(&MenuButton, &ComputedNode, &UiGlobalTransform)>,
+    mut exit: MessageWriter<AppExit>,
+    mut stick: Local<[bool; 4]>,
+    mut cursor_was: Local<Option<Vec2>>,
+) {
+    let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
+    let last = MAIN_ROWS.len() - 1;
+    let go = moves(&keys, &gamepads, &mut stick);
+    if go.up && menu.main_row > 0 {
+        menu.main_row -= 1;
+    }
+    if go.down && menu.main_row < last {
+        menu.main_row += 1;
+    }
+    let cursor = windows.single().ok().and_then(Window::physical_cursor_position);
+    let over = cursor.and_then(|at| rows.iter().find(|(_, n, t)| n.contains_point(**t, at)).map(|(r, ..)| r.0));
+    // The mouse takes the focus only when it moves, so it does not fight the keys.
+    if cursor != *cursor_was {
+        *cursor_was = cursor;
+        if let Some(row) = over.filter(|r| *r != menu.main_row) {
+            menu.main_row = row;
+        }
+    }
+    if keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]) || pad(GamepadButton::South) {
+        let row = menu.main_row;
+        open_main_row(&mut menu, row, &mut exit);
+        return;
+    }
+    if keys.just_pressed(KeyCode::Escape) || pad(GamepadButton::East) {
+        if menu.main_row == last {
+            exit.write(AppExit::Success);
+        } else {
+            menu.main_row = last;
+        }
+        return;
+    }
+    if !buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    if let Some(row) = over {
+        open_main_row(&mut menu, row, &mut exit);
+        return;
+    }
+    let Some(at) = cursor else {
+        return;
+    };
+    match bar.iter().find(|(_, n, t)| n.contains_point(**t, at)).map(|(b, ..)| *b) {
+        Some(MenuButton::Select) => {
+            let row = menu.main_row;
+            open_main_row(&mut menu, row, &mut exit);
+        }
+        Some(MenuButton::Exit) => {
+            exit.write(AppExit::Success);
+        }
+        _ => {}
+    }
+}
+
+/// The chooser's keys and pads: the arrows, WASD, the d-pad and the left
+/// stick move between the tiles; Q / E, Tab, Page Up / Page Down or LB / RB
+/// change the game's tab (the Campaign has none).
+fn navigate(keys: Res<ButtonInput<KeyCode>>, gamepads: Query<&Gamepad>, mut menu: ResMut<Menu>, mut stick: Local<[bool; 4]>) {
+    let key = |k: &[KeyCode]| k.iter().any(|k| keys.just_pressed(*k));
+    let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
+    let go = moves(&keys, &gamepads, &mut stick);
     if key(&[KeyCode::F1]) || pad(GamepadButton::West) {
         open_settings(&mut menu);
         return;
     }
-    if menu.tab == CAMPAIGN_TAB && (key(&[KeyCode::F2]) || pad(GamepadButton::North)) {
-        menu.next_difficulty();
-    }
-    let tabs = TABS.len();
-    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let tab_key = keys.just_pressed(KeyCode::Tab);
-    if key(&[KeyCode::KeyE, KeyCode::PageDown]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger) {
-        menu.tab = (menu.tab + 1) % tabs;
-    }
-    if key(&[KeyCode::KeyQ, KeyCode::PageUp]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger) {
-        menu.tab = (menu.tab + tabs - 1) % tabs;
-    }
-    if menu.tabs[menu.tab].is_empty() {
-        return;
+    if menu.tab == CAMPAIGN_TAB {
+        if key(&[KeyCode::F2]) || pad(GamepadButton::North) {
+            menu.next_difficulty();
+        }
+    } else {
+        let tabs = CAMPAIGN_TAB;
+        let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+        let tab_key = keys.just_pressed(KeyCode::Tab);
+        if key(&[KeyCode::KeyE, KeyCode::PageDown]) || (tab_key && !shift) || pad(GamepadButton::RightTrigger) {
+            menu.tab = (menu.tab + 1) % tabs;
+        }
+        if key(&[KeyCode::KeyQ, KeyCode::PageUp]) || (tab_key && shift) || pad(GamepadButton::LeftTrigger) {
+            menu.tab = (menu.tab + tabs - 1) % tabs;
+        }
+        if menu.mp_tab != menu.tab {
+            menu.mp_tab = menu.tab;
+        }
     }
     let t = menu.tab;
-    let (mut dx, mut dy) = (0, 0);
-    if key(&[KeyCode::ArrowLeft, KeyCode::KeyA]) || pad(GamepadButton::DPadLeft) || pushed[0] {
-        dx -= 1;
+    if menu.tabs[t].is_empty() {
+        return;
     }
-    if key(&[KeyCode::ArrowRight, KeyCode::KeyD]) || pad(GamepadButton::DPadRight) || pushed[1] {
-        dx += 1;
-    }
-    if key(&[KeyCode::ArrowUp, KeyCode::KeyW]) || pad(GamepadButton::DPadUp) || pushed[2] {
-        dy -= 1;
-    }
-    if key(&[KeyCode::ArrowDown, KeyCode::KeyS]) || pad(GamepadButton::DPadDown) || pushed[3] {
-        dy += 1;
-    }
-    let at = moved(&rows(t), menu.pick[t], dx, dy);
+    let (dx, dy) = (go.right as isize - go.left as isize, go.down as isize - go.up as isize);
+    let at = moved(&rows(t), menu.pick[t], dx, dy).min(menu.tabs[t].len() - 1);
     if at != menu.pick[t] {
         menu.pick[t] = at;
     }
 }
 
+/// Tiles across a tab's page.
+const COLUMNS: usize = 6;
+
+/// A tab's rows of tiles as (first map, how many): each section starts a new
+/// row.
+fn rows(tab: usize) -> Vec<(usize, usize)> {
+    let mut rows = Vec::new();
+    let mut first = 0;
+    for (_, entries) in SECTIONS[tab] {
+        for at in (0..entries.len()).step_by(COLUMNS) {
+            rows.push((first + at, (entries.len() - at).min(COLUMNS)));
+        }
+        first += entries.len();
+    }
+    rows
+}
+
+/// The tile `dx` tiles along and `dy` rows down from `at`: along runs on
+/// across sections, down keeps the column (or the last tile of a shorter
+/// row); both stop at the ends.
+fn moved(rows: &[(usize, usize)], at: usize, dx: isize, dy: isize) -> usize {
+    let Some(&(last, len)) = rows.last() else {
+        return 0;
+    };
+    let at = (at as isize + dx).clamp(0, (last + len) as isize - 1) as usize;
+    if dy == 0 {
+        return at;
+    }
+    let r = rows.iter().rposition(|&(first, _)| first <= at).unwrap_or(0);
+    let column = at - rows[r].0;
+    let (first, len) = rows[(r as isize + dy).clamp(0, rows.len() as isize - 1) as usize];
+    first + column.min(len - 1)
+}
+
 /// The mouse: a click on a tab shows it, on a tile picks it, a double click
-/// on a tile or a click on Start Game starts, a click on Exit exits.
+/// on a tile or a click on Start Game starts, a click on Back goes back to
+/// the main menu.
 #[allow(clippy::too_many_arguments)]
 fn mouse(
     mut commands: Commands,
@@ -1688,7 +1838,6 @@ fn mouse(
     tiles: Query<(&Tile, &ComputedNode, &UiGlobalTransform)>,
     pages: Query<(&TabPage, &ComputedNode, &UiGlobalTransform)>,
     bar: Query<(&MenuButton, &ComputedNode, &UiGlobalTransform)>,
-    mut exit: MessageWriter<AppExit>,
 ) {
     if !buttons.just_pressed(MouseButton::Left) {
         return;
@@ -1696,18 +1845,21 @@ fn mouse(
     let Some(at) = windows.single().ok().and_then(Window::physical_cursor_position) else {
         return;
     };
-    if let Some((label, ..)) = tabs.iter().find(|(_, n, t)| n.contains_point(**t, at)) {
+    if menu.tab != CAMPAIGN_TAB
+        && let Some((label, ..)) = tabs.iter().find(|(_, n, t)| n.contains_point(**t, at))
+    {
         menu.tab = label.0;
+        menu.mp_tab = label.0;
         return;
     }
     let tab = menu.tab;
     // A tile scrolled out of the page is not there to click.
     let on_page = pages.iter().any(|(page, n, t)| page.0 == tab && n.contains_point(*t, at));
-    if let Some((tile, ..)) = tiles.iter().find(|(tile, n, t)| on_page && tile.0 == tab && n.contains_point(**t, at)) {
+    if let Some((row, ..)) = tiles.iter().find(|(tile, n, t)| on_page && tile.0 == tab && n.contains_point(**t, at)) {
         let now = time.elapsed_secs_f64();
-        let double = menu.click.is_some_and(|(i, then)| i == tile.1 && now - then < 0.4);
-        menu.pick[tile.0] = tile.1;
-        menu.click = Some((tile.1, now));
+        let double = menu.click.is_some_and(|(i, then)| i == row.1 && now - then < 0.4);
+        menu.pick[row.0] = row.1;
+        menu.click = Some((row.1, now));
         if double {
             start(&mut commands, &mut menu);
         }
@@ -1717,10 +1869,8 @@ fn mouse(
         Some(MenuButton::Difficulty) => menu.next_difficulty(),
         Some(MenuButton::Settings) => open_settings(&mut menu),
         Some(MenuButton::Start) => start(&mut commands, &mut menu),
-        Some(MenuButton::Exit) => {
-            exit.write(AppExit::Success);
-        }
-        None => {}
+        Some(MenuButton::Exit) => menu.phase = Phase::Main,
+        Some(MenuButton::Select) | None => {}
     }
 }
 
@@ -1730,6 +1880,7 @@ fn difficulty_label(difficulty: usize) -> String {
 }
 
 fn open_settings(menu: &mut Menu) {
+    menu.under = if menu.phase == Phase::Choosing { Phase::Choosing } else { Phase::Main };
     menu.phase = Phase::Settings;
     menu.setting = 0;
     menu.confirm = None;
@@ -1766,7 +1917,8 @@ fn settings_input(
         Option<ResMut<mcc_bike::tune::BikeTuning>>,
         ResMut<LookSettings>,
     ),
-    selects: Query<(&SettingSelect, &ComputedNode, &UiGlobalTransform)>,
+    rows_on_screen: Query<(&SettingRow, &ComputedNode, &UiGlobalTransform)>,
+    act_button: Query<(&ComputedNode, &UiGlobalTransform), With<SettingsAct>>,
     tabs: Query<(&SettingTab, &ComputedNode, &UiGlobalTransform)>,
     back: Query<(&ComputedNode, &UiGlobalTransform), With<SettingsBack>>,
 ) {
@@ -1783,7 +1935,7 @@ fn settings_input(
     let mut live = Live { unit: unit.into(), skate: skate.into(), tuning: tuning.map(Into::into), look: look.into(), window };
     let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
     if keys.any_just_pressed([KeyCode::Escape, KeyCode::Backspace]) || pad(GamepadButton::East) {
-        menu.phase = Phase::Choosing;
+        menu.phase = menu.under;
         return;
     }
     let pages = SETTING_PAGES.len();
@@ -1840,13 +1992,17 @@ fn settings_input(
         return;
     };
     let on_page = |r: usize| page_of(r) == page && row_offered(r);
-    if let Some((s, ..)) = selects.iter().find(|(s, n, t)| on_page(s.0) && n.contains_point(**t, at)) {
+    if let Some((s, ..)) = rows_on_screen.iter().find(|(s, n, t)| on_page(s.0) && n.contains_point(**t, at)) {
+        // A click on a row takes the focus; on the focused row it changes it.
         if s.0 != menu.setting {
             go_to_row(&mut menu, s.0);
+        } else {
+            select(&mut menu, &mut live, s.0);
         }
-        select(&mut menu, &mut live, s.0);
+    } else if act_button.iter().any(|(n, t)| n.contains_point(*t, at)) {
+        select(&mut menu, &mut live, row);
     } else if back.iter().any(|(n, t)| n.contains_point(*t, at)) {
-        menu.phase = Phase::Choosing;
+        menu.phase = menu.under;
     }
 }
 
@@ -2198,7 +2354,7 @@ fn refresh_maps(world: &mut World) {
 
 /// Draws the settings screen: shown in [`Phase::Settings`], the focused
 /// row's page (its name lit in the tab bar), the saved values, the focused
-/// row, the note.
+/// row and what it is, the note, and what A does.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn show_settings(
     menu: Res<Menu>,
@@ -2206,17 +2362,14 @@ fn show_settings(
     skate: Res<SkateEnabled>,
     tuning: Option<Res<mcc_bike::tune::BikeTuning>>,
     look: Res<LookSettings>,
-    mut tabs: Query<
-        (&SettingTab, &mut TextColor, &mut BorderColor),
-        (Without<SettingValue>, Without<SettingSelectLabel>, Without<SettingRow>, Without<SettingSelect>, Without<SettingsNote>),
-    >,
+    mut tabs: Query<(&SettingTab, &mut TextColor, &mut BorderColor), Without<SettingRow>>,
     mut screen: Query<&mut Node, (With<SettingsScreen>, Without<SettingRow>, Without<SettingsStepHint>)>,
     mut step_hint: Query<&mut Node, (With<SettingsStepHint>, Without<SettingRow>, Without<SettingsScreen>)>,
-    mut rows: Query<(&SettingRow, &mut BackgroundColor, &mut BorderColor, &mut Node), (Without<SettingSelect>, Without<SettingsScreen>)>,
-    mut values: Query<(&SettingValue, &mut Text, &mut TextColor), (Without<SettingsNote>, Without<SettingSelectLabel>)>,
-    mut selects: Query<(&SettingSelect, &mut BorderColor), Without<SettingRow>>,
-    mut labels: Query<(&SettingSelectLabel, &mut Text, &mut TextColor), (Without<SettingValue>, Without<SettingsNote>)>,
-    mut note: Query<&mut Text, (With<SettingsNote>, Without<SettingValue>, Without<SettingSelectLabel>)>,
+    mut rows: Query<(&SettingRow, &mut BackgroundColor, &mut BorderColor, &mut Node), Without<SettingsScreen>>,
+    mut texts: Query<
+        (AnyOf<(&SettingValue, &SettingTitle, &SettingAbout, &SettingsNote, &SettingActionLabel)>, &mut Text, &mut TextColor),
+        Without<SettingTab>,
+    >,
 ) {
     let tuned = tuning.as_ref().is_some_and(|t| t.is_changed());
     if !menu.is_changed() && !unit.is_changed() && !skate.is_changed() && !look.is_changed() && !tuned {
@@ -2229,69 +2382,69 @@ fn show_settings(
     if !open {
         return;
     }
-    let busy = |i: usize| menu.picking.as_ref().is_some_and(|p| p.what == Pick::Setting(i));
-    let page = page_of(menu.setting);
+    let focused = menu.setting;
+    let page = page_of(focused);
     for mut node in &mut step_hint {
-        let steps = SETTING_PAGES[page].1.contains(&MOUSE_ROW) || SETTING_PAGES[page].1.contains(&FOV_ROW);
-        node.display = if steps { Display::Flex } else { Display::None };
+        let any = SETTING_PAGES[page].1.clone().any(steps);
+        node.display = if any { Display::Flex } else { Display::None };
     }
     for (tab, mut colour, mut border) in &mut tabs {
-        let on = tab.0 == page;
-        colour.0 = if on { LIT } else { DIM };
-        *border = BorderColor::all(if on { LIT } else { Color::NONE });
+        (colour.0, *border) = ui::tab_lit(tab.0 == page, false);
     }
-    for (row, mut background, mut border, mut node) in &mut rows {
+    for (row, mut fill, mut border, mut node) in &mut rows {
         let shown = page_of(row.0) == page && row_offered(row.0);
         let display = if shown { Display::Flex } else { Display::None };
         if node.display != display {
             node.display = display;
         }
-        let on = row.0 == menu.setting;
-        background.0 = if on { BAR } else { Color::NONE };
-        *border = BorderColor::all(if on { LINE } else { Color::NONE });
+        ui::focus(row.0 == focused, &mut fill, &mut border);
     }
     let reflex_physics = tuning.map_or_else(|| mcc_bike::tune::load().model, |t| t.0.model) >= 1.5;
     let skate_ready = game_paths::skate_ready();
     let now = setting_values(*unit, *skate, reflex_physics, skate_ready, *look, &menu.converted);
-    for (value, mut text, mut colour) in &mut values {
-        text.0.clone_from(&now[value.0]);
-        if value.0 == USERNAME_ROW {
-            if let Some(typing) = &menu.editing {
-                text.0 = format!("{typing}_");
+    let busy = menu.picking.as_ref().is_some_and(|p| p.what == Pick::Setting(focused));
+    for ((value, title, about, note, action), mut text, mut colour) in &mut texts {
+        if let Some(&SettingValue(i)) = value {
+            text.0 = match &menu.editing {
+                Some(typing) if i == USERNAME_ROW => format!("{typing}_"),
+                _ if i == focused && steps(i) => format!("\u{2039}   {}   \u{203a}", now[i]),
+                _ => now[i].clone(),
+            };
+            colour.0 = if now[i].starts_with("Not") {
+                FAINT
+            } else if i == focused {
+                ui::BRIGHT
+            } else {
+                DIM
+            };
+        } else if title.is_some() {
+            text.0 = SETTING_NAMES[focused].to_string();
+        } else if about.is_some() {
+            text.0 = setting_about(focused, skate_ready, skate.0).to_string();
+        } else if note.is_some() {
+            text.0.clone_from(&menu.note);
+        } else if action.is_some() {
+            text.0 = if busy {
+                "WORKING..."
+            } else if focused == USERNAME_ROW && menu.editing.is_some() {
+                "SAVE"
+            } else if menu.confirm == Some(focused) {
+                "CONFIRM"
+            } else {
+                button_label(focused, skate_ready)
             }
+            .to_string();
         }
-        colour.0 = if now[value.0].starts_with("Not") { FAINT } else { DIM };
-    }
-    for (select, mut border) in &mut selects {
-        *border = BorderColor::all(if select.0 == menu.setting { LIT } else { LINE });
-    }
-    for (label, mut text, mut colour) in &mut labels {
-        let editing = label.0 == USERNAME_ROW && menu.editing.is_some();
-        text.0 = if busy(label.0) {
-            "WORKING..."
-        } else if editing {
-            "ENTER"
-        } else if menu.confirm == Some(label.0) {
-            "CONFIRM"
-        } else {
-            button_label(label.0, skate_ready)
-        }
-        .to_string();
-        colour.0 = if label.0 == menu.setting { LIT } else { DIM };
-    }
-    for mut text in &mut note {
-        text.0.clone_from(&menu.note);
     }
 }
 
-/// Enter / A starts, Escape / B exits.
+/// Enter / A starts, Escape / B goes back to the main menu.
 fn act(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     gamepads: Query<&Gamepad>,
     mut menu: ResMut<Menu>,
     shot: Option<ResMut<MenuShot>>,
-    mut exit: MessageWriter<AppExit>,
 ) {
     let pad = |b: GamepadButton| gamepads.iter().any(|p| p.just_pressed(b));
     // `--menu-shot`: start the map (twice with `--menu-back`).
@@ -2303,8 +2456,9 @@ fn act(
     });
     if auto || keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Space]) || pad(GamepadButton::South) {
         start(&mut commands, &mut menu);
-    } else if keys.just_pressed(KeyCode::Escape) || pad(GamepadButton::East) {
-        exit.write(AppExit::Success);
+    } else if keys.any_just_pressed([KeyCode::Escape, KeyCode::Backspace]) || pad(GamepadButton::East) {
+        menu.phase = Phase::Main;
+        menu.error = None;
     }
 }
 
@@ -2384,7 +2538,8 @@ fn update_poll(mut menu: ResMut<Menu>) {
             menu.update = found;
         }
     }
-    if menu.update.is_some() && menu.phase == Phase::Choosing {
+    if menu.update.is_some() && matches!(menu.phase, Phase::Main | Phase::Choosing) {
+        menu.under = menu.phase;
         menu.phase = Phase::Update;
         menu.fresh = true;
     }
@@ -2427,7 +2582,7 @@ fn update_input(
         }
     }
     menu.update = None;
-    menu.phase = Phase::Choosing;
+    menu.phase = menu.under;
     menu.click = None;
 }
 
@@ -2438,7 +2593,7 @@ fn back_to_menu(world: &mut World) {
     }
     mcc_core::map::unload(world);
     if let Ok(mut window) = world.query_filtered::<&mut Window, With<PrimaryWindow>>().single_mut(world) {
-        window.title = "Halo 3".to_string();
+        window.title = "MCC Rust Rewrite".to_string();
     }
     if let Ok(mut cursor) = world
         .query_filtered::<&mut bevy::window::CursorOptions, With<PrimaryWindow>>()
@@ -2542,100 +2697,155 @@ fn leave(
     }
 }
 
-/// Draws the state: chooser or loading screen, the tab shown, the gold
-/// frame on the pick, the bar.
-#[allow(clippy::type_complexity)]
+/// Draws the state: which screen is up; on the main menu its focused row,
+/// what it is and the picture; on the chooser its title, the tab shown, the
+/// picked map's tile, its words in the footer, and the footer's buttons.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn show(
     menu: Res<Menu>,
-    mut chooser: Query<&mut Node, (With<Chooser>, Without<LoadingScreen>, Without<TabPage>)>,
-    mut loading: Query<&mut Node, (With<LoadingScreen>, Without<Chooser>, Without<TabPage>)>,
-    mut picture: Query<&mut ImageNode, With<LoadingPicture>>,
-    mut pages: Query<(&TabPage, &mut Node), (Without<Chooser>, Without<LoadingScreen>)>,
-    mut labels: Query<(&TabLabel, &mut TextColor, &mut BorderColor), (Without<TileLabel>, Without<Tile>, Without<StartLabel>)>,
-    mut tiles: Query<(&Tile, &mut BorderColor), Without<TabLabel>>,
-    mut names: Query<(&TileLabel, &mut TextColor), (Without<TabLabel>, Without<StartLabel>)>,
-    mut start_label: Query<&mut TextColor, (With<StartLabel>, Without<TabLabel>, Without<TileLabel>)>,
-    mut texts: Query<(Option<&Chosen>, Option<&LoadingName>, Option<&DifficultyLabel>, &mut Text)>,
-    mut bar: Query<(&MenuButton, &mut Node), (Without<Chooser>, Without<LoadingScreen>, Without<TabPage>)>,
+    mut screens: Query<
+        (AnyOf<(&MainScreen, &Chooser, &LoadingScreen, &TabPage, &MenuButton, &TabExtra, &TabLabel)>, &mut Node),
+    >,
+    mut pictures: Query<(AnyOf<(&MainPicture, &LoadingPicture)>, &mut ImageNode), Without<TilePicture>>,
+    mut tile_pictures: Query<(&TilePicture, &mut ImageNode), (Without<MainPicture>, Without<LoadingPicture>)>,
+    mut rows: Query<(&MainRow, &mut BackgroundColor, &mut BorderColor), (Without<TabLabel>, Without<SettingRow>, Without<Tile>)>,
+    mut tiles: Query<(&Tile, &mut BorderColor), (Without<TabLabel>, Without<MainRow>)>,
+    mut labels: Query<(&TabLabel, &mut TextColor, &mut BorderColor), (Without<MainRow>, Without<Tile>)>,
+    mut texts: Query<
+        (
+            AnyOf<(
+                &Chosen,
+                &LoadingName,
+                &DifficultyLabel,
+                &MainLabel,
+                &MainAbout,
+                &MainCaption,
+                &ChooserTitle,
+                &TileName,
+                &StartLabel,
+            )>,
+            &mut Text,
+            &mut TextColor,
+        ),
+        Without<TabLabel>,
+    >,
 ) {
     if !menu.is_changed() {
         return;
     }
-    for (button, mut node) in &mut bar {
-        if *button == MenuButton::Difficulty {
-            node.display = if menu.tab == CAMPAIGN_TAB { Display::Flex } else { Display::None };
+    let campaign = menu.tab == CAMPAIGN_TAB;
+    // The pop-ups sit over the screen they came up on.
+    let phase = match menu.phase {
+        Phase::Missing(_) => Phase::Choosing,
+        Phase::Update => menu.under,
+        phase => phase,
+    };
+    for ((main, chooser, loading, page, button, ..), mut node) in &mut screens {
+        let shown = if main.is_some() {
+            phase == Phase::Main
+        } else if chooser.is_some() {
+            phase == Phase::Choosing
+        } else if loading.is_some() {
+            phase == Phase::Loading
+        } else if let Some(page) = page {
+            page.0 == menu.tab
+        } else if let Some(button) = button {
+            *button != MenuButton::Difficulty || campaign
+        } else {
+            // The games' tabs and their hints: not on the Campaign.
+            !campaign
+        };
+        let display = if shown { Display::Flex } else { Display::None };
+        if node.display != display {
+            node.display = display;
         }
-    }
-    let loading_now = menu.phase == Phase::Loading;
-    let over = matches!(menu.phase, Phase::Settings | Phase::Setup);
-    for mut node in &mut chooser {
-        node.display = if loading_now || over { Display::None } else { Display::Flex };
-    }
-    for mut node in &mut loading {
-        node.display = if loading_now { Display::Flex } else { Display::None };
     }
     let selected = menu.selected();
-    for mut image in &mut picture {
-        if let Some(handle) = selected.and_then(|m| m.picture.clone()) {
-            image.image = handle;
+    for ((main, _), mut image) in &mut pictures {
+        // Behind the loading screen's words, and quieter on the main menu.
+        let tint = if main.is_some() { Color::srgb(0.82, 0.86, 0.92) } else { Color::srgb(0.62, 0.66, 0.72) };
+        match selected.and_then(|m| m.picture.clone()) {
+            Some(handle) => {
+                image.image = handle;
+                image.color = tint;
+            }
+            None => image.color = Color::NONE,
         }
     }
-    for (page, mut node) in &mut pages {
-        node.display = if page.0 == menu.tab { Display::Flex } else { Display::None };
+    for (row, mut fill, mut border) in &mut rows {
+        ui::focus(row.0 == menu.main_row, &mut fill, &mut border);
     }
-    for (label, mut colour, mut border) in &mut labels {
-        let on = label.0 == menu.tab;
-        colour.0 = if on { LIT } else { DIM };
-        *border = BorderColor::all(if on { LIT } else { Color::NONE });
-    }
+    // The picked tile is framed in the accent and drawn at full brightness;
+    // a map MCC lacks stays dark.
     for (tile, mut border) in &mut tiles {
         let on = tile.1 == menu.pick[tile.0];
-        *border = BorderColor::all(if on { LIT } else { Color::NONE });
+        *border = BorderColor::all(if on { ui::ACCENT } else { Color::NONE });
     }
-    for (label, mut colour) in &mut names {
-        let installed = menu.tabs[label.0].get(label.1).is_some_and(|m| m.installed);
-        colour.0 = match (label.1 == menu.pick[label.0], installed) {
-            (true, true) => LIT,
-            (true, false) => LIT.mix(&FAINT, 0.5),
-            (false, true) => DIM,
-            (false, false) => FAINT,
+    for (picture, mut image) in &mut tile_pictures {
+        let on = picture.1 == menu.pick[picture.0];
+        let installed = menu.tabs[picture.0].get(picture.1).is_some_and(|m| m.installed);
+        image.color = match (installed, on) {
+            (false, _) => MISSING_TINT,
+            (true, true) => Color::WHITE,
+            (true, false) => TILE_TINT,
         };
     }
-    for mut colour in &mut start_label {
-        colour.0 = if selected.is_some_and(|m| m.installed) { LIT } else { FAINT };
+    for (label, mut colour, mut border) in &mut labels {
+        // On Campaign the tabs are hidden: their nodes are left alone.
+        (colour.0, *border) = ui::tab_lit(label.0 == menu.tab, false);
     }
-    for (part, name, difficulty, mut text) in &mut texts {
-        if difficulty.is_some() {
-            text.0 = difficulty_label(menu.difficulty);
-            continue;
-        }
-        if name.is_some() {
+    for ((part, loading, difficulty, main, about, caption, heading, name, start), mut text, mut colour) in &mut texts {
+        if let Some(part) = part {
+            let note = |map: &Map| match &menu.error {
+                Some(error) => error.clone(),
+                None if !map.installed => format!("{} isn't installed in your Master Chief Collection.", game_title(map.game)),
+                None => String::new(),
+            };
+            text.0 = match (selected, part.0) {
+                (Some(map), 0) => map.name.to_uppercase(),
+                (Some(map), 1) => kind(menu.tab, map).to_uppercase(),
+                (Some(map), _) => note(map),
+                (None, _) => String::new(),
+            };
+            if part.0 == 2 {
+                colour.0 = if menu.error.is_some() { ui::ERROR } else { DIM };
+            }
+        } else if loading.is_some() {
             text.0 = selected.map_or(String::new(), |m| m.name.to_uppercase());
-            continue;
+        } else if difficulty.is_some() {
+            text.0 = difficulty_label(menu.difficulty);
+        } else if let Some(row) = main {
+            colour.0 = if row.0 == menu.main_row { ui::BRIGHT } else { DIM };
+        } else if about.is_some() {
+            text.0 = MAIN_ROWS[menu.main_row].1.to_string();
+        } else if caption.is_some() {
+            text.0 = selected.map_or(String::new(), |m| format!("{}  /  {}", m.name.to_uppercase(), kind(menu.tab, m).to_uppercase()));
+        } else if heading.is_some() {
+            text.0 = if campaign { "CAMPAIGN" } else { "MULTIPLAYER MAPS" }.to_string();
+        } else if let Some(name) = name {
+            let installed = menu.tabs[name.0].get(name.1).is_some_and(|m| m.installed);
+            colour.0 = match (name.1 == menu.pick[name.0], installed) {
+                (true, true) => ui::BRIGHT,
+                (true, false) => ui::QUIET,
+                (false, true) => ui::TEXT,
+                (false, false) => ui::OFF,
+            };
+        } else if start.is_some() {
+            colour.0 = if selected.is_some_and(|m| m.installed) { ui::BRIGHT } else { ui::OFF };
         }
-        let Some(part) = part else {
-            continue;
-        };
-        text.0 = match (selected, part.0) {
-            (Some(map), 0) => map.name.to_string(),
-            (Some(_), _) if menu.error.is_some() => menu.error.clone().unwrap_or_default(),
-            (Some(map), _) if !map.installed => format!("{} - not installed in MCC", kind(menu.tab, map)),
-            (Some(map), _) => kind(menu.tab, map).to_string(),
-            (None, _) => String::new(),
-        };
     }
 }
 
-/// Scrolls the shown page so the picked tile is all in view: picking a
-/// tile in the row below the page's bottom row moves the page up by that
-/// row, and the same upwards (with the section's heading, for its first
-/// row). Waits for the page to be laid out (just shown, or rebuilt).
+/// Scrolls the shown page so the picked tile is all in view: picking a tile
+/// below the page's bottom row moves the page up by that row, and the same
+/// upwards (with the section's heading, for its first row). Waits for the
+/// page to be laid out (just shown, or rebuilt).
 #[allow(clippy::type_complexity)]
 fn follow(
     menu: Res<Menu>,
     mut pages: Query<(Entity, &TabPage, &ComputedNode, &UiGlobalTransform, &mut ScrollPosition)>,
     cells: Query<(&TileCell, &ComputedNode, &UiGlobalTransform)>,
-    sections: Query<(&SectionBox, &ComputedNode, &UiGlobalTransform)>,
+    sections: Query<(&SectionHead, &ComputedNode, &UiGlobalTransform)>,
     mut done: Local<Option<(Entity, usize, usize)>>,
 ) {
     let (t, i) = (menu.tab, menu.pick[menu.tab]);
@@ -2645,20 +2855,18 @@ fn follow(
     if *done == Some((page, t, i)) {
         return;
     }
-    let Some((_, cell, cell_at)) = cells.iter().find(|(c, ..)| c.0 == t && c.1 == i) else {
+    let Some((_, row, row_at)) = cells.iter().find(|(c, ..)| c.0 == t && c.1 == i) else {
         return;
     };
-    if node.size.y <= 0.0 || cell.size.y <= 0.0 {
+    if node.size.y <= 0.0 || row.size.y <= 0.0 {
         return;
     }
     // Top and bottom on screen, in physical pixels.
     let span = |n: &ComputedNode, at: &UiGlobalTransform| (at.translation.y - n.size.y / 2.0, at.translation.y + n.size.y / 2.0);
     let (page_top, page_bottom) = span(node, at);
-    let (mut top, bottom) = span(cell, cell_at);
+    let (mut top, bottom) = span(row, row_at);
     // A section's first row brings its heading with it.
-    if let Some((section, n, a)) = sections.iter().filter(|(s, ..)| s.0 == t && s.1 <= i).max_by_key(|(s, ..)| s.1)
-        && i - section.1 < COLUMNS
-    {
+    if let Some((_, n, a)) = sections.iter().find(|(s, ..)| s.0 == t && i >= s.1 && i - s.1 < COLUMNS) {
         top = span(n, a).0;
     }
     let by = if bottom > page_bottom {
@@ -2736,7 +2944,7 @@ fn spin(menu: Res<Menu>, time: Res<Time<Real>>, mut segments: Query<(&RingSegmen
         // How far behind the head, in segments.
         let behind = (head - segment.0 as f32).rem_euclid(RING_SEGMENTS as f32);
         let glow = (1.0 - behind / (RING_SEGMENTS as f32 * 0.45)).max(0.0);
-        colour.0 = LINE.mix(&LIT, glow * glow);
+        colour.0 = RING_DARK.mix(&LIT, glow * glow);
     }
 }
 
@@ -2871,8 +3079,6 @@ mod tests {
         assert_eq!(button_label(FOV_ROW, false), "CHANGE");
     }
 
-    /// Up and down keep the column and stop at a section's shorter row;
-    /// along runs across sections.
     #[test]
     fn moving_between_sections() {
         // The Campaign tab: rows of 1, 1, 6 and 5 maps.
@@ -2889,6 +3095,21 @@ mod tests {
         assert_eq!(moved(&campaign, 12, 1, 0), 12);
         // One section: rows of six.
         assert_eq!(moved(&rows(0), 3, 0, 1), 9);
+    }
+
+    /// Every settings row says what it is, and its value is drawn between
+    /// arrows only where left and right change it.
+    #[test]
+    fn every_setting_says_what_it_is() {
+        for row in 0..SETTING_NAMES.len() {
+            for (ready, skating) in [(false, false), (true, false), (true, true)] {
+                assert!(!setting_about(row, ready, skating).is_empty(), "{}", SETTING_NAMES[row]);
+            }
+        }
+        assert!(steps(FOV_ROW) && steps(VSYNC_ROW) && !steps(USERNAME_ROW) && !steps(RESET_ROW));
+        assert_eq!(MAIN_ROWS[MAIN_CAMPAIGN].0, "CAMPAIGN");
+        assert_eq!(MAIN_ROWS[MAIN_MAPS].0, "MULTIPLAYER MAPS");
+        assert_eq!(MAIN_ROWS[MAIN_SETTINGS].0, "SETTINGS");
     }
 
     #[test]

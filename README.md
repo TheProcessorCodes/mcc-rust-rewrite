@@ -225,9 +225,14 @@ target\debug\blam.exe anim 120_halo --all
 & "target\debug\mcc-rust-rewrite.exe" h1:warthog_run
 ```
 
-`mcc-rust-rewrite.exe` with no map opens the map menu: Halo 3, Halo 2, Halo CE, Reach and
-Campaign tabs, each map shown with MCC's own preview picture
-(`Data\UI\texturepacks\levelstexturepack`, read at run time). The Campaign tab
+`mcc-rust-rewrite.exe` with no map opens the main menu: Campaign, Multiplayer maps, Settings
+and Exit (up / down, Enter / A or a click; Escape / B goes to Exit, and from there out). Campaign
+and Multiplayer maps open the map chooser: a grid of tiles, six across, each with MCC's own
+picture of the map (`Data\UI\texturepacks\levelstexturepack`, read at run time) and its name
+(Multiplayer has Halo 3, Halo 2, Halo CE and Reach tabs); the footer names the picked map.
+Escape / B goes back to the main menu. The menus' look is shared (`mcc_core::ui`: the Barlow
+font, colours, and sizes as parts of the window's height, so every screen fits any window).
+A `--menu-shot` with no `--menu-tab` / `--menu-pick` draws the main menu. The Campaign tab
 sorts its missions under Halo CE and Halo 3 (the Warthog runs, played through) and
 Untested (the rest); a page taller than the window scrolls a row at a time as the
 selection moves past its bottom or top row, or with the mouse wheel. MCC lets players
@@ -237,7 +242,7 @@ with MCC" instead of loading (A / B / Enter / Esc or a click closes it). Start
 Game loads the map into the same window behind a loading screen; Q (or View)
 in the pause menu unloads it and goes back to the menu. Arrows / WASD / d-pad /
 left stick move, Q / E, Tab / Shift+Tab, Page Up / Page Down or LB / RB change tab (the hints by the tabs show Q / E, or LB / RB when a controller was used last), Enter / A start, Escape / B exit, F2 / Y on the Campaign tab change the difficulty (saved); the menu opens on the last map started;
-the mouse picks a tile and a double click starts it. Naming a map on the
+the mouse picks a map's tile and a double click starts it. Naming a map on the
 command line skips the menu, and Q then quits. When the menu opens it asks GitHub (with
 Windows' own `curl.exe`, in the background) whether a newer release is out; if so a pop-up
 offers its release page (Enter / A) or Close (Esc / B), once per launch. Offline, nothing
@@ -285,7 +290,9 @@ IW4L, which is Apache-2.0 (`blam_geometry/src/rails.rs`, `mcc_setup/src/board.rs
 retarget in `mcc_rider`); Apache-2.0 code may be used in a GPL-3.0 work, and its licence
 text stays in `LICENSE-APACHE` as Apache-2.0 asks. The Reflex bike simulation in
 `third_party/reflex-physics` is GPL-3.0-only too. The CELT decoder in
-`third_party/celt-0.11.0` keeps its BSD-3-Clause licence (`COPYING`). The Skate 3
+`third_party/celt-0.11.0` keeps its BSD-3-Clause licence (`COPYING`). The menus' font,
+Barlow (`crates/mcc_core/fonts`), is under the SIL Open Font License 1.1 (`OFL.txt` there,
+shipped with a release as `LICENSE-OFL-Barlow.txt`). The Skate 3
 converter `iw4l-skate-convert.exe` is not shipped; it comes from the player's MW2 Skate 3
 download, with its own licence files. None of this
 grants rights to any game's code, data, assets or trademarks; the player brings their own copies.

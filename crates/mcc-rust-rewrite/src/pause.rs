@@ -41,6 +41,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use mcc_audio::{Channel, SoundLevels};
 use mcc_core::bike::EngineVolume;
 use mcc_core::pause::Paused;
+use mcc_core::ui::{self, bold, text, u};
 
 pub struct PausePlugin;
 
@@ -198,40 +199,49 @@ const SKATE: &[[&str; 3]] = &[
     ["Esc", "Start", "pause"],
 ];
 
-/// Column widths of the dirt bike and skate tabs: keyboard, controller, what.
-const RIDE_WIDTHS: [f32; 3] = [130.0, 230.0, 550.0];
+//// The controls tables' columns, on a 1080-line screen: what it does, the
+/// keyboard, the controller.
+const WIDTHS: [f32; 3] = [760.0, 420.0, 420.0];
 
-fn text(s: &str, size: f32, colour: Color) -> impl Bundle {
-    (Text::new(s), TextFont::from_font_size(size), TextColor(colour))
-}
+const DIM: Color = ui::TEXT;
+const LIT: Color = ui::ACCENT;
 
-const DIM: Color = Color::srgb(0.65, 0.70, 0.78);
-const LIT: Color = Color::srgb(1.0, 0.82, 0.35);
-const HOVER: Color = Color::WHITE;
-
-/// One row of cells, each a fixed width so the columns line up.
-fn row(parent: &mut ChildSpawnerCommands, cells: &[&str], widths: &[f32], colour: Color) {
-    parent.spawn(Node::default()).with_children(|r| {
-        for (s, w) in cells.iter().zip(widths) {
-            r.spawn(Node {
-                width: Val::Px(*w),
+/// One line of a controls table (`cells`: keyboard, controller, what it
+/// does), drawn what-first with a hairline under it; `head` is the titles.
+fn row(parent: &mut ChildSpawnerCommands, cells: &[&str; 3], head: bool) {
+    parent
+        .spawn((
+            Node {
+                min_height: u(if head { 34.0 } else { 39.0 }),
+                flex_shrink: 0.0,
+                align_items: AlignItems::Center,
+                padding: UiRect::left(u(26.0)),
+                border: UiRect::bottom(u(1.0)),
                 ..default()
-            })
-            .with_child(text(s, 18.0, colour));
-        }
-    });
+            },
+            BorderColor::all(if head { ui::LINE } else { ui::LINE.with_alpha(0.09) }),
+        ))
+        .with_children(|r| {
+            for (cell, width) in [2, 0, 1].into_iter().zip(WIDTHS) {
+                let mut column = r.spawn(Node { width: u(width), flex_shrink: 0.0, ..default() });
+                if head {
+                    column.with_child(text(cells[cell], 16.0, ui::QUIET));
+                } else if cell == 2 {
+                    column.with_child(bold(cells[cell], 20.0, ui::BRIGHT));
+                } else {
+                    column.with_child(text(cells[cell], 20.0, DIM));
+                }
+            }
+        });
 }
 
-/// A tab page: a header row, then the controls, then `extra`. Shown when
-/// `index` is `shown`.
-#[allow(clippy::too_many_arguments)]
-fn page<const N: usize>(
+/// A tab page: the controls table, then `extra`. Shown when `index` is
+/// `shown`.
+fn page(
     panel: &mut ChildSpawnerCommands,
     index: usize,
     shown: usize,
-    header: [&str; N],
-    widths: [f32; N],
-    rows: &[[&str; N]],
+    rows: &[[&str; 3]],
     extra: impl FnOnce(&mut ChildSpawnerCommands),
 ) {
     panel
@@ -239,61 +249,44 @@ fn page<const N: usize>(
             TabPage(index),
             Node {
                 flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(6.0),
                 display: if index == shown { Display::Flex } else { Display::None },
                 ..default()
             },
         ))
         .with_children(|p| {
-            row(p, &header, &widths, DIM);
-            for cells in rows {
-                row(p, cells, &widths, Color::WHITE);
+            if !rows.is_empty() {
+                row(p, &["KEYBOARD", "CONTROLLER", "ACTION"], true);
+                for cells in rows {
+                    row(p, cells, false);
+                }
             }
             extra(p);
         });
 }
 
-/// The engine volume row: a label, the bar, the figure, how to move it.
-fn volume_slider(p: &mut ChildSpawnerCommands) {
+/// A setting's line under a table: its name, then what `rest` puts beside it.
+fn setting_line(p: &mut ChildSpawnerCommands, name: &str, top: f32, rest: impl FnOnce(&mut ChildSpawnerCommands)) {
     p.spawn(Node {
-        margin: UiRect::top(Val::Px(14.0)),
+        margin: UiRect::top(u(top)),
+        padding: UiRect::left(u(26.0)),
+        min_height: u(44.0),
         align_items: AlignItems::Center,
-        column_gap: Val::Px(14.0),
+        column_gap: u(22.0),
         ..default()
     })
     .with_children(|r| {
-        r.spawn(Node {
-            width: Val::Px(246.0),
-            ..default()
-        })
-        .with_child(text("Engine volume", 18.0, LIT));
-        r.spawn((
-            VolumeBar,
-            Node {
-                width: Val::Px(240.0),
-                height: Val::Px(14.0),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
-        ))
-        .with_child((
-            VolumeFill,
-            Node {
-                width: Val::Percent(70.0),
-                height: Val::Percent(100.0),
-                ..default()
-            },
-            BackgroundColor(LIT),
-        ));
-        r.spawn((
-            VolumeText,
-            Node {
-                width: Val::Px(56.0),
-                ..default()
-            },
-            text("70 %", 18.0, Color::WHITE),
-        ));
-        r.spawn(crate::key_hint::hint("d-pad up / down, or drag", "W / S or up / down, or drag", 16.0, DIM));
+        r.spawn(Node { width: u(300.0), flex_shrink: 0.0, ..default() }).with_child(bold(name, 22.0, ui::BRIGHT));
+        rest(r);
+    });
+}
+
+/// The engine volume row: a label, the bar, the figure, how to move it.
+fn volume_slider(p: &mut ChildSpawnerCommands) {
+    setting_line(p, "Engine volume", 22.0, |r| {
+        r.spawn((VolumeBar, Node { width: u(420.0), height: u(14.0), ..default() }, BackgroundColor(ui::WELL)))
+            .with_child((VolumeFill, Node { width: Val::Percent(70.0), height: Val::Percent(100.0), ..default() }, BackgroundColor(LIT)));
+        r.spawn((VolumeText, Node { width: u(80.0), ..default() }, text("70 %", 21.0, ui::BRIGHT)));
+        r.spawn(crate::key_hint::hint("d-pad up / down, or drag", "W / S or up / down, or drag", 18.0, ui::QUIET));
     });
     // Only with Reflex set up: without it there is nothing to switch to.
     if mcc_bike::exact::vehicle().is_some() {
@@ -303,34 +296,24 @@ fn volume_slider(p: &mut ChildSpawnerCommands) {
 
 /// The physics switch row: a label, Arcade and Reflex, how to flip it.
 fn physics_row(p: &mut ChildSpawnerCommands) {
-    p.spawn(Node {
-        margin: UiRect::top(Val::Px(10.0)),
-        align_items: AlignItems::Center,
-        column_gap: Val::Px(14.0),
-        ..default()
-    })
-    .with_children(|r| {
-        r.spawn(Node {
-            width: Val::Px(246.0),
-            ..default()
-        })
-        .with_child(text("Physics", 18.0, LIT));
-        for (choice, name) in [(false, "Arcade"), (true, "Reflex")] {
-            r.spawn((
-                PhysicsChoice(choice),
-                Node {
-                    padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::NONE),
-            ))
-            .with_child(text(name, 18.0, DIM));
-        }
-        r.spawn(crate::key_hint::hint("X, or click", "P, or click", 16.0, DIM));
+    setting_line(p, "Physics", 6.0, |r| {
+        r.spawn(Node { column_gap: u(8.0), ..default() }).with_children(|choices| {
+            for (choice, name) in [(false, "Arcade"), (true, "Reflex")] {
+                choices
+                    .spawn((
+                        PhysicsChoice(choice),
+                        Node { padding: UiRect::axes(u(20.0), u(6.0)), border: UiRect::all(u(1.5)), ..default() },
+                        BackgroundColor(Color::NONE),
+                        BorderColor::all(ui::LINE),
+                    ))
+                    .with_child(bold(name, 20.0, DIM));
+            }
+        });
+        r.spawn(crate::key_hint::hint("X, or click", "P, or click", 18.0, ui::QUIET));
     });
 }
 
-/// Why skating is off for this map, which the Skate tab and the
+// Why skating is off for this map, which the Skate tab and the
 /// skateboard's rows say.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SkateOff {
@@ -362,48 +345,44 @@ impl SkateOff {
     }
 }
 
-/// The Skate tab while skating is off: why, and how to turn it on.
+//// The Skate tab while skating is off: why, and how to turn it on.
 fn skate_off_notice(p: &mut ChildSpawnerCommands, off: SkateOff) {
     p.spawn((
         Node {
             flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(10.0),
-            margin: UiRect::top(Val::Px(6.0)),
-            padding: UiRect::axes(Val::Px(20.0), Val::Px(16.0)),
-            border: UiRect::left(Val::Px(3.0)),
+            row_gap: u(12.0),
+            max_width: u(1100.0),
+            padding: UiRect::axes(u(34.0), u(28.0)),
+            border: UiRect::left(u(4.0)),
             ..default()
         },
         BorderColor::all(LIT),
-        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.05)),
+        BackgroundColor(ui::PANEL),
     ))
     .with_children(|n| {
         match off {
             SkateOff::Settings => {
-                n.spawn(text("Skating is turned off", 24.0, LIT));
-                n.spawn(text("This map was loaded without the skateboard or its grind rails.", 18.0, Color::WHITE));
+                n.spawn(bold("Skating is turned off", 32.0, ui::BRIGHT));
+                n.spawn(text("This map was loaded without the skateboard or its grind rails.", 21.0, DIM));
                 n.spawn(crate::key_hint::hint(
-                    "To skate, go back to the map menu, open Settings (X) and turn Skating on.",
-                    "To skate, go back to the map menu, open Settings (F1) and turn Skating on.",
-                    18.0,
-                    Color::WHITE,
+                    "To skate, go back to the main menu, open Settings and turn Skating on.",
+                    "To skate, go back to the main menu, open Settings and turn Skating on.",
+                    21.0,
+                    DIM,
                 ));
             }
             SkateOff::NoSkate3 => {
-                n.spawn(text("Skating needs Skate 3", 24.0, LIT));
-                n.spawn(text(
-                    "Skate 3 is not set up, so maps load without the skateboard or grind rails.",
-                    18.0,
-                    Color::WHITE,
-                ));
+                n.spawn(bold("Skating needs Skate 3", 32.0, ui::BRIGHT));
+                n.spawn(text("Skate 3 is not set up, so maps load without the skateboard or grind rails.", 21.0, DIM));
                 n.spawn(crate::key_hint::hint(
-                    "To add it, go back to the map menu, open Settings (X) and choose Skate 3.",
-                    "To add it, go back to the map menu, open Settings (F1) and choose Skate 3.",
-                    18.0,
-                    Color::WHITE,
+                    "To add it, go back to the main menu, open Settings and choose Skate 3.",
+                    "To add it, go back to the main menu, open Settings and choose Skate 3.",
+                    21.0,
+                    DIM,
                 ));
             }
         }
-        n.spawn(text("It takes effect on the next map you load.", 16.0, DIM));
+        n.spawn(text("It takes effect on the next map you load.", 19.0, ui::QUIET));
     });
 }
 
@@ -431,6 +410,15 @@ fn without_skating<const N: usize>(rows: &[[&'static str; N]], off: Option<Skate
         .collect()
 }
 
+/// A footer's button: its badge and its label (`label` may carry markers).
+fn footer_button(bar: &mut ChildSpawnerCommands, letter: &'static str, key: &'static str, colour: Color, label: impl Bundle) {
+    bar.spawn(Node { align_items: AlignItems::Center, column_gap: u(12.0), padding: UiRect::axes(u(8.0), u(10.0)), ..default() })
+        .with_children(|b| {
+            crate::key_hint::badge(b, letter, key, colour);
+            b.spawn(label);
+        });
+}
+
 fn spawn_menu(
     mut commands: Commands,
     levels: Option<Res<SoundLevels>>,
@@ -441,113 +429,87 @@ fn spawn_menu(
     let off = SkateOff::find(mcc_core::skate::skating_on(skate.as_deref()), game_paths::skate_ready());
     // `MCC_SHOT_PAUSE_TAB=N` (dev, for headless shots): the menu is drawn
     // open on tab N (the game is not paused).
-    let open_on = std::env::var("MCC_SHOT_PAUSE_TAB").ok().and_then(|s| s.parse::<usize>().ok()).filter(|&t| t < SOUND_TAB);
+    let open_on = std::env::var("MCC_SHOT_PAUSE_TAB").ok().and_then(|s| s.parse::<usize>().ok()).filter(|&t| t < TABS.len());
     let shown = open_on.unwrap_or(0);
     commands.insert_resource(ShownTab(shown));
     let campaign = zones.is_some_and(|z| !z.layout.zone_sets.is_empty());
-    let leave = if map_menu.is_some() {
-        ("View (Back) to go back to the map menu", "Q to go back to the map menu")
-    } else {
-        ("View (Back) to quit the game", "Q to quit the game")
-    };
+    let leave = if map_menu.is_some() { "BACK TO THE MAPS" } else { "QUIT THE GAME" };
     commands
         .spawn((
             PauseMenu,
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            // The frozen frame shows through, darkened.
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                ColorStop::new(ui::BACKDROP_TOP.with_alpha(0.90), Val::Percent(0.0)),
+                ColorStop::new(ui::BACKDROP_BOTTOM.with_alpha(0.94), Val::Percent(100.0)),
+            ])),
             GlobalZIndex(100),
             if open_on.is_some() { Visibility::Visible } else { Visibility::Hidden },
         ))
         .with_children(|root| {
-            root.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(6.0),
-                    padding: UiRect::all(Val::Px(28.0)),
-                    min_width: Val::Px(836.0),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.05, 0.07, 0.10, 0.92)),
-            ))
-            .with_children(|panel| {
-                panel.spawn(text("PAUSED", 36.0, Color::WHITE));
-                panel.spawn(crate::key_hint::hint("Start to resume", "Esc to resume", 16.0, DIM));
-                panel.spawn((
-                    AskHint { what: Asking::Quit, pad: leave.0, keys: leave.1 },
-                    crate::key_hint::hint(leave.0, leave.1, 16.0, DIM),
+            root.spawn((ui::header_node(), ui::bar())).with_children(|head| {
+                head.spawn((
+                    Node { padding: UiRect::bottom(u(10.0)), margin: UiRect::right(u(24.0)), ..default() },
+                    bold("PAUSED", 40.0, ui::BRIGHT),
                 ));
-                if campaign {
-                    let restart = ("Y to restart the level from the beginning", "R to restart the level from the beginning");
-                    panel.spawn((
-                        AskHint { what: Asking::Restart, pad: restart.0, keys: restart.1 },
-                        crate::key_hint::hint(restart.0, restart.1, 16.0, DIM),
-                    ));
+                let hint = Node { padding: UiRect::bottom(u(18.0)), ..default() };
+                head.spawn((crate::key_hint::KeyHint { pad: "LB", keys: "A" }, hint.clone(), text("A", 17.0, ui::QUIET)));
+                for (i, name) in TABS.iter().enumerate() {
+                    let (colour, underline) = ui::tab_lit(i == shown, false);
+                    head.spawn((TabLabel(i), ui::tab_node(), underline, bold(&name.to_uppercase(), 24.0, colour)));
                 }
-                panel
-                    .spawn(Node {
-                        column_gap: Val::Px(12.0),
-                        margin: UiRect::vertical(Val::Px(12.0)),
-                        align_items: AlignItems::Baseline,
-                        ..default()
-                    })
-                    .with_children(|tabs| {
-                        tabs.spawn((crate::key_hint::KeyHint { pad: "LB", keys: "A" }, text("A", 16.0, DIM)));
-                        for (i, name) in TABS.iter().enumerate() {
-                            tabs.spawn((
-                                TabLabel(i),
-                                Node {
-                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-                                    ..default()
-                                },
-                                text(name, 22.0, if i == shown { LIT } else { DIM }),
-                            ));
-                        }
-                        tabs.spawn((crate::key_hint::KeyHint { pad: "RB", keys: "D" }, text("D", 16.0, DIM)));
-                    });
-                page(
-                    panel,
-                    0,
-                    shown,
-                    ["Keyboard", "Controller", ""],
-                    [260.0, 200.0, 320.0],
-                    &without_skating(FREE_ROAM, off),
-                    |_| {},
-                );
-                page(
-                    panel,
-                    1,
-                    shown,
-                    ["Keyboard", "Controller", ""],
-                    [260.0, 200.0, 320.0],
-                    &without_skating(FOOT, off),
-                    |_| {},
-                );
-                page(
-                    panel,
-                    BIKE_TAB,
-                    shown,
-                    ["Keyboard", "Controller", ""],
-                    RIDE_WIDTHS,
-                    &without_skating(BIKE, off),
-                    volume_slider,
-                );
+                head.spawn((crate::key_hint::KeyHint { pad: "RB", keys: "D" }, hint, text("D", 17.0, ui::QUIET)));
+            });
+            root.spawn(Node {
+                flex_grow: 1.0,
+                min_height: Val::Px(0.0),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::new(u(72.0), u(72.0), u(30.0), u(20.0)),
+                overflow: Overflow::clip_y(),
+                ..default()
+            })
+            .with_children(|panel| {
+                page(panel, 0, shown, &without_skating(FREE_ROAM, off), |_| {});
+                page(panel, 1, shown, &without_skating(FOOT, off), |_| {});
+                page(panel, BIKE_TAB, shown, &without_skating(BIKE, off), volume_slider);
                 match off {
-                    None => page(panel, SKATE_TAB, shown, ["Keyboard", "Controller", ""], RIDE_WIDTHS, SKATE, |_| {}),
-                    Some(off) => page(panel, SKATE_TAB, shown, [], [], &[], |p| skate_off_notice(p, off)),
+                    None => page(panel, SKATE_TAB, shown, SKATE, |_| {}),
+                    Some(off) => page(panel, SKATE_TAB, shown, &[], |p| skate_off_notice(p, off)),
                 }
-                sound_page(panel, levels.as_deref());
+                sound_page(panel, levels.as_deref(), shown);
+            });
+            root.spawn((ui::footer_node(), ui::bar())).with_children(|bar| {
+                if campaign {
+                    footer_button(
+                        bar,
+                        "Y",
+                        "R",
+                        Color::srgb(0.93, 0.76, 0.20),
+                        (
+                            AskHint { what: Asking::Restart, pad: "RESTART LEVEL", keys: "RESTART LEVEL" },
+                            crate::key_hint::hint("RESTART LEVEL", "RESTART LEVEL", 20.0, DIM),
+                        ),
+                    );
+                }
+                footer_button(
+                    bar,
+                    "View",
+                    "Q",
+                    Color::srgb(0.62, 0.68, 0.76),
+                    (AskHint { what: Asking::Quit, pad: leave, keys: leave }, crate::key_hint::hint(leave, leave, 20.0, DIM)),
+                );
+                footer_button(bar, "Start", "Esc", Color::srgb(0.62, 0.68, 0.76), bold("RESUME", 20.0, ui::BRIGHT));
             });
         });
 }
 
-/// Width of a slider's bar, px.
-const BAR: f32 = 340.0;
+/// Width of a slider's bar, on a 1080-line screen.
+const BAR: f32 = 520.0;
 
 /// A slider's name.
 #[derive(Component)]
@@ -562,84 +524,73 @@ struct SliderFill(Channel);
 #[derive(Component)]
 struct SliderValue(Channel);
 
-/// The Sound tab: a slider per volume, then how to use them.
-fn sound_page(panel: &mut ChildSpawnerCommands, levels: Option<&SoundLevels>) {
+//// The Sound tab: a slider per volume, then how to use them.
+fn sound_page(panel: &mut ChildSpawnerCommands, levels: Option<&SoundLevels>, shown: usize) {
     panel
         .spawn((
             TabPage(SOUND_TAB),
             Node {
                 flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(10.0),
-                display: Display::None,
+                row_gap: u(6.0),
+                display: if shown == SOUND_TAB { Display::Flex } else { Display::None },
                 ..default()
             },
         ))
         .with_children(|p| {
             let Some(levels) = levels else {
-                p.spawn(text("Sound is off (MCC_AUDIO=0, or this map has no sound).", 18.0, DIM));
+                p.spawn(text("Sound is off (MCC_AUDIO=0, or this map has no sound).", 21.0, DIM));
                 return;
             };
             for (i, c) in Channel::ALL.into_iter().enumerate() {
-                p.spawn(Node {
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(14.0),
-                    ..default()
-                })
+                p.spawn((
+                    Node {
+                        min_height: u(62.0),
+                        align_items: AlignItems::Center,
+                        column_gap: u(22.0),
+                        padding: UiRect::left(u(26.0)),
+                        border: UiRect::bottom(u(1.0)),
+                        ..default()
+                    },
+                    BorderColor::all(ui::LINE.with_alpha(0.09)),
+                ))
                 .with_children(|r| {
                     r.spawn((
-                        Node {
-                            width: Val::Px(110.0),
-                            ..default()
-                        },
+                        Node { width: u(200.0), flex_shrink: 0.0, ..default() },
                         SliderLabel(c),
-                        text(c.label(), 20.0, if i == 0 { LIT } else { Color::WHITE }),
+                        bold(c.label(), 24.0, if i == 0 { LIT } else { DIM }),
                     ));
                     // The bar: a dark track, the fill, and a tick at 100 %.
+                    r.spawn((SliderTrack(c), Node { width: u(BAR), height: u(16.0), flex_shrink: 0.0, ..default() }, BackgroundColor(ui::WELL)))
+                        .with_children(|bar| {
+                            bar.spawn((
+                                SliderFill(c),
+                                Node {
+                                    width: Val::Percent(levels.get(c) / SoundLevels::MAX * 100.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(LIT),
+                            ));
+                            bar.spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    left: Val::Percent(100.0 / SoundLevels::MAX),
+                                    width: u(2.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::WHITE.with_alpha(0.7)),
+                            ));
+                        });
                     r.spawn((
-                        SliderTrack(c),
-                        Node {
-                            width: Val::Px(BAR),
-                            height: Val::Px(16.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.12)),
-                    ))
-                    .with_children(|bar| {
-                        bar.spawn((
-                            SliderFill(c),
-                            Node {
-                                width: Val::Percent(levels.get(c) / SoundLevels::MAX * 100.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                            BackgroundColor(LIT.with_alpha(0.85)),
-                        ));
-                        bar.spawn((
-                            Node {
-                                position_type: PositionType::Absolute,
-                                left: Val::Percent(100.0 / SoundLevels::MAX),
-                                width: Val::Px(2.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                            BackgroundColor(Color::WHITE.with_alpha(0.6)),
-                        ));
-                    });
-                    r.spawn((
-                        Node {
-                            width: Val::Px(100.0),
-                            ..default()
-                        },
+                        Node { width: u(130.0), flex_shrink: 0.0, ..default() },
                         SliderValue(c),
-                        text(&value_text(levels, c), 20.0, Color::WHITE),
+                        text(&value_text(levels, c), 22.0, ui::BRIGHT),
                     ));
-                    r.spawn(text(c.about(), 15.0, DIM));
+                    r.spawn(text(c.about(), 18.0, ui::QUIET));
                 });
             }
-            p.spawn(Node {
-                height: Val::Px(8.0),
-                ..default()
-            });
+            p.spawn(Node { height: u(18.0), ..default() });
             for (pad, keys) in [
                 (
                     "Up / down (d-pad, left stick): pick a slider. Left / right (d-pad, left stick): move it.",
@@ -659,7 +610,7 @@ fn sound_page(panel: &mut ChildSpawnerCommands, levels: Option<&SoundLevels>) {
                 ),
                 ("LB / RB: the other tabs.", "A / D: the other tabs."),
             ] {
-                p.spawn(crate::key_hint::hint(pad, keys, 15.0, DIM));
+                p.spawn((Node { padding: UiRect::left(u(26.0)), ..default() }, crate::key_hint::hint(pad, keys, 18.0, ui::QUIET)));
             }
         });
 }
@@ -817,7 +768,7 @@ fn sound_tab(
         }
     }
     for (l, mut colour) in &mut labels {
-        let want = if l.0 == selected { LIT } else { Color::WHITE };
+        let want = if l.0 == selected { LIT } else { DIM };
         if colour.0 != want {
             colour.0 = want;
         }
@@ -882,8 +833,8 @@ impl Asking {
     fn question(self) -> (&'static str, &'static str) {
         match self {
             Asking::Nothing => ("", ""),
-            Asking::Quit => ("Leave this map? View (Back) again to leave", "Leave this map? Q again to leave"),
-            Asking::Restart => ("Restart the level? Y again to restart", "Restart the level? R again to restart"),
+            Asking::Quit => ("LEAVE THIS MAP? VIEW AGAIN TO LEAVE", "LEAVE THIS MAP? Q AGAIN TO LEAVE"),
+            Asking::Restart => ("RESTART THE LEVEL? Y AGAIN TO RESTART", "RESTART THE LEVEL? R AGAIN TO RESTART"),
         }
     }
 
@@ -930,7 +881,7 @@ fn show_ask(asking: Res<Asking>, mut hints: Query<(&AskHint, &mut crate::key_hin
         let asked = hint.what == *asking;
         let (pad, keys) = if asked { asking.question() } else { (hint.pad, hint.keys) };
         (shown.pad, shown.keys) = (pad, keys);
-        colour.0 = if asked { LIT } else { DIM };
+        colour.0 = if asked { ui::BRIGHT } else { DIM };
     }
 }
 
@@ -992,7 +943,7 @@ fn switch_tab(
     mut pages: Query<(&TabPage, &mut Node)>,
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut labels: Query<(&TabLabel, &ComputedNode, &UiGlobalTransform, &mut TextColor)>,
+    mut labels: Query<(&TabLabel, &ComputedNode, &UiGlobalTransform, &mut TextColor, &mut BorderColor)>,
 ) {
     if !paused.0 || finished.0 {
         return;
@@ -1006,7 +957,7 @@ fn switch_tab(
     let hovered = cursor.and_then(|at| {
         labels
             .iter()
-            .find(|(_, node, transform, _)| node.contains_point(**transform, at))
+            .find(|(_, node, transform, ..)| node.contains_point(**transform, at))
             .map(|(label, ..)| label.0)
     });
     let clicked = hovered.filter(|_| mouse.just_pressed(MouseButton::Left));
@@ -1032,16 +983,13 @@ fn switch_tab(
             node.display = if page.0 == wanted { Display::Flex } else { Display::None };
         }
     }
-    for (label, _, _, mut colour) in &mut labels {
-        let want = if label.0 == wanted {
-            LIT
-        } else if hovered == Some(label.0) {
-            HOVER
-        } else {
-            DIM
-        };
+    for (label, _, _, mut colour, mut underline) in &mut labels {
+        let (want, line) = ui::tab_lit(label.0 == wanted, hovered == Some(label.0));
         if colour.0 != want {
             colour.0 = want;
+        }
+        if *underline != line {
+            *underline = line;
         }
     }
 }
@@ -1122,7 +1070,7 @@ fn physics_switch(
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     tuning: Option<ResMut<mcc_bike::tune::BikeTuning>>,
-    mut choices: Query<(&PhysicsChoice, &ComputedNode, &UiGlobalTransform, &mut BackgroundColor, &Children)>,
+    mut choices: Query<(&PhysicsChoice, &ComputedNode, &UiGlobalTransform, &mut BackgroundColor, &mut BorderColor, &Children)>,
     mut colours: Query<&mut TextColor>,
 ) {
     let Some(mut tuning) = tuning.filter(|_| !choices.is_empty()) else {
@@ -1137,7 +1085,7 @@ fn physics_switch(
         // Node sizes and the cursor are in physical pixels.
         let cursor = windows.single().ok().and_then(Window::physical_cursor_position);
         if let Some(at) = cursor.filter(|_| mouse.just_pressed(MouseButton::Left)) {
-            for (choice, node, transform, _, _) in &choices {
+            for (choice, node, transform, ..) in &choices {
                 if node.contains_point(*transform, at) {
                     want = choice.0;
                 }
@@ -1147,13 +1095,17 @@ fn physics_switch(
     if want != reflex_now && !mcc_bike::tune::switch_physics(&mut tuning.0, want) {
         want = reflex_now;
     }
-    for (choice, _, _, mut background, children) in &mut choices {
+    for (choice, _, _, mut background, mut edge, children) in &mut choices {
         let on = choice.0 == want;
-        let fill = if on { Color::srgba(1.0, 0.82, 0.35, 0.25) } else { Color::NONE };
+        let fill = if on { ui::FOCUS } else { Color::NONE };
         if background.0 != fill {
             background.0 = fill;
         }
-        let colour = if on { LIT } else { DIM };
+        let line = BorderColor::all(if on { LIT } else { ui::LINE });
+        if *edge != line {
+            *edge = line;
+        }
+        let colour = if on { ui::BRIGHT } else { DIM };
         for &child in children {
             if let Ok(mut c) = colours.get_mut(child)
                 && c.0 != colour
